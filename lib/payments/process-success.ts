@@ -391,52 +391,27 @@ export async function processCampaignDonation(
   amount: number,
   gatewayFee?: number,
 ): Promise<void> {
-  // Mark donation as success — try by payment_id first, fallback to campaign_id.
-  // The .eq('status', 'pending') guard ensures only one call transitions the donation.
-  const { data: updated } = await supabase
-    .from('campaign_donations')
-    .update({ status: 'success' })
-    .eq('payment_id', paymentId)
-    .eq('status', 'pending')
-    .select('id')
-    .maybeSingle();
+  // Atomic RPC: transitions donation + increments campaign in one transaction.
+  // If donation is already processed, returns already_processed (idempotent).
+  // Two concurrent calls produce one increment.
+  const { data: result, error: rpcError } = await supabase.rpc('apply_campaign_donation', {
+    p_payment_id: paymentId,
+    p_campaign_id: campaignId,
+    p_amount: amount,
+    p_business_id: '', // Business ID resolved from campaign inside RPC
+  });
 
-  if (!updated) {
-    const { data: fallbackUpdated } = await supabase
-      .from('campaign_donations')
-      .update({ status: 'success', payment_id: paymentId })
-      .eq('campaign_id', campaignId)
-      .eq('status', 'pending')
-      .is('payment_id', null)
-      .select('id')
-      .maybeSingle();
-
-    if (!fallbackUpdated) {
-      // Donation already processed (status != 'pending') — skip increment.
-      // This prevents double-counting on webhook retries.
-      return;
-    }
+  if (rpcError) {
+    // Log but don't throw — payment confirmation should not be blocked
+    logger.error('[CAMPAIGN-DONATION] RPC error:', rpcError.message);
   }
 
-  // Only reached if we actually transitioned a donation from pending → success.
-  // Atomic increment of campaign stats.
-  if (typeof supabase.rpc === 'function') {
-    await supabase.rpc('increment_campaign_donation', {
-      p_campaign_id: campaignId,
-      p_amount: amount,
-      p_donor_count: 1,
-    });
-  } else {
-    const { data: camp } = await supabase.from('campaigns').select('raised_amount, donor_count').eq('id', campaignId).single();
-    if (camp) {
-      await supabase.from('campaigns').update({
-        raised_amount: Number(camp.raised_amount || 0) + amount,
-        donor_count: (camp.donor_count || 0) + 1,
-      }).eq('id', campaignId);
-    }
+  if (!result?.success) {
+    // Already processed — skip fee recording
+    return;
   }
 
-  // Record platform fee (unique index prevents duplicates)
+  // Record platform fee (unique index on payment_id prevents duplicates)
   const { data: campaign } = await supabase
     .from('campaigns')
     .select('business_id')

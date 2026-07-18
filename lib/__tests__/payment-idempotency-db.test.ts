@@ -175,6 +175,140 @@ describeIntegration('Payment idempotency — real database', () => {
     const { data: result } = await db.from('invoices').select('amount_paid').eq('id', inv!.id).single();
     expect(Number(result!.amount_paid)).toBe(5000);
   });
+
+  // ── Campaign donation atomicity ──
+
+  it('campaign donation: same payment twice → one increment', async () => {
+    // Create campaign
+    const { data: campaign } = await db.from('campaigns').insert({
+      business_id: testBizId, title: `Camp ${Date.now()}`,
+      goal_amount: 50000, status: 'active',
+    }).select('id').single();
+
+    // Create a real payment record (FK constraint on campaign_donations.payment_id)
+    const { data: pay } = await db.from('payments').insert({
+      business_id: testBizId, amount: 5000, currency: 'NGN',
+      campaign_id: campaign!.id,
+      gateway_reference: `camp-dup-${Date.now()}`, gateway: 'paystack', status: 'success',
+    }).select('id').single();
+
+    // Create pending donation with the real payment_id
+    await db.from('campaign_donations').insert({
+      campaign_id: campaign!.id, business_id: testBizId,
+      payment_id: pay!.id,
+      amount: 5000, status: 'pending', donor_name: 'Test', donor_phone: '+1234567890',
+    });
+
+    // First call
+    const r1 = await db.rpc('apply_campaign_donation', {
+      p_payment_id: pay!.id,
+      p_campaign_id: campaign!.id,
+      p_amount: 5000,
+      p_business_id: testBizId,
+    });
+
+    // Second call (retry)
+    const r2 = await db.rpc('apply_campaign_donation', {
+      p_payment_id: pay!.id,
+      p_campaign_id: campaign!.id,
+      p_amount: 5000,
+      p_business_id: testBizId,
+    });
+
+    expect(r1.data?.success).toBe(true);
+    expect(r2.data?.success).toBe(false);
+    expect(r2.data?.reason).toBe('already_processed');
+
+    // Verify raised_amount incremented only once
+    const { data: camp } = await db.from('campaigns').select('raised_amount, donor_count').eq('id', campaign!.id).single();
+    expect(Number(camp!.raised_amount)).toBe(5000);
+    expect(camp!.donor_count).toBe(1);
+
+    // Cleanup
+    await db.from('campaign_donations').delete().eq('campaign_id', campaign!.id);
+    await db.from('payments').delete().eq('id', pay!.id);
+    await db.from('campaigns').delete().eq('id', campaign!.id);
+  });
+
+  it('campaign donation: concurrent calls → one increment', async () => {
+    const { data: campaign } = await db.from('campaigns').insert({
+      business_id: testBizId, title: `Conc Camp ${Date.now()}`,
+      goal_amount: 50000, status: 'active',
+    }).select('id').single();
+
+    const { data: pay } = await db.from('payments').insert({
+      business_id: testBizId, amount: 3000, currency: 'NGN',
+      campaign_id: campaign!.id,
+      gateway_reference: `camp-conc-${Date.now()}`, gateway: 'paystack', status: 'success',
+    }).select('id').single();
+
+    await db.from('campaign_donations').insert({
+      campaign_id: campaign!.id, business_id: testBizId,
+      payment_id: pay!.id,
+      amount: 3000, status: 'pending', donor_name: 'Concurrent', donor_phone: '+1234567890',
+    });
+
+    const call = () => db.rpc('apply_campaign_donation', {
+      p_payment_id: pay!.id,
+      p_campaign_id: campaign!.id,
+      p_amount: 3000,
+      p_business_id: testBizId,
+    });
+
+    const [r1, r2] = await Promise.all([call(), call()]);
+
+    const successes = [r1.data, r2.data].filter(d => d?.success === true).length;
+    expect(successes).toBe(1);
+
+    const { data: camp } = await db.from('campaigns').select('raised_amount, donor_count').eq('id', campaign!.id).single();
+    expect(Number(camp!.raised_amount)).toBe(3000);
+    expect(camp!.donor_count).toBe(1);
+
+    await db.from('campaign_donations').delete().eq('campaign_id', campaign!.id);
+    await db.from('payments').delete().eq('id', pay!.id);
+    await db.from('campaigns').delete().eq('id', campaign!.id);
+  });
+
+  it('two different valid donations both count', async () => {
+    const { data: campaign } = await db.from('campaigns').insert({
+      business_id: testBizId, title: `Multi Camp ${Date.now()}`,
+      goal_amount: 50000, status: 'active',
+    }).select('id').single();
+
+    const { data: pay1 } = await db.from('payments').insert({
+      business_id: testBizId, amount: 2000, currency: 'NGN',
+      campaign_id: campaign!.id,
+      gateway_reference: `camp-multi1-${Date.now()}`, gateway: 'paystack', status: 'success',
+    }).select('id').single();
+    const { data: pay2 } = await db.from('payments').insert({
+      business_id: testBizId, amount: 3000, currency: 'NGN',
+      campaign_id: campaign!.id,
+      gateway_reference: `camp-multi2-${Date.now()}`, gateway: 'paystack', status: 'success',
+    }).select('id').single();
+
+    await db.from('campaign_donations').insert([
+      { campaign_id: campaign!.id, business_id: testBizId, payment_id: pay1!.id, amount: 2000, status: 'pending', donor_name: 'A', donor_phone: '+1111111111' },
+      { campaign_id: campaign!.id, business_id: testBizId, payment_id: pay2!.id, amount: 3000, status: 'pending', donor_name: 'B', donor_phone: '+2222222222' },
+    ]);
+
+    const r1 = await db.rpc('apply_campaign_donation', {
+      p_payment_id: pay1!.id, p_campaign_id: campaign!.id, p_amount: 2000, p_business_id: testBizId,
+    });
+    const r2 = await db.rpc('apply_campaign_donation', {
+      p_payment_id: pay2!.id, p_campaign_id: campaign!.id, p_amount: 3000, p_business_id: testBizId,
+    });
+
+    expect(r1.data?.success).toBe(true);
+    expect(r2.data?.success).toBe(true);
+
+    const { data: camp } = await db.from('campaigns').select('raised_amount, donor_count').eq('id', campaign!.id).single();
+    expect(Number(camp!.raised_amount)).toBe(5000);
+    expect(camp!.donor_count).toBe(2);
+
+    await db.from('campaign_donations').delete().eq('campaign_id', campaign!.id);
+    await db.from('payments').delete().eq('campaign_id', campaign!.id);
+    await db.from('campaigns').delete().eq('id', campaign!.id);
+  });
 });
 
 describe('Payment idempotency DB status', () => {
