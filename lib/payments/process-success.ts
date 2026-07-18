@@ -359,26 +359,26 @@ export async function processInvoicePayment(
 
   if (!invoice) return;
 
-  // Idempotency guard: if invoice is already fully paid, skip.
-  // This prevents double-incrementing amount_paid on webhook retries.
-  if (invoice.status === 'paid') {
-    return;
+  // Skip if already fully paid (saves a roundtrip — RPC also checks internally)
+  if (invoice.status === 'paid') return;
+
+  // Atomic RPC: records fee + increments amount_paid in one transaction.
+  // Two concurrent calls for the same payment_id produce one increment and one fee.
+  // UNIQUE index on payment_id is unconditional — refunds don't make it reusable.
+  const { error: rpcError } = await supabase.rpc('apply_invoice_payment', {
+    p_invoice_id: invoiceId,
+    p_payment_id: paymentId,
+    p_payment_amount: paymentAmount,
+    p_business_id: invoice.business_id,
+    p_gateway_fee: gatewayFee || 0,
+  });
+
+  if (rpcError) {
+    if (rpcError.message?.includes('duplicate') || rpcError.message?.includes('unique') || rpcError.message?.includes('already_applied')) {
+      return; // Idempotent — already applied
+    }
+    logger.error('[INVOICE-PAYMENT] RPC error:', rpcError.message);
   }
-
-  const newAmountPaid = (Number(invoice.amount_paid) || 0) + paymentAmount;
-  const totalAmount = Number(invoice.total_amount) || 0;
-  const isFullyPaid = newAmountPaid >= totalAmount;
-
-  await supabase
-    .from('invoices')
-    .update({
-      status: isFullyPaid ? 'paid' : 'sent',
-      amount_paid: newAmountPaid,
-      paid_at: isFullyPaid ? new Date().toISOString() : null,
-    })
-    .eq('id', invoiceId);
-
-  await recordPlatformFee(supabase, { invoiceId, paymentId, paymentAmount, gatewayFee });
 }
 
 /**
@@ -391,43 +391,27 @@ export async function processCampaignDonation(
   amount: number,
   gatewayFee?: number,
 ): Promise<void> {
-  // Mark donation as success — try by payment_id first, fallback to campaign_id
-  const { data: updated } = await supabase
-    .from('campaign_donations')
-    .update({ status: 'success' })
-    .eq('payment_id', paymentId)
-    .eq('status', 'pending')
-    .select('id')
-    .maybeSingle();
+  // Atomic RPC: transitions donation + increments campaign in one transaction.
+  // If donation is already processed, returns already_processed (idempotent).
+  // Two concurrent calls produce one increment.
+  const { data: result, error: rpcError } = await supabase.rpc('apply_campaign_donation', {
+    p_payment_id: paymentId,
+    p_campaign_id: campaignId,
+    p_amount: amount,
+    p_business_id: '', // Business ID resolved from campaign inside RPC
+  });
 
-  if (!updated) {
-    await supabase
-      .from('campaign_donations')
-      .update({ status: 'success', payment_id: paymentId })
-      .eq('campaign_id', campaignId)
-      .eq('status', 'pending')
-      .is('payment_id', null);
+  if (rpcError) {
+    // Log but don't throw — payment confirmation should not be blocked
+    logger.error('[CAMPAIGN-DONATION] RPC error:', rpcError.message);
   }
 
-  // Atomic increment of campaign stats (prevents double-counting under race)
-  if (typeof supabase.rpc === 'function') {
-    await supabase.rpc('increment_campaign_donation', {
-      p_campaign_id: campaignId,
-      p_amount: amount,
-      p_donor_count: 1,
-    });
-  } else {
-    // Fallback for test environments without RPC support
-    const { data: camp } = await supabase.from('campaigns').select('raised_amount, donor_count').eq('id', campaignId).single();
-    if (camp) {
-      await supabase.from('campaigns').update({
-        raised_amount: Number(camp.raised_amount || 0) + amount,
-        donor_count: (camp.donor_count || 0) + 1,
-      }).eq('id', campaignId);
-    }
+  if (!result?.success) {
+    // Already processed — skip fee recording
+    return;
   }
 
-  // Record platform fee (unique index prevents duplicates)
+  // Record platform fee (unique index on payment_id prevents duplicates)
   const { data: campaign } = await supabase
     .from('campaigns')
     .select('business_id')
