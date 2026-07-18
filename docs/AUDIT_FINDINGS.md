@@ -1,6 +1,7 @@
 # Waaiio Pre-Launch Audit — Phase 2: Findings
 
-Status: IN PROGRESS
+Static domain review: READY FOR REVIEW
+Functional verification: IN PROGRESS
 
 ## Domains Completed
 
@@ -92,7 +93,10 @@ Status: IN PROGRESS
 | F-014 | Public directory exposes WhatsApp phone numbers | Remove wa_phone from API response |
 | F-016 | Campaign fields editable after donations | Lock title/goal/end_date when donations > 0 |
 
-## All 15 Domains Complete
+## Static Domain Review: READY FOR REVIEW
 
-Phase 2 findings investigation is complete. All Critical and High findings have been fixed.
-7 Medium and 7 Low findings remain — none are launch blockers.
+15 domains inspected at Level D. All Critical and High findings from static review are fixed.
+7 Medium and 7 Low findings remain from static review.
+
+Functional verification (Level A/B evidence) is IN PROGRESS. Features without
+Level A/B evidence cannot be marked READY FOR REVIEW.
