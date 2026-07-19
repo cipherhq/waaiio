@@ -98,8 +98,8 @@ jobs:
           # Verify latest applied is 249
           LATEST=$(psql "$PGURL" -t -c "SELECT MAX(version::integer) FROM supabase_migrations.schema_migrations" | tr -d ' ')
           echo "Latest applied migration: $LATEST"
-          if [ "$LATEST" != "284" ]; then
-            echo "❌ Expected latest migration 284, got $LATEST"
+          if [ "$LATEST" != "287" ]; then
+            echo "❌ Expected latest migration 287, got $LATEST"
             exit 1
           fi
 
@@ -399,6 +399,15 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
         run: npx vitest run lib/__tests__/property-reservation-journey.test.ts --reporter=verbose
+
+      - name: Run payment connections invariants tests
+        if: always() && !cancelled()
+        env:
+          SUPABASE_INTEGRATION: 'true'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
+        run: npx vitest run lib/__tests__/payment-connections-invariants.test.ts --reporter=verbose
 
       - name: Run payment connections tests
         if: always() && !cancelled()

@@ -112,19 +112,21 @@ describeIntegration('Payment connections — real database', () => {
 
   // ── Unverified cannot be default ──
 
-  it('only verified connection can be default', async () => {
-    // First remove existing default
+  it('DB allows unverified default (enforcement is via RPC, not constraint)', async () => {
+    // The DB allows inserting an unverified default — this is a data model fact.
+    // The BUSINESS RULE is enforced by set_default_connection RPC (tested in invariants).
+    // Direct UPDATE of is_default should only be done via the RPC.
     await db.from('payout_accounts').update({ is_default: false }).eq('business_id', testBizId);
 
-    // Try to set unverified as default
     const { error } = await db.from('payout_accounts').insert({
       business_id: testBizId, gateway: 'square', connection_mode: 'connect',
       connection_status: 'pending', is_active: true, is_default: true,
       verified_at: null,
     });
-    // The insert succeeds but the resolver will reject it (app-level check)
-    // The DB allows it — the resolver enforces verified_at IS NOT NULL
-    // Cleanup: remove square first, then restore paystack default
+    // DB insert succeeds (no constraint prevents it)
+    expect(error).toBeNull();
+
+    // Cleanup
     await db.from('payout_accounts').delete()
       .eq('business_id', testBizId).eq('gateway', 'square');
     await db.from('payout_accounts').update({ is_default: true })
