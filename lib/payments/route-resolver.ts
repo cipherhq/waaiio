@@ -91,59 +91,52 @@ export async function resolvePaymentRoute(
     return platformFallback(countryCode, feeTotal);
   }
 
-  // 3. Find the best connection: default first, then country-matching
+  // 3. Use ONLY the default connection — never silently select another provider
   const defaultConn = connections.find(c => c.is_default);
-  const countryMatch = connections.find(c => {
-    const supported = PROVIDER_COUNTRY_MAP[c.gateway] || [];
-    return supported.includes(countryCode);
-  });
 
-  const conn = defaultConn || countryMatch;
-
-  if (!conn) {
-    return platformFallback(countryCode, feeTotal, 'No verified connection supports this country');
+  if (!defaultConn) {
+    return platformFallback(countryCode, feeTotal, 'No default connection set — using platform');
   }
 
-  // 4. Validate the connection is healthy and country-supported
-  const supported = PROVIDER_COUNTRY_MAP[conn.gateway] || [];
+  // 4. Validate the default is healthy, verified, and country-supported
+  const supported = PROVIDER_COUNTRY_MAP[defaultConn.gateway] || [];
   if (!supported.includes(countryCode)) {
-    return platformFallback(countryCode, feeTotal, `Default connection (${conn.gateway}) does not support ${countryCode}`);
+    return platformFallback(countryCode, feeTotal, `Default connection (${defaultConn.gateway}) does not support ${countryCode}`);
   }
 
-  if (conn.health_status === 'unhealthy') {
-    return platformFallback(countryCode, feeTotal, `Connection ${conn.gateway} is unhealthy — using platform`);
+  if (defaultConn.health_status === 'unhealthy') {
+    return platformFallback(countryCode, feeTotal, `Default connection (${defaultConn.gateway}) is unhealthy — using platform`);
   }
 
   // 5. Route based on connection mode
-  switch (conn.connection_mode) {
+  switch (defaultConn.connection_mode) {
     case 'managed':
       return {
         mode: 'managed_split',
-        provider: conn.gateway,
-        connectionId: conn.id,
+        provider: defaultConn.gateway,
+        connectionId: defaultConn.id,
         feeBearerMode: 'merchant',
         platformFeeAmount: feeTotal,
-        subaccountCode: conn.subaccount_code || undefined,
-        stripeAccountId: conn.stripe_account_id || undefined,
-        paystackBearer: conn.gateway === 'paystack' ? 'subaccount' : undefined,
+        subaccountCode: defaultConn.subaccount_code || undefined,
+        stripeAccountId: defaultConn.stripe_account_id || undefined,
+        paystackBearer: defaultConn.gateway === 'paystack' ? 'subaccount' : undefined,
       };
 
     case 'connect':
       return {
         mode: 'connect',
-        provider: conn.gateway,
-        connectionId: conn.id,
+        provider: defaultConn.gateway,
+        connectionId: defaultConn.id,
         feeBearerMode: 'merchant',
         platformFeeAmount: feeTotal,
-        stripeAccountId: conn.stripe_account_id || undefined,
+        stripeAccountId: defaultConn.stripe_account_id || undefined,
       };
 
     case 'byo': {
-      // Look up the secret reference (NOT the key itself)
       const { data: secret } = await supabase
         .from('business_connection_secrets')
         .select('id, platform_fee_subaccount_code, webhook_verified_at, verified_at')
-        .eq('payout_account_id', conn.id)
+        .eq('payout_account_id', defaultConn.id)
         .is('revoked_at', null)
         .maybeSingle();
 
@@ -153,8 +146,8 @@ export async function resolvePaymentRoute(
 
       return {
         mode: 'byo',
-        provider: conn.gateway,
-        connectionId: conn.id,
+        provider: defaultConn.gateway,
+        connectionId: defaultConn.id,
         feeBearerMode: 'merchant',
         platformFeeAmount: feeTotal,
         byoSecretId: secret.id,
@@ -166,10 +159,10 @@ export async function resolvePaymentRoute(
       return {
         mode: 'flutterwave_mid',
         provider: 'flutterwave',
-        connectionId: conn.id,
-        feeBearerMode: 'shared', // Flutterwave deducts fee before split
+        connectionId: defaultConn.id,
+        feeBearerMode: 'shared',
         platformFeeAmount: feeTotal,
-        flutterwaveMid: conn.flutterwave_mid || undefined,
+        flutterwaveMid: defaultConn.flutterwave_mid || undefined,
       };
 
     default:

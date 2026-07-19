@@ -14,11 +14,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=missing_state`);
   }
 
-  const { verifyOAuthState } = await import('@/lib/payments/oauth-state');
+  const { verifyOAuthState, consumeOAuthState } = await import('@/lib/payments/oauth-state');
+  const { createServiceClient } = await import('@/lib/supabase/service');
   const verified = verifyOAuthState(state);
   if (!verified) {
     logger.warn('[STRIPE-CALLBACK] Invalid, expired, or tampered state parameter');
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=invalid_state`);
+  }
+
+  // Consume nonce atomically — prevents replay
+  const service = createServiceClient();
+  const consumed = await consumeOAuthState(service, verified.nonce);
+  if (!consumed) {
+    logger.warn('[STRIPE-CALLBACK] State already consumed (replay attempt)');
+    return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=state_replayed`);
   }
 
   const { userId, businessId, accountId } = verified;
@@ -33,20 +42,20 @@ export async function GET(request: NextRequest) {
 
   try {
     if (!stripeSecretKey) {
-      // Mock mode — just save it
-      await supabase
-        .from('payout_accounts')
-        .update({ is_active: false, updated_at: new Date().toISOString() })
-        .eq('business_id', businessId)
-        .eq('is_active', true);
+      // Mock mode — deactivate only previous Stripe, preserve others
+      await supabase.from('payout_accounts')
+        .update({ is_active: false, connection_status: 'revoked', updated_at: new Date().toISOString() })
+        .eq('business_id', businessId).eq('gateway', 'stripe').eq('is_active', true);
+
+      const { data: mockDefault } = await supabase.from('payout_accounts')
+        .select('id').eq('business_id', businessId).eq('is_default', true)
+        .eq('is_active', true).not('verified_at', 'is', null).maybeSingle();
 
       await supabase.from('payout_accounts').insert({
-        business_id: businessId,
-        gateway: 'stripe',
-        stripe_account_id: accountId,
-        platform_percentage: 2.5,
-        is_active: true,
-        verified_at: new Date().toISOString(),
+        business_id: businessId, gateway: 'stripe', stripe_account_id: accountId,
+        platform_percentage: 2.5, is_active: true, is_default: !mockDefault,
+        connection_mode: 'connect', connection_status: 'active',
+        health_status: 'healthy', verified_at: new Date().toISOString(),
       });
 
       return NextResponse.redirect(`${appUrl}/dashboard/payouts?connected=true`);
@@ -62,22 +71,42 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=not_verified`);
     }
 
-    // Deactivate existing
+    // Deactivate only previous Stripe connections (preserve other providers)
     await supabase
       .from('payout_accounts')
-      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .update({ is_active: false, connection_status: 'revoked', updated_at: new Date().toISOString() })
       .eq('business_id', businessId)
+      .eq('gateway', 'stripe')
       .eq('is_active', true);
 
+    // Check if business has an existing valid default
+    const { data: existingDefault } = await supabase
+      .from('payout_accounts')
+      .select('id')
+      .eq('business_id', businessId)
+      .eq('is_default', true)
+      .eq('is_active', true)
+      .not('verified_at', 'is', null)
+      .maybeSingle();
+
     // Save the connected account
-    await supabase.from('payout_accounts').insert({
+    const { data: newConn, error: insertErr } = await supabase.from('payout_accounts').insert({
       business_id: businessId,
       gateway: 'stripe',
       stripe_account_id: accountId,
       platform_percentage: 2.5,
       is_active: true,
+      is_default: !existingDefault, // Default only if no existing valid default
+      connection_mode: 'connect',
+      connection_status: 'active',
+      health_status: 'healthy',
       verified_at: new Date().toISOString(),
-    });
+    }).select('id').single();
+
+    if (insertErr) {
+      logger.error('[STRIPE-CALLBACK] Insert error:', insertErr.message);
+      return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=insert_failed`);
+    }
 
     // Auto-set payout_mode to direct_split when merchant connects Stripe
     await supabase

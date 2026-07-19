@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { generateOAuthState } from '@/lib/payments/oauth-state';
+import { createServiceClient } from '@/lib/supabase/service';
+import { generateOAuthState, persistOAuthState } from '@/lib/payments/oauth-state';
 import { logger } from '@/lib/logger';
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
@@ -60,8 +61,11 @@ export async function POST(request: NextRequest) {
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
-    // Create onboarding link with cryptographic state binding
-    const oauthState = generateOAuthState(user.id, business_id, account.id);
+    // Create onboarding link with cryptographic state binding + nonce persistence
+    const { token: oauthState, payload } = generateOAuthState(user.id, business_id, 'stripe', account.id);
+    const service = createServiceClient();
+    await persistOAuthState(service, payload);
+
     const link = await stripeRequest('/account_links', {
       account: account.id,
       refresh_url: `${appUrl}/dashboard/payouts?refresh=true`,
