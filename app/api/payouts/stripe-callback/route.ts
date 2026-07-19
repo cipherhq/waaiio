@@ -64,6 +64,12 @@ export async function GET(request: NextRequest) {
       verified_at: new Date().toISOString(),
     });
 
+    // Auto-set payout_mode to direct_split when merchant connects Stripe
+    await supabase
+      .from('businesses')
+      .update({ payout_mode: 'direct_split' })
+      .eq('id', businessId);
+
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?connected=true`);
   } catch (error) {
     logger.error('Stripe callback error:', (error as Error).message);
