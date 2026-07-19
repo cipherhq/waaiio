@@ -14,7 +14,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { CountryCode, SubscriptionTier } from '@/lib/constants';
+import { type CountryCode, type SubscriptionTier, getPaymentGatewayForCountry } from '@/lib/constants';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import { logger } from '@/lib/logger';
 
@@ -182,7 +182,6 @@ function platformFallback(
   platformFeeAmount: number,
   warning?: string,
 ): PaymentRoute {
-  const { getPaymentGatewayForCountry } = require('@/lib/constants');
   const provider = getPaymentGatewayForCountry(countryCode);
 
   if (warning) {
