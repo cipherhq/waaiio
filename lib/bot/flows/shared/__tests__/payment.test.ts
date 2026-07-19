@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+
+// Enable payments for these tests (the gate would block otherwise)
+process.env.ENABLE_PAYMENTS = 'true';
 
 // Mock all external dependencies
 vi.mock('@/lib/payments/factory', () => ({
