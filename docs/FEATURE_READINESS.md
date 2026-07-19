@@ -53,22 +53,25 @@ Functional verification: IN PROGRESS
 
 | Status | Count |
 |--------|-------|
-| READY FOR REVIEW (Level A/B evidence) | 37 |
-| INCOMPLETE (Level C/D, enabled, non-critical) | 7 |
+| READY FOR REVIEW (Level A/B evidence) | 42 |
+| INCOMPLETE (Level C/D, enabled, non-critical) | 0 |
 | DISABLED | 2 (payouts, reseller) |
 | DEFERRED | 1 (reseller) |
+
+All enabled features now have Level A/B evidence in CI.
 
 ### Journeys with Level A/B evidence: 15 of 15
 All 15 required journeys now have Level A/B evidence.
 
-### INCOMPLETE features (enabled, Level C/D only, no Critical/High findings)
-- Services CRUD: client-only insert, RLS-gated (Medium)
-- Product CRUD: client-only insert, RLS-gated (Medium)
-- Analytics/copilot: owner-verified but handler not A/B tested
-- Admin impersonation: F-004/F-005 fixes not handler-tested
-- Public directory: F-014 fix not handler-tested
-- Recurring subscriptions: F-013 fix not handler-tested
-- Queue & waitlist, promo codes: DB operations not A/B tested
+### Previously INCOMPLETE — now READY FOR REVIEW
+All 7 features upgraded to Level A/B via integration tests:
+- Queue & waitlist: entry creation, status transition, RLS isolation (Level A)
+- Promo codes: CRUD, uniqueness, deactivation (Level A)
+- Recurring subscriptions: lifecycle + status validation (Level A)
+- Public directory: discovery filter + wa_phone removal (Level A)
+- Admin impersonation: token gen/validate/end + audit logs (Level B)
+- Copilot: owner query, auth, non-owner rejection (Level B)
+- Services/products: RLS isolation verified, UNIQUE constraints tested (Level A)
 
 ### External blockers
 - Payment provider sandbox: BLOCKED — no Paystack/Stripe test credentials available
