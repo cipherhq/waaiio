@@ -1121,9 +1121,7 @@ export const ticketingFlow: FlowDefinition = {
               recordPlatformFee(ctx.supabase, {
                 businessId: ctx.business.id,
                 bookingId: d.booking_id as string,
-                transactionAmount: d.total_amount as number,
-                tier: ctx.business.subscription_tier as SubscriptionTier,
-                isInTrial,
+                paymentAmount: d.total_amount as number,
               }).catch(err => console.error('[TICKETING] recordPlatformFee error:', err));
 
               // Post-completion: loyalty points, feedback request, referral tracking

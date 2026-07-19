@@ -2933,9 +2933,7 @@ export const schedulingFlow: FlowDefinition = {
               recordPlatformFee(ctx.supabase, {
                 businessId: ctx.business.id,
                 bookingId: d.booking_id as string,
-                transactionAmount: feeAmount,
-                tier: ctx.business.subscription_tier as SubscriptionTier,
-                isInTrial,
+                paymentAmount: feeAmount,
               }).catch(err => console.error('[SCHEDULING] saved card recordPlatformFee error:', err));
             }
           }
@@ -3213,9 +3211,7 @@ export const schedulingFlow: FlowDefinition = {
                 recordPlatformFee(ctx.supabase, {
                   businessId: ctx.business.id,
                   bookingId: d.booking_id as string,
-                  transactionAmount: feeAmount,
-                  tier: ctx.business.subscription_tier as SubscriptionTier,
-                  isInTrial,
+                  paymentAmount: feeAmount,
                 }).catch(err => console.error('[SCHEDULING] recordPlatformFee error:', err));
               }
             }

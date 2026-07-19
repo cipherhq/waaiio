@@ -5,6 +5,23 @@ import { resolvePaymentRoute, type PaymentRoute } from '@/lib/payments/route-res
 import { decryptToken } from '@/lib/encryption';
 import { logger } from '@/lib/logger';
 
+// Re-exported for backwards compatibility with bot flows
+export { recordPlatformFee } from '@/lib/payments/process-success';
+
+/** Verify a payment via gateway. Used by bot flows after "I've Paid" button. */
+export async function verifyPayment(
+  supabase: SupabaseClient,
+  gatewayReference: string,
+  countryCode: CountryCode = 'NG',
+): Promise<boolean> {
+  const gateway = getPaymentGateway(countryCode);
+  try {
+    return await gateway.verifyPayment(supabase, gatewayReference);
+  } catch {
+    return false;
+  }
+}
+
 export async function initializePayment(
   supabase: SupabaseClient,
   opts: {

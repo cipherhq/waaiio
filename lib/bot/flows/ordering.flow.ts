@@ -3149,9 +3149,7 @@ export const orderingFlow: FlowDefinition = {
               recordPlatformFee(ctx.supabase, {
                 orderId,
                 businessId: ctx.business.id,
-                transactionAmount: totalAmount,
-                tier,
-                isInTrial,
+                paymentAmount: totalAmount,
               }).catch(err => logger.error('[ORDERING] Platform fee error:', err));
             }
 

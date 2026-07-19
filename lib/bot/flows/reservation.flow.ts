@@ -1309,9 +1309,7 @@ export const reservationFlow: FlowDefinition = {
               await recordPlatformFee(ctx.supabase, {
                 businessId: ctx.business.id,
                 reservationId: d.reservation_id as string,
-                transactionAmount: d.total_amount as number,
-                tier: ctx.business.subscription_tier as SubscriptionTier,
-                isInTrial,
+                paymentAmount: d.total_amount as number,
               });
             }
             const checkInLabel = new Date((d.check_in as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
