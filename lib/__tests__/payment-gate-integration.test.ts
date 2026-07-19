@@ -82,17 +82,20 @@ describe('ENABLE_PAYMENTS centralized factory gate', () => {
   it('all callers of getPaymentGateway traced and covered', () => {
     const fs = require('fs');
     // Every file that imports getPaymentGateway or getPaymentGatewayByName
-    const callers = [
-      'lib/bot/flows/shared/payment.ts',          // shared initializePayment
-      'app/api/webhook/meta-cloud/route.ts',       // catalog orders
-      'app/api/recurring/setup/route.ts',          // subscription setup
+    // Direct factory callers
+    const directCallers = [
+      'lib/bot/flows/shared/payment.ts',          // shared initializePayment (factory fallback)
+      'app/api/recurring/setup/route.ts',          // subscription setup (via resolver + factory)
     ];
-    for (const f of callers) {
+    for (const f of directCallers) {
       const content = fs.readFileSync(f, 'utf-8');
       expect(
         content.includes('getPaymentGateway') || content.includes('getPaymentGatewayByName')
       ).toBe(true);
     }
+    // Meta catalog now routes through shared initializePayment (not direct factory)
+    const metaContent = fs.readFileSync('app/api/webhook/meta-cloud/route.ts', 'utf-8');
+    expect(metaContent).toContain('initializePayment');
   });
 
   it('webhook reconciliation is NOT blocked (separate from initiation)', () => {

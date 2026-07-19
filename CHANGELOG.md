@@ -19,6 +19,15 @@ If something breaks, check this log to find what changed and when.
 
 **Could break:** Code that passes `gatewayOverride` to `initializePayment` will get a TypeScript error (parameter removed). Code that reads `consumed` as boolean from `consumeOAuthState` needs to check for null instead. `platform_settings`-based OAuth state rows will be orphaned (new states use `oauth_states` table).
 
+### Phase 1 Correction Round
+
+- **1: Meta catalog through shared initializer** — `handleCatalogOrder` in `app/api/webhook/meta-cloud/route.ts` now uses `initializePayment` from shared/payment.ts instead of direct `getPaymentGateway`/`getPaymentGatewayByName`. Removed the duplicate `payments` INSERT (gateway already creates the record). Source-level test proves no direct factory import and no duplicate INSERT.
+- **2: Sensitive-field enforcement expanded** — Migration 289 rewritten with server-controlled allowlist. UPDATE trigger now covers: `is_default`, `is_active`, `gateway`, `business_id`, `connection_mode`, `connection_status`, `subaccount_code`, `stripe_account_id`, `flutterwave_mid`, `verified_at`, `health_status`, `last_health_check_at`, `platform_percentage`. INSERT trigger forces safe defaults (`is_default=false`, `is_active=false`, `connection_status='pending'`, `health_status='unchecked'`, `verified_at=NULL`). Integration tests with real authenticated JWT prove rejection.
+- **3: Stripe callback uses service client** — All `payout_accounts` mutations now use `service` (service_role client), not the authenticated `supabase` client. Business ownership verified via RLS-enforced SELECT before mutations. Every DB error (revoke, insert, business update) is checked and redirects to error URL. Source-level test proves pattern.
+- **4: verifyPayment fail-closed** — Returns `false` for: missing payment record, unsupported gateway, BYO with no valid credential, database error. No country-default fallback. 4 dedicated unit tests.
+- **5: Handler-level tests** — Source-level verification that Meta catalog, pay-link, and recurring all route through the shared initializer or resolver. Stripe callback verified for service client usage and error checking.
+- **6: Resolver requires healthy** — Changed from `!== 'unhealthy'` to `!== 'healthy'` — now rejects both 'unhealthy' and 'unchecked'. Aligns with `set_default_connection` RPC. Integration test proves 'unchecked' → platform fallback.
+
 ---
 
 ## 2026-07-16

@@ -54,28 +54,51 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=user_mismatch`);
   }
 
+  // Verify business ownership via authenticated client (RLS-enforced)
+  const { data: bizCheck } = await supabase
+    .from('businesses')
+    .select('id')
+    .eq('id', businessId)
+    .single();
+  if (!bizCheck) {
+    logger.warn('[STRIPE-CALLBACK] User does not own business', businessId);
+    return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=not_owner`);
+  }
+
+  // All mutations below use service client (bypasses sensitive-field trigger).
+  // Auth check above proves ownership; service client is safe here.
   try {
     if (!stripeSecretKey) {
       // Mock mode — deactivate only previous Stripe, preserve others
-      await supabase.from('payout_accounts')
+      const { error: revokeErr } = await service.from('payout_accounts')
         .update({ is_active: false, connection_status: 'revoked', updated_at: new Date().toISOString() })
         .eq('business_id', businessId).eq('gateway', 'stripe').eq('is_active', true);
 
-      const { data: mockDefault } = await supabase.from('payout_accounts')
+      if (revokeErr) {
+        logger.error('[STRIPE-CALLBACK] Mock revoke error:', revokeErr.message);
+        return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=revoke_failed`);
+      }
+
+      const { data: mockDefault } = await service.from('payout_accounts')
         .select('id').eq('business_id', businessId).eq('is_default', true)
         .eq('is_active', true).not('verified_at', 'is', null).maybeSingle();
 
-      await supabase.from('payout_accounts').insert({
+      const { error: mockInsertErr } = await service.from('payout_accounts').insert({
         business_id: businessId, gateway: 'stripe', stripe_account_id: accountId,
         platform_percentage: 2.5, is_active: true, is_default: !mockDefault,
         connection_mode: 'connect', connection_status: 'active',
         health_status: 'healthy', verified_at: new Date().toISOString(),
       });
 
+      if (mockInsertErr) {
+        logger.error('[STRIPE-CALLBACK] Mock insert error:', mockInsertErr.message);
+        return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=insert_failed`);
+      }
+
       return NextResponse.redirect(`${appUrl}/dashboard/payouts?connected=true`);
     }
 
-    // Verify the account status
+    // Verify the account status with Stripe
     const res = await fetch(`https://api.stripe.com/v1/accounts/${encodeURIComponent(accountId)}`, {
       headers: { Authorization: `Bearer ${stripeSecretKey}` },
     });
@@ -86,15 +109,20 @@ export async function GET(request: NextRequest) {
     }
 
     // Deactivate only previous Stripe connections (preserve other providers)
-    await supabase
+    const { error: revokeErr } = await service
       .from('payout_accounts')
       .update({ is_active: false, connection_status: 'revoked', updated_at: new Date().toISOString() })
       .eq('business_id', businessId)
       .eq('gateway', 'stripe')
       .eq('is_active', true);
 
+    if (revokeErr) {
+      logger.error('[STRIPE-CALLBACK] Revoke error:', revokeErr.message);
+      return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=revoke_failed`);
+    }
+
     // Check if business has an existing valid default
-    const { data: existingDefault } = await supabase
+    const { data: existingDefault } = await service
       .from('payout_accounts')
       .select('id')
       .eq('business_id', businessId)
@@ -103,8 +131,8 @@ export async function GET(request: NextRequest) {
       .not('verified_at', 'is', null)
       .maybeSingle();
 
-    // Save the connected account
-    const { data: newConn, error: insertErr } = await supabase.from('payout_accounts').insert({
+    // Save the connected account (service client — sets sensitive fields)
+    const { error: insertErr } = await service.from('payout_accounts').insert({
       business_id: businessId,
       gateway: 'stripe',
       stripe_account_id: accountId,
@@ -115,18 +143,23 @@ export async function GET(request: NextRequest) {
       connection_status: 'active',
       health_status: 'healthy',
       verified_at: new Date().toISOString(),
-    }).select('id').single();
+    });
 
     if (insertErr) {
       logger.error('[STRIPE-CALLBACK] Insert error:', insertErr.message);
       return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=insert_failed`);
     }
 
-    // Auto-set payout_mode to direct_split when merchant connects Stripe
-    await supabase
+    // Auto-set payout_mode to direct_split
+    const { error: bizUpdateErr } = await service
       .from('businesses')
       .update({ payout_mode: 'direct_split' })
       .eq('id', businessId);
+
+    if (bizUpdateErr) {
+      logger.error('[STRIPE-CALLBACK] Business update error:', bizUpdateErr.message);
+      // Non-fatal — connection was created successfully
+    }
 
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?connected=true`);
   } catch (error) {

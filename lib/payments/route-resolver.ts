@@ -105,8 +105,10 @@ export async function resolvePaymentRoute(
     return platformFallback(countryCode, feeTotal, `Default connection (${defaultConn.gateway}) does not support ${countryCode}`);
   }
 
-  if (defaultConn.health_status === 'unhealthy') {
-    return platformFallback(countryCode, feeTotal, `Default connection (${defaultConn.gateway}) is unhealthy — using platform`);
+  // Require healthy — reject both 'unhealthy' and 'unchecked'.
+  // Aligns with set_default_connection RPC which uses IS DISTINCT FROM 'healthy'.
+  if (defaultConn.health_status !== 'healthy') {
+    return platformFallback(countryCode, feeTotal, `Default connection (${defaultConn.gateway}) health_status is '${defaultConn.health_status}' — using platform`);
   }
 
   // 5. Route based on connection mode — fail to platform if required identifier is missing

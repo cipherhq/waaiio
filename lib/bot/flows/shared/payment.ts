@@ -10,45 +10,72 @@ export { recordPlatformFee } from '@/lib/payments/process-success';
 
 /**
  * Verify a payment via the gateway recorded on the payment record.
- * Falls back to country-default gateway if no payment record is found.
- * For BYO payments, retrieves the merchant's credentials from the connection.
+ * Fail-closed: returns false if:
+ * - payment record is missing (no stored gateway to verify against)
+ * - stored gateway is not a recognized provider
+ * - BYO payment has no valid, non-revoked credential
+ * - database lookup returns an error
  */
 export async function verifyPayment(
   supabase: SupabaseClient,
   gatewayReference: string,
-  countryCode: CountryCode = 'NG',
+  _countryCode: CountryCode = 'NG',
 ): Promise<boolean> {
+  // Look up the stored payment to determine which gateway processed it
+  const { data: payment, error: lookupErr } = await supabase
+    .from('payments')
+    .select('gateway, collection_mode, payout_account_id, metadata')
+    .eq('gateway_reference', gatewayReference)
+    .maybeSingle();
+
+  // Fail closed on DB error
+  if (lookupErr) {
+    logger.error('[VERIFY] Payment lookup error:', lookupErr.message);
+    return false;
+  }
+
+  // Fail closed if no payment record found
+  if (!payment || !payment.gateway) {
+    logger.warn('[VERIFY] No payment record found for reference:', gatewayReference);
+    return false;
+  }
+
+  // Validate the stored gateway is a recognized provider
+  const validGateways = ['paystack', 'stripe', 'flutterwave', 'square', 'paypal'];
+  if (!validGateways.includes(payment.gateway)) {
+    logger.warn('[VERIFY] Unsupported gateway on payment record:', payment.gateway);
+    return false;
+  }
+
   try {
-    // Look up the stored payment to determine which gateway processed it
-    const { data: payment } = await supabase
-      .from('payments')
-      .select('gateway, collection_mode, payout_account_id, metadata')
-      .eq('gateway_reference', gatewayReference)
-      .maybeSingle();
-
     let byoSecretKey: string | undefined;
-    const storedGateway = payment?.gateway;
 
-    // For BYO payments, retrieve the merchant's credentials
-    if (payment?.collection_mode === 'byo' && payment?.payout_account_id) {
-      const { data: secret } = await supabase
+    // For BYO payments, retrieve the merchant's credentials — fail closed if missing
+    if (payment.collection_mode === 'byo' && payment.payout_account_id) {
+      const { data: secret, error: secretErr } = await supabase
         .from('business_connection_secrets')
         .select('encrypted_secret_key')
         .eq('payout_account_id', payment.payout_account_id)
         .is('revoked_at', null)
         .maybeSingle();
-      if (secret?.encrypted_secret_key) {
-        byoSecretKey = decryptToken(secret.encrypted_secret_key);
+
+      if (secretErr) {
+        logger.error('[VERIFY] BYO credential lookup error:', secretErr.message);
+        return false;
       }
+
+      if (!secret?.encrypted_secret_key) {
+        logger.warn('[VERIFY] BYO payment has no valid credential for connection:', payment.payout_account_id);
+        return false;
+      }
+
+      byoSecretKey = decryptToken(secret.encrypted_secret_key);
     }
 
-    // Use the stored gateway, not the country default
-    const gateway = storedGateway
-      ? getPaymentGatewayByName(storedGateway as PaymentGatewayName)
-      : getPaymentGateway(countryCode);
-
+    const gateway = getPaymentGatewayByName(payment.gateway as PaymentGatewayName);
     return await gateway.verifyPayment(supabase, gatewayReference, byoSecretKey);
-  } catch {
+  } catch (err) {
+    logger.error('[VERIFY] Gateway verification error:', (err as Error).message);
     return false;
   }
 }
