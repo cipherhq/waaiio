@@ -13,10 +13,8 @@ export class PaystackGateway implements PaymentGateway {
     const amountInKobo = Math.round(opts.amount * 100);
     const email = opts.userEmail || `${opts.phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
 
-    // Connect mode: use platform key; BYO: business's own key; else: platform key
-    const secretKey = opts.connectAccountId
-      ? paystackSecretKey
-      : (opts.isByo && opts.byoSecretKey ? opts.byoSecretKey : paystackSecretKey);
+    // BYO: business's own key; else: platform key
+    const secretKey = opts.isByo && opts.byoSecretKey ? opts.byoSecretKey : paystackSecretKey;
 
     try {
       if (!secretKey) {
@@ -42,9 +40,7 @@ export class PaystackGateway implements PaymentGateway {
 
       // Build split params
       let splitParams: Record<string, unknown> = {};
-      if (opts.connectAccountId) {
-        // Connect mode: split is pre-configured at account level, no params needed
-      } else if (opts.isByo && opts.byoPlatformSubaccount && opts.platformFeeAmount != null) {
+      if (opts.isByo && opts.byoPlatformSubaccount && opts.platformFeeAmount != null) {
         // BYO reversed split: platform subaccount on business's account receives platform fee
         // transaction_charge = amount business keeps (total minus platform fee) in kobo
         const businessKeeps = Math.round((opts.amount - opts.platformFeeAmount) * 100);
@@ -53,21 +49,20 @@ export class PaystackGateway implements PaymentGateway {
           transaction_charge: businessKeeps,
         };
       } else if (opts.subaccountCode) {
-        // Normal platform split: business subaccount on platform account
+        // Managed split: business subaccount on platform account
+        // bearer=subaccount means the business bears the gateway fee
+        // transaction_charge = Waaiio's platform fee (what platform keeps)
         splitParams = {
           subaccount: opts.subaccountCode,
           transaction_charge: opts.platformFeeAmount ? Math.round(opts.platformFeeAmount * 100) : undefined,
+          bearer: 'subaccount',
         };
       }
 
-      // Build headers — add X-Connect-Account for Connect mode
       const headers: Record<string, string> = {
         Authorization: `Bearer ${secretKey}`,
         'Content-Type': 'application/json',
       };
-      if (opts.connectAccountId) {
-        headers['X-Connect-Account'] = opts.connectAccountId;
-      }
 
       const response = await fetch('https://api.paystack.co/transaction/initialize', {
         method: 'POST',

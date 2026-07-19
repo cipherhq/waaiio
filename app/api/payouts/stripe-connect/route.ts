@@ -1,6 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createHmac } from 'crypto';
 import { logger } from '@/lib/logger';
+
+/** Generate HMAC state token binding callback to user+business */
+function generateOAuthState(userId: string, businessId: string, accountId: string): string {
+  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.TOKEN_ENCRYPTION_KEY || 'dev-only';
+  const expires = Date.now() + 30 * 60 * 1000; // 30 minutes
+  const payload = `${userId}:${businessId}:${accountId}:${expires}`;
+  const sig = createHmac('sha256', secret).update(payload).digest('hex').slice(0, 16);
+  return `${payload}:${sig}`;
+}
+
+/** Verify HMAC state token */
+export function verifyOAuthState(state: string): { userId: string; businessId: string; accountId: string } | null {
+  const parts = state.split(':');
+  if (parts.length !== 5) return null;
+  const [userId, businessId, accountId, expiresStr, sig] = parts;
+  const expires = parseInt(expiresStr, 10);
+  if (isNaN(expires) || Date.now() > expires) return null;
+  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.TOKEN_ENCRYPTION_KEY || 'dev-only';
+  const payload = `${userId}:${businessId}:${accountId}:${expiresStr}`;
+  const expectedSig = createHmac('sha256', secret).update(payload).digest('hex').slice(0, 16);
+  if (sig !== expectedSig) return null;
+  return { userId, businessId, accountId };
+}
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 
@@ -59,11 +83,12 @@ export async function POST(request: NextRequest) {
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
-    // Create onboarding link
+    // Create onboarding link with cryptographic state binding
+    const oauthState = generateOAuthState(user.id, business_id, account.id);
     const link = await stripeRequest('/account_links', {
       account: account.id,
       refresh_url: `${appUrl}/dashboard/payouts?refresh=true`,
-      return_url: `${appUrl}/api/payouts/stripe-callback?account_id=${account.id}&business_id=${business_id}`,
+      return_url: `${appUrl}/api/payouts/stripe-callback?state=${encodeURIComponent(oauthState)}`,
       type: 'account_onboarding',
     });
 

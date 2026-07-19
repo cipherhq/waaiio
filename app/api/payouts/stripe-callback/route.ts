@@ -6,15 +6,30 @@ const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const accountId = searchParams.get('account_id');
-  const businessId = searchParams.get('business_id');
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
-  if (!accountId || !businessId) {
-    return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=missing_params`);
+  // Validate cryptographic OAuth state
+  const state = searchParams.get('state');
+  if (!state) {
+    return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=missing_state`);
   }
 
+  const { verifyOAuthState } = await import('@/app/api/payouts/stripe-connect/route');
+  const verified = verifyOAuthState(state);
+  if (!verified) {
+    logger.warn('[STRIPE-CALLBACK] Invalid, expired, or tampered state parameter');
+    return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=invalid_state`);
+  }
+
+  const { userId, businessId, accountId } = verified;
+
+  // Verify the authenticated user matches the state
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user || user.id !== userId) {
+    logger.warn('[STRIPE-CALLBACK] Authenticated user does not match state');
+    return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=user_mismatch`);
+  }
 
   try {
     if (!stripeSecretKey) {
