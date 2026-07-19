@@ -221,8 +221,8 @@ export async function searchMarketplace(
         priceBand: biz.price_band as string | undefined,
         supportsDelivery: biz.supports_delivery as boolean | undefined,
         address: biz.address as string | undefined,
-        phone: biz.phone as string | undefined,
-        botCode: biz.bot_code as string | undefined,
+        // phone excluded from public search results (F-014 consistency)
+        botCode: biz.bot_code as string | undefined, // intentionally public: shown on business pages + QR
         city: biz.city as string | undefined,
         slug: biz.slug as string | undefined,
         countryCode: biz.country_code as string | undefined,

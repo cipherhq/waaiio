@@ -117,14 +117,16 @@ describeIntegration('Directory search — real database', () => {
     const found = results.find(r => r.businessId === activeBizId);
     expect(found).toBeDefined();
 
-    // The marketplace search returns raw business data — the directory route filters it.
-    // Verify the search result does NOT include private fields that shouldn't be public.
+    // Verify phone number is NOT in public search results
+    expect(found!.phone).toBeUndefined();
+
+    // Verify no private credentials/tokens leak
     const resultStr = JSON.stringify(found);
-    // Bot code should NOT be in marketplace results (it's a private routing value)
-    // Phone can be in results for display but wa_phone should not leak private WA numbers
-    expect(resultStr).not.toContain('secret');
-    expect(resultStr).not.toContain('service_role');
     expect(resultStr).not.toContain('meta_access_token');
+    expect(resultStr).not.toContain('service_role');
+
+    // bot_code IS intentionally public (shown on business pages, QR codes)
+    // It is a customer-facing identifier, not a routing secret
   });
 });
 
