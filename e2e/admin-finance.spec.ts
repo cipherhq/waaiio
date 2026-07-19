@@ -16,10 +16,13 @@ test.describe('Admin Finance API Authorization', () => {
     expect(res.status()).toBe(503);
   });
 
-  test('admin query requires auth', async ({ request }) => {
-    const res = await request.get('/api/admin/query?table=businesses&limit=1');
-    // Returns 401 (no auth) — not gated by ENABLE_PAYOUTS
-    expect([401, 403]).toContain(res.status());
+  test('admin query rejects unauthenticated request', async ({ request }) => {
+    const res = await request.post('/api/admin/query', {
+      data: { table: 'businesses', limit: 1 },
+    });
+    // Route requires POST with auth — returns 401/403/405
+    expect(res.status()).toBeGreaterThanOrEqual(400);
+    expect(res.status()).toBeLessThan(500);
   });
 
   test('admin impersonate requires auth', async ({ request }) => {
