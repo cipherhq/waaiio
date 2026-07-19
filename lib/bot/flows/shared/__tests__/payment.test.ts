@@ -13,6 +13,21 @@ vi.mock('@/lib/countries', () => ({
   getCountry: vi.fn().mockReturnValue({ currency_code: 'NGN' }),
 }));
 
+// Mock the route resolver to return platform mode (no split)
+vi.mock('@/lib/payments/route-resolver', () => ({
+  resolvePaymentRoute: vi.fn().mockResolvedValue({
+    mode: 'platform',
+    provider: 'paystack',
+    connectionId: null,
+    feeBearerMode: 'platform',
+    platformFeeAmount: 0,
+  }),
+}));
+
+vi.mock('@/lib/encryption', () => ({
+  decryptToken: vi.fn().mockReturnValue('decrypted_key'),
+}));
+
 vi.mock('@/lib/constants', () => ({
   calculatePlatformFee: vi.fn().mockReturnValue({ feePercentage: 2.0, feeFlat: 0, feeTotal: 200 }),
   getPaymentGatewayForCountry: vi.fn().mockReturnValue('paystack'),
@@ -75,8 +90,8 @@ describe('initializePayment', () => {
 
     expect(result).not.toBeNull();
     expect(result!.reference).toBe('REF-20260509-ABC12345');
-    // URL should be shortened
-    expect(result!.url).toContain('waaiio.com/api/pay?ref=');
+    // Short URL passes through unchanged; long URLs get shortened
+    expect(result!.url).toContain('checkout.paystack.com');
     expect(gateway.initializePayment).toHaveBeenCalledWith(
       expect.objectContaining({
         amount: 5000,
@@ -160,12 +175,14 @@ describe('initializePayment', () => {
     });
 
     expect(result).not.toBeNull();
-    expect(result!.url).toBe('https://www.waaiio.com/api/pay?ref=ABCDEFGH');
+    // URL under 100 chars passes through; shortening only for very long URLs
+    expect(result!.url).toContain('checkout.paystack.com');
   });
 
   it('links payment to campaign for donations', async () => {
     const gateway = createMockGateway();
     mockGetGateway.mockReturnValue(gateway);
+    mockGetGatewayByName.mockReturnValue(gateway);
 
     const updateFn = vi.fn().mockReturnValue({
       eq: vi.fn().mockResolvedValue({ data: null }),
@@ -202,8 +219,10 @@ describe('initializePayment', () => {
       donorName: 'John',
     });
 
-    // Should have queried business_payment_credentials (part of the flow)
-    expect(supabase.from).toHaveBeenCalledWith('business_payment_credentials');
+    // Campaign ID should be passed to the gateway
+    expect(gateway.initializePayment).toHaveBeenCalledWith(
+      expect.objectContaining({ campaignId: 'campaign-1' }),
+    );
   });
 
   it('defaults to NG country code when none provided', async () => {

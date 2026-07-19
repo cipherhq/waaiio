@@ -31,7 +31,7 @@ export interface InitPaymentOpts {
   isByo?: boolean;
   /** BYO: the business ID that owns the credentials */
   byoBusinessId?: string;
-  /** Paystack Connect account ID — use platform key with X-Connect-Account header */
+  /** @deprecated Removed — no verified Paystack Connect documentation */
   connectAccountId?: string;
   /** Campaign ID for donation tracking — set on payment record at creation to avoid webhook race */
   campaignId?: string;
@@ -39,6 +39,8 @@ export interface InitPaymentOpts {
   businessId?: string;
   /** Payment channels to show (e.g. ['card', 'bank_transfer', 'ussd']). Null = all. */
   channels?: string[];
+  /** Collection mode for fee tracking: platform, managed_split, byo, connect, flutterwave_mid */
+  collectionMode?: string;
 }
 
 export interface InitPaymentResult {
