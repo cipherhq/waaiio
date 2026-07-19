@@ -274,8 +274,9 @@ describeIntegration('Impersonation handler — real database integration', () =>
       .eq('action', 'token_validated')
       .order('created_at', { ascending: false })
       .limit(1);
-    // Currently 0 due to column name mismatch bug — will become 1 after F-004 fix
-    expect(logs).toHaveLength(0);
+    // F-004 fix applied: audit log is now correctly inserted
+    expect(logs).toHaveLength(1);
+    expect(logs![0].action).toBe('token_validated');
 
     // Verify cookies were set
     expect(cookieJar.get('impersonate_business_id')).toBe(testBizId);
@@ -307,8 +308,9 @@ describeIntegration('Impersonation handler — real database integration', () =>
       .eq('action', 'session_ended')
       .order('created_at', { ascending: false })
       .limit(1);
-    // Currently 0 due to column name mismatch bug — will become 1 after F-005 fix
-    expect(logs).toHaveLength(0);
+    // F-005 fix applied: audit log is now correctly inserted
+    expect(logs).toHaveLength(1);
+    expect(logs![0].action).toBe('session_ended');
   });
 
   // ── Test 1d: Non-admin (support role) → 403 on token generation ──
