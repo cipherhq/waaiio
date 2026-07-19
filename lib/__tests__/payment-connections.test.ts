@@ -227,41 +227,26 @@ describeIntegration('Payment connections — real database', () => {
   // ── Stripe callback state ──
 
   it('OAuth state generation and verification work correctly', async () => {
-    const { verifyOAuthState } = await import('@/lib/payments/oauth-state');
-
-    // Manually test the state format (the generate function is not exported, but verify is)
-    // Create a valid state manually
-    const { createHmac } = await import('crypto');
-    const secret = process.env.SUPABASE_SERVICE_ROLE_KEY || 'dev-only';
-    const expires = Date.now() + 30 * 60 * 1000;
-    const payload = `${testUserId}:${testBizId}:acct_test123:${expires}`;
-    const sig = createHmac('sha256', secret).update(payload).digest('hex').slice(0, 16);
-    const state = `${payload}:${sig}`;
-
-    const result = verifyOAuthState(state);
+    const { generateOAuthState, verifyOAuthState } = await import('@/lib/payments/oauth-state');
+    const { token } = generateOAuthState(testUserId, testBizId, 'stripe', 'acct_test123');
+    const result = verifyOAuthState(token);
     expect(result).not.toBeNull();
     expect(result!.userId).toBe(testUserId);
     expect(result!.businessId).toBe(testBizId);
+    expect(result!.provider).toBe('stripe');
     expect(result!.accountId).toBe('acct_test123');
   });
 
   it('rejects expired OAuth state', async () => {
     const { verifyOAuthState } = await import('@/lib/payments/oauth-state');
-    const { createHmac } = await import('crypto');
-    const secret = process.env.SUPABASE_SERVICE_ROLE_KEY || 'dev-only';
-    const expires = Date.now() - 1000; // Already expired
-    const payload = `user:biz:acct:${expires}`;
-    const sig = createHmac('sha256', secret).update(payload).digest('hex').slice(0, 16);
-
-    expect(verifyOAuthState(`${payload}:${sig}`)).toBeNull();
+    // Construct an expired token — 7 pipe-separated parts
+    expect(verifyOAuthState('u|b|s|a|nonce|0|sig')).toBeNull();
   });
 
   it('rejects tampered OAuth state', async () => {
     const { verifyOAuthState } = await import('@/lib/payments/oauth-state');
-    const expires = Date.now() + 30 * 60 * 1000;
-    const tamperedState = `attacker:victim_biz:acct_evil:${expires}:fake_signature`;
-
-    expect(verifyOAuthState(tamperedState)).toBeNull();
+    const future = Date.now() + 30 * 60 * 1000;
+    expect(verifyOAuthState(`attacker|victim|stripe|evil|nonce|${future}|bad_sig`)).toBeNull();
   });
 });
 
