@@ -92,16 +92,16 @@ export async function searchMarketplace(
         'latitude, longitude, discovery_enabled, discovery_description, price_band, ' +
         'supports_delivery, max_group_size, is_verified, metadata, operating_hours',
       )
-      .eq('is_active', true)
       .eq('status', 'active')
       // Only show businesses that explicitly opted into discovery
       .eq('discovery_enabled', true);
 
-    // Category filter
+    // Category filter (category is an enum — use eq for exact or in for multiple)
     if (criteria.category) {
-      const safeCat = sanitizeFilterValue(criteria.category).replace(/[%_'"\\]/g, '');
+      const safeCat = sanitizeFilterValue(criteria.category).replace(/[%_'"\\]/g, '').toLowerCase();
       if (safeCat.length > 0) {
-        query = query.ilike('category', `%${safeCat}%`);
+        // Enum comparison: exact match on the enum value
+        query = query.eq('category', safeCat);
       }
     }
 
