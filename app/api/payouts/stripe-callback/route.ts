@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=missing_state`);
   }
 
-  const { verifyOAuthState } = await import('@/app/api/payouts/stripe-connect/route');
+  const { verifyOAuthState } = await import('@/lib/payments/oauth-state');
   const verified = verifyOAuthState(state);
   if (!verified) {
     logger.warn('[STRIPE-CALLBACK] Invalid, expired, or tampered state parameter');

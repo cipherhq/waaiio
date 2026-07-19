@@ -144,7 +144,7 @@ describeIntegration('Payment connections — real database', () => {
       payout_account_id: conn!.id,
       business_id: testBizId,
       encrypted_secret_key: 'abc123:def456:encrypted_test_value',
-      key_identifier: 'sk_live_...X4f2',
+      key_identifier: 'sk_****X4f2',
       verified_at: new Date().toISOString(),
       verification_method: 'balance_check',
     });
@@ -156,7 +156,7 @@ describeIntegration('Payment connections — real database', () => {
       .single();
     expect(data).not.toBeNull();
     expect(data!.encrypted_secret_key).toBe('abc123:def456:encrypted_test_value');
-    expect(data!.key_identifier).toBe('sk_live_...X4f2');
+    expect(data!.key_identifier).toBe('sk_****X4f2');
   });
 
   it('authenticated browser client CANNOT read secrets', async () => {
@@ -228,7 +228,7 @@ describeIntegration('Payment connections — real database', () => {
   // ── Stripe callback state ──
 
   it('OAuth state generation and verification work correctly', async () => {
-    const { verifyOAuthState } = await import('@/app/api/payouts/stripe-connect/route');
+    const { verifyOAuthState } = await import('@/lib/payments/oauth-state');
 
     // Manually test the state format (the generate function is not exported, but verify is)
     // Create a valid state manually
@@ -247,7 +247,7 @@ describeIntegration('Payment connections — real database', () => {
   });
 
   it('rejects expired OAuth state', async () => {
-    const { verifyOAuthState } = await import('@/app/api/payouts/stripe-connect/route');
+    const { verifyOAuthState } = await import('@/lib/payments/oauth-state');
     const { createHmac } = await import('crypto');
     const secret = process.env.SUPABASE_SERVICE_ROLE_KEY || 'dev-only';
     const expires = Date.now() - 1000; // Already expired
@@ -258,7 +258,7 @@ describeIntegration('Payment connections — real database', () => {
   });
 
   it('rejects tampered OAuth state', async () => {
-    const { verifyOAuthState } = await import('@/app/api/payouts/stripe-connect/route');
+    const { verifyOAuthState } = await import('@/lib/payments/oauth-state');
     const expires = Date.now() + 30 * 60 * 1000;
     const tamperedState = `attacker:victim_biz:acct_evil:${expires}:fake_signature`;
 

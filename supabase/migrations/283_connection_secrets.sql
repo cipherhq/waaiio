@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS public.business_connection_secrets (
   -- Encrypted with AES-256-GCM via lib/encryption.ts
   -- Format: iv:authTag:ciphertext (hex-encoded)
   encrypted_secret_key TEXT NOT NULL,
-  -- Masked identifier shown to business owner (e.g., "sk_live_...X4f2")
+  -- Masked identifier shown to business owner (e.g., "sk_****X4f2")
   key_identifier VARCHAR(30) NOT NULL,
   -- Platform-fee subaccount created on merchant's provider account
   platform_fee_subaccount_code VARCHAR(100),
