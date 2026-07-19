@@ -223,7 +223,7 @@ describeIntegration('WhatsApp Conversation Journey — Full Webhook Handler Inte
     // 3. Create whatsapp_channels record (dedicated channel)
     const { data: channel, error: chErr } = await db.from('whatsapp_channels').insert({
       country_code: 'NG',
-      phone_number: '+2349010000001',
+      phone_number: `+234901${Date.now().toString().slice(-7)}`,
       channel_type: 'dedicated',
       business_id: testBizId,
       is_active: true,
