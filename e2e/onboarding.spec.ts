@@ -129,8 +129,7 @@ test.describe('Signup & Onboarding Journey', () => {
   });
 
   test('signup form submits with valid credentials', async ({ page }) => {
-    test.skip(!!process.env.CI, 'Requires real Supabase auth signup — CI has email confirmation enabled');
-    test.setTimeout(30000);
+    test.setTimeout(45000);
     const result = await waitForGetStartedPage(page);
     if (result !== 'loaded') {
       // Verify login page submit button exists
@@ -155,8 +154,7 @@ test.describe('Signup & Onboarding Journey', () => {
   });
 
   test('duplicate email signup shows appropriate message', async ({ page }) => {
-    test.skip(!!process.env.CI, 'Requires real Supabase auth signup — CI has email confirmation enabled');
-    test.setTimeout(30000);
+    test.setTimeout(45000);
     const result = await waitForGetStartedPage(page);
     if (result !== 'loaded') {
       // Verify login page shows error for wrong credentials
