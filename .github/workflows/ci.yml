@@ -205,7 +205,8 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium webkit --with-deps
 
-      - name: Start server and run tests
+      - name: Start server and run browser tests
+        id: browser_tests
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
@@ -213,7 +214,6 @@ jobs:
         run: |
           npx next start &
           SERVER_PID=$!
-          # Wait for server to be ready
           for i in $(seq 1 30); do
             if curl -s http://localhost:3000 > /dev/null 2>&1; then
               echo "Server ready"
@@ -221,14 +221,18 @@ jobs:
             fi
             sleep 2
           done
-          # Run only chromium (faster CI, mobile is supplementary)
-          npx playwright test e2e/smoke.spec.ts e2e/onboarding.spec.ts e2e/profile-settings.spec.ts e2e/mobile-journeys.spec.ts e2e/admin-finance.spec.ts --project=chromium --reporter=list
-          npx playwright test e2e/mobile-journeys.spec.ts --project=mobile --reporter=list
-          TEST_EXIT=$?
+          BROWSER_EXIT=0
+          npx playwright test e2e/smoke.spec.ts e2e/onboarding.spec.ts e2e/profile-settings.spec.ts e2e/mobile-journeys.spec.ts e2e/admin-finance.spec.ts --project=chromium --reporter=list || BROWSER_EXIT=$?
+          npx playwright test e2e/mobile-journeys.spec.ts --project=mobile --reporter=list || BROWSER_EXIT=$?
           kill $SERVER_PID 2>/dev/null || true
-          exit $TEST_EXIT
+          echo "$BROWSER_EXIT" > /tmp/browser_exit_code
+          if [ $BROWSER_EXIT -ne 0 ]; then
+            echo "::warning::Browser tests had failures (exit=$BROWSER_EXIT) — integration tests will still run"
+          fi
+          exit $BROWSER_EXIT
 
       - name: Run JWT/RLS integration tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -237,6 +241,7 @@ jobs:
         run: npx vitest run lib/__tests__/supabase-auth-integration.test.ts --reporter=verbose
 
       - name: Run payment idempotency database tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -245,6 +250,7 @@ jobs:
         run: npx vitest run lib/__tests__/payment-idempotency-db.test.ts --reporter=verbose
 
       - name: Run payout safety database tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -253,6 +259,7 @@ jobs:
         run: npx vitest run lib/__tests__/payout-safety-db.test.ts --reporter=verbose
 
       - name: Run payout handler integration tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -261,6 +268,7 @@ jobs:
         run: npx vitest run lib/__tests__/payout-handler-integration.test.ts --reporter=verbose
 
       - name: Run OTP concurrency tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -269,6 +277,7 @@ jobs:
         run: npx vitest run lib/__tests__/otp-concurrency.test.ts --reporter=verbose
 
       - name: Run campaign lock trigger tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -277,6 +286,7 @@ jobs:
         run: npx vitest run lib/__tests__/campaign-lock-db.test.ts --reporter=verbose
 
       - name: Run invoice token security tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -285,6 +295,7 @@ jobs:
         run: npx vitest run lib/__tests__/invoice-token-security.test.ts --reporter=verbose
 
       - name: Run booking and order journey tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -293,6 +304,7 @@ jobs:
         run: npx vitest run lib/__tests__/booking-order-journey.test.ts --reporter=verbose
 
       - name: Run capability and tier enforcement tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -301,6 +313,7 @@ jobs:
         run: npx vitest run lib/__tests__/capability-tier-enforcement.test.ts --reporter=verbose
 
       - name: Run event and membership journey tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -309,6 +322,7 @@ jobs:
         run: npx vitest run lib/__tests__/event-membership-journey.test.ts --reporter=verbose
 
       - name: Run WhatsApp conversation journey tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -317,6 +331,7 @@ jobs:
         run: npx vitest run lib/__tests__/whatsapp-conversation-journey.test.ts --reporter=verbose
 
       - name: Run WhatsApp webhook harness tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -325,6 +340,7 @@ jobs:
         run: npx vitest run lib/__tests__/whatsapp-webhook-harness.test.ts --reporter=verbose
 
       - name: Run chat, contract and AI integration tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -333,6 +349,7 @@ jobs:
         run: npx vitest run lib/__tests__/chat-contract-ai-integration.test.ts --reporter=verbose
 
       - name: Run webhook, loyalty, broadcast and survey tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -341,6 +358,7 @@ jobs:
         run: npx vitest run lib/__tests__/webhook-loyalty-broadcast.test.ts --reporter=verbose
 
       - name: Run queue, promo, recurring, directory tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -349,6 +367,7 @@ jobs:
         run: npx vitest run lib/__tests__/incomplete-features-upgrade.test.ts --reporter=verbose
 
       - name: Run impersonation and copilot handler tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
@@ -357,12 +376,22 @@ jobs:
         run: npx vitest run lib/__tests__/impersonation-copilot-handler.test.ts --reporter=verbose
 
       - name: Run property and reservation journey tests
+        if: always() && !cancelled()
         env:
           SUPABASE_INTEGRATION: 'true'
           NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
         run: npx vitest run lib/__tests__/property-reservation-journey.test.ts --reporter=verbose
+
+      - name: Run directory search integration tests
+        if: always() && !cancelled()
+        env:
+          SUPABASE_INTEGRATION: 'true'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
+        run: npx vitest run lib/__tests__/directory-search-integration.test.ts --reporter=verbose
 
       - name: Upload test results
         if: failure()
