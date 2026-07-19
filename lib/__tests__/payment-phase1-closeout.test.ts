@@ -608,21 +608,40 @@ describe('Phase 1 close-out: unit tests', () => {
     expect(verified!.nonce).toBe(payload.nonce);
   });
 
-  // ── G: Stripe callback uses service client ──
+  // ── G: Stripe callback uses service client + recoverable replacement ──
 
-  it('Stripe callback handler uses service client for payout_accounts mutations', async () => {
+  it('Stripe callback handler uses service client with error checking and restore', async () => {
     const fs = await import('fs');
     const source = fs.readFileSync('app/api/payouts/stripe-callback/route.ts', 'utf-8');
 
-    // Mutations use service client, not the authenticated supabase client
-    // Look for service.from('payout_accounts') patterns
+    // Mutations use service client
     expect(source).toContain("service.from('payout_accounts')");
-    // DB errors are checked
+    // All DB errors checked
     expect(source).toContain('revokeErr');
     expect(source).toContain('insertErr');
     expect(source).toContain('bizUpdateErr');
-    // Business ownership verified via authenticated client before mutations
+    expect(source).toContain('defaultQueryErr');
+    // Business ownership verified
     expect(source).toContain('bizCheck');
+    // Snapshot + restore pattern for recoverable replacement
+    expect(source).toContain('restoreRevokedConns');
+    expect(source).toContain('oldStripeConns');
+    // Restore called on both insert failure AND default query failure
+    const restoreCalls = source.match(/restoreRevokedConns/g);
+    expect(restoreCalls!.length).toBeGreaterThanOrEqual(4); // function def + mock path + prod default err + prod insert err
+  });
+
+  // ── B: INSERT trigger clears provider-routing values ──
+
+  it('INSERT trigger clears untrusted provider-routing values', async () => {
+    const fs = await import('fs');
+    const migration = fs.readFileSync('supabase/migrations/289_payout_accounts_sensitive_fields.sql', 'utf-8');
+
+    // INSERT trigger must clear these untrusted values
+    expect(migration).toContain("NEW.subaccount_code := NULL");
+    expect(migration).toContain("NEW.stripe_account_id := NULL");
+    expect(migration).toContain("NEW.flutterwave_mid := NULL");
+    expect(migration).toContain("NEW.connection_mode := 'managed'");
   });
 });
 

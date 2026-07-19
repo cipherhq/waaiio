@@ -115,14 +115,23 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- Force safe defaults on all sensitive fields for browser inserts
+  -- Force safe defaults on all sensitive fields for browser inserts.
+  -- Provider-routing values are cleared because the server activation path
+  -- (OAuth callbacks) always sets them correctly. A browser-crafted INSERT
+  -- with fake subaccount_code/stripe_account_id would be trusted if the
+  -- server later activates the row without re-validating these values.
   NEW.is_default := false;
-  NEW.is_active := false;       -- must be activated by server after verification
+  NEW.is_active := false;           -- must be activated by server after verification
   NEW.connection_status := 'pending';
+  NEW.connection_mode := 'managed'; -- safe default; server sets actual mode
   NEW.health_status := 'unchecked';
   NEW.verified_at := NULL;
   NEW.last_health_check_at := NULL;
-  NEW.platform_percentage := 2.5;  -- cannot self-set fee
+  NEW.platform_percentage := 2.5;   -- cannot self-set fee
+  -- Clear provider-routing identifiers (set by server during OAuth/onboarding)
+  NEW.subaccount_code := NULL;
+  NEW.stripe_account_id := NULL;
+  NEW.flutterwave_mid := NULL;
 
   RETURN NEW;
 END;

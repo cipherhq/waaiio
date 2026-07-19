@@ -1,8 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
+
+/** Restore previously revoked connections if the replacement insert fails */
+async function restoreRevokedConns(
+  service: SupabaseClient,
+  snapshot: Array<{ id: string; is_active: boolean; connection_status: string; is_default: boolean }> | null,
+) {
+  if (!snapshot?.length) return;
+  for (const conn of snapshot) {
+    await service.from('payout_accounts').update({
+      is_active: conn.is_active,
+      connection_status: conn.connection_status,
+      is_default: conn.is_default,
+      updated_at: new Date().toISOString(),
+    }).eq('id', conn.id);
+  }
+  logger.info('[STRIPE-CALLBACK] Restored', snapshot.length, 'previously revoked connection(s)');
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -69,7 +87,11 @@ export async function GET(request: NextRequest) {
   // Auth check above proves ownership; service client is safe here.
   try {
     if (!stripeSecretKey) {
-      // Mock mode — deactivate only previous Stripe, preserve others
+      // Mock mode — snapshot, revoke, insert with restore-on-failure
+      const { data: mockOldConns } = await service.from('payout_accounts')
+        .select('id, is_active, connection_status, is_default')
+        .eq('business_id', businessId).eq('gateway', 'stripe').eq('is_active', true);
+
       const { error: revokeErr } = await service.from('payout_accounts')
         .update({ is_active: false, connection_status: 'revoked', updated_at: new Date().toISOString() })
         .eq('business_id', businessId).eq('gateway', 'stripe').eq('is_active', true);
@@ -79,9 +101,15 @@ export async function GET(request: NextRequest) {
         return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=revoke_failed`);
       }
 
-      const { data: mockDefault } = await service.from('payout_accounts')
+      const { data: mockDefault, error: mockDefaultErr } = await service.from('payout_accounts')
         .select('id').eq('business_id', businessId).eq('is_default', true)
         .eq('is_active', true).not('verified_at', 'is', null).maybeSingle();
+
+      if (mockDefaultErr) {
+        logger.error('[STRIPE-CALLBACK] Mock default query error:', mockDefaultErr.message);
+        await restoreRevokedConns(service, mockOldConns);
+        return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=default_query_failed`);
+      }
 
       const { error: mockInsertErr } = await service.from('payout_accounts').insert({
         business_id: businessId, gateway: 'stripe', stripe_account_id: accountId,
@@ -92,6 +120,7 @@ export async function GET(request: NextRequest) {
 
       if (mockInsertErr) {
         logger.error('[STRIPE-CALLBACK] Mock insert error:', mockInsertErr.message);
+        await restoreRevokedConns(service, mockOldConns);
         return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=insert_failed`);
       }
 
@@ -108,6 +137,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=not_verified`);
     }
 
+    // Snapshot existing Stripe connections before revoking so we can restore on failure
+    const { data: oldStripeConns } = await service
+      .from('payout_accounts')
+      .select('id, is_active, connection_status, is_default')
+      .eq('business_id', businessId)
+      .eq('gateway', 'stripe')
+      .eq('is_active', true);
+
     // Deactivate only previous Stripe connections (preserve other providers)
     const { error: revokeErr } = await service
       .from('payout_accounts')
@@ -121,8 +158,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=revoke_failed`);
     }
 
-    // Check if business has an existing valid default
-    const { data: existingDefault } = await service
+    // Check if business has an existing valid default (from any provider)
+    const { data: existingDefault, error: defaultQueryErr } = await service
       .from('payout_accounts')
       .select('id')
       .eq('business_id', businessId)
@@ -130,6 +167,13 @@ export async function GET(request: NextRequest) {
       .eq('is_active', true)
       .not('verified_at', 'is', null)
       .maybeSingle();
+
+    if (defaultQueryErr) {
+      logger.error('[STRIPE-CALLBACK] Default query error:', defaultQueryErr.message);
+      // Restore revoked connections and abort
+      await restoreRevokedConns(service, oldStripeConns);
+      return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=default_query_failed`);
+    }
 
     // Save the connected account (service client — sets sensitive fields)
     const { error: insertErr } = await service.from('payout_accounts').insert({
@@ -147,6 +191,8 @@ export async function GET(request: NextRequest) {
 
     if (insertErr) {
       logger.error('[STRIPE-CALLBACK] Insert error:', insertErr.message);
+      // Restore revoked connections — don't leave business without its prior Stripe
+      await restoreRevokedConns(service, oldStripeConns);
       return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=insert_failed`);
     }
 
