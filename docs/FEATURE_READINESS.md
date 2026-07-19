@@ -53,15 +53,23 @@ Functional verification: IN PROGRESS
 
 | Status | Count |
 |--------|-------|
-| READY FOR REVIEW (Level A/B evidence) | 42 |
-| INCOMPLETE (Level C/D, enabled, non-critical) | 0 |
-| DISABLED | 2 (payouts, reseller) |
+| READY FOR REVIEW (Level A/B in CI) | 39 |
+| IN PROGRESS (local evidence, not yet CI-stable) | 3 |
+| DISABLED (server-side) | 2 (payouts, payments) |
 | DEFERRED | 1 (reseller) |
 
-All enabled features now have Level A/B evidence in CI.
+Functional verification: IN PROGRESS
 
-### Journeys with Level A/B evidence: 15 of 15
-All 15 required journeys now have Level A/B evidence.
+### IN PROGRESS features (local evidence only, CI execution pending)
+- Signup & onboarding: 38 Playwright tests pass locally, CI timing unstable
+- WhatsApp discovery-to-handoff: DB harness tests pass, full conversation sequence NOT EXECUTED
+- Admin/Finance browser workflows: handler tests pass, browser E2E NOT STARTED
+
+### Journeys with Level A/B CI evidence: 12 of 15
+### Journeys IN PROGRESS: 3
+- Journey 1 (Signup/onboarding): Local Playwright passes, CI unstable
+- Journey 7 (WhatsApp discovery → handoff): DB harness only, full conversation NOT EXECUTED
+- Journey 13 (Admin/Finance browser): Handler tests only, browser E2E NOT STARTED
 
 ### Previously INCOMPLETE — now READY FOR REVIEW
 All 7 features upgraded to Level A/B via integration tests:
