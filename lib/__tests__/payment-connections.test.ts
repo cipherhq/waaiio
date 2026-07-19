@@ -124,14 +124,11 @@ describeIntegration('Payment connections — real database', () => {
     });
     // The insert succeeds but the resolver will reject it (app-level check)
     // The DB allows it — the resolver enforces verified_at IS NOT NULL
-    // Restore default
+    // Cleanup: remove square first, then restore paystack default
+    await db.from('payout_accounts').delete()
+      .eq('business_id', testBizId).eq('gateway', 'square');
     await db.from('payout_accounts').update({ is_default: true })
       .eq('business_id', testBizId).eq('gateway', 'paystack');
-    // Cleanup
-    if (!error) {
-      await db.from('payout_accounts').delete()
-        .eq('business_id', testBizId).eq('gateway', 'square');
-    }
   });
 
   // ── Secrets table: service-role-only ──
