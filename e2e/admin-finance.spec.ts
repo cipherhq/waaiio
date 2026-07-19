@@ -36,8 +36,10 @@ test.describe('Admin Finance API Authorization', () => {
     expect(res.status()).toBe(401);
   });
 
-  test('admin payments route requires auth', async ({ request }) => {
-    const res = await request.get('/api/admin/payments');
+  test('admin payments refund requires auth', async ({ request }) => {
+    const res = await request.post('/api/admin/payments/refund', {
+      data: { paymentId: 'fake' },
+    });
     expect([401, 403]).toContain(res.status());
   });
 
