@@ -91,6 +91,10 @@ export class PayPalGateway implements PaymentGateway {
           gateway: 'paypal',
           gateway_reference: mockRef,
           status: 'pending',
+          collection_mode: opts.collectionMode || 'platform',
+          fee_bearer: opts.feeBearerMode || 'platform',
+          payout_account_id: opts.payoutAccountId || null,
+          waaiio_fee: opts.waaiioFee ?? 0,
           metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null },
         });
         return { url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/pay?ref=${mockRef}`, reference: mockRef };
@@ -180,12 +184,17 @@ export class PayPalGateway implements PaymentGateway {
         invoice_id: opts.invoiceId || null,
         campaign_id: opts.campaignId || null,
         reservation_id: opts.reservationId || null,
+        business_id: opts.businessId || null,
         user_id: opts.userId,
         amount: opts.amount,
         currency: opts.currency,
         gateway: 'paypal',
         gateway_reference: paypalOrderId,
         status: 'pending',
+        collection_mode: opts.collectionMode || 'platform',
+        fee_bearer: opts.feeBearerMode || 'platform',
+        payout_account_id: opts.payoutAccountId || null,
+        waaiio_fee: opts.waaiioFee ?? 0,
         metadata: {
           paypal_order_id: paypalOrderId,
           reference_code: opts.referenceCode,

@@ -83,6 +83,7 @@ export async function resolvePaymentRoute(
     .from('payout_accounts')
     .select('id, gateway, subaccount_code, stripe_account_id, flutterwave_mid, connection_mode, connection_status, is_default, is_active, verified_at, health_status, country_code')
     .eq('business_id', businessId)
+    .eq('is_active', true)
     .in('connection_status', ['active'])
     .not('verified_at', 'is', null)
     .order('is_default', { ascending: false }); // default first
@@ -108,9 +109,16 @@ export async function resolvePaymentRoute(
     return platformFallback(countryCode, feeTotal, `Default connection (${defaultConn.gateway}) is unhealthy — using platform`);
   }
 
-  // 5. Route based on connection mode
+  // 5. Route based on connection mode — fail to platform if required identifier is missing
   switch (defaultConn.connection_mode) {
-    case 'managed':
+    case 'managed': {
+      // Managed split requires the provider-specific identifier
+      const hasSplitId = defaultConn.gateway === 'stripe'
+        ? !!defaultConn.stripe_account_id
+        : !!defaultConn.subaccount_code;
+      if (!hasSplitId) {
+        return platformFallback(countryCode, feeTotal, `Managed connection missing ${defaultConn.gateway === 'stripe' ? 'stripe_account_id' : 'subaccount_code'}`);
+      }
       return {
         mode: 'managed_split',
         provider: defaultConn.gateway,
@@ -121,15 +129,19 @@ export async function resolvePaymentRoute(
         stripeAccountId: defaultConn.stripe_account_id || undefined,
         paystackBearer: defaultConn.gateway === 'paystack' ? 'subaccount' : undefined,
       };
+    }
 
     case 'connect':
+      if (!defaultConn.stripe_account_id) {
+        return platformFallback(countryCode, feeTotal, 'Connect connection missing stripe_account_id');
+      }
       return {
         mode: 'connect',
         provider: defaultConn.gateway,
         connectionId: defaultConn.id,
         feeBearerMode: 'merchant',
         platformFeeAmount: feeTotal,
-        stripeAccountId: defaultConn.stripe_account_id || undefined,
+        stripeAccountId: defaultConn.stripe_account_id,
       };
 
     case 'byo': {
@@ -156,13 +168,16 @@ export async function resolvePaymentRoute(
     }
 
     case 'flutterwave_mid':
+      if (!defaultConn.flutterwave_mid) {
+        return platformFallback(countryCode, feeTotal, 'Flutterwave MID connection missing flutterwave_mid');
+      }
       return {
         mode: 'flutterwave_mid',
         provider: 'flutterwave',
         connectionId: defaultConn.id,
         feeBearerMode: 'shared',
         platformFeeAmount: feeTotal,
-        flutterwaveMid: defaultConn.flutterwave_mid || undefined,
+        flutterwaveMid: defaultConn.flutterwave_mid,
       };
 
     default:

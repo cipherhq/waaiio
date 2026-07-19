@@ -102,7 +102,7 @@ describe('initializePayment', () => {
     );
   });
 
-  it('uses gateway override when specified', async () => {
+  it('uses resolver route provider when businessId is provided', async () => {
     const gateway = createMockGateway();
     mockGetGatewayByName.mockReturnValue(gateway);
 
@@ -114,11 +114,12 @@ describe('initializePayment', () => {
       referenceCode: 'REF-002',
       businessName: 'Test Biz',
       phone: '+2341234567890',
-      gatewayOverride: 'stripe',
+      businessId: 'biz-1',
     });
 
     expect(result).not.toBeNull();
-    expect(mockGetGatewayByName).toHaveBeenCalledWith('stripe');
+    // Resolver mock returns 'paystack', so gateway should be selected by name
+    expect(mockGetGatewayByName).toHaveBeenCalledWith('paystack');
   });
 
   it('returns null when gateway throws', async () => {

@@ -34,6 +34,10 @@ export class FlutterwaveGateway implements PaymentGateway {
           gateway: 'flutterwave',
           gateway_reference: mockRef,
           status: 'pending',
+          collection_mode: opts.collectionMode || 'platform',
+          fee_bearer: opts.feeBearerMode || 'platform',
+          payout_account_id: opts.payoutAccountId || null,
+          waaiio_fee: opts.waaiioFee ?? 0,
           metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null, byo: !!opts.isByo },
         });
         return { url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/pay?ref=${mockRef}`, reference: mockRef };
@@ -112,12 +116,17 @@ export class FlutterwaveGateway implements PaymentGateway {
         invoice_id: opts.invoiceId || null,
         campaign_id: opts.campaignId || null,
         reservation_id: opts.reservationId || null,
+        business_id: opts.businessId || null,
         user_id: opts.userId,
         amount: opts.amount,
         currency: opts.currency,
         gateway: 'flutterwave',
         gateway_reference: txRef,
         status: 'pending',
+        collection_mode: opts.collectionMode || 'platform',
+        fee_bearer: opts.feeBearerMode || 'platform',
+        payout_account_id: opts.payoutAccountId || null,
+        waaiio_fee: opts.waaiioFee ?? 0,
         metadata: {
           flw_link: data.data.link,
           reference_code: opts.referenceCode,

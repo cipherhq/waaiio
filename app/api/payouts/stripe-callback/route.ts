@@ -22,15 +22,29 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=invalid_state`);
   }
 
-  // Consume nonce atomically — prevents replay
+  // Consume nonce atomically — prevents replay.
+  // Returns the stored state payload (from DB), not just a boolean.
   const service = createServiceClient();
-  const consumed = await consumeOAuthState(service, verified.nonce);
+  let consumed;
+  try {
+    consumed = await consumeOAuthState(service, verified.nonce);
+  } catch (err) {
+    logger.error('[STRIPE-CALLBACK] OAuth state consumption error:', (err as Error).message);
+    return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=state_error`);
+  }
   if (!consumed) {
     logger.warn('[STRIPE-CALLBACK] State already consumed (replay attempt)');
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=state_replayed`);
   }
 
-  const { userId, businessId, accountId } = verified;
+  // Use the DB-stored payload (authoritative), not just the signed token
+  const { userId, businessId, accountId } = consumed;
+
+  // Validate token bindings match DB state
+  if (consumed.provider !== 'stripe') {
+    logger.warn('[STRIPE-CALLBACK] Provider mismatch: expected stripe, got', consumed.provider);
+    return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=provider_mismatch`);
+  }
 
   // Verify the authenticated user matches the state
   const supabase = await createClient();

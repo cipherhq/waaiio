@@ -236,7 +236,6 @@ const invoicePayStep: FlowStepConfig = {
         businessName: biz?.name || 'Business',
         phone: ctx.from,
         countryCode: cc as CountryCode,
-        gatewayOverride: biz?.payment_gateway || null,
         businessId: invoice.business_id,
       });
 

@@ -3,7 +3,8 @@
  *
  * Uses a dedicated OAUTH_STATE_SECRET (not the service role key).
  * Includes a random nonce for replay prevention.
- * State must be persisted server-side and consumed atomically.
+ * State is persisted in the oauth_states table and consumed atomically
+ * via a SECURITY DEFINER RPC that does UPDATE...WHERE consumed=false RETURNING.
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -77,39 +78,59 @@ export async function persistOAuthState(
   supabase: SupabaseClient,
   payload: OAuthStatePayload,
 ): Promise<void> {
-  await supabase.from('platform_settings').upsert({
-    key: `oauth_state:${payload.nonce}`,
-    value: {
-      userId: payload.userId,
-      businessId: payload.businessId,
-      provider: payload.provider,
-      accountId: payload.accountId,
-      expiresAt: payload.expiresAt,
-      consumed: false,
-    },
-  }, { onConflict: 'key' });
+  const { error } = await supabase.from('oauth_states').insert({
+    nonce: payload.nonce,
+    user_id: payload.userId,
+    business_id: payload.businessId,
+    provider: payload.provider,
+    account_id: payload.accountId,
+    expires_at: new Date(payload.expiresAt).toISOString(),
+    consumed: false,
+  });
+
+  if (error) {
+    throw new Error(`Failed to persist OAuth state: ${error.message}`);
+  }
 }
 
-/** Consume a state nonce atomically. Returns false if already consumed or not found. */
+/**
+ * Consume a state nonce atomically via RPC.
+ * Returns the full state payload if consumption succeeded, or null if
+ * already consumed, expired, or not found.
+ *
+ * The RPC does: UPDATE oauth_states SET consumed=true WHERE nonce=? AND consumed=false AND expires_at > NOW()
+ * Only the first concurrent caller gets true.
+ */
 export async function consumeOAuthState(
   supabase: SupabaseClient,
   nonce: string,
-): Promise<boolean> {
-  // Atomic: only succeeds if consumed=false
-  const { data } = await supabase
-    .from('platform_settings')
-    .select('key, value')
-    .eq('key', `oauth_state:${nonce}`)
-    .maybeSingle();
+): Promise<OAuthStatePayload | null> {
+  // Atomic consume via RPC — only one caller wins
+  const { data: consumed, error: rpcError } = await supabase.rpc('consume_oauth_state', {
+    p_nonce: nonce,
+  });
 
-  if (!data) return false;
-  const val = data.value as Record<string, unknown>;
-  if (val.consumed === true) return false;
+  if (rpcError) {
+    throw new Error(`OAuth state consumption failed: ${rpcError.message}`);
+  }
 
-  // Mark consumed
-  await supabase.from('platform_settings').update({
-    value: { ...val, consumed: true, consumed_at: new Date().toISOString() },
-  }).eq('key', `oauth_state:${nonce}`);
+  if (!consumed) return null;
 
-  return true;
+  // Fetch the state details (now consumed, safe to read)
+  const { data: state } = await supabase
+    .from('oauth_states')
+    .select('user_id, business_id, provider, account_id, expires_at')
+    .eq('nonce', nonce)
+    .single();
+
+  if (!state) return null;
+
+  return {
+    userId: state.user_id,
+    businessId: state.business_id,
+    provider: state.provider,
+    accountId: state.account_id,
+    nonce,
+    expiresAt: new Date(state.expires_at).getTime(),
+  };
 }

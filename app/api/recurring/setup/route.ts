@@ -1,11 +1,13 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { getPaymentGateway } from '@/lib/payments/factory';
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
 import type { CountryCode } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
 import { authenticateRequest } from '@/lib/api-auth';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { resolvePaymentRoute } from '@/lib/payments/route-resolver';
+import { getPaymentGatewayByName } from '@/lib/payments/factory';
+import type { PaymentGatewayName } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
@@ -55,17 +57,20 @@ export async function POST(request: NextRequest) {
 
     const cc = (business.country_code || 'NG') as CountryCode;
     const currencyCode = getCountry(cc)?.currency_code ?? 'NGN';
-    const isPaystack = ['NG', 'GH'].includes(cc);
 
-    // For web setup, we create a subscription checkout
-    // Paystack: Initialize a one-time payment first (auth will be captured via webhook)
-    // Stripe: Create subscription checkout session directly
+    // Resolve payment route — determines gateway and collection mode.
+    // Connected-provider recurring is not yet supported; if route is not platform,
+    // we still use the resolved provider but fall back to platform-mode recurring
+    // (no split params) since subscription billing via BYO/managed is Phase 2.
+    const route = await resolvePaymentRoute(supabase, businessId, parseFloat(amount), cc);
+    const provider = route.provider;
+    const isPaystack = ['paystack', 'flutterwave'].includes(provider);
 
     if (isPaystack) {
-      // For Paystack, initialize a one-time payment first
-      // After payment succeeds, the webhook will capture authorization
-      // Then the customer can be prompted to set up recurring via WhatsApp
-      const gateway = getPaymentGateway(cc);
+      // For Paystack/Flutterwave: initialize a one-time payment first.
+      // After payment succeeds, the webhook captures authorization.
+      // Recurring subscriptions always use platform collection (no split) for now.
+      const gateway = getPaymentGatewayByName(provider as PaymentGatewayName);
       const result = await gateway.initializePayment({
         supabase,
         userId: '', // Will be created/matched
@@ -75,6 +80,8 @@ export async function POST(request: NextRequest) {
         businessName: business.name,
         phone: customerPhone,
         userEmail: customerEmail,
+        businessId,
+        collectionMode: 'platform', // Recurring always platform for now
       });
 
       if (!result) {
@@ -94,7 +101,7 @@ export async function POST(request: NextRequest) {
         currency: currencyCode,
         frequency,
         status: 'active',
-        gateway: 'paystack',
+        gateway: provider,
         next_charge_at: nextCharge.toISOString(),
         customer_name: customerName,
         customer_phone: customerPhone,

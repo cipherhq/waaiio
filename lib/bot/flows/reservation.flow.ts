@@ -837,7 +837,6 @@ export const reservationFlow: FlowDefinition = {
             phone: ctx.from,
             userEmail: (d.email as string) || undefined,
             countryCode: cc,
-            gatewayOverride: ctx.business?.payment_gateway || null,
             businessId: ctx.business?.id,
           });
 

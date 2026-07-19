@@ -102,7 +102,6 @@ export async function POST(request: NextRequest) {
       businessName: biz.name,
       phone,
       countryCode: cc,
-      gatewayOverride: biz.payment_gateway,
       businessId: biz.id,
     });
 

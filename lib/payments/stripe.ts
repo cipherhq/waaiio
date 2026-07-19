@@ -55,6 +55,10 @@ export class StripeGateway implements PaymentGateway {
           gateway: 'stripe',
           gateway_reference: mockRef,
           status: 'pending',
+          collection_mode: opts.collectionMode || 'platform',
+          fee_bearer: opts.feeBearerMode || 'platform',
+          payout_account_id: opts.payoutAccountId || null,
+          waaiio_fee: opts.waaiioFee ?? 0,
           metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null },
         });
         return { url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/pay?ref=${mockRef}`, reference: mockRef };
@@ -121,6 +125,10 @@ export class StripeGateway implements PaymentGateway {
         gateway: 'stripe',
         gateway_reference: stripeRef,
         status: 'pending',
+        collection_mode: opts.collectionMode || 'platform',
+        fee_bearer: opts.feeBearerMode || 'platform',
+        payout_account_id: opts.payoutAccountId || null,
+        waaiio_fee: opts.waaiioFee ?? 0,
         metadata: {
           stripe_session_id: stripeRef,
           reference_code: opts.referenceCode,

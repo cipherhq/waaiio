@@ -41,6 +41,12 @@ export interface InitPaymentOpts {
   channels?: string[];
   /** Collection mode for fee tracking: platform, managed_split, byo, connect, flutterwave_mid */
   collectionMode?: string;
+  /** Fee bearer: platform, merchant, shared */
+  feeBearerMode?: string;
+  /** Payout account ID (connection used for this payment) */
+  payoutAccountId?: string;
+  /** Platform fee amount in base currency units */
+  waaiioFee?: number;
 }
 
 export interface InitPaymentResult {

@@ -27,12 +27,17 @@ export class PaystackGateway implements PaymentGateway {
           invoice_id: opts.invoiceId || null,
           campaign_id: opts.campaignId || null,
           reservation_id: opts.reservationId || null,
+          business_id: opts.businessId || null,
           user_id: opts.userId,
           amount: opts.amount,
           currency: opts.currency,
           gateway: 'paystack',
           gateway_reference: mockRef,
           status: 'pending',
+          collection_mode: opts.collectionMode || 'platform',
+          fee_bearer: opts.feeBearerMode || 'platform',
+          payout_account_id: opts.payoutAccountId || null,
+          waaiio_fee: opts.waaiioFee ?? 0,
           metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null, byo: !!opts.isByo },
         });
         return { url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/pay?ref=${mockRef}`, reference: mockRef };
@@ -110,6 +115,10 @@ export class PaystackGateway implements PaymentGateway {
         gateway: 'paystack',
         gateway_reference: data.data.reference,
         status: 'pending',
+        collection_mode: opts.collectionMode || 'platform',
+        fee_bearer: opts.feeBearerMode || 'platform',
+        payout_account_id: opts.payoutAccountId || null,
+        waaiio_fee: opts.waaiioFee ?? 0,
         metadata: {
           access_code: data.data.access_code,
           reference_code: opts.referenceCode,

@@ -248,7 +248,6 @@ export async function POST(request: NextRequest) {
     phone: guestPhone || '',
     userEmail: validatedEmail.toLowerCase(),
     countryCode: business.country_code || 'US',
-    gatewayOverride: business.payment_gateway || null,
     businessId: business.id,
   });
 

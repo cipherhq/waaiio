@@ -117,7 +117,6 @@ export async function POST(request: NextRequest) {
       phone: invoice.customer_phone || '',
       userEmail: invoice.customer_email || undefined,
       countryCode: countryCode as 'NG' | 'US' | 'GB' | 'GH' | 'KE' | 'ZA',
-      gatewayOverride: biz.payment_gateway,
       businessId: biz.id,
     });
 

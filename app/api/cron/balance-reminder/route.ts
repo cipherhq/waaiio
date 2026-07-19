@@ -83,7 +83,6 @@ export async function GET(request: NextRequest) {
                 businessName: biz?.name || 'Business',
                 phone: r.guest_phone,
                 countryCode: cc,
-                gatewayOverride: biz?.payment_gateway || null,
                 businessId: r.business_id,
               });
               if (result) payLink = result.url;
@@ -196,7 +195,6 @@ export async function GET(request: NextRequest) {
                 businessName: biz?.name || 'Business',
                 phone: b.guest_phone,
                 countryCode: cc,
-                gatewayOverride: biz?.payment_gateway || null,
                 businessId: b.business_id,
               });
               if (result) payLink = result.url;

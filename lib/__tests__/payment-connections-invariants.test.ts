@@ -239,16 +239,17 @@ describeIntegration('Payment connection invariants', () => {
     const { token, payload } = generateOAuthState(testUserId, testBizId, 'stripe', 'acct_test');
     await persistOAuthState(db, payload);
 
-    // First consumption succeeds
+    // First consumption succeeds (returns payload)
     const first = await consumeOAuthState(db, payload.nonce);
-    expect(first).toBe(true);
+    expect(first).not.toBeNull();
+    expect(first!.userId).toBe(testUserId);
 
     // Second consumption fails (replay)
     const second = await consumeOAuthState(db, payload.nonce);
-    expect(second).toBe(false);
+    expect(second).toBeNull();
 
     // Cleanup
-    await db.from('platform_settings').delete().eq('key', `oauth_state:${payload.nonce}`);
+    await db.from('oauth_states').delete().eq('nonce', payload.nonce);
   });
 
   // ── Item 6: Unique secret constraint ──

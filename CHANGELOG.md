@@ -5,6 +5,22 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-19
+
+### Phase 1 Close-out: Payment Routing & Connection Safety
+
+- **A: OAuth replay safety** — Replaced platform_settings-based OAuth nonce storage with dedicated `oauth_states` table (migration 288). Consumption is now truly atomic via `consume_oauth_state` RPC (UPDATE...WHERE consumed=false RETURNING). Concurrent test proves exactly one consumer wins. `consumeOAuthState()` now returns the full stored payload (user, business, provider, account bindings) instead of boolean. Stripe callback validates provider mismatch and propagates DB errors. Files: `lib/payments/oauth-state.ts`, `app/api/payouts/stripe-callback/route.ts`, migration 288.
+- **B: Authoritative routing** — Retired `gatewayOverride` parameter from `initializePayment()`. The resolver (`resolvePaymentRoute`) is now the sole authority for gateway selection. Removed `gatewayOverride` from all 13 callers (6 bot flows, 7 API routes). Added `is_active=true` filter to resolver query. Added provider-identifier fallback: managed connections without subaccount_code/stripe_account_id, connect without stripe_account_id, and flutterwave_mid without flutterwave_mid all safely fall back to platform with warning. Files: `lib/bot/flows/shared/payment.ts`, `lib/payments/route-resolver.ts`, all flow files, all payment API routes.
+- **C: All payment boundaries** — `pay-link/pay` now routes through the shared `initializePayment` (removes duplicate payment INSERT that gateway also creates). `recurring/setup` now uses `resolvePaymentRoute` for provider selection instead of hardcoded country check. Recurring subscriptions explicitly use platform collection mode (connected-provider recurring is Phase 2). Files: `app/api/pay-link/pay/route.ts`, `app/api/recurring/setup/route.ts`.
+- **D: Verification routing** — `verifyPayment()` now looks up the stored payment record's gateway instead of using the country default. For BYO payments, retrieves the merchant's decrypted credentials via the stored `payout_account_id`. Falls back to country default only if no payment record found. File: `lib/bot/flows/shared/payment.ts`.
+- **E: Persist route identity** — All 5 gateway implementations (Stripe, Paystack, Flutterwave, Square, PayPal) + charge-saved now persist `collection_mode`, `fee_bearer`, `payout_account_id`, and `waaiio_fee` on every payment INSERT (both mock and production paths). Added `feeBearerMode`, `payoutAccountId`, `waaiioFee` to `InitPaymentOpts`. Files: all gateway files in `lib/payments/`, `lib/payments/types.ts`.
+- **F: Sensitive-field authorization** — Created trigger `trg_payout_accounts_sensitive_fields` (migration 289) that blocks browser/authenticated clients from modifying `is_default`, `connection_status`, `connection_mode`, `health_status`, `verified_at`, `last_health_check_at`. Only service_role bypasses (for RPCs and admin routes). Addresses the gap where migration 285 had comments but no enforcement SQL.
+- **G: Runtime tests** — New test file `lib/__tests__/payment-phase1-closeout.test.ts` covers: concurrent OAuth consumption (5 parallel, exactly 1 wins), expired OAuth rejection, resolver route winning (no gatewayOverride), inactive default fallback, missing provider ID fallback, BYO fee fields passed through, verification using stored gateway, Paystack outbound bearer=subaccount payload. Updated existing invariant tests for new `consumeOAuthState` return type.
+
+**Could break:** Code that passes `gatewayOverride` to `initializePayment` will get a TypeScript error (parameter removed). Code that reads `consumed` as boolean from `consumeOAuthState` needs to check for null instead. `platform_settings`-based OAuth state rows will be orphaned (new states use `oauth_states` table).
+
+---
+
 ## 2026-07-16
 
 ### Pre-Launch Finance Safety Hardening

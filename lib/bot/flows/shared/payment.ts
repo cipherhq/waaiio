@@ -8,15 +8,46 @@ import { logger } from '@/lib/logger';
 // Re-exported for backwards compatibility with bot flows
 export { recordPlatformFee } from '@/lib/payments/process-success';
 
-/** Verify a payment via gateway. Used by bot flows after "I've Paid" button. */
+/**
+ * Verify a payment via the gateway recorded on the payment record.
+ * Falls back to country-default gateway if no payment record is found.
+ * For BYO payments, retrieves the merchant's credentials from the connection.
+ */
 export async function verifyPayment(
   supabase: SupabaseClient,
   gatewayReference: string,
   countryCode: CountryCode = 'NG',
 ): Promise<boolean> {
-  const gateway = getPaymentGateway(countryCode);
   try {
-    return await gateway.verifyPayment(supabase, gatewayReference);
+    // Look up the stored payment to determine which gateway processed it
+    const { data: payment } = await supabase
+      .from('payments')
+      .select('gateway, collection_mode, payout_account_id, metadata')
+      .eq('gateway_reference', gatewayReference)
+      .maybeSingle();
+
+    let byoSecretKey: string | undefined;
+    const storedGateway = payment?.gateway;
+
+    // For BYO payments, retrieve the merchant's credentials
+    if (payment?.collection_mode === 'byo' && payment?.payout_account_id) {
+      const { data: secret } = await supabase
+        .from('business_connection_secrets')
+        .select('encrypted_secret_key')
+        .eq('payout_account_id', payment.payout_account_id)
+        .is('revoked_at', null)
+        .maybeSingle();
+      if (secret?.encrypted_secret_key) {
+        byoSecretKey = decryptToken(secret.encrypted_secret_key);
+      }
+    }
+
+    // Use the stored gateway, not the country default
+    const gateway = storedGateway
+      ? getPaymentGatewayByName(storedGateway as PaymentGatewayName)
+      : getPaymentGateway(countryCode);
+
+    return await gateway.verifyPayment(supabase, gatewayReference, byoSecretKey);
   } catch {
     return false;
   }
@@ -36,8 +67,6 @@ export async function initializePayment(
     phone: string;
     userEmail?: string;
     countryCode?: CountryCode;
-    /** Per-business gateway override (from businesses.payment_gateway) */
-    gatewayOverride?: string | null;
     /** Business ID for payment routing */
     businessId?: string;
     /** Campaign ID for donation tracking */
@@ -50,17 +79,18 @@ export async function initializePayment(
     const countryCode = opts.countryCode || 'NG';
 
     // ── Resolve payment route using the deterministic resolver ──
+    // The resolver is the SOLE authority for gateway selection.
+    // It checks default connection health, verification, country support, and
+    // falls back to platform collection when no valid connection exists.
     let route: PaymentRoute | null = null;
     if (opts.businessId) {
       route = await resolvePaymentRoute(supabase, opts.businessId, opts.amount, countryCode);
     }
 
-    // Select gateway: resolver route → business override → country default
-    const gateway = opts.gatewayOverride
-      ? getPaymentGatewayByName(opts.gatewayOverride as PaymentGatewayName)
-      : route
-        ? getPaymentGatewayByName(route.provider as PaymentGatewayName)
-        : getPaymentGateway(countryCode);
+    // Select gateway: resolver route → country default (no override)
+    const gateway = route
+      ? getPaymentGatewayByName(route.provider as PaymentGatewayName)
+      : getPaymentGateway(countryCode);
 
     const { getCountry } = await import('@/lib/countries');
     const currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
@@ -153,8 +183,11 @@ export async function initializePayment(
       channels,
       callbackUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/payment-success`,
       businessId: opts.businessId,
-      // Fee mode tracking
+      // Fee mode tracking — persisted on payment record
       collectionMode: route?.mode || 'platform',
+      feeBearerMode: route?.feeBearerMode || 'platform',
+      payoutAccountId: route?.connectionId || undefined,
+      waaiioFee: route?.platformFeeAmount ?? 0,
     });
 
     if (!result) return null;
