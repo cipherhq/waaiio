@@ -27,6 +27,11 @@ export async function initializePayment(
     donorName?: string;
   },
 ): Promise<{ url: string; reference: string } | null> {
+  // Server-side payment activation gate — no provider calls when disabled
+  if (process.env.ENABLE_PAYMENTS !== 'true') {
+    return null;
+  }
+
   try {
     const countryCode = opts.countryCode || 'NG';
 
