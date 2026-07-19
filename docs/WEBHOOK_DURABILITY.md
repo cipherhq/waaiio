@@ -23,13 +23,25 @@
 - **Batch safety:** One message failure doesn't block others in the same batch
 - **Concurrent safety:** Second delivery of same message skips if in-progress or completed
 
-### Gap: No durable retry worker
+### Gap 1: No raw payload stored
 
-**Problem:** The route always returns 200 to Meta. If processing fails:
+The `processed_webhook_events` table does NOT have a `payload` column. When processing
+fails, only `event_id`, `last_error`, and `attempts` are recorded — the original message
+content is lost. A retry worker cannot reconstruct and replay the failed message.
+
+### Gap 2: Stale claim is not atomic
+
+The stale detection (line 405-416) uses SELECT + UPDATE, not an atomic claim. Two
+concurrent workers could both read `status='failed'`, both pass the check, and both
+attempt to process the same event.
+
+### Gap 3: No durable retry after HTTP 200
+
+The route always returns 200 to Meta. If processing fails:
 - Event is marked `failed` in the database
 - Meta will NOT retry (it received 200)
 - No cron/worker picks up failed events for retry
-- The failure is recorded but never recovered
+- The failure is recorded but unrecoverable (payload not stored)
 
 **Why 200 is returned even on failure:**
 - Meta retries failed deliveries (non-200) up to 3 times over 12 hours
@@ -39,10 +51,25 @@
 - Current dedup handles this, but the retry volume multiplies under load
 
 ### Risk assessment
-- **Severity:** Medium
-- **Impact:** Occasional lost messages when processing fails after event claim
+- **Severity:** Medium (not High — see justification)
+- **Impact:** Occasional lost conversational messages when processing fails
 - **Frequency:** Low (processing failures are caught and error-messaged to user)
-- **Mitigation:** User receives "error, please try again" message
+- **Mitigation:** User receives "Sorry, we encountered an error. Please try again."
+- **Why Medium, not High:**
+  - No financial data is lost (payments recorded separately in payments table)
+  - No booking/order corruption (atomic RPCs protect those)
+  - Only conversational state is affected (bot session progress)
+  - User can retry by sending the message again
+  - The failure requires an exception AFTER event claim (uncommon)
+  - No cross-tenant exposure or money loss
+
+### Status: IN PROGRESS
+
+Gaps 1-3 require architectural work beyond this PR:
+1. Add `payload JSONB` column to `processed_webhook_events`
+2. Store raw webhook body before processing
+3. Use atomic UPDATE ... RETURNING for stale claims
+4. Add retry cron with exponential backoff
 
 ### Proposed solution (not implemented in this PR)
 
