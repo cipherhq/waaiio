@@ -222,7 +222,7 @@ jobs:
             sleep 2
           done
           # Run only chromium (faster CI, mobile is supplementary)
-          npx playwright test e2e/smoke.spec.ts e2e/mobile-journeys.spec.ts --project=chromium --reporter=list
+          npx playwright test e2e/smoke.spec.ts e2e/onboarding.spec.ts e2e/profile-settings.spec.ts e2e/mobile-journeys.spec.ts --project=chromium --reporter=list
           npx playwright test e2e/mobile-journeys.spec.ts --project=mobile --reporter=list
           TEST_EXIT=$?
           kill $SERVER_PID 2>/dev/null || true
