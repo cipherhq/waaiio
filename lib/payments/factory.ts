@@ -16,10 +16,10 @@ const paypalInstance = new PayPalGateway();
  * Disabled gateway — returned when ENABLE_PAYMENTS !== 'true'.
  * initializePayment() returns null; no provider call is made.
  */
-const disabledGateway: PaymentGateway = {
+const disabledGateway = {
   initializePayment: async () => null,
   verifyPayment: async () => ({ verified: false, amount: 0, status: 'failed' as const, gatewayReference: '' }),
-} as PaymentGateway;
+} as unknown as PaymentGateway;
 
 /** Returns true only when customer payment initiation is enabled */
 export function isPaymentEnabled(): boolean {
