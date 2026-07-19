@@ -205,6 +205,22 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium webkit --with-deps
 
+      - name: Build and start admin app
+        env:
+          VITE_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
+          VITE_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
+          VITE_API_URL: http://localhost:3000
+        run: |
+          cd admin && npm ci && npm run build && npx vite preview --port 8083 &
+          cd ..
+          for i in $(seq 1 20); do
+            if curl -s http://localhost:8083 > /dev/null 2>&1; then
+              echo "Admin app ready"
+              break
+            fi
+            sleep 2
+          done
+
       - name: Start server and run browser tests
         id: browser_tests
         env:
@@ -222,7 +238,7 @@ jobs:
             sleep 2
           done
           BROWSER_EXIT=0
-          npx playwright test e2e/smoke.spec.ts e2e/onboarding.spec.ts e2e/profile-settings.spec.ts e2e/mobile-journeys.spec.ts e2e/admin-finance.spec.ts --project=chromium --reporter=list || BROWSER_EXIT=$?
+          npx playwright test e2e/smoke.spec.ts e2e/onboarding.spec.ts e2e/profile-settings.spec.ts e2e/mobile-journeys.spec.ts e2e/admin-finance.spec.ts e2e/admin-browser.spec.ts --project=chromium --reporter=list || BROWSER_EXIT=$?
           npx playwright test e2e/mobile-journeys.spec.ts --project=mobile --reporter=list || BROWSER_EXIT=$?
           kill $SERVER_PID 2>/dev/null || true
           echo "$BROWSER_EXIT" > /tmp/browser_exit_code
