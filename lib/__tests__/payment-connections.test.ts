@@ -263,23 +263,41 @@ describeIntegration('Payment connections — real database', () => {
   let stripeConnId: string;
 
   it('setup: install failure-injection trigger for replacement test', async () => {
-    // Uses supabase CLI to execute DDL on the local test database.
-    // This trigger only exists in the disposable local Supabase instance.
+    // Install a temporary trigger on the local test database that rejects
+    // INSERT when stripe_account_id matches the sentinel value.
+    // Uses psql against the local Supabase Postgres (port 54322).
     const { execSync } = await import('child_process');
+    const { writeFileSync, unlinkSync } = await import('fs');
+    const { join } = await import('path');
 
-    const triggerSQL = [
-      "DROP TRIGGER IF EXISTS trg_test_reject_stripe ON public.payout_accounts;",
-      "DROP FUNCTION IF EXISTS public._test_reject_stripe_insert();",
-      "CREATE OR REPLACE FUNCTION public._test_reject_stripe_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $fn$ BEGIN IF NEW.stripe_account_id = '" + SENTINEL + "' THEN RAISE EXCEPTION 'Injected test failure' USING ERRCODE = 'P0001'; END IF; RETURN NEW; END; $fn$;",
-      "CREATE TRIGGER trg_test_reject_stripe BEFORE INSERT ON public.payout_accounts FOR EACH ROW EXECUTE FUNCTION public._test_reject_stripe_insert();",
-    ].join('\n');
+    const triggerSQL = `
+DROP TRIGGER IF EXISTS trg_test_reject_stripe ON public.payout_accounts;
+DROP FUNCTION IF EXISTS public._test_reject_stripe_insert();
+CREATE OR REPLACE FUNCTION public._test_reject_stripe_insert()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.stripe_account_id = '${SENTINEL}' THEN
+    RAISE EXCEPTION 'Injected test failure' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER trg_test_reject_stripe
+  BEFORE INSERT ON public.payout_accounts
+  FOR EACH ROW
+  EXECUTE FUNCTION public._test_reject_stripe_insert();
+`;
 
-    // supabase db execute runs SQL against the local Supabase Postgres
-    execSync('supabase db execute --stdin', {
-      input: triggerSQL,
-      encoding: 'utf-8',
-      timeout: 15000,
-    });
+    const tmpFile = join('/tmp', `_test_trigger_${Date.now()}.sql`);
+    writeFileSync(tmpFile, triggerSQL);
+    try {
+      execSync(`psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f "${tmpFile}"`, {
+        encoding: 'utf-8',
+        timeout: 15000,
+      });
+    } finally {
+      try { unlinkSync(tmpFile); } catch { /* ignore */ }
+    }
   });
 
   it('setup: create a Stripe connection for replacement test', async () => {
@@ -406,17 +424,24 @@ describeIntegration('Payment connections — real database', () => {
 
   it('cleanup: remove failure-injection trigger', async () => {
     const { execSync } = await import('child_process');
+    const { writeFileSync, unlinkSync } = await import('fs');
+    const { join } = await import('path');
 
-    const cleanupSQL = [
-      "DROP TRIGGER IF EXISTS trg_test_reject_stripe ON public.payout_accounts;",
-      "DROP FUNCTION IF EXISTS public._test_reject_stripe_insert();",
-    ].join('\n');
+    const cleanupSQL = `
+DROP TRIGGER IF EXISTS trg_test_reject_stripe ON public.payout_accounts;
+DROP FUNCTION IF EXISTS public._test_reject_stripe_insert();
+`;
 
-    execSync('supabase db execute --stdin', {
-      input: cleanupSQL,
-      encoding: 'utf-8',
-      timeout: 15000,
-    });
+    const tmpFile = join('/tmp', `_test_cleanup_${Date.now()}.sql`);
+    writeFileSync(tmpFile, cleanupSQL);
+    try {
+      execSync(`psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f "${tmpFile}"`, {
+        encoding: 'utf-8',
+        timeout: 15000,
+      });
+    } finally {
+      try { unlinkSync(tmpFile); } catch { /* ignore */ }
+    }
 
     // Clean up test Stripe connections
     await db.from('payout_accounts').delete()
