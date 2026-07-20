@@ -22,6 +22,7 @@ interface PayoutAccount {
   account_number: string | null;
   account_name: string | null;
   verified_at: string | null;
+  is_default: boolean;
 }
 
 interface TermsAcceptance {
@@ -300,6 +301,7 @@ export default function PayoutsPage() {
         account_number: accountNumber,
         account_name: resolvedName,
         verified_at: new Date().toISOString(),
+        is_default: true,
       });
       setPageView('connected');
     } catch {
@@ -682,7 +684,14 @@ export default function PayoutsPage() {
             )}
             <div className="flex justify-between">
               <span className="text-green-700">Gateway</span>
-              <span className="font-medium text-green-900 capitalize">{existing.gateway}</span>
+              <span className="font-medium text-green-900 capitalize">
+                {existing.gateway}
+                {existing.is_default && (
+                  <span className="ml-2 inline-flex items-center rounded-full bg-green-200 px-2 py-0.5 text-xs font-medium text-green-800" role="status" aria-label="Default payment provider">
+                    Default
+                  </span>
+                )}
+              </span>
             </div>
           </div>
 

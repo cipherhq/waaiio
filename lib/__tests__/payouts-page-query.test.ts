@@ -179,6 +179,66 @@ describeIntegration('Payouts page: payout account query', () => {
     // Supabase returns error for invalid column
     expect(error).not.toBeNull();
   });
+
+  // ── Default badge display tests ──
+
+  it('default connection has is_default=true for badge display', async () => {
+    await db.from('payout_accounts').insert({
+      business_id: testBizId, gateway: 'stripe', connection_mode: 'connect',
+      connection_status: 'active', is_active: true, is_default: true,
+      stripe_account_id: 'acct_badge', verified_at: new Date().toISOString(),
+      health_status: 'healthy',
+    });
+
+    const { data } = await queryPayoutAccount(db, testBizId);
+    expect(data).not.toBeNull();
+    expect(data!.is_default).toBe(true);
+
+    await db.from('payout_accounts').delete().eq('business_id', testBizId);
+  });
+
+  it('non-default connection has is_default=false (no badge)', async () => {
+    await db.from('payout_accounts').insert({
+      business_id: testBizId, gateway: 'square', connection_mode: 'connect',
+      connection_status: 'active', is_active: true, is_default: false,
+      verified_at: new Date().toISOString(), health_status: 'healthy',
+      bank_name: 'No Badge',
+    });
+
+    const { data } = await queryPayoutAccount(db, testBizId);
+    expect(data).not.toBeNull();
+    expect(data!.is_default).toBe(false);
+
+    await db.from('payout_accounts').delete().eq('business_id', testBizId);
+  });
+
+  it('multi-provider: selects default and is_default=true for badge', async () => {
+    await db.from('payout_accounts').insert({
+      business_id: testBizId, gateway: 'square', connection_mode: 'connect',
+      connection_status: 'active', is_active: true, is_default: false,
+      verified_at: new Date().toISOString(), health_status: 'healthy',
+      bank_name: 'Square Non-Default',
+    });
+    await db.from('payout_accounts').insert({
+      business_id: testBizId, gateway: 'stripe', connection_mode: 'connect',
+      connection_status: 'active', is_active: true, is_default: true,
+      stripe_account_id: 'acct_multi_dfl', verified_at: new Date().toISOString(),
+      health_status: 'healthy',
+    });
+
+    const { data } = await queryPayoutAccount(db, testBizId);
+    expect(data).not.toBeNull();
+    expect(data!.gateway).toBe('stripe');
+    expect(data!.is_default).toBe(true);
+
+    await db.from('payout_accounts').delete().eq('business_id', testBizId);
+  });
+
+  it('zero active rows: null result, setup UI (no badge)', async () => {
+    const { data } = await queryPayoutAccount(db, testBizId);
+    expect(data).toBeNull();
+    // UI should show setup view, no badge rendered
+  });
 });
 
 describe('Payouts page query status', () => {
