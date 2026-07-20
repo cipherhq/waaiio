@@ -118,13 +118,22 @@ export default function PayoutsPage() {
     async function load() {
       const supabase = createClient();
 
-      // Check for existing payout account
-      const { data: payoutAccount } = await supabase
+      // Check for existing payout account (prefer default, then most recent).
+      // Uses limit(1) + maybeSingle() so zero rows returns null (not an error)
+      // and multiple rows are prevented by the limit.
+      const { data: payoutAccount, error: payoutErr } = await supabase
         .from('payout_accounts')
-        .select('id, gateway, subaccount_code, stripe_account_id, bank_name, account_number, account_name, verified_at')
+        .select('id, gateway, subaccount_code, stripe_account_id, bank_name, account_number, account_name, verified_at, is_default')
         .eq('business_id', business.id)
         .eq('is_active', true)
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
+
+      if (payoutErr) {
+        console.error('Failed to load payout account:', payoutErr.message);
+      }
 
       // Check for terms acceptance
       const { data: terms } = await supabase
@@ -188,11 +197,17 @@ export default function PayoutsPage() {
       const supabase = createClient();
       supabase
         .from('payout_accounts')
-        .select('id, gateway, subaccount_code, stripe_account_id, bank_name, account_number, account_name, verified_at')
+        .select('id, gateway, subaccount_code, stripe_account_id, bank_name, account_number, account_name, verified_at, is_default')
         .eq('business_id', business.id)
         .eq('is_active', true)
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle()
-        .then(({ data }) => {
+        .then(({ data, error }) => {
+          if (error) {
+            console.error('Failed to load connected account:', error.message);
+          }
           setExisting(data);
           setPageView('connected');
         });
