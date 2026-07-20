@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { fastHash, getCachedSession, setCachedSession, shouldTouch } from '@/lib/security/session-check';
+import { getCsrfAllowedOrigins } from '@/lib/get-app-url';
 
 type CookieEntry = { name: string; value: string; options: CookieOptions };
 
@@ -133,19 +134,7 @@ export async function middleware(request: NextRequest) {
   const isWebhook = webhookReceiverPaths.some(p => request.nextUrl.pathname.startsWith(p));
   if (isStateMutating && isApiRoute && !isWebhook) {
     const origin = request.headers.get('origin');
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
-    const appOrigin = new URL(appUrl).origin;
-    const allowedOrigins = [
-      appOrigin,
-      // Include both www and non-www variants
-      appOrigin.includes('www.') ? appOrigin.replace('www.', '') : appOrigin.replace('://', '://www.'),
-      process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
-      'https://admin.waaiio.com',
-      'https://admin-staging.waaiio.com',
-      'http://localhost:3000',
-      'http://localhost:8083',
-    ];
-    if (origin && !allowedOrigins.includes(origin)) {
+    if (origin && !getCsrfAllowedOrigins().includes(origin)) {
       return new NextResponse(JSON.stringify({ error: 'Forbidden' }), {
         status: 403,
         headers: { 'Content-Type': 'application/json' },

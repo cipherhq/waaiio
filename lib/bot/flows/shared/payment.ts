@@ -3,6 +3,7 @@ import { type CountryCode, type PaymentGatewayName } from '@/lib/constants';
 import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/factory';
 import { resolvePaymentRoute, type PaymentRoute } from '@/lib/payments/route-resolver';
 import { decryptToken } from '@/lib/encryption';
+import { getAppUrl } from '@/lib/get-app-url';
 import { logger } from '@/lib/logger';
 
 // Re-exported for backwards compatibility with bot flows
@@ -208,7 +209,7 @@ export async function initializePayment(
       byoBusinessId,
       campaignId: opts.campaignId,
       channels,
-      callbackUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/payment-success`,
+      callbackUrl: `${getAppUrl()}/payment-success`,
       businessId: opts.businessId,
       // Fee mode tracking — persisted on payment record
       collectionMode: route?.mode || 'platform',
@@ -221,7 +222,7 @@ export async function initializePayment(
 
     // Shorten the checkout URL for WhatsApp messages
     const shortUrl = result.url.length > 100
-      ? `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/pay?ref=${result.reference.slice(-8)}`
+      ? `${getAppUrl()}/pay?ref=${result.reference.slice(-8)}`
       : result.url;
 
     return { url: shortUrl, reference: result.reference };

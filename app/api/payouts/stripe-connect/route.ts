@@ -59,7 +59,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create payout account. Please try again.' }, { status: 400 });
     }
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+    const { getAppUrl } = await import('@/lib/get-app-url');
+    const appUrl = getAppUrl();
 
     // Create onboarding link with cryptographic state binding + nonce persistence
     const { token: oauthState, payload } = generateOAuthState(user.id, business_id, 'stripe', account.id);

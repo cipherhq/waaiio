@@ -6,7 +6,8 @@ const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+  const { getAppUrl } = await import('@/lib/get-app-url');
+  const appUrl = getAppUrl();
 
   // Validate cryptographic OAuth state
   const state = searchParams.get('state');
