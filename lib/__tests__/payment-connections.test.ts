@@ -248,6 +248,180 @@ describeIntegration('Payment connections — real database', () => {
     const future = Date.now() + 30 * 60 * 1000;
     expect(verifyOAuthState(`attacker|victim|stripe|evil|nonce|${future}|bad_sig`)).toBeNull();
   });
+
+  // ═══════════════════════════════════════════════════════
+  // Transactional Stripe connection replacement
+  // ═══════════════════════════════════════════════════════
+
+  // Setup: install a temporary INSERT trigger that rejects a sentinel value.
+  // This trigger exists ONLY in the local test database and is never included
+  // in any migration. It forces the INSERT inside replace_stripe_connection
+  // to fail AFTER the revoke mutation has executed, proving that Postgres
+  // rolls back the entire transaction atomically.
+
+  const SENTINEL = 'acct_FORCE_FAIL_TEST';
+  let stripeConnId: string;
+
+  it('setup: install failure-injection trigger for replacement test', async () => {
+    // Uses supabase CLI to execute DDL on the local test database.
+    // This trigger only exists in the disposable local Supabase instance.
+    const { execSync } = await import('child_process');
+
+    const triggerSQL = [
+      "DROP TRIGGER IF EXISTS trg_test_reject_stripe ON public.payout_accounts;",
+      "DROP FUNCTION IF EXISTS public._test_reject_stripe_insert();",
+      "CREATE OR REPLACE FUNCTION public._test_reject_stripe_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $fn$ BEGIN IF NEW.stripe_account_id = '" + SENTINEL + "' THEN RAISE EXCEPTION 'Injected test failure' USING ERRCODE = 'P0001'; END IF; RETURN NEW; END; $fn$;",
+      "CREATE TRIGGER trg_test_reject_stripe BEFORE INSERT ON public.payout_accounts FOR EACH ROW EXECUTE FUNCTION public._test_reject_stripe_insert();",
+    ].join('\n');
+
+    // supabase db execute runs SQL against the local Supabase Postgres
+    execSync('supabase db execute --stdin', {
+      input: triggerSQL,
+      encoding: 'utf-8',
+      timeout: 15000,
+    });
+  });
+
+  it('setup: create a Stripe connection for replacement test', async () => {
+    // Ensure paystack is default (from earlier tests)
+    await db.from('payout_accounts').update({ is_default: true })
+      .eq('business_id', testBizId).eq('gateway', 'paystack');
+
+    // Add a non-default active Stripe connection
+    const { data: stripe, error } = await db.from('payout_accounts').insert({
+      business_id: testBizId, gateway: 'stripe', connection_mode: 'connect',
+      connection_status: 'active', is_active: true, is_default: false,
+      stripe_account_id: 'acct_original_test', verified_at: new Date().toISOString(),
+      health_status: 'healthy',
+    }).select('id').single();
+
+    expect(error).toBeNull();
+    stripeConnId = stripe!.id;
+  });
+
+  it('forced replacement failure leaves previous Stripe active and preserves other providers', async () => {
+    // Snapshot state before the failing call
+    const { data: beforeStripe } = await db.from('payout_accounts')
+      .select('id, is_active, connection_status, is_default, stripe_account_id')
+      .eq('id', stripeConnId).single();
+
+    const { data: beforePaystack } = await db.from('payout_accounts')
+      .select('id, is_active, connection_status, is_default, gateway')
+      .eq('business_id', testBizId).eq('gateway', 'paystack').single();
+
+    // Call replace with the sentinel value — trigger will reject the INSERT
+    const { data: result, error: rpcErr } = await db.rpc('replace_stripe_connection', {
+      p_business_id: testBizId,
+      p_account_id: SENTINEL,
+    });
+
+    // The RPC should have returned an error (not success=false, but a real DB error)
+    // because the unhandled RAISE EXCEPTION aborts the transaction.
+    expect(rpcErr).not.toBeNull();
+
+    // Verify: old Stripe connection is UNCHANGED (transaction rolled back)
+    const { data: afterStripe } = await db.from('payout_accounts')
+      .select('id, is_active, connection_status, is_default, stripe_account_id')
+      .eq('id', stripeConnId).single();
+
+    expect(afterStripe!.is_active).toBe(beforeStripe!.is_active);
+    expect(afterStripe!.connection_status).toBe(beforeStripe!.connection_status);
+    expect(afterStripe!.is_default).toBe(beforeStripe!.is_default);
+    expect(afterStripe!.stripe_account_id).toBe('acct_original_test');
+
+    // Verify: Paystack connection is UNCHANGED
+    const { data: afterPaystack } = await db.from('payout_accounts')
+      .select('id, is_active, connection_status, is_default, gateway')
+      .eq('business_id', testBizId).eq('gateway', 'paystack').single();
+
+    expect(afterPaystack!.is_active).toBe(beforePaystack!.is_active);
+    expect(afterPaystack!.connection_status).toBe(beforePaystack!.connection_status);
+    expect(afterPaystack!.is_default).toBe(beforePaystack!.is_default);
+
+    // Verify: no replacement row with the sentinel value exists
+    const { data: sentinel } = await db.from('payout_accounts')
+      .select('id')
+      .eq('business_id', testBizId)
+      .eq('stripe_account_id', SENTINEL);
+    expect(sentinel).toEqual([]);
+  });
+
+  it('subsequent valid replacement succeeds', async () => {
+    const { data: result, error: rpcErr } = await db.rpc('replace_stripe_connection', {
+      p_business_id: testBizId,
+      p_account_id: 'acct_valid_replacement',
+    });
+
+    expect(rpcErr).toBeNull();
+    expect(result.success).toBe(true);
+    expect(result.revoked_count).toBe(1); // the original Stripe connection
+
+    // Old Stripe is now revoked
+    const { data: oldStripe } = await db.from('payout_accounts')
+      .select('connection_status, is_active')
+      .eq('id', stripeConnId).single();
+    expect(oldStripe!.connection_status).toBe('revoked');
+    expect(oldStripe!.is_active).toBe(false);
+
+    // New Stripe is active (not default — Paystack holds default)
+    const { data: newStripe } = await db.from('payout_accounts')
+      .select('connection_status, is_active, is_default, stripe_account_id')
+      .eq('business_id', testBizId)
+      .eq('stripe_account_id', 'acct_valid_replacement')
+      .single();
+    expect(newStripe!.connection_status).toBe('active');
+    expect(newStripe!.is_active).toBe(true);
+    expect(newStripe!.is_default).toBe(false); // Paystack is still default
+
+    // Paystack still untouched
+    const { data: paystack } = await db.from('payout_accounts')
+      .select('is_default, is_active, connection_status')
+      .eq('business_id', testBizId).eq('gateway', 'paystack').single();
+    expect(paystack!.is_default).toBe(true);
+    expect(paystack!.is_active).toBe(true);
+    expect(paystack!.connection_status).toBe('active');
+  });
+
+  it('anon and authenticated clients cannot execute replace_stripe_connection', async () => {
+    // Authenticated client (browser simulation)
+    const { error: authErr } = await userClient.rpc('replace_stripe_connection', {
+      p_business_id: testBizId,
+      p_account_id: 'acct_unauthorized',
+    });
+    expect(authErr).not.toBeNull();
+
+    // Anon client
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://127.0.0.1:54321';
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+    if (!anonKey) return;
+
+    const { createClient: createAnonClient } = await import('@supabase/supabase-js');
+    const anonClient = createAnonClient(url, anonKey);
+    const { error: anonErr } = await anonClient.rpc('replace_stripe_connection', {
+      p_business_id: testBizId,
+      p_account_id: 'acct_anon_attempt',
+    });
+    expect(anonErr).not.toBeNull();
+  });
+
+  it('cleanup: remove failure-injection trigger', async () => {
+    const { execSync } = await import('child_process');
+
+    const cleanupSQL = [
+      "DROP TRIGGER IF EXISTS trg_test_reject_stripe ON public.payout_accounts;",
+      "DROP FUNCTION IF EXISTS public._test_reject_stripe_insert();",
+    ].join('\n');
+
+    execSync('supabase db execute --stdin', {
+      input: cleanupSQL,
+      encoding: 'utf-8',
+      timeout: 15000,
+    });
+
+    // Clean up test Stripe connections
+    await db.from('payout_accounts').delete()
+      .eq('business_id', testBizId).eq('gateway', 'stripe');
+  });
 });
 
 describe('Payment connections status', () => {

@@ -608,27 +608,23 @@ describe('Phase 1 close-out: unit tests', () => {
     expect(verified!.nonce).toBe(payload.nonce);
   });
 
-  // ── G: Stripe callback uses service client + recoverable replacement ──
+  // ── G: Stripe callback uses transactional RPC ──
 
-  it('Stripe callback handler uses service client with error checking and restore', async () => {
+  it('Stripe callback uses replace_stripe_connection RPC with error handling', async () => {
     const fs = await import('fs');
     const source = fs.readFileSync('app/api/payouts/stripe-callback/route.ts', 'utf-8');
 
-    // Mutations use service client
-    expect(source).toContain("service.from('payout_accounts')");
-    // All DB errors checked
-    expect(source).toContain('revokeErr');
-    expect(source).toContain('insertErr');
-    expect(source).toContain('bizUpdateErr');
-    expect(source).toContain('defaultQueryErr');
-    // Business ownership verified
+    // Uses transactional RPC instead of sequential mutations
+    expect(source).toContain("replace_stripe_connection");
+    expect(source).toContain("service.rpc(");
+    // RPC errors checked
+    expect(source).toContain('rpcErr');
+    // Business ownership verified via authenticated client before RPC
     expect(source).toContain('bizCheck');
-    // Snapshot + restore pattern for recoverable replacement
-    expect(source).toContain('restoreRevokedConns');
-    expect(source).toContain('oldStripeConns');
-    // Restore called on both insert failure AND default query failure
-    const restoreCalls = source.match(/restoreRevokedConns/g);
-    expect(restoreCalls!.length).toBeGreaterThanOrEqual(4); // function def + mock path + prod default err + prod insert err
+    // Non-fatal payout_mode update after success
+    expect(source).toContain('bizUpdateErr');
+    // No application-level restore (transaction handles it)
+    expect(source).not.toContain('restoreRevokedConns');
   });
 
   // ── B: INSERT trigger clears provider-routing values ──
