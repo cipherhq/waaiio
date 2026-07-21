@@ -449,11 +449,15 @@ BEGIN
       p_reason, p_initiated_by, COALESCE(p_initiated_by_role, 'business')
     ) RETURNING id INTO v_refund_id;
   EXCEPTION WHEN unique_violation THEN
-    -- Race condition: another call inserted first. Re-read the existing row.
-    SELECT id, planned_fee_reversal INTO v_refund_id, v_planned_reversal
+    -- Concurrent insert or SELECT-missed-then-INSERT race. Re-read and validate.
+    SELECT id, planned_fee_reversal, amount INTO v_refund_id, v_planned_reversal, v_remaining
       FROM public.refunds
       WHERE payment_id = p_payment_id AND provider_idempotency_key = p_idempotency_key;
     IF v_refund_id IS NOT NULL THEN
+      -- Validate the existing row matches this request's parameters
+      IF v_remaining != p_refund_amount THEN
+        RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'amount');
+      END IF;
       RETURN jsonb_build_object('claimed', true, 'refund_id', v_refund_id, 'existing', true,
         'planned_fee_reversal', COALESCE(v_planned_reversal, 0));
     END IF;
