@@ -123,9 +123,7 @@ export async function GET(request: NextRequest) {
         squareCategory: sqErrors?.[0]?.category,
         squareRequestId: tokenRes.headers.get('square-request-id') || undefined,
       });
-      const diagCode = sqErrors?.[0]?.code || tokenData.error || 'unknown';
-      const diagDetail = encodeURIComponent(sqErrors?.[0]?.detail || 'no access_token');
-      return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=token_exchange_failed&sq_status=${tokenRes.status}&sq_code=${diagCode}&sq_detail=${diagDetail}`);
+      return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=token_exchange_failed`);
     }
 
     const accessToken = tokenData.access_token as string;
