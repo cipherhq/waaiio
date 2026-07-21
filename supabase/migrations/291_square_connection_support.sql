@@ -388,7 +388,6 @@ BEGIN
   UPDATE public.payments
     SET refund_amount = v_new_refund_amount,
         refund_reason = p_refund_reason,
-        refunded_at = NOW(),
         refunded_by = p_initiated_by,
         status = CASE WHEN v_is_fully_refunded THEN 'refunded'::public.payment_status ELSE status END
     WHERE id = v_refund.payment_id;
@@ -602,7 +601,6 @@ BEGIN
 
   UPDATE public.payments SET
     refund_amount = v_new_refund_amount,
-    refunded_at = NOW(),
     status = CASE WHEN v_is_fully_refunded THEN 'refunded'::public.payment_status ELSE status END
   WHERE id = v_refund.payment_id;
 
