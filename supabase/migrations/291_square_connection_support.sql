@@ -335,6 +335,8 @@ REVOKE ALL ON FUNCTION public.complete_refresh_lease(UUID, TEXT, TEXT, TEXT, TIM
 GRANT EXECUTE ON FUNCTION public.complete_refresh_lease(UUID, TEXT, TEXT, TEXT, TIMESTAMPTZ) TO service_role;
 
 -- ── 9. Atomic refund reservation ──
+-- Drop the old 5-param version so the new 9-param version is the only one
+DROP FUNCTION IF EXISTS public.claim_refund_balance(UUID, NUMERIC, TEXT, VARCHAR, NUMERIC);
 CREATE OR REPLACE FUNCTION public.claim_refund_balance(
   p_payment_id UUID, p_refund_amount NUMERIC(12,2), p_idempotency_key TEXT,
   p_currency VARCHAR(3) DEFAULT 'USD', p_waaiio_fee_total NUMERIC(12,2) DEFAULT 0,

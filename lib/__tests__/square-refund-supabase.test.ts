@@ -102,13 +102,14 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
     expect(first.claimed).toBe(true);
 
     // Duplicate claim — same key, same amount
-    const { data: second } = await supabase.rpc('claim_refund_balance', {
+    const { data: second, error: secondErr } = await supabase.rpc('claim_refund_balance', {
       p_payment_id: pid,
       p_refund_amount: 10.00,
       p_idempotency_key: idempotencyKey,
       p_currency: 'USD',
       p_waaiio_fee_total: 2.50,
     });
+    expect(secondErr).toBeNull();
     expect(second.claimed).toBe(true);
     expect(second.existing).toBe(true);
     expect(second.refund_id).toBe(first.refund_id);
@@ -410,20 +411,30 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
     });
 
     // First finalization
+    const gwRef = `gw-${Date.now()}`;
     await supabase.rpc('finalize_refund_generic', {
       p_refund_id: claim.refund_id,
-      p_gateway_refund_ref: `gw-${Date.now()}`,
+      p_gateway_refund_ref: gwRef,
       p_final_status: 'success',
     });
 
-    // Second finalization should be rejected
-    const { data: second } = await supabase.rpc('finalize_refund_generic', {
+    // Idempotent replay with SAME reference should succeed (existing=true)
+    const { data: replay } = await supabase.rpc('finalize_refund_generic', {
       p_refund_id: claim.refund_id,
-      p_gateway_refund_ref: `gw-${Date.now()}`,
+      p_gateway_refund_ref: gwRef,
       p_final_status: 'success',
     });
-    expect(second.success).toBe(false);
-    expect(second.reason).toBe('already_finalized');
+    expect(replay.success).toBe(true);
+    expect(replay.existing).toBe(true);
+
+    // DIFFERENT reference should be rejected as mismatch
+    const { data: mismatch } = await supabase.rpc('finalize_refund_generic', {
+      p_refund_id: claim.refund_id,
+      p_gateway_refund_ref: `gw-different-${Date.now()}`,
+      p_final_status: 'success',
+    });
+    expect(mismatch.success).toBe(false);
+    expect(mismatch.reason).toBe('provider_reference_mismatch');
   });
 
   it('concurrent claims do not double-reserve', async () => {
