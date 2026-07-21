@@ -271,7 +271,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   }
 
   if (isDirectSplit) {
-    // Non-Square direct split: record-only
+    // Non-Square direct split: record-only, mark success then finalize atomically
     await supabase.from('refunds').update({ status: 'success' }).eq('id', refundRecord.id);
   } else {
     // Platform managed: call gateway refund API
@@ -291,112 +291,34 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       providerIdempotencyKey: refundRecord.id,
     });
 
-    if (result.success) {
-      await supabase.from('refunds').update({
-        status: 'success',
-        gateway_refund_reference: result.gatewayRefundReference || null,
-        gateway_response: result.gatewayResponse || null,
-      }).eq('id', refundRecord.id);
-    } else {
+    if (!result.success) {
       await supabase.from('refunds').update({
         status: 'failed',
         gateway_response: result.gatewayResponse || { error: result.errorMessage },
       }).eq('id', refundRecord.id);
       return { success: false, refundId: refundRecord.id, isDirectSplit, errorMessage: result.errorMessage };
     }
+
+    // Provider succeeded — update refund row with gateway reference before atomic finalization
+    await supabase.from('refunds').update({
+      gateway_refund_reference: result.gatewayRefundReference || null,
+      gateway_response: result.gatewayResponse || null,
+    }).eq('id', refundRecord.id);
   }
 
-  // Finalize payment/ledger for non-Square (synchronous completion)
-  await finalizeRefundLocally(supabase, payment, refundRecord.id, amount, reason || null, initiatedBy);
+  // Finalize payment/ledger atomically via RPC (handles payment totals, booking/reservation
+  // deposit status, fee reversal, and payout adjustments in a single transaction)
+  const { data: finalResult, error: finalErr } = await supabase.rpc('finalize_refund_generic', {
+    p_refund_id: refundRecord.id,
+    p_final_status: 'success',
+  });
+  if (finalErr) {
+    logger.error('[REFUND] Generic finalization RPC error:', finalErr.message);
+    return { success: false, refundId: refundRecord.id, isDirectSplit, errorMessage: 'Finalization failed' };
+  }
+  if (!finalResult?.success) {
+    return { success: false, refundId: refundRecord.id, isDirectSplit, errorMessage: finalResult?.reason || 'Finalization rejected' };
+  }
 
   return { success: true, refundId: refundRecord.id, isDirectSplit };
-}
-
-/**
- * Finalize refund effects on payment, booking, fees, and payout adjustments.
- * Called synchronously for non-Square or when Square returns COMPLETED immediately.
- * For Square PENDING, this is called later by the webhook via finalize_square_refund RPC.
- */
-async function finalizeRefundLocally(
-  supabase: SupabaseClient,
-  payment: Record<string, unknown>,
-  refundId: string,
-  amount: number,
-  reason: string | null,
-  initiatedBy: string,
-): Promise<void> {
-  const existingRefund = Number(payment.refund_amount || 0);
-  const paymentAmount = Number(payment.amount);
-  const newRefundAmount = existingRefund + amount;
-  const isFullyRefunded = newRefundAmount >= paymentAmount;
-
-  await supabase.from('payments').update({
-    refund_amount: newRefundAmount,
-    refund_reason: reason || null,
-    refunded_at: new Date().toISOString(),
-    refunded_by: initiatedBy,
-    ...(isFullyRefunded && { status: 'refunded' }),
-  }).eq('id', payment.id as string);
-
-  if (isFullyRefunded && payment.booking_id) {
-    await supabase.from('bookings')
-      .update({ deposit_status: 'refunded' })
-      .eq('id', payment.booking_id as string);
-  }
-
-  if (isFullyRefunded && payment.reservation_id) {
-    await supabase.from('reservations')
-      .update({ deposit_status: 'refunded' })
-      .eq('id', payment.reservation_id as string);
-  }
-
-  // Reverse platform fee
-  const feeEntityCol = payment.booking_id ? 'booking_id' : payment.invoice_id ? 'invoice_id'
-    : payment.campaign_id ? 'campaign_id' : payment.order_id ? 'order_id'
-    : payment.reservation_id ? 'reservation_id' : null;
-  const feeEntityVal = (payment.booking_id || payment.invoice_id || payment.campaign_id
-    || payment.order_id || payment.reservation_id) as string | null;
-
-  if (feeEntityCol && feeEntityVal) {
-    if (isFullyRefunded) {
-      await supabase.from('platform_fees')
-        .update({ refunded_at: new Date().toISOString() })
-        .eq(feeEntityCol, feeEntityVal)
-        .is('refunded_at', null);
-    } else {
-      const { data: fee } = await supabase.from('platform_fees')
-        .select('id, fee_total, transaction_amount')
-        .eq(feeEntityCol, feeEntityVal)
-        .is('refunded_at', null)
-        .maybeSingle();
-      if (fee && fee.transaction_amount > 0) {
-        const feeReduction = Math.round(fee.fee_total * (amount / fee.transaction_amount) * 100) / 100;
-        await supabase.from('platform_fees')
-          .update({ fee_total: Math.max(0, fee.fee_total - feeReduction) })
-          .eq('id', fee.id);
-      }
-    }
-  }
-
-  // Payout adjustment
-  try {
-    const { data: payment2 } = await supabase.from('payments')
-      .select('created_at').eq('id', payment.id as string).single();
-    if (payment2) {
-      const { data: paidPayout } = await supabase.from('business_payouts')
-        .select('id').eq('business_id', payment.business_id as string)
-        .eq('status', 'paid').gte('period_end', payment2.created_at).maybeSingle();
-      if (paidPayout) {
-        await supabase.from('payout_adjustments').insert({
-          business_id: payment.business_id,
-          payout_id: paidPayout.id,
-          amount: -amount,
-          reason: `Refund for payment ${payment.gateway_reference}`,
-          payment_id: payment.id,
-        });
-      }
-    }
-  } catch (adjError) {
-    logger.error('[REFUND] Payout adjustment error (non-blocking):', adjError);
-  }
 }

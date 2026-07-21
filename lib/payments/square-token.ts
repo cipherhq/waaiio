@@ -66,7 +66,27 @@ export async function resolveSquareToken(
 
     if (leaseExpires > now) {
       // Another refresh in progress
-      return isExpired ? null : { accessToken: decryptToken(secret.encrypted_secret_key), secretId: secret.id };
+      if (isExpired) {
+        // Token is expired but another worker is refreshing — brief wait and re-read
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const { data: refreshedSecret } = await supabase
+          .from('business_connection_secrets')
+          .select('encrypted_secret_key, token_expires_at, refresh_lease_expires_at')
+          .eq('id', secret.id)
+          .is('revoked_at', null)
+          .single();
+        if (refreshedSecret?.token_expires_at) {
+          const newExpiry = new Date(refreshedSecret.token_expires_at).getTime();
+          if (newExpiry > now) {
+            // Winner refreshed successfully — use new token
+            return { accessToken: decryptToken(refreshedSecret.encrypted_secret_key), secretId: secret.id };
+          }
+        }
+        // Still expired after wait — the winner may have failed
+        return null;
+      }
+      // Not expired, just near expiry — use current token while another worker refreshes
+      return { accessToken: decryptToken(secret.encrypted_secret_key), secretId: secret.id };
     }
 
     const refreshed = await refreshWithLease(supabase, secret.id, refreshToken);

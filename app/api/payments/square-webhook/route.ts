@@ -8,6 +8,7 @@ import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 
 const squareWebhookSignatureKey = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || '';
 const squareWebhookNotificationUrl = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL || '';
+const squarePlatformMerchantId = process.env.SQUARE_PLATFORM_MERCHANT_ID || '';
 
 function verifySquareSignature(rawBody: string, signature: string): boolean {
   if (!squareWebhookSignatureKey || !signature) return false;
@@ -60,16 +61,22 @@ async function markEventFailed(
     .eq('status', 'processing');
 }
 
-/** Resolve merchant_id → payout_account. Throws on missing/unknown merchant. */
+/** Resolve merchant_id → payout_account or platform mode. Throws on missing/unknown merchant. */
 async function resolveMerchant(
   supabase: ReturnType<typeof createServiceClient>,
   webhookMerchantId: string | undefined,
-): Promise<{ id: string; business_id: string }> {
+): Promise<{ id: string | null; business_id: string | null; isConnect: boolean }> {
   if (!webhookMerchantId) {
     logger.warn('[SQUARE-WEBHOOK] Missing merchant_id — fail closed');
     throw new Error('Missing merchant_id in webhook payload');
   }
 
+  // Check if this is the platform merchant
+  if (squarePlatformMerchantId && webhookMerchantId === squarePlatformMerchantId) {
+    return { id: null, business_id: null, isConnect: false };
+  }
+
+  // Connect merchant — resolve via payout_accounts
   const { data: conn, error: connErr } = await supabase
     .from('payout_accounts')
     .select('id, business_id')
@@ -83,7 +90,7 @@ async function resolveMerchant(
     logger.warn('[SQUARE-WEBHOOK] No active Square connection for merchant');
     throw new Error('Unknown merchant — no active connection');
   }
-  return conn;
+  return { id: conn.id, business_id: conn.business_id, isConnect: true };
 }
 
 export const maxDuration = 60;
@@ -156,16 +163,34 @@ export async function POST(request: NextRequest) {
       // Resolve merchant — fails closed on missing/unknown
       const conn = await resolveMerchant(supabase, webhookMerchantId);
 
-      // Scoped payment lookup — ALWAYS requires resolved payout account
-      const { data: matchedPayment, error: payLookupErr } = await supabase
-        .from('payments')
-        .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, currency, status, metadata, business_id, payout_account_id, gateway_reference, waaiio_fee, collection_mode')
-        .eq('gateway', 'square')
-        .eq('payout_account_id', conn.id)
-        .eq('provider_order_ref', orderId)
-        .maybeSingle();
+      // Scoped payment lookup — Connect vs Platform mode
+      let matchedPayment: any = null;
+      const paymentSelectCols = 'id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, currency, status, metadata, business_id, payout_account_id, gateway_reference, waaiio_fee, collection_mode';
 
-      if (payLookupErr) throw new Error(`Payment lookup error: ${payLookupErr.message}`);
+      if (conn.isConnect) {
+        // Connect: scope by payout_account_id
+        const { data, error: payLookupErr } = await supabase
+          .from('payments')
+          .select(paymentSelectCols)
+          .eq('gateway', 'square')
+          .eq('payout_account_id', conn.id!)
+          .eq('provider_order_ref', orderId)
+          .maybeSingle();
+        if (payLookupErr) throw new Error(`Payment lookup error: ${payLookupErr.message}`);
+        matchedPayment = data;
+      } else {
+        // Platform: scope by collection_mode='platform' + payout_account_id IS NULL
+        const { data, error: payLookupErr } = await supabase
+          .from('payments')
+          .select(paymentSelectCols)
+          .eq('gateway', 'square')
+          .eq('collection_mode', 'platform')
+          .is('payout_account_id', null)
+          .eq('provider_order_ref', orderId)
+          .maybeSingle();
+        if (payLookupErr) throw new Error(`Payment lookup error: ${payLookupErr.message}`);
+        matchedPayment = data;
+      }
       if (!matchedPayment) {
         if (eventId && claimToken) await markEventCompleted(supabase, eventId, claimToken);
         return NextResponse.json({ received: true });
@@ -341,12 +366,25 @@ export async function POST(request: NextRequest) {
 
           // Verify refund belongs to this merchant's business
           if (localRefund?.payment_id) {
-            const { data: refPayment } = await supabase
-              .from('payments')
-              .select('payout_account_id')
-              .eq('id', localRefund.payment_id)
-              .eq('payout_account_id', conn.id)
-              .maybeSingle();
+            let refPayment;
+            if (conn.isConnect) {
+              const { data } = await supabase
+                .from('payments')
+                .select('payout_account_id')
+                .eq('id', localRefund.payment_id)
+                .eq('payout_account_id', conn.id!)
+                .maybeSingle();
+              refPayment = data;
+            } else {
+              const { data } = await supabase
+                .from('payments')
+                .select('payout_account_id')
+                .eq('id', localRefund.payment_id)
+                .eq('collection_mode', 'platform')
+                .is('payout_account_id', null)
+                .maybeSingle();
+              refPayment = data;
+            }
 
             if (!refPayment) {
               throw new Error('Refund payment does not belong to this merchant — scoping violation');
@@ -360,8 +398,9 @@ export async function POST(request: NextRequest) {
 
             if (finalStatus) {
               // Extract fee reversal from Square's app_fee_money if present
+              // Use != null to preserve explicit zero (amount === 0 means no fee reversal, not "unknown")
               const appFeeMoneyLocal = refund.app_fee_money as { amount?: number } | undefined;
-              const feeReversalLocal = appFeeMoneyLocal?.amount ? appFeeMoneyLocal.amount / 100 : null;
+              const feeReversalLocal = appFeeMoneyLocal?.amount != null ? appFeeMoneyLocal.amount / 100 : null;
 
               const { data: finalResult, error: finalErr } = await supabase.rpc('finalize_square_refund', {
                 p_refund_id: localRefund.id,
@@ -382,29 +421,57 @@ export async function POST(request: NextRequest) {
             }
 
             // Find the local payment by Square payment ID in metadata
-            let refPayment: { id: string; amount: number; currency: string; business_id: string; payout_account_id: string; gateway: string; waaiio_fee: number } | null = null;
-            const { data: metaPayment, error: refPayErr } = await supabase
-              .from('payments')
-              .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee')
-              .eq('gateway', 'square')
-              .eq('payout_account_id', conn.id)
-              .filter('metadata->>square_payment_id', 'eq', squarePaymentId)
-              .maybeSingle();
+            let refPayment: { id: string; amount: number; currency: string; business_id: string; payout_account_id: string; gateway: string; waaiio_fee: number; collection_mode: string | null } | null = null;
 
-            if (refPayErr) throw new Error(`Refund payment lookup error: ${refPayErr.message}`);
-            refPayment = metaPayment;
-
-            // Fallback: older reconciled payments have Square payment ID as gateway_reference
-            if (!refPayment) {
-              const { data: fallbackPay, error: fallbackErr } = await supabase
+            if (conn.isConnect) {
+              // Connect: scope by payout_account_id
+              const { data: metaPayment, error: refPayErr } = await supabase
                 .from('payments')
-                .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee')
+                .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee, collection_mode')
                 .eq('gateway', 'square')
-                .eq('payout_account_id', conn.id)
-                .eq('gateway_reference', squarePaymentId)
+                .eq('payout_account_id', conn.id!)
+                .filter('metadata->>square_payment_id', 'eq', squarePaymentId)
                 .maybeSingle();
-              if (fallbackErr) throw new Error(`Refund payment fallback lookup error: ${fallbackErr.message}`);
-              refPayment = fallbackPay;
+              if (refPayErr) throw new Error(`Refund payment lookup error: ${refPayErr.message}`);
+              refPayment = metaPayment;
+
+              // Fallback: older reconciled payments have Square payment ID as gateway_reference
+              if (!refPayment) {
+                const { data: fallbackPay, error: fallbackErr } = await supabase
+                  .from('payments')
+                  .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee, collection_mode')
+                  .eq('gateway', 'square')
+                  .eq('payout_account_id', conn.id!)
+                  .eq('gateway_reference', squarePaymentId)
+                  .maybeSingle();
+                if (fallbackErr) throw new Error(`Refund payment fallback lookup error: ${fallbackErr.message}`);
+                refPayment = fallbackPay;
+              }
+            } else {
+              // Platform: scope by collection_mode='platform' + payout_account_id IS NULL
+              const { data: metaPayment, error: refPayErr } = await supabase
+                .from('payments')
+                .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee, collection_mode')
+                .eq('gateway', 'square')
+                .eq('collection_mode', 'platform')
+                .is('payout_account_id', null)
+                .filter('metadata->>square_payment_id', 'eq', squarePaymentId)
+                .maybeSingle();
+              if (refPayErr) throw new Error(`Refund payment lookup error: ${refPayErr.message}`);
+              refPayment = metaPayment;
+
+              if (!refPayment) {
+                const { data: fallbackPay, error: fallbackErr } = await supabase
+                  .from('payments')
+                  .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee, collection_mode')
+                  .eq('gateway', 'square')
+                  .eq('collection_mode', 'platform')
+                  .is('payout_account_id', null)
+                  .eq('gateway_reference', squarePaymentId)
+                  .maybeSingle();
+                if (fallbackErr) throw new Error(`Refund payment fallback lookup error: ${fallbackErr.message}`);
+                refPayment = fallbackPay;
+              }
             }
 
             if (!refPayment) {
@@ -431,8 +498,9 @@ export async function POST(request: NextRequest) {
               const refundAmount = refundAmountCents / 100;
 
               // Calculate fee reversal from app_fee_money if present
+              // Use != null to preserve explicit zero
               const appFeeMoney = refund.app_fee_money as { amount?: number } | undefined;
-              const feeReversalCents = appFeeMoney?.amount || 0;
+              const feeReversalCents = appFeeMoney?.amount != null ? appFeeMoney.amount : 0;
               const feeReversal = feeReversalCents / 100;
 
               // Check for unmatched claimed refund for this specific payment
@@ -452,10 +520,14 @@ export async function POST(request: NextRequest) {
               // Try to bind to a matching claim (same payment and approximately same amount)
               if (unmatchedClaims && unmatchedClaims.length > 0) {
                 const matchingClaims = unmatchedClaims.filter(c =>
-                  c.payment_id === refPayment.id && Math.abs(Number(c.amount) - refundAmount) < 0.01
+                  c.payment_id === refPayment!.id && Math.abs(Number(c.amount) - refundAmount) < 0.01
                 );
                 if (matchingClaims.length > 1) {
                   throw new Error('Multiple matching unmatched claims — ambiguous, fail closed');
+                }
+                if (matchingClaims.length === 0) {
+                  // Incompatible claims exist but none match — fail closed for review
+                  throw new Error('Square-initiated refund: incompatible claims exist, manual review required');
                 }
                 if (matchingClaims.length === 1) {
                   const { data: bound, error: bindErr } = await supabase.from('refunds')
@@ -468,8 +540,12 @@ export async function POST(request: NextRequest) {
                   if (bound) {
                     boundRefundId = bound.id;
                     logger.info(`[SQUARE-WEBHOOK] Bound Square refund ${squareRefundId} to existing claim ${matchingClaims[0].id}`);
+                  } else {
+                    // CAS failed — another worker bound it. Re-read the winner
+                    const { data: winner } = await supabase.from('refunds')
+                      .select('id').eq('gateway_refund_reference', squareRefundId).maybeSingle();
+                    if (winner) boundRefundId = winner.id;
                   }
-                  // If CAS failed (another worker bound it), fall through to insert
                 }
               }
 
@@ -488,7 +564,7 @@ export async function POST(request: NextRequest) {
                     gateway_refund_reference: squareRefundId,
                     refund_type: refundAmount >= Number(refPayment.amount) ? 'full' : 'partial',
                     planned_fee_reversal: feeReversal,
-                    is_direct_split: true,
+                    is_direct_split: refPayment.collection_mode === 'connect',
                     initiated_by_role: 'admin',
                   })
                   .select('id')

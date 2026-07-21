@@ -36,6 +36,7 @@ describe('Square payment-link idempotency', () => {
       id: 'existing-payment-uuid',
       gateway_reference: 'sq-init-REF-001',
       metadata: null, // no Square response yet
+      amount: 50, currency: 'USD', business_id: null,
     };
     const updateFn = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) });
     const fromFn = vi.fn((table: string) => {
@@ -44,6 +45,7 @@ describe('Square payment-link idempotency', () => {
           select: vi.fn().mockReturnThis(),
           eq: vi.fn().mockReturnThis(),
           maybeSingle: vi.fn().mockResolvedValue({ data: existingRow }),
+          single: vi.fn().mockResolvedValue({ data: existingRow }),
           update: updateFn,
           insert: vi.fn(),
         };
@@ -126,6 +128,7 @@ describe('Square payment-link idempotency', () => {
     const fromFn = vi.fn(() => ({
       select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({ data: null }),
+      single: vi.fn().mockResolvedValue({ data: { metadata: {} } }),
       insert: insertFn,
       update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
     }));
@@ -706,6 +709,7 @@ describe('Square checkout redirect', () => {
     const fromFn = vi.fn(() => ({
       select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({ data: null }),
+      single: vi.fn().mockResolvedValue({ data: { metadata: {} } }),
       insert: insertFn,
       update: updateFn,
     }));

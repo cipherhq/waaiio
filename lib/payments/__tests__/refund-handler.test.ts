@@ -69,6 +69,7 @@ function createMockSupabase(tableConfigs: Record<string, MockTableConfig> = {}) 
         insert: insertFn,
       };
     }),
+    rpc: vi.fn().mockResolvedValue({ data: { success: true, financial: true }, error: null }),
     _calls: calls,
   };
 }

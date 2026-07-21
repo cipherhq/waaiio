@@ -542,3 +542,115 @@ END; $$;
 
 REVOKE ALL ON FUNCTION public.revoke_square_connection(TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.revoke_square_connection(TEXT) TO service_role;
+
+-- ── 13. Atomic non-Square refund finalization ──
+-- One transaction: refund status + payment totals + booking/reservation + fee reversal + payout adjustment
+-- Used by refund-handler.ts for Paystack, Stripe, Flutterwave, PayPal refunds
+CREATE OR REPLACE FUNCTION public.finalize_refund_generic(
+  p_refund_id UUID,
+  p_gateway_refund_ref TEXT DEFAULT NULL,
+  p_final_status TEXT DEFAULT 'success',
+  p_gateway_response JSONB DEFAULT NULL
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v_refund RECORD;
+  v_payment RECORD;
+  v_new_refund_amount NUMERIC(12,2);
+  v_is_fully_refunded BOOLEAN;
+  v_fee RECORD;
+BEGIN
+  -- Input validation
+  IF p_refund_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'invalid_input');
+  END IF;
+  IF p_final_status NOT IN ('success', 'failed') THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'invalid_status');
+  END IF;
+
+  -- Lock and read refund
+  SELECT * INTO v_refund FROM public.refunds WHERE id = p_refund_id FOR UPDATE;
+  IF v_refund IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'refund_not_found');
+  END IF;
+  IF v_refund.status IN ('success', 'failed') THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'already_finalized');
+  END IF;
+
+  -- Update refund status
+  UPDATE public.refunds SET
+    status = p_final_status,
+    gateway_refund_reference = COALESCE(p_gateway_refund_ref, gateway_refund_reference),
+    gateway_response = COALESCE(p_gateway_response, gateway_response)
+  WHERE id = p_refund_id;
+
+  -- For failed: no financial mutations
+  IF p_final_status != 'success' THEN
+    RETURN jsonb_build_object('success', true, 'financial', false);
+  END IF;
+
+  -- Lock and read payment
+  SELECT id, amount, refund_amount, booking_id, reservation_id, invoice_id,
+         campaign_id, order_id, business_id, gateway_reference, collection_mode
+    INTO v_payment FROM public.payments WHERE id = v_refund.payment_id FOR UPDATE;
+  IF v_payment IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'payment_not_found');
+  END IF;
+
+  -- Update payment refund totals
+  v_new_refund_amount := COALESCE(v_payment.refund_amount, 0) + v_refund.amount;
+  v_is_fully_refunded := (v_new_refund_amount >= v_payment.amount);
+
+  UPDATE public.payments SET
+    refund_amount = v_new_refund_amount,
+    refunded_at = NOW(),
+    status = CASE WHEN v_is_fully_refunded THEN 'refunded'::payment_status ELSE status END
+  WHERE id = v_refund.payment_id;
+
+  -- Booking/reservation deposit status
+  IF v_is_fully_refunded AND v_payment.booking_id IS NOT NULL THEN
+    UPDATE public.bookings SET deposit_status = 'refunded' WHERE id = v_payment.booking_id;
+  END IF;
+  IF v_is_fully_refunded AND v_payment.reservation_id IS NOT NULL THEN
+    UPDATE public.reservations SET deposit_status = 'refunded' WHERE id = v_payment.reservation_id;
+  END IF;
+
+  -- Fee reversal — scoped by payment_id
+  IF v_is_fully_refunded THEN
+    UPDATE public.platform_fees SET refunded_at = NOW()
+      WHERE payment_id = v_refund.payment_id AND refunded_at IS NULL;
+  ELSE
+    -- Proportional partial fee reversal
+    SELECT id, fee_total, transaction_amount INTO v_fee
+      FROM public.platform_fees WHERE payment_id = v_refund.payment_id AND refunded_at IS NULL LIMIT 1;
+    IF v_fee IS NOT NULL AND v_fee.transaction_amount > 0 THEN
+      UPDATE public.platform_fees SET
+        fee_total = GREATEST(0, fee_total - ROUND(v_fee.fee_total * v_refund.amount / v_fee.transaction_amount, 2))
+      WHERE id = v_fee.id;
+    END IF;
+  END IF;
+
+  -- Payout adjustment: only for non-connect (platform held the funds)
+  IF v_payment.collection_mode IS DISTINCT FROM 'connect' THEN
+    DECLARE v_payout RECORD;
+    BEGIN
+      SELECT bp.id INTO v_payout
+        FROM public.business_payouts bp, public.payments p
+        WHERE p.id = v_refund.payment_id
+          AND bp.business_id = v_refund.business_id
+          AND bp.status = 'paid'
+          AND bp.period_end >= p.created_at
+        LIMIT 1;
+      IF v_payout IS NOT NULL THEN
+        INSERT INTO public.payout_adjustments (business_id, payout_id, amount, reason, payment_id)
+        VALUES (v_refund.business_id, v_payout.id, -v_refund.amount,
+                'Refund for payment ' || v_payment.gateway_reference, v_refund.payment_id);
+      END IF;
+    END;
+  END IF;
+
+  RETURN jsonb_build_object('success', true, 'financial', true, 'fully_refunded', v_is_fully_refunded);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.finalize_refund_generic(UUID, TEXT, TEXT, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.finalize_refund_generic(UUID, TEXT, TEXT, JSONB) TO service_role;

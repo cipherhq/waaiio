@@ -244,9 +244,7 @@ export async function sendProactiveConfirmation(
     const { data: donation } = await supabase
       .from('campaign_donations')
       .select('donor_phone, campaigns(business_id, businesses(name, country_code))')
-      .eq('campaign_id', payment.campaign_id)
-      .order('created_at', { ascending: false })
-      .limit(1)
+      .eq('payment_id', payment.id)
       .maybeSingle();
     if (donation?.donor_phone) {
       customerPhone = donation.donor_phone;
@@ -762,25 +760,41 @@ export async function sendProactiveConfirmation(
 /**
  * Retry confirmation for successful payments that have no confirmation_sent_at.
  * Called by cron or webhook handlers to recover from delivery failures.
+ * Includes both unclaimed confirmations and stale claims (claimed but not sent within 5 minutes).
  */
 export async function retryUndeliveredConfirmations(
   supabase: SupabaseClient,
   limit = 10,
 ): Promise<number> {
-  const { data: undelivered, error } = await supabase
+  const staleThresholdMs = 5 * 60 * 1000;
+  const staleThreshold = new Date(Date.now() - staleThresholdMs).toISOString();
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  // Unclaimed confirmations (no claim, no sent)
+  const { data: unclaimed } = await supabase
     .from('payments')
     .select('id, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id')
     .eq('status', 'success')
     .is('confirmation_sent_at', null)
     .is('confirmation_claimed_at', null)
-    .gte('paid_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+    .gte('paid_at', oneDayAgo)
     .order('paid_at', { ascending: true })
     .limit(limit);
 
-  if (error || !undelivered) return 0;
+  // Stale claims (claimed but not sent, older than threshold)
+  const { data: stale } = await supabase
+    .from('payments')
+    .select('id, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id')
+    .eq('status', 'success')
+    .is('confirmation_sent_at', null)
+    .not('confirmation_claimed_at', 'is', null)
+    .lt('confirmation_claimed_at', staleThreshold)
+    .order('paid_at', { ascending: true })
+    .limit(limit);
 
+  const all = [...(unclaimed || []), ...(stale || [])].slice(0, limit);
   let retried = 0;
-  for (const payment of undelivered) {
+  for (const payment of all) {
     try {
       await sendProactiveConfirmation(supabase, payment, '[RETRY]');
       retried++;

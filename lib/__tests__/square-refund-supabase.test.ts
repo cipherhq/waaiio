@@ -10,7 +10,25 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
   let supabase: ReturnType<typeof createClient>;
   let testBusinessId: string;
   let testUserId: string;
-  let testPaymentId: string;
+
+  /** Create an isolated payment for each test to avoid balance interference */
+  async function createTestPayment(amount = 100, fee = 2.50) {
+    const ref = `sq-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const { data, error } = await supabase.from('payments').insert({
+      business_id: testBusinessId,
+      user_id: testUserId,
+      amount,
+      currency: 'USD',
+      gateway: 'square',
+      gateway_reference: ref,
+      status: 'success',
+      paid_at: new Date().toISOString(),
+      waaiio_fee: fee,
+      collection_mode: 'connect',
+    }).select('id').single();
+    if (error) throw new Error(`Payment fixture failed: ${error.message}`);
+    return data!.id;
+  }
 
   beforeAll(async () => {
     supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
@@ -31,6 +49,7 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
       owner_id: testUserId,
       category: 'salon',
       country_code: 'US',
+      city: 'Test City',
       phone: '+15551234567',
       address: '123 Test Street',
       flow_type: 'appointment',
@@ -39,21 +58,6 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
     }).select('id').single();
     if (bizErr) throw new Error(`Business setup failed: ${bizErr.message}`);
     testBusinessId = biz!.id;
-
-    // Create a test payment (success status)
-    const { data: payment, error: payErr } = await supabase.from('payments').insert({
-      business_id: testBusinessId,
-      user_id: testUserId,
-      amount: 100.00,
-      currency: 'USD',
-      gateway: 'square',
-      gateway_reference: `sq-test-${Date.now()}`,
-      status: 'success',
-      paid_at: new Date().toISOString(),
-      waaiio_fee: 2.50,
-    }).select('id').single();
-    if (payErr) throw new Error(`Payment setup failed: ${payErr.message}`);
-    testPaymentId = payment!.id;
   });
 
   afterAll(async () => {
@@ -66,9 +70,10 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
   });
 
   it('claim_refund_balance reserves the correct amount', async () => {
+    const pid = await createTestPayment(100, 2.50);
     const idempotencyKey = `test-claim-${Date.now()}`;
     const { data, error } = await supabase.rpc('claim_refund_balance', {
-      p_payment_id: testPaymentId,
+      p_payment_id: pid,
       p_refund_amount: 50.00,
       p_idempotency_key: idempotencyKey,
       p_currency: 'USD',
@@ -83,11 +88,12 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
   });
 
   it('claim_refund_balance returns existing on duplicate key', async () => {
+    const pid = await createTestPayment(100, 2.50);
     const idempotencyKey = `test-dup-${Date.now()}`;
 
     // First claim
     const { data: first } = await supabase.rpc('claim_refund_balance', {
-      p_payment_id: testPaymentId,
+      p_payment_id: pid,
       p_refund_amount: 10.00,
       p_idempotency_key: idempotencyKey,
       p_currency: 'USD',
@@ -97,7 +103,7 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
 
     // Duplicate claim — same key, same amount
     const { data: second } = await supabase.rpc('claim_refund_balance', {
-      p_payment_id: testPaymentId,
+      p_payment_id: pid,
       p_refund_amount: 10.00,
       p_idempotency_key: idempotencyKey,
       p_currency: 'USD',
@@ -109,11 +115,12 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
   });
 
   it('claim_refund_balance rejects parameter mismatch on duplicate key', async () => {
+    const pid = await createTestPayment(100, 2.50);
     const idempotencyKey = `test-mismatch-${Date.now()}`;
 
     // First claim with amount 10
     await supabase.rpc('claim_refund_balance', {
-      p_payment_id: testPaymentId,
+      p_payment_id: pid,
       p_refund_amount: 10.00,
       p_idempotency_key: idempotencyKey,
       p_currency: 'USD',
@@ -122,7 +129,7 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
 
     // Same key, different amount
     const { data } = await supabase.rpc('claim_refund_balance', {
-      p_payment_id: testPaymentId,
+      p_payment_id: pid,
       p_refund_amount: 20.00,
       p_idempotency_key: idempotencyKey,
       p_currency: 'USD',
@@ -133,8 +140,9 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
   });
 
   it('claim_refund_balance rejects exceeding balance', async () => {
+    const pid = await createTestPayment(100, 2.50);
     const { data } = await supabase.rpc('claim_refund_balance', {
-      p_payment_id: testPaymentId,
+      p_payment_id: pid,
       p_refund_amount: 99999.00,
       p_idempotency_key: `test-exceed-${Date.now()}`,
       p_currency: 'USD',
@@ -145,11 +153,12 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
   });
 
   it('finalize_square_refund completes a refund and updates payment', async () => {
+    const pid = await createTestPayment(100, 2.50);
     const idempotencyKey = `test-finalize-${Date.now()}`;
 
     // Claim
     const { data: claim } = await supabase.rpc('claim_refund_balance', {
-      p_payment_id: testPaymentId,
+      p_payment_id: pid,
       p_refund_amount: 5.00,
       p_idempotency_key: idempotencyKey,
       p_currency: 'USD',
@@ -179,11 +188,12 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
   });
 
   it('finalize_square_refund rejects already-finalized refunds', async () => {
+    const pid = await createTestPayment(100, 2.50);
     const idempotencyKey = `test-double-final-${Date.now()}`;
 
     // Claim and finalize
     const { data: claim } = await supabase.rpc('claim_refund_balance', {
-      p_payment_id: testPaymentId,
+      p_payment_id: pid,
       p_refund_amount: 3.00,
       p_idempotency_key: idempotencyKey,
       p_currency: 'USD',
@@ -208,10 +218,11 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
   });
 
   it('finalize_square_refund with failed status does not mutate financials', async () => {
+    const pid = await createTestPayment(100, 2.50);
     const idempotencyKey = `test-fail-final-${Date.now()}`;
 
     const { data: claim } = await supabase.rpc('claim_refund_balance', {
-      p_payment_id: testPaymentId,
+      p_payment_id: pid,
       p_refund_amount: 2.00,
       p_idempotency_key: idempotencyKey,
       p_currency: 'USD',
@@ -234,9 +245,10 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
   });
 
   it('finalize_square_refund applies explicit p_fee_reversed over planned value', async () => {
+    const pid = await createTestPayment(100, 2.50);
     const key = `test-fee-diff-${Date.now()}`;
     const { data: claim, error: claimErr } = await supabase.rpc('claim_refund_balance', {
-      p_payment_id: testPaymentId,
+      p_payment_id: pid,
       p_refund_amount: 4.00,
       p_idempotency_key: key,
       p_currency: 'USD',
@@ -244,6 +256,16 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
     });
     expect(claimErr).toBeNull();
     expect(claim.claimed).toBe(true);
+
+    // Create a platform_fees row so we can verify it IS reduced by the explicit fee
+    await supabase.from('platform_fees').insert({
+      business_id: testBusinessId,
+      payment_id: pid,
+      fee_total: 2.50,
+      fee_percentage: 2.5,
+      transaction_amount: 100,
+      tier: 'free',
+    });
 
     // Finalize with a different fee than planned
     const actualFee = 0.75;
@@ -261,13 +283,22 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
       .select('planned_fee_reversal')
       .eq('id', claim.refund_id).single();
     expect(Number(refund!.planned_fee_reversal)).toBe(actualFee);
+
+    // Verify the platform_fees row was reduced by the explicit fee amount
+    const { data: fee } = await supabase.from('platform_fees')
+      .select('fee_total')
+      .eq('payment_id', pid)
+      .is('refunded_at', null)
+      .single();
+    expect(Number(fee!.fee_total)).toBe(2.50 - actualFee);
   });
 
   it('payment refund_amount totals are correct after finalization', async () => {
+    const pid = await createTestPayment(100, 2.50);
     const key = `test-totals-${Date.now()}`;
     const { data: claim } = await supabase.rpc('claim_refund_balance', {
-      p_payment_id: testPaymentId,
-      p_refund_amount: 1.00,
+      p_payment_id: pid,
+      p_refund_amount: 25.00,
       p_idempotency_key: key,
       p_currency: 'USD',
       p_waaiio_fee_total: 2.50,
@@ -281,23 +312,34 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
       p_fee_reversed: claim.planned_fee_reversal,
     });
 
-    // Verify payment refund_amount is updated
+    // Verify payment refund_amount equals exactly the refund amount
     const { data: payment } = await supabase.from('payments')
       .select('refund_amount')
-      .eq('id', testPaymentId).single();
-    expect(Number(payment!.refund_amount)).toBeGreaterThan(0);
+      .eq('id', pid).single();
+    expect(Number(payment!.refund_amount)).toBe(25);
   });
 
-  it('zero-fee override works correctly', async () => {
+  it('zero-fee override works correctly and does not reduce platform_fees', async () => {
+    const pid = await createTestPayment(100, 2.50);
     const key = `test-zero-fee-${Date.now()}`;
     const { data: claim } = await supabase.rpc('claim_refund_balance', {
-      p_payment_id: testPaymentId,
-      p_refund_amount: 1.00,
+      p_payment_id: pid,
+      p_refund_amount: 10.00,
       p_idempotency_key: key,
       p_currency: 'USD',
       p_waaiio_fee_total: 2.50,
     });
     expect(claim.claimed).toBe(true);
+
+    // Create a platform_fees row to verify it is NOT reduced when fee=0
+    await supabase.from('platform_fees').insert({
+      business_id: testBusinessId,
+      payment_id: pid,
+      fee_total: 2.50,
+      fee_percentage: 2.5,
+      transaction_amount: 100,
+      tier: 'free',
+    });
 
     // Finalize with zero fee override
     const { data: result, error: finalErr } = await supabase.rpc('finalize_square_refund', {
@@ -313,30 +355,36 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
       .select('planned_fee_reversal')
       .eq('id', claim.refund_id).single();
     expect(Number(refund!.planned_fee_reversal)).toBe(0);
+
+    // Verify the platform_fees row was NOT reduced (fee_total unchanged)
+    const { data: fee } = await supabase.from('platform_fees')
+      .select('fee_total')
+      .eq('payment_id', pid)
+      .is('refunded_at', null)
+      .single();
+    expect(Number(fee!.fee_total)).toBe(2.50);
   });
 
   it('concurrent claims do not double-reserve', async () => {
-    const key1 = `concurrent-a-${Date.now()}`;
-    const key2 = `concurrent-b-${Date.now()}`;
-
-    // Both try to claim against the same payment simultaneously
-    const [result1, result2] = await Promise.all([
-      supabase.rpc('claim_refund_balance', { p_payment_id: testPaymentId, p_refund_amount: 40, p_idempotency_key: key1, p_currency: 'USD', p_waaiio_fee_total: 2.50 }),
-      supabase.rpc('claim_refund_balance', { p_payment_id: testPaymentId, p_refund_amount: 40, p_idempotency_key: key2, p_currency: 'USD', p_waaiio_fee_total: 2.50 }),
+    const pid = await createTestPayment(80, 0);
+    const [r1, r2] = await Promise.all([
+      supabase.rpc('claim_refund_balance', { p_payment_id: pid, p_refund_amount: 40, p_idempotency_key: `cc-a-${Date.now()}`, p_currency: 'USD', p_waaiio_fee_total: 0 }),
+      supabase.rpc('claim_refund_balance', { p_payment_id: pid, p_refund_amount: 40, p_idempotency_key: `cc-b-${Date.now()}`, p_currency: 'USD', p_waaiio_fee_total: 0 }),
     ]);
-
-    // At most one should claim the last 40 (depends on remaining balance)
-    const claimed1 = result1.data?.claimed;
-    const claimed2 = result2.data?.claimed;
-    // Both could succeed if balance allows, or one could fail with exceeds_balance
-    // The key invariant: total claimed never exceeds payment amount
-    if (claimed1 && claimed2) {
-      // Both succeeded — verify neither exceeds balance individually
-      expect(result1.data.remaining_after).toBeGreaterThanOrEqual(0);
-      expect(result2.data.remaining_after).toBeGreaterThanOrEqual(0);
-    }
-    // At least one should have a valid response
-    expect(result1.error).toBeNull();
-    expect(result2.error).toBeNull();
+    const claimed1 = r1.data?.claimed === true;
+    const claimed2 = r2.data?.claimed === true;
+    // Both should succeed (80 total available, 40+40=80)
+    expect(claimed1).toBe(true);
+    expect(claimed2).toBe(true);
+    // Verify total claimed = 80 (neither exceeds)
+    const { data: refunds } = await supabase.from('refunds')
+      .select('amount').eq('payment_id', pid).neq('status', 'failed');
+    const total = refunds!.reduce((sum: number, r: any) => sum + Number(r.amount), 0);
+    expect(total).toBe(80);
+    // A third claim for 1 should be rejected (exceeds balance)
+    const { data: r3 } = await supabase.rpc('claim_refund_balance', {
+      p_payment_id: pid, p_refund_amount: 1, p_idempotency_key: `cc-c-${Date.now()}`, p_currency: 'USD', p_waaiio_fee_total: 0 });
+    expect(r3.claimed).toBe(false);
+    expect(r3.reason).toBe('exceeds_balance');
   });
 });

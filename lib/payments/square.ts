@@ -110,6 +110,27 @@ export class SquareGateway implements PaymentGateway {
       if (existingAttempt) {
         paymentId = existingAttempt.id;
         const existingMeta = existingAttempt.metadata as Record<string, unknown> | null;
+
+        // Validate immutable parameters match on retry
+        const { data: existingPayment } = await opts.supabase.from('payments')
+          .select('amount, currency, business_id')
+          .eq('id', paymentId).single();
+
+        if (existingPayment) {
+          if (Number(existingPayment.amount) !== opts.amount) {
+            logger.error('[SQUARE] Parameter mismatch on retry: amount');
+            return null;
+          }
+          if ((existingPayment.currency as string) !== opts.currency) {
+            logger.error('[SQUARE] Parameter mismatch on retry: currency');
+            return null;
+          }
+          if (existingPayment.business_id !== (opts.businessId || null)) {
+            logger.error('[SQUARE] Parameter mismatch on retry: businessId');
+            return null;
+          }
+        }
+
         // Recover the shortRef from the existing row
         if (existingMeta?.checkout_short_ref) {
           insertShortRef = existingMeta.checkout_short_ref as string;
@@ -232,11 +253,17 @@ export class SquareGateway implements PaymentGateway {
       const orderId = paymentLink.order_id as string | undefined;
 
       // Step 3: Update the payment row with Square's actual references
+      // Re-read current metadata to avoid overwriting webhook-written fields (e.g. square_payment_id)
+      const { data: currentRow } = await opts.supabase.from('payments')
+        .select('metadata').eq('id', paymentId).single();
+      const currentMeta = (currentRow?.metadata as Record<string, unknown>) || {};
+
       // Store the checkout URL and short ref in metadata for retry recovery
       const { error: updateErr } = await opts.supabase.from('payments').update({
         gateway_reference: squareRef,
         provider_order_ref: orderId || null,
         metadata: {
+          ...currentMeta,
           square_payment_link_id: squareRef,
           square_order_id: orderId || null,
           square_checkout_url: paymentLink.url as string,

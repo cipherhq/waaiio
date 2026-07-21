@@ -225,9 +225,16 @@ export default function Payments() {
         details: { amount: amt, reason: refundReason.trim(), refundId: data.refundId, isDirectSplit: data.isDirectSplit },
       });
 
-      setRefundSuccess(data.isDirectSplit
-        ? 'Refund recorded (direct split — please return funds manually)'
-        : 'Refund processed successfully');
+      if (data.isDirectSplit) {
+        // Square Connect refunds are actually submitted — no manual action needed
+        if (selected.gateway === 'square') {
+          setRefundSuccess('Refund submitted to Square for processing');
+        } else {
+          setRefundSuccess('Refund recorded (direct split — please return funds manually)');
+        }
+      } else {
+        setRefundSuccess('Refund processed successfully');
+      }
       setRefundAmount('');
       setRefundReason('');
       setManualRefundKey('');

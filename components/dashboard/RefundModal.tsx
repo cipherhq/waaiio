@@ -113,12 +113,12 @@ export function RefundModal({
             </div>
           </div>
 
-          {/* Direct split warning */}
+          {/* Direct split info */}
           {isDirectSplit && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              <p className="font-medium">Direct split payment</p>
-              <p className="mt-0.5 text-amber-700">
-                Please manually return the funds to the customer. This action records the refund in the system only.
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+              <p className="font-medium">Connected payment</p>
+              <p className="mt-0.5 text-blue-700">
+                The refund will be submitted directly to the payment provider.
               </p>
             </div>
           )}
