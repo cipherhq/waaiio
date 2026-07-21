@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
 import { logger } from '@/lib/logger';
 
@@ -114,6 +114,7 @@ export class SquareGateway implements PaymentGateway {
           return {
             url: existingMeta.square_checkout_url as string,
             reference: paymentId,
+            shortRef: (existingMeta.checkout_short_ref as string) || createHash('sha256').update(paymentId).digest('hex').slice(0, 8),
           };
         }
       } else {
@@ -160,6 +161,9 @@ export class SquareGateway implements PaymentGateway {
           paymentId = newPayment.id;
         }
       }
+
+      // Compute deterministic short ref for URL shortening
+      const shortRef = createHash('sha256').update(paymentId).digest('hex').slice(0, 8);
 
       // Step 2: Use the payment row ID as the stable idempotency key
       const idempotencyKey = paymentId;
@@ -220,7 +224,7 @@ export class SquareGateway implements PaymentGateway {
       const orderId = paymentLink.order_id as string | undefined;
 
       // Step 3: Update the payment row with Square's actual references
-      // Store the checkout URL in metadata for retry recovery
+      // Store the checkout URL and short ref in metadata for retry recovery
       const { error: updateErr } = await opts.supabase.from('payments').update({
         gateway_reference: squareRef,
         provider_order_ref: orderId || null,
@@ -228,6 +232,7 @@ export class SquareGateway implements PaymentGateway {
           square_payment_link_id: squareRef,
           square_order_id: orderId || null,
           square_checkout_url: paymentLink.url as string,
+          checkout_short_ref: shortRef,
           reference_code: opts.referenceCode,
           channel: 'whatsapp',
           order_id: opts.orderId || null,
@@ -246,7 +251,7 @@ export class SquareGateway implements PaymentGateway {
         await opts.supabase.from('invoices').update({ payment_id: paymentId }).eq('id', opts.invoiceId);
       }
 
-      return { url: paymentLink.url as string, reference: paymentId };
+      return { url: paymentLink.url as string, reference: paymentId, shortRef };
     } catch (error) {
       logger.error('[SQUARE] init error:', (error as Error).message);
       return null;
@@ -335,15 +340,35 @@ export class SquareGateway implements PaymentGateway {
           : tenderType === 'CARD' ? 'card'
           : 'square';
 
-        // Validate location_id matches expected square_location_id from payout_account
-        if (paymentRecord.payout_account_id && order.location_id) {
-          const { data: payoutAcct } = await supabase
+        // Require order.location_id
+        if (!order.location_id) {
+          logger.warn('[SQUARE] Verification: missing order location_id');
+          return false;
+        }
+
+        if (paymentRecord.payout_account_id) {
+          // Connected payment: validate against payout account location
+          const { data: payoutAcct, error: locErr } = await supabase
             .from('payout_accounts')
             .select('square_location_id')
             .eq('id', paymentRecord.payout_account_id)
             .maybeSingle();
-          if (payoutAcct?.square_location_id && payoutAcct.square_location_id !== order.location_id) {
+          if (locErr) {
+            logger.error('[SQUARE] Verification: payout account lookup error:', locErr.message);
+            return false;
+          }
+          if (!payoutAcct?.square_location_id) {
+            logger.warn('[SQUARE] Verification: no expected location for connected payment');
+            return false;
+          }
+          if (payoutAcct.square_location_id !== order.location_id) {
             logger.warn('[SQUARE] Verification location_id mismatch');
+            return false;
+          }
+        } else {
+          // Platform payment: validate against configured platform location
+          if (squareLocationId && squareLocationId !== order.location_id) {
+            logger.warn('[SQUARE] Verification: platform location_id mismatch');
             return false;
           }
         }
@@ -378,7 +403,7 @@ export class SquareGateway implements PaymentGateway {
             .update({ deposit_status: 'paid', status: 'confirmed', confirmed_at: new Date().toISOString() })
             .eq('id', paymentRecord.booking_id);
         }
-        return true;
+        return !!updatedRow;
       }
       return false;
     } catch (error) {

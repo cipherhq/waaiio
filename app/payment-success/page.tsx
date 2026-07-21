@@ -32,7 +32,6 @@ export default async function PaymentSuccessPage({
       const supabase = createServiceClient();
 
       // Square redirects with ?paymentId=<uuid> — look up by id first
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let payment: any = null;
 
       if (params.paymentId) {
@@ -123,21 +122,17 @@ export default async function PaymentSuccessPage({
           }
 
           if (isVerified) {
-            // Update payment status
-            await supabase.from('payments')
-              .update({ status: 'success', paid_at: new Date().toISOString() })
-              .eq('id', payment.id)
-              .neq('status', 'success');
-
-            // Update booking/order status
-            if (payment.booking_id) {
-              await supabase.from('bookings')
-                .update({ status: 'confirmed', deposit_status: 'paid', confirmed_at: new Date().toISOString() })
-                .eq('id', payment.booking_id)
-                .neq('deposit_status', 'paid');
-            }
-
             confirmed = true;
+          } else {
+            // verifyPayment returned false — check if payment is already success (webhook handled it)
+            const { data: currentPayment } = await supabase
+              .from('payments')
+              .select('status')
+              .eq('id', payment.id)
+              .single();
+            if (currentPayment?.status === 'success') {
+              confirmed = true;
+            }
           }
         } else {
           confirmed = true;

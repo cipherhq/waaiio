@@ -178,12 +178,16 @@ export async function resolvePaymentRoute(
     }
 
     case 'byo': {
-      const { data: secret } = await supabase
+      const { data: secret, error: secretErr } = await supabase
         .from('business_connection_secrets')
         .select('id, platform_fee_subaccount_code, webhook_verified_at, verified_at')
         .eq('payout_account_id', defaultConn.id)
         .is('revoked_at', null)
         .maybeSingle();
+
+      if (secretErr) {
+        throw new Error(`[PAYMENT-ROUTE] BYO secret lookup failed — aborting: ${secretErr.message}`);
+      }
 
       if (!secret || !secret.verified_at || !secret.webhook_verified_at) {
         return platformFallback(countryCode, feeTotal, 'BYO connection not fully verified (credentials or webhook missing)');

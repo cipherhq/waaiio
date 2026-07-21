@@ -16,28 +16,28 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient();
 
-  // Look up payment by gateway_reference (full or partial match)
+  // Look up payment by gateway_reference (exact match)
   const safeRef = ref.replace(/[%_\\]/g, '\\$&');
   let payment = (await supabase
     .from('payments')
     .select('gateway, gateway_reference, metadata')
-    .like('gateway_reference', `%${safeRef}`)
+    .eq('gateway_reference', safeRef)
     .eq('status', 'pending')
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()).data;
 
-  // Fallback: for Square, reference is the payment row ID (UUID). Try partial ID match.
+  // Fallback: look up by short ref in metadata (used by Square short URLs)
   if (!payment) {
-    const { data: idMatch } = await supabase
+    const { data: shortMatch } = await supabase
       .from('payments')
       .select('gateway, gateway_reference, metadata')
-      .like('id', `%${safeRef}`)
+      .filter('metadata->>checkout_short_ref', 'eq', safeRef)
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (idMatch) payment = idMatch;
+    if (shortMatch) payment = shortMatch;
   }
 
   if (payment) {

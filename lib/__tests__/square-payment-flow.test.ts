@@ -780,8 +780,14 @@ describe('Square refund review_required retry', () => {
 
   it('review_required status falls through to retry the provider call', async () => {
     vi.resetModules();
-    const rpcFn = vi.fn().mockResolvedValue({
-      data: { claimed: true, refund_id: 'ref-review', existing: true }, error: null,
+    const rpcFn = vi.fn().mockImplementation((name: string) => {
+      if (name === 'claim_refund_balance') {
+        return Promise.resolve({ data: { claimed: true, refund_id: 'ref-review', existing: true, planned_fee_reversal: 0 }, error: null });
+      }
+      if (name === 'finalize_square_refund') {
+        return Promise.resolve({ data: { success: true, payment_id: 'pay-1', financial: true }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
     });
     const fromFn = vi.fn((table: string) => ({
       select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),

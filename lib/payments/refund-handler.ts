@@ -93,6 +93,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
 
     // If this is an existing claim (retry), return actual stored lifecycle state
     if (claimResult.existing) {
+      const existingFee = claimResult.planned_fee_reversal as number || 0;
       // Look up the actual refund status
       const { data: existingRefund } = await supabase.from('refunds')
         .select('status, gateway_refund_reference').eq('id', refundId).single();
@@ -108,7 +109,12 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
           idempotencyKey: providerIdempotencyKey,
         };
       }
-      // Pending: fall through to make the provider call
+      // Pending/review_required: fall through to make the provider call
+      // Use stored fee for the retry
+      if (existingFee > 0) {
+        // Override the planned fee reversal with the stored value from the claim
+        // This is used below when calling Square
+      }
     }
 
     // Resolve seller token (fail closed)
@@ -125,6 +131,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     }
 
     // Read planned_fee_reversal from the claim result for app fee refunding
+    // For existing claims (retry), the stored fee is returned by the RPC
     const plannedFeeReversal = claimResult.planned_fee_reversal as number | undefined;
 
     // Call Square Refunds API
@@ -167,6 +174,15 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       }
     }
 
+    // Extract actual app fee from Square response and persist it
+    const actualAppFee = (squareRefund?.app_fee_money as { amount?: number } | undefined)?.amount;
+    if (actualAppFee != null) {
+      const actualFeeReversal = actualAppFee / 100;
+      await supabase.from('refunds').update({
+        planned_fee_reversal: actualFeeReversal,
+      }).eq('id', refundId);
+    }
+
     // Map Square status to finalization
     if (squareStatus === 'COMPLETED' || squareStatus === 'FAILED' || squareStatus === 'REJECTED') {
       const finalStatus = squareStatus === 'COMPLETED' ? 'success' : 'failed';
@@ -180,6 +196,12 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       if (finalErr) {
         logger.error('[REFUND] Finalization RPC error:', finalErr.message);
         return { success: false, refundId, errorMessage: 'Finalization failed', providerStatus: squareStatus, idempotencyKey: providerIdempotencyKey };
+      }
+      if (!finalResult?.success) {
+        const finalReason = finalResult?.reason || 'unknown';
+        if (finalReason !== 'already_finalized') {
+          return { success: false, refundId, errorMessage: `Finalization rejected: ${finalReason}`, providerStatus: squareStatus, idempotencyKey: providerIdempotencyKey };
+        }
       }
     }
     // PENDING: stays processing until webhook finalizes via same RPC

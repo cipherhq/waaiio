@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { randomUUID } from 'crypto';
 import * as Sentry from '@sentry/nextjs';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
@@ -35,50 +36,74 @@ export async function sendProactiveConfirmation(
   logPrefix = '[WEBHOOK]',
 ): Promise<void> {
   // Dedup: only the first caller sends confirmation.
-  // Atomic: UPDATE ... WHERE confirmation_sent_at IS NULL — only one path can claim it.
-  // Uses .select('id').maybeSingle() to check if the update matched a row (count is not returned by default).
-  // On failure, the catch block clears confirmation_sent_at to NULL so retries can succeed.
-  //
-  // Stale-claim recovery: if a previous claim set confirmation_sent_at but crashed before
-  // clearing it, the claim becomes stale. We check for claims older than 5 minutes and
-  // re-claim them by clearing first, then re-attempting.
-  const STALE_CLAIM_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+  // Uses a two-phase claim: confirmation_claimed_at + confirmation_claim_token for lease,
+  // confirmation_sent_at set AFTER successful delivery.
+  // Stale-claim recovery: if a previous claim set confirmation_claimed_at but crashed before
+  // setting confirmation_sent_at, the claim becomes stale after 5 minutes and can be re-claimed.
+  const STALE_CLAIM_MS = 5 * 60 * 1000; // 5 minutes
+  const claimToken = randomUUID();
 
-  let claimed = (await supabase
+  // Step 1: Atomic claim — set confirmation_claimed_at + token where not already claimed
+  const { data: claimed, error: claimErr } = await supabase
     .from('payments')
-    .update({ confirmation_sent_at: new Date().toISOString() })
+    .update({
+      confirmation_claimed_at: new Date().toISOString(),
+      confirmation_claim_token: claimToken,
+    })
     .eq('id', payment.id)
+    .is('confirmation_claimed_at', null)
     .is('confirmation_sent_at', null)
     .select('id')
-    .maybeSingle()).data;
+    .maybeSingle();
+
+  if (claimErr) {
+    logger.error(`${logPrefix} Confirmation claim DB error:`, claimErr.message);
+    throw new Error(`Confirmation claim failed: ${claimErr.message}`);
+  }
 
   if (!claimed) {
-    // Check if existing claim is stale (set but never completed — process crash)
-    const { data: existingPayment } = await supabase
+    // Check for stale claim or already sent
+    const { data: existingPayment, error: readErr } = await supabase
       .from('payments')
-      .select('confirmation_sent_at')
+      .select('confirmation_claimed_at, confirmation_sent_at')
       .eq('id', payment.id)
       .single();
 
+    if (readErr) {
+      throw new Error(`Confirmation read failed: ${readErr.message}`);
+    }
+
+    // Already fully sent
     if (existingPayment?.confirmation_sent_at) {
-      const claimAge = Date.now() - new Date(existingPayment.confirmation_sent_at).getTime();
-      if (claimAge > STALE_CLAIM_THRESHOLD_MS) {
-        // Stale claim — clear and re-claim
-        logger.warn(`${logPrefix} Stale confirmation claim (${Math.round(claimAge / 1000)}s old) for payment ${payment.id} — re-claiming`);
-        await supabase.from('payments')
-          .update({ confirmation_sent_at: null })
-          .eq('id', payment.id);
-        claimed = (await supabase
+      logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id}`);
+      return;
+    }
+
+    // Stale claim recovery
+    if (existingPayment?.confirmation_claimed_at) {
+      const age = Date.now() - new Date(existingPayment.confirmation_claimed_at).getTime();
+      if (age > STALE_CLAIM_MS) {
+        logger.warn(`${logPrefix} Stale claim recovery for payment ${payment.id}`);
+        const { data: reclaimed } = await supabase
           .from('payments')
-          .update({ confirmation_sent_at: new Date().toISOString() })
+          .update({
+            confirmation_claimed_at: new Date().toISOString(),
+            confirmation_claim_token: claimToken,
+          })
           .eq('id', payment.id)
           .is('confirmation_sent_at', null)
           .select('id')
-          .maybeSingle()).data;
+          .maybeSingle();
+        if (!reclaimed) {
+          logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
+          return;
+        }
+      } else {
+        // Another worker holds the claim
+        logger.info(`${logPrefix} Confirmation claim held by another worker for payment ${payment.id} — skipping`);
+        return;
       }
-    }
-
-    if (!claimed) {
+    } else {
       logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
       return;
     }
@@ -660,11 +685,17 @@ export async function sendProactiveConfirmation(
         .eq('is_active', true)
         .in('current_step', ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking']);
     }
+
+    // Step 3: Mark as sent AFTER delivery succeeds (guarded by claim token)
+    await supabase.from('payments').update({
+      confirmation_sent_at: new Date().toISOString(),
+    }).eq('id', payment.id).eq('confirmation_claim_token', claimToken);
   } catch (err) {
-    // Clear the claim so retry can succeed
-    await supabase.from('payments')
-      .update({ confirmation_sent_at: null })
-      .eq('id', payment.id);
+    // Clear claim on failure (retryable) — guarded by claim token
+    await supabase.from('payments').update({
+      confirmation_claimed_at: null,
+      confirmation_claim_token: null,
+    }).eq('id', payment.id).eq('confirmation_claim_token', claimToken);
     logger.error(`${logPrefix} Send confirmation error (claim cleared for retry):`, err);
     Sentry.captureException(err, { tags: { component: 'send-confirmation', operation: 'send-confirmation' } });
     throw err; // propagate so caller knows delivery failed

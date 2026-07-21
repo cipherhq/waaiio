@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { randomUUID } from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { processRefund } from '@/lib/payments/refund-handler';
 import { logger } from '@/lib/logger';
@@ -26,9 +25,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing or invalid fields: paymentId, businessId, amount (must be positive number)' }, { status: 400 });
     }
 
-    // Stable refund-request ID: client-supplied for retry recovery, or generated once per request.
-    // The client SHOULD persist this and resend on retry to ensure idempotency.
-    const logicalRefundId = idempotencyKey || randomUUID();
+    if (!idempotencyKey) {
+      return NextResponse.json({ error: 'idempotencyKey is required for refund requests' }, { status: 400 });
+    }
+
+    const logicalRefundId = idempotencyKey;
 
     // Verify the user owns the business
     const { data: business } = await supabase

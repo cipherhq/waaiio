@@ -377,7 +377,8 @@ export async function POST(request: NextRequest) {
             }
 
             // Find the local payment by Square payment ID in metadata
-            const { data: refPayment, error: refPayErr } = await supabase
+            let refPayment: { id: string; amount: number; currency: string; business_id: string; payout_account_id: string; gateway: string; waaiio_fee: number } | null = null;
+            const { data: metaPayment, error: refPayErr } = await supabase
               .from('payments')
               .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee')
               .eq('gateway', 'square')
@@ -386,6 +387,20 @@ export async function POST(request: NextRequest) {
               .maybeSingle();
 
             if (refPayErr) throw new Error(`Refund payment lookup error: ${refPayErr.message}`);
+            refPayment = metaPayment;
+
+            // Fallback: older reconciled payments have Square payment ID as gateway_reference
+            if (!refPayment) {
+              const { data: fallbackPay, error: fallbackErr } = await supabase
+                .from('payments')
+                .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee')
+                .eq('gateway', 'square')
+                .eq('payout_account_id', conn.id)
+                .eq('gateway_reference', squarePaymentId)
+                .maybeSingle();
+              if (fallbackErr) throw new Error(`Refund payment fallback lookup error: ${fallbackErr.message}`);
+              refPayment = fallbackPay;
+            }
 
             if (refPayment) {
               // Calculate refund amount from Square's amount_money
@@ -400,8 +415,8 @@ export async function POST(request: NextRequest) {
 
               // Validate currency matches the payment currency
               const paymentCurrency = ((refPayment.currency as string) || 'USD').toUpperCase();
-              if (refundCurrency && refundCurrency.toUpperCase() !== paymentCurrency) {
-                throw new Error(`Refund currency ${refundCurrency} does not match payment currency ${paymentCurrency} — fail closed`);
+              if (!refundCurrency || refundCurrency.toUpperCase() !== paymentCurrency) {
+                throw new Error('Square-initiated refund currency mismatch');
               }
 
               const refundAmount = refundAmountCents / 100;
@@ -412,7 +427,7 @@ export async function POST(request: NextRequest) {
               const feeReversal = feeReversalCents / 100;
 
               // Check for unmatched claimed refund before creating a new one
-              const { data: unmatchedRefund } = await supabase
+              const { data: unmatchedRefund, error: unmatchErr } = await supabase
                 .from('refunds')
                 .select('id, status')
                 .eq('payment_id', refPayment.id)
@@ -420,16 +435,49 @@ export async function POST(request: NextRequest) {
                 .is('gateway_refund_reference', null)
                 .in('status', ['pending', 'processing', 'review_required'])
                 .maybeSingle();
+              if (unmatchErr) throw new Error(`Unmatched refund lookup error: ${unmatchErr.message}`);
 
               let refundRowId: string;
 
               if (unmatchedRefund) {
-                // Bind the Square refund ID to the existing claim
-                await supabase.from('refunds')
-                  .update({ gateway_refund_reference: squareRefundId })
-                  .eq('id', unmatchedRefund.id);
-                refundRowId = unmatchedRefund.id;
-                logger.info(`[SQUARE-WEBHOOK] Bound Square refund ${squareRefundId} to existing claim ${unmatchedRefund.id}`);
+                // Validate the claim matches this payment and amount
+                const { data: claimRefund, error: claimReadErr } = await supabase.from('refunds')
+                  .select('payment_id, amount')
+                  .eq('id', unmatchedRefund.id).single();
+                if (claimReadErr) throw new Error(`Claim read error: ${claimReadErr.message}`);
+
+                if (claimRefund?.payment_id !== refPayment.id ||
+                    Math.abs(Number(claimRefund.amount) - refundAmount) > 0.01) {
+                  // Claim doesn't match — create new row instead (fall through)
+                  logger.warn(`[SQUARE-WEBHOOK] Unmatched claim ${unmatchedRefund.id} doesn't match payment/amount — creating new row`);
+                  // Fall through to insert block by setting unmatchedRefund to null
+                  const { data: newRefund, error: insertErr } = await supabase
+                    .from('refunds')
+                    .insert({
+                      payment_id: refPayment.id,
+                      business_id: refPayment.business_id,
+                      amount: refundAmount,
+                      status: 'pending',
+                      gateway: 'square',
+                      gateway_refund_reference: squareRefundId,
+                      refund_type: refundAmount >= Number(refPayment.amount) ? 'full' : 'partial',
+                      planned_fee_reversal: feeReversal,
+                      is_direct_split: true,
+                      initiated_by_role: 'admin',
+                    })
+                    .select('id')
+                    .single();
+                  if (insertErr) throw new Error(`Refund insert error: ${insertErr.message}`);
+                  refundRowId = newRefund.id;
+                } else {
+                  // Bind the Square refund ID to the existing claim
+                  const { error: bindErr } = await supabase.from('refunds')
+                    .update({ gateway_refund_reference: squareRefundId })
+                    .eq('id', unmatchedRefund.id);
+                  if (bindErr) throw new Error(`Refund bind error: ${bindErr.message}`);
+                  refundRowId = unmatchedRefund.id;
+                  logger.info(`[SQUARE-WEBHOOK] Bound Square refund ${squareRefundId} to existing claim ${unmatchedRefund.id}`);
+                }
               } else {
                 // Create a local refund row
                 const { data: newRefund, error: insertErr } = await supabase
@@ -471,10 +519,11 @@ export async function POST(request: NextRequest) {
                 }
               } else {
                 // PENDING: mark as processing, wait for COMPLETED webhook
-                await supabase.from('refunds')
+                const { error: procErr } = await supabase.from('refunds')
                   .update({ status: 'processing' })
                   .eq('id', refundRowId)
                   .in('status', ['pending']);
+                if (procErr) throw new Error(`Refund processing status update error: ${procErr.message}`);
               }
 
               logger.info(`[SQUARE-WEBHOOK] Reconciled Square-initiated refund ${squareRefundId} for payment ${refPayment.id}`);

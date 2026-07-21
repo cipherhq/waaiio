@@ -54,6 +54,8 @@ export interface InitPaymentOpts {
 export interface InitPaymentResult {
   url: string;
   reference: string;
+  /** Short deterministic ref for URL shortening (8-char hex from SHA-256 of reference) */
+  shortRef?: string;
 }
 
 export interface VerifyResult {

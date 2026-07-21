@@ -6,6 +6,11 @@
 ALTER TABLE public.payout_accounts
   ADD COLUMN IF NOT EXISTS square_location_id VARCHAR(100);
 
+-- ── 1b. Confirmation claim columns ──
+ALTER TABLE public.payments
+  ADD COLUMN IF NOT EXISTS confirmation_claimed_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS confirmation_claim_token TEXT;
+
 -- ── 2. Normalized provider order reference ──
 ALTER TABLE public.payments
   ADD COLUMN IF NOT EXISTS provider_order_ref TEXT;
@@ -229,6 +234,7 @@ CREATE OR REPLACE FUNCTION public.claim_refund_balance(
 DECLARE
   v_payment RECORD; v_total_refunded NUMERIC(12,2); v_total_fee_reversed NUMERIC(12,2);
   v_remaining NUMERIC(12,2); v_planned_reversal NUMERIC(12,2); v_refund_id UUID; v_existing_id UUID;
+  v_existing_fee NUMERIC(12,2); v_existing_amount NUMERIC(12,2);
 BEGIN
   IF p_payment_id IS NULL OR p_refund_amount IS NULL OR p_refund_amount <= 0 THEN
     RETURN jsonb_build_object('claimed', false, 'reason', 'invalid_input');
@@ -242,20 +248,32 @@ BEGIN
   IF v_payment.status != 'success' THEN
     -- Allow replay of completed full refund (status='refunded')
     IF v_payment.status = 'refunded' THEN
-      SELECT id INTO v_existing_id FROM public.refunds
+      SELECT id, planned_fee_reversal, amount INTO v_existing_id, v_existing_fee, v_existing_amount
+        FROM public.refunds
         WHERE payment_id = p_payment_id AND provider_idempotency_key = p_idempotency_key;
       IF v_existing_id IS NOT NULL THEN
-        RETURN jsonb_build_object('claimed', true, 'refund_id', v_existing_id, 'existing', true);
+        -- Reject key reuse with changed parameters
+        IF v_existing_amount != p_refund_amount THEN
+          RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'amount');
+        END IF;
+        RETURN jsonb_build_object('claimed', true, 'refund_id', v_existing_id, 'existing', true,
+          'planned_fee_reversal', COALESCE(v_existing_fee, 0));
       END IF;
     END IF;
     RETURN jsonb_build_object('claimed', false, 'reason', 'payment_not_successful');
   END IF;
   IF p_currency != v_payment.currency THEN RETURN jsonb_build_object('claimed', false, 'reason', 'currency_mismatch'); END IF;
 
-  SELECT id INTO v_existing_id FROM public.refunds
+  SELECT id, planned_fee_reversal, amount INTO v_existing_id, v_existing_fee, v_existing_amount
+    FROM public.refunds
     WHERE payment_id = p_payment_id AND provider_idempotency_key = p_idempotency_key;
   IF v_existing_id IS NOT NULL THEN
-    RETURN jsonb_build_object('claimed', true, 'refund_id', v_existing_id, 'existing', true);
+    -- Reject key reuse with changed parameters
+    IF v_existing_amount != p_refund_amount THEN
+      RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'amount');
+    END IF;
+    RETURN jsonb_build_object('claimed', true, 'refund_id', v_existing_id, 'existing', true,
+      'planned_fee_reversal', COALESCE(v_existing_fee, 0));
   END IF;
 
   SELECT COALESCE(SUM(amount), 0), COALESCE(SUM(COALESCE(planned_fee_reversal, 0)), 0)

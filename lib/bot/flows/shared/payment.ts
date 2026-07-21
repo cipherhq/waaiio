@@ -176,12 +176,16 @@ export async function initializePayment(
         case 'byo':
           if (route.byoSecretId) {
             // Fetch and decrypt the merchant's key (service-role only)
-            const { data: secret } = await supabase
+            const { data: secret, error: secretErr } = await supabase
               .from('business_connection_secrets')
               .select('encrypted_secret_key')
               .eq('id', route.byoSecretId)
               .is('revoked_at', null)
               .single();
+            if (secretErr) {
+              logger.error('[PAYMENT] BYO credential lookup error:', secretErr.message);
+              return null; // fail closed
+            }
             if (secret?.encrypted_secret_key) {
               byoSecretKey = decryptToken(secret.encrypted_secret_key);
               byoPlatformSubaccount = route.byoPlatformSubaccount;
@@ -252,9 +256,12 @@ export async function initializePayment(
     if (!result) return null;
 
     // Shorten the checkout URL for WhatsApp messages
-    const shortUrl = result.url.length > 100
-      ? `${getAppUrl()}/pay?ref=${result.reference.slice(-8)}`
-      : result.url;
+    let shortUrl = result.url;
+    if (result.url.length > 100) {
+      // Use shortRef from gateway if available (deterministic hash), otherwise fall back to reference suffix
+      const ref = result.shortRef || result.reference.slice(-8);
+      shortUrl = `${getAppUrl()}/pay?ref=${ref}`;
+    }
 
     return { url: shortUrl, reference: result.reference };
   } catch (error) {
