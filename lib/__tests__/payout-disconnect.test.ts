@@ -140,9 +140,14 @@ describe('POST /api/payouts/disconnect', () => {
       return chainMock({ data: { id: 'p1', gateway: 'stripe', is_active: true, is_default: true } }); // account
     });
 
-    // Service client chains for revoke, secrets, remaining default check, payout_mode reset
-    const serviceChain = chainMock({ data: null, error: null });
-    mockServiceFrom.mockReturnValue(serviceChain);
+    // Service client chains: first call (update payout_accounts) must return the revoked row,
+    // subsequent calls (secrets, remaining default, payout_mode) return null
+    const serviceCallNum = { current: 0 };
+    mockServiceFrom.mockImplementation(() => {
+      serviceCallNum.current++;
+      if (serviceCallNum.current === 1) return chainMock({ data: { id: 'p1' }, error: null }); // revoked row
+      return chainMock({ data: null, error: null });
+    });
 
     const res = await handler(makeRequest({ business_id: 'b1', payout_account_id: 'p1' }));
     expect(res.status).toBe(200);
@@ -224,6 +229,13 @@ describe('Disconnect route structural safety', () => {
 
   it('is idempotent for already-inactive accounts', () => {
     expect(routeCode).toContain('already_disconnected');
+  });
+
+  it('verifies the update actually modified a row', () => {
+    // Must use .select().maybeSingle() to detect zero-row updates
+    expect(routeCode).toMatch(/\.select\(['"]id['"]\)/);
+    expect(routeCode).toContain('.maybeSingle()');
+    expect(routeCode).toContain('if (!revoked)');
   });
 });
 

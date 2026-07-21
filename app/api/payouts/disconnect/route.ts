@@ -49,8 +49,10 @@ export async function POST(request: NextRequest) {
   const service = createServiceClient();
 
   // Revoke the specific connection + secrets + reset payout_mode atomically
-  // Use service client to bypass the update guard trigger
-  const { error: revokeErr } = await service
+  // Use service client to bypass the update guard trigger.
+  // .select('id').maybeSingle() verifies a row was actually modified — PostgREST
+  // returns no error when an update matches zero rows, which would mask silent failures.
+  const { data: revoked, error: revokeErr } = await service
     .from('payout_accounts')
     .update({
       is_active: false,
@@ -61,11 +63,19 @@ export async function POST(request: NextRequest) {
     })
     .eq('id', payout_account_id)
     .eq('business_id', business_id)
-    .eq('is_active', true);
+    .eq('is_active', true)
+    .select('id')
+    .maybeSingle();
 
   if (revokeErr) {
     logger.error('[DISCONNECT] Failed to revoke payout account:', revokeErr.message);
     return NextResponse.json({ error: 'Failed to disconnect account' }, { status: 500 });
+  }
+
+  if (!revoked) {
+    // The row was already revoked by a concurrent request or the state changed between checks
+    logger.warn(`[DISCONNECT] Update matched zero rows for payout account ${payout_account_id} — already revoked or state changed`);
+    return NextResponse.json({ success: true, already_disconnected: true });
   }
 
   // Revoke associated secrets
