@@ -359,10 +359,15 @@ export async function POST(request: NextRequest) {
               : null;
 
             if (finalStatus) {
+              // Extract fee reversal from Square's app_fee_money if present
+              const appFeeMoneyLocal = refund.app_fee_money as { amount?: number } | undefined;
+              const feeReversalLocal = appFeeMoneyLocal?.amount ? appFeeMoneyLocal.amount / 100 : null;
+
               const { data: finalResult, error: finalErr } = await supabase.rpc('finalize_square_refund', {
                 p_refund_id: localRefund.id,
                 p_square_refund_id: squareRefundId,
                 p_final_status: finalStatus,
+                p_fee_reversed: feeReversalLocal,
               });
               if (finalErr) throw new Error(`Refund finalization RPC error: ${finalErr.message}`);
               if (!finalResult?.success && finalResult?.reason !== 'already_finalized') {
@@ -430,58 +435,39 @@ export async function POST(request: NextRequest) {
               const feeReversalCents = appFeeMoney?.amount || 0;
               const feeReversal = feeReversalCents / 100;
 
-              // Check for unmatched claimed refund before creating a new one
-              const { data: unmatchedRefund, error: unmatchErr } = await supabase
+              // Check for unmatched claimed refund for this specific payment
+              const { data: unmatchedClaims, error: unmatchErr } = await supabase
                 .from('refunds')
-                .select('id, status')
+                .select('id, status, payment_id, amount')
                 .eq('payment_id', refPayment.id)
                 .eq('gateway', 'square')
                 .is('gateway_refund_reference', null)
                 .in('status', ['pending', 'processing', 'review_required'])
-                .maybeSingle();
+                .order('created_at', { ascending: true });
               if (unmatchErr) throw new Error(`Unmatched refund lookup error: ${unmatchErr.message}`);
 
               let refundRowId: string;
+              let boundRefundId: string | null = null;
 
-              if (unmatchedRefund) {
-                // Validate the claim matches this payment and amount
-                const { data: claimRefund, error: claimReadErr } = await supabase.from('refunds')
-                  .select('payment_id, amount')
-                  .eq('id', unmatchedRefund.id).single();
-                if (claimReadErr) throw new Error(`Claim read error: ${claimReadErr.message}`);
-
-                if (claimRefund?.payment_id !== refPayment.id ||
-                    Math.abs(Number(claimRefund.amount) - refundAmount) > 0.01) {
-                  // Claim doesn't match — create new row instead (fall through)
-                  logger.warn(`[SQUARE-WEBHOOK] Unmatched claim ${unmatchedRefund.id} doesn't match payment/amount — creating new row`);
-                  // Fall through to insert block by setting unmatchedRefund to null
-                  const { data: newRefund, error: insertErr } = await supabase
-                    .from('refunds')
-                    .insert({
-                      payment_id: refPayment.id,
-                      business_id: refPayment.business_id,
-                      amount: refundAmount,
-                      status: 'pending',
-                      gateway: 'square',
-                      gateway_refund_reference: squareRefundId,
-                      refund_type: refundAmount >= Number(refPayment.amount) ? 'full' : 'partial',
-                      planned_fee_reversal: feeReversal,
-                      is_direct_split: true,
-                      initiated_by_role: 'admin',
-                    })
-                    .select('id')
-                    .single();
-                  if (insertErr) throw new Error(`Refund insert error: ${insertErr.message}`);
-                  refundRowId = newRefund.id;
-                } else {
-                  // Bind the Square refund ID to the existing claim
+              // Try to bind to a matching claim (same payment and approximately same amount)
+              if (unmatchedClaims && unmatchedClaims.length > 0) {
+                const matchingClaim = unmatchedClaims.find(c =>
+                  c.payment_id === refPayment.id && Math.abs(Number(c.amount) - refundAmount) < 0.01
+                );
+                if (matchingClaim) {
                   const { error: bindErr } = await supabase.from('refunds')
-                    .update({ gateway_refund_reference: squareRefundId })
-                    .eq('id', unmatchedRefund.id);
-                  if (bindErr) throw new Error(`Refund bind error: ${bindErr.message}`);
-                  refundRowId = unmatchedRefund.id;
-                  logger.info(`[SQUARE-WEBHOOK] Bound Square refund ${squareRefundId} to existing claim ${unmatchedRefund.id}`);
+                    .update({ gateway_refund_reference: squareRefundId, status: 'processing' })
+                    .eq('id', matchingClaim.id)
+                    .is('gateway_refund_reference', null); // CAS
+                  if (!bindErr) {
+                    boundRefundId = matchingClaim.id;
+                    logger.info(`[SQUARE-WEBHOOK] Bound Square refund ${squareRefundId} to existing claim ${matchingClaim.id}`);
+                  }
                 }
+              }
+
+              if (boundRefundId) {
+                refundRowId = boundRefundId;
               } else {
                 // Create a local refund row
                 const { data: newRefund, error: insertErr } = await supabase

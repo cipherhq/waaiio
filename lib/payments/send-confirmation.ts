@@ -240,7 +240,12 @@ export async function sendProactiveConfirmation(
   }
 
   if (!businessId) {
-    logger.warn(`${logPrefix} Proactive confirmation skipped — no business`);
+    // No business found — clear claim for retry
+    await supabase.from('payments').update({
+      confirmation_claimed_at: null,
+      confirmation_claim_token: null,
+    }).eq('id', payment.id).eq('confirmation_claim_token', claimToken);
+    logger.warn(`${logPrefix} Proactive confirmation skipped — no business — claim released`);
     return;
   }
 
@@ -265,7 +270,12 @@ export async function sendProactiveConfirmation(
       guestEmail = emailBooking?.guest_email || null;
     }
     if (!guestEmail) {
-      logger.warn(`${logPrefix} Proactive confirmation skipped — no phone or email`);
+      // No recipient found — clear claim for retry
+      await supabase.from('payments').update({
+        confirmation_claimed_at: null,
+        confirmation_claim_token: null,
+      }).eq('id', payment.id).eq('confirmation_claim_token', claimToken);
+      logger.warn(`${logPrefix} No recipient found for payment ${payment.id} — claim released`);
       return;
     }
     // We have email but no phone — send email-only below
@@ -373,6 +383,8 @@ export async function sendProactiveConfirmation(
     lines.push('💳 Type *save card* to save this card for faster checkout next time');
   }
 
+  let deliverySucceeded = false;
+
   // ── 5. Resolve channel + send ──
   try {
     const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
@@ -410,6 +422,7 @@ export async function sendProactiveConfirmation(
     if (resolved && customerPhone) {
       const phone = stripPlus(customerPhone);
       await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
+      deliverySucceeded = true;
     } else {
       logger.info(`${logPrefix} No WhatsApp channel resolved — will attempt email-only confirmation`);
     }
@@ -623,6 +636,7 @@ export async function sendProactiveConfirmation(
             whitelabel: isWl,
           });
           await sendEmail({ to: guestEmail, ...emailContent });
+          deliverySucceeded = true;
           logger.info(`${logPrefix} Email confirmation sent to ${guestEmail}`);
         }
       } catch (emailErr) {
@@ -687,16 +701,26 @@ export async function sendProactiveConfirmation(
     }
 
     // Step 3: Mark as sent AFTER delivery succeeds (guarded by claim token)
-    const { data: confirmed, error: confirmErr } = await supabase
-      .from('payments')
-      .update({ confirmation_sent_at: new Date().toISOString() })
-      .eq('id', payment.id)
-      .eq('confirmation_claim_token', claimToken)
-      .select('id')
-      .maybeSingle();
+    if (deliverySucceeded) {
+      const { data: confirmed, error: confirmErr } = await supabase
+        .from('payments')
+        .update({ confirmation_sent_at: new Date().toISOString() })
+        .eq('id', payment.id)
+        .eq('confirmation_claim_token', claimToken)
+        .select('id')
+        .maybeSingle();
 
-    if (confirmErr) {
-      logger.error(`${logPrefix} Failed to mark confirmation sent:`, confirmErr.message);
+      if (confirmErr || !confirmed) {
+        logger.error(`${logPrefix} Final mark failed — claim may be stale`);
+        throw new Error('Confirmation final mark failed');
+      }
+    } else {
+      // No delivery succeeded — clear claim for retry
+      await supabase.from('payments').update({
+        confirmation_claimed_at: null,
+        confirmation_claim_token: null,
+      }).eq('id', payment.id).eq('confirmation_claim_token', claimToken);
+      logger.warn(`${logPrefix} No delivery succeeded for payment ${payment.id} — claim released`);
     }
   } catch (err) {
     // Clear claim on failure (retryable) — guarded by claim token

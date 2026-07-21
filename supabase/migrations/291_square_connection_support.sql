@@ -361,6 +361,9 @@ BEGIN
         planned_fee_reversal = COALESCE(p_fee_reversed, planned_fee_reversal)
     WHERE id = p_refund_id;
 
+  -- Compute effective fee reversal (accounts for p_fee_reversed override)
+  v_refund.planned_fee_reversal := COALESCE(p_fee_reversed, v_refund.planned_fee_reversal);
+
   -- For failed/review_required: no financial mutations (reservation released by status change)
   IF p_final_status != 'success' THEN
     RETURN jsonb_build_object('success', true, 'payment_id', v_refund.payment_id, 'financial', false);

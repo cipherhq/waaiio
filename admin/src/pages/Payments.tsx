@@ -52,6 +52,7 @@ export default function Payments() {
   const [refundLoading, setRefundLoading] = useState(false);
   const [refundError, setRefundError] = useState('');
   const [refundSuccess, setRefundSuccess] = useState('');
+  const [manualRefundKey, setManualRefundKey] = useState('');
   const perPage = 20;
 
   const loadingRef = useRef(false);
@@ -187,7 +188,8 @@ export default function Payments() {
     setRefundSuccess('');
 
     try {
-      const idempotencyKey = crypto.randomUUID();
+      const idempotencyKey = manualRefundKey || crypto.randomUUID();
+      if (!manualRefundKey) setManualRefundKey(idempotencyKey);
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
@@ -228,6 +230,7 @@ export default function Payments() {
         : 'Refund processed successfully');
       setRefundAmount('');
       setRefundReason('');
+      setManualRefundKey('');
       loadData();
     } catch {
       setRefundError('Network error — please try again');
@@ -456,7 +459,7 @@ export default function Payments() {
       {/* Detail Modal */}
       <DetailModal
         open={!!selected}
-        onClose={() => { setSelected(null); setRefundAmount(''); setRefundReason(''); setRefundError(''); setRefundSuccess(''); }}
+        onClose={() => { setSelected(null); setRefundAmount(''); setRefundReason(''); setRefundError(''); setRefundSuccess(''); setManualRefundKey(''); }}
         title="Payment Details"
       >
         {selected && (

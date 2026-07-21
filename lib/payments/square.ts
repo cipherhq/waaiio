@@ -111,21 +111,16 @@ export class SquareGateway implements PaymentGateway {
         // If Square already succeeded (checkout URL stored), return without re-calling Square
         const existingMeta = existingAttempt.metadata as Record<string, unknown> | null;
         if (existingMeta?.square_checkout_url && existingMeta?.square_payment_link_id) {
-          let shortRef = existingMeta.checkout_short_ref as string;
-          if (!shortRef) {
-            shortRef = randomUUID();
-            await opts.supabase.from('payments').update({
-              metadata: { ...existingMeta, checkout_short_ref: shortRef },
-            }).eq('id', paymentId);
-          }
           return {
             url: existingMeta.square_checkout_url as string,
             reference: paymentId,
-            shortRef,
+            shortRef: existingMeta.checkout_short_ref as string, // already persisted at creation
           };
         }
       } else {
         // First attempt: create the payment row with the immutable attempt key
+        // Generate shortRef at insert time so it's set atomically with row creation
+        const insertShortRef = randomUUID();
         const { data: newPayment, error: insertErr } = await opts.supabase.from('payments').insert({
           booking_id: opts.bookingId || null,
           invoice_id: opts.invoiceId || null,
@@ -147,6 +142,7 @@ export class SquareGateway implements PaymentGateway {
             reference_code: opts.referenceCode,
             channel: 'whatsapp',
             order_id: opts.orderId || null,
+            checkout_short_ref: insertShortRef,
           },
         }).select('id').single();
 

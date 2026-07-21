@@ -201,6 +201,15 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       }
     }
     // PENDING: stays processing until webhook finalizes via same RPC
+    // For PENDING: persist actual fee with error check
+    if (squareStatus === 'PENDING' && actualFeeReversal != null) {
+      const { error: feeErr } = await supabase.from('refunds').update({
+        planned_fee_reversal: actualFeeReversal,
+      }).eq('id', refundId);
+      if (feeErr) {
+        logger.error('[REFUND] Failed to persist actual fee reversal:', feeErr.message);
+      }
+    }
 
     return {
       success: squareStatus !== 'FAILED' && squareStatus !== 'REJECTED',
@@ -248,6 +257,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       is_direct_split: isDirectSplit,
       initiated_by: initiatedBy,
       initiated_by_role: initiatedByRole,
+      provider_idempotency_key: opts.logicalRefundId, // Record for audit
     })
     .select('id')
     .single();

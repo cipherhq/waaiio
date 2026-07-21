@@ -211,14 +211,15 @@ describe('Square verifyPayment zero-row transition', () => {
   it('returns false when payment is already success (updatedRow is null)', async () => {
     vi.resetModules();
     process.env.SQUARE_ACCESS_TOKEN = 'mock-token';
+    process.env.SQUARE_LOCATION_ID = 'LOC_PLATFORM'; // Set expected platform location
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       json: () => Promise.resolve({
         order: {
           state: 'COMPLETED',
+          location_id: 'LOC_PLATFORM', // Must match SQUARE_LOCATION_ID
           total_money: { amount: 5000, currency: 'USD' },
           tenders: [{ payment_id: 'sq-pay-1', type: 'CARD' }],
-          location_id: 'loc-1',
         },
       }),
     }));
@@ -227,6 +228,7 @@ describe('Square verifyPayment zero-row transition', () => {
     const gw = new SquareGateway();
 
     // Mock supabase: payment lookup succeeds, but conditional update returns no row
+    // payout_account_id is null so it takes the platform location path
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'payments') {
