@@ -5,19 +5,27 @@
 -- ── Fix fee precision: INTEGER rounds fees to whole units, losing cents ──
 ALTER TABLE public.platform_fees ALTER COLUMN fee_total TYPE NUMERIC(12,2);
 ALTER TABLE public.platform_fees ALTER COLUMN fee_flat TYPE NUMERIC(12,2);
+ALTER TABLE public.platform_fees ALTER COLUMN transaction_amount TYPE NUMERIC(12,2);
+ALTER TABLE public.platform_fees ALTER COLUMN gateway_fee TYPE NUMERIC(12,2);
+ALTER TABLE public.platform_fees ALTER COLUMN reseller_commission TYPE NUMERIC(12,2);
 
 -- ── Atomic JSONB metadata merge for payments (prevents read-then-write races) ──
+-- Returns JSONB with 'matched' boolean indicating whether a row was updated
 CREATE OR REPLACE FUNCTION public.merge_payment_metadata(
   p_payment_id UUID, p_new_fields JSONB,
   p_gateway_reference TEXT DEFAULT NULL,
   p_provider_order_ref TEXT DEFAULT NULL
-) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v_count INT;
 BEGIN
   UPDATE public.payments SET
     metadata = COALESCE(metadata, '{}'::jsonb) || p_new_fields,
     gateway_reference = COALESCE(p_gateway_reference, gateway_reference),
     provider_order_ref = COALESCE(p_provider_order_ref, provider_order_ref)
   WHERE id = p_payment_id;
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN jsonb_build_object('matched', v_count > 0);
 END; $$;
 REVOKE ALL ON FUNCTION public.merge_payment_metadata(UUID, JSONB, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.merge_payment_metadata(UUID, JSONB, TEXT, TEXT) TO service_role;
@@ -454,8 +462,10 @@ BEGIN
     END IF;
   END IF;
 
-  -- Payout adjustment: only for platform-collected payments (not direct_split)
-  IF v_payment.collection_mode != 'connect' THEN
+  -- Payout adjustment: only when Waaiio held the funds
+  -- Platform and managed_split: Waaiio collected and must return
+  -- Connect, BYO, flutterwave_mid: provider/merchant collected — no payout adjustment needed
+  IF v_payment.collection_mode IN ('platform', 'managed_split') THEN
     SELECT bp.id INTO v_payout
       FROM public.business_payouts bp, public.payments p
       WHERE p.id = v_refund.payment_id
@@ -647,8 +657,10 @@ BEGIN
     END IF;
   END IF;
 
-  -- Payout adjustment: only for non-connect (platform held the funds)
-  IF v_payment.collection_mode IS DISTINCT FROM 'connect' THEN
+  -- Payout adjustment: only create when Waaiio held the funds
+  -- Platform and managed_split: Waaiio collected and must return
+  -- Connect, BYO, flutterwave_mid: provider/merchant collected — no payout adjustment needed
+  IF v_payment.collection_mode IN ('platform', 'managed_split') THEN
     DECLARE v_payout RECORD;
     BEGIN
       SELECT bp.id INTO v_payout

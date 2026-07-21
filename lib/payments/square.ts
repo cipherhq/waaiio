@@ -38,6 +38,28 @@ async function squareGet(path: string): Promise<Record<string, unknown>> {
   return response.json() as Promise<Record<string, unknown>>;
 }
 
+/**
+ * Single validation function for immutable payment parameters.
+ * Used for both normal retry recovery and concurrent-winner recovery.
+ * Returns the mismatched field name, or null if all match.
+ */
+function validateInitParams(
+  existing: Record<string, unknown>,
+  opts: InitPaymentOpts,
+): string | null {
+  if (Number(existing.amount) !== opts.amount) return 'amount';
+  if ((existing.currency as string) !== opts.currency) return 'currency';
+  if (existing.business_id !== (opts.businessId || null)) return 'business_id';
+  if (existing.user_id !== opts.userId) return 'user_id';
+  if (existing.booking_id !== (opts.bookingId || null)) return 'booking_id';
+  if (existing.invoice_id !== (opts.invoiceId || null)) return 'invoice_id';
+  if (existing.campaign_id !== (opts.campaignId || null)) return 'campaign_id';
+  if (existing.reservation_id !== (opts.reservationId || null)) return 'reservation_id';
+  if (existing.collection_mode !== (opts.collectionMode || 'platform')) return 'collection_mode';
+  if (existing.payout_account_id !== (opts.payoutAccountId || null)) return 'payout_account_id';
+  return null; // all match
+}
+
 export class SquareGateway implements PaymentGateway {
   name = 'square' as const;
 
@@ -102,55 +124,34 @@ export class SquareGateway implements PaymentGateway {
       let insertShortRef: string = randomUUID(); // Generated once, persisted atomically at insert
 
       // Check for existing attempt (retry recovery) via the immutable key
-      const { data: existingAttempt } = await opts.supabase.from('payments')
+      const { data: existingAttempt, error: existingAttemptErr } = await opts.supabase.from('payments')
         .select('id, gateway_reference, metadata')
         .eq('payment_attempt_key', attemptKey)
         .maybeSingle();
+
+      if (existingAttemptErr) {
+        logger.error('[SQUARE] Existing attempt lookup failed:', existingAttemptErr.message);
+        return null;
+      }
 
       if (existingAttempt) {
         paymentId = existingAttempt.id;
         const existingMeta = existingAttempt.metadata as Record<string, unknown> | null;
 
         // Validate immutable parameters match on retry
-        const { data: existingPayment } = await opts.supabase.from('payments')
-          .select('amount, currency, business_id, booking_id, invoice_id, campaign_id, reservation_id, collection_mode, payout_account_id')
+        const { data: existingPayment, error: existingPaymentErr } = await opts.supabase.from('payments')
+          .select('amount, currency, business_id, user_id, booking_id, invoice_id, campaign_id, reservation_id, collection_mode, payout_account_id')
           .eq('id', paymentId).single();
 
+        if (existingPaymentErr) {
+          logger.error('[SQUARE] Payment lookup for validation failed:', existingPaymentErr.message);
+          return null;
+        }
+
         if (existingPayment) {
-          if (Number(existingPayment.amount) !== opts.amount) {
-            logger.error('[SQUARE] Parameter mismatch on retry: amount');
-            return null;
-          }
-          if ((existingPayment.currency as string) !== opts.currency) {
-            logger.error('[SQUARE] Parameter mismatch on retry: currency');
-            return null;
-          }
-          if (existingPayment.business_id !== (opts.businessId || null)) {
-            logger.error('[SQUARE] Parameter mismatch on retry: businessId');
-            return null;
-          }
-          if (existingPayment.booking_id !== (opts.bookingId || null)) {
-            logger.error('[SQUARE] Parameter mismatch on retry: bookingId');
-            return null;
-          }
-          if (existingPayment.invoice_id !== (opts.invoiceId || null)) {
-            logger.error('[SQUARE] Parameter mismatch on retry: invoiceId');
-            return null;
-          }
-          if (existingPayment.campaign_id !== (opts.campaignId || null)) {
-            logger.error('[SQUARE] Parameter mismatch on retry: campaignId');
-            return null;
-          }
-          if (existingPayment.reservation_id !== (opts.reservationId || null)) {
-            logger.error('[SQUARE] Parameter mismatch on retry: reservationId');
-            return null;
-          }
-          if ((existingPayment.collection_mode as string) !== (opts.collectionMode || 'platform')) {
-            logger.error('[SQUARE] Parameter mismatch on retry: collectionMode');
-            return null;
-          }
-          if (existingPayment.payout_account_id !== (opts.payoutAccountId || null)) {
-            logger.error('[SQUARE] Parameter mismatch on retry: payoutAccountId');
+          const mismatchField = validateInitParams(existingPayment, opts);
+          if (mismatchField) {
+            logger.error(`[SQUARE] Parameter mismatch on retry: ${mismatchField}`);
             return null;
           }
         }
@@ -197,17 +198,24 @@ export class SquareGateway implements PaymentGateway {
         if (insertErr || !newPayment) {
           // Unique violation on attempt_key means another concurrent call created it
           if (insertErr?.code === '23505') {
-            const { data: concurrent } = await opts.supabase.from('payments')
-              .select('id, metadata').eq('payment_attempt_key', attemptKey).single();
-            if (concurrent) {
-              paymentId = concurrent.id;
-              // Use the winner's shortRef
-              const concurrentMeta = concurrent.metadata as Record<string, unknown> | null;
-              if (concurrentMeta?.checkout_short_ref) {
-                insertShortRef = concurrentMeta.checkout_short_ref as string;
-              }
-            } else {
+            const { data: concurrent, error: concurrentErr } = await opts.supabase.from('payments')
+              .select('id, amount, currency, business_id, user_id, booking_id, invoice_id, campaign_id, reservation_id, collection_mode, payout_account_id, metadata')
+              .eq('payment_attempt_key', attemptKey).single();
+            if (concurrentErr || !concurrent) {
+              logger.error('[SQUARE] Concurrent winner lookup failed:', concurrentErr?.message);
               return null;
+            }
+            // Validate the concurrent winner's parameters match ours
+            const concurrentMismatch = validateInitParams(concurrent, opts);
+            if (concurrentMismatch) {
+              logger.error(`[SQUARE] Parameter mismatch with concurrent winner: ${concurrentMismatch}`);
+              return null;
+            }
+            paymentId = concurrent.id;
+            // Use the winner's shortRef
+            const concurrentMeta = concurrent.metadata as Record<string, unknown> | null;
+            if (concurrentMeta?.checkout_short_ref) {
+              insertShortRef = concurrentMeta.checkout_short_ref as string;
             }
           } else {
             logger.error('[SQUARE] Payment row creation failed:', insertErr?.message);
@@ -287,15 +295,15 @@ export class SquareGateway implements PaymentGateway {
         channel: 'whatsapp',
         order_id: opts.orderId || null,
       };
-      const { error: updateErr } = await opts.supabase.rpc('merge_payment_metadata', {
+      const { data: mergeResult, error: updateErr } = await opts.supabase.rpc('merge_payment_metadata', {
         p_payment_id: paymentId,
         p_new_fields: newMetaFields,
         p_gateway_reference: squareRef,
         p_provider_order_ref: orderId || null,
       });
 
-      if (updateErr) {
-        logger.error('[SQUARE] Payment metadata merge failed:', updateErr.message);
+      if (updateErr || !mergeResult?.matched) {
+        logger.error('[SQUARE] Metadata merge failed:', updateErr?.message || 'no row matched');
         return null;
       }
 

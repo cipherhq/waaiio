@@ -30,7 +30,7 @@ function getSquareBaseUrl(): string {
 
 const PERMANENT_ERRORS = ['invalid_grant', 'unauthorized', 'ACCESS_TOKEN_REVOKED'];
 
-type RefreshOutcome = 'refreshed' | 'lease_held' | 'provider_failed' | 'persistence_failed' | 'lease_acquire_failed';
+type RefreshOutcome = 'refreshed' | 'lease_held' | 'provider_failed' | 'transient_failure' | 'persistence_failed' | 'lease_acquire_failed';
 
 /**
  * Resolve a Square access token for a connection.
@@ -69,22 +69,24 @@ export async function resolveSquareToken(
     if (leaseExpires > now) {
       // Another refresh in progress
       if (isExpired) {
-        // Token is expired but another worker is refreshing — brief wait and re-read
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        const { data: refreshedSecret } = await supabase
-          .from('business_connection_secrets')
-          .select('encrypted_secret_key, token_expires_at, refresh_lease_expires_at')
-          .eq('id', secret.id)
-          .is('revoked_at', null)
-          .single();
-        if (refreshedSecret?.token_expires_at) {
-          const newExpiry = new Date(refreshedSecret.token_expires_at).getTime();
-          if (newExpiry > now) {
-            // Winner refreshed successfully — use new token
-            return { accessToken: decryptToken(refreshedSecret.encrypted_secret_key), secretId: secret.id };
+        // Token is expired but another worker is refreshing — bounded backoff wait
+        for (let i = 0; i < 3; i++) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          const { data: refreshedSecret } = await supabase
+            .from('business_connection_secrets')
+            .select('encrypted_secret_key, token_expires_at, refresh_lease_expires_at')
+            .eq('id', secret.id)
+            .is('revoked_at', null)
+            .single();
+          if (refreshedSecret?.token_expires_at) {
+            const newExpiry = new Date(refreshedSecret.token_expires_at).getTime();
+            if (newExpiry > Date.now()) {
+              // Winner refreshed successfully — use new token
+              return { accessToken: decryptToken(refreshedSecret.encrypted_secret_key), secretId: secret.id };
+            }
           }
         }
-        // Still expired after wait — the winner may have failed
+        // Still expired after ~4.5s — the winner may have failed
         return null;
       }
       // Not expired, just near expiry — use current token while another worker refreshes
@@ -97,9 +99,12 @@ export async function resolveSquareToken(
       case 'refreshed': {
         // Restore healthy status after successful refresh
         if (secret.payout_account_id) {
-          await supabase.from('payout_accounts').update({
+          const { error: healthErr } = await supabase.from('payout_accounts').update({
             health_status: 'healthy', connection_status: 'active',
           }).eq('id', secret.payout_account_id);
+          if (healthErr) {
+            logger.error('[SQUARE-TOKEN] Failed to restore healthy status:', healthErr.message);
+          }
         }
         // Re-read the credential — another worker may have completed a newer refresh
         const { data: fresh } = await supabase
@@ -116,24 +121,36 @@ export async function resolveSquareToken(
 
       case 'lease_held':
       case 'lease_acquire_failed': {
-        // Another worker is refreshing — wait and re-read if expired
+        // Another worker is refreshing — wait with bounded backoff and re-read if expired
         if (isExpired) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          const { data: refreshedSecret } = await supabase
-            .from('business_connection_secrets')
-            .select('encrypted_secret_key, token_expires_at')
-            .eq('id', secret.id)
-            .is('revoked_at', null)
-            .single();
-          if (refreshedSecret?.token_expires_at) {
-            const newExpiry = new Date(refreshedSecret.token_expires_at).getTime();
-            if (newExpiry > now) {
-              return { accessToken: decryptToken(refreshedSecret.encrypted_secret_key), secretId: secret.id };
+          for (let i = 0; i < 3; i++) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            const { data: refreshedSecret } = await supabase
+              .from('business_connection_secrets')
+              .select('encrypted_secret_key, token_expires_at')
+              .eq('id', secret.id)
+              .is('revoked_at', null)
+              .single();
+            if (refreshedSecret?.token_expires_at) {
+              const newExpiry = new Date(refreshedSecret.token_expires_at).getTime();
+              if (newExpiry > Date.now()) {
+                return { accessToken: decryptToken(refreshedSecret.encrypted_secret_key), secretId: secret.id };
+              }
             }
           }
-          return null;
+          return null; // Winner hasn't completed after ~4.5s
         }
         // Not expired — use current token
+        return { accessToken: decryptToken(secret.encrypted_secret_key), secretId: secret.id };
+      }
+
+      case 'transient_failure': {
+        // Timeout/abort — don't mark unhealthy, use current token if not expired
+        if (isExpired) {
+          // Token expired and refresh timed out — cannot serve, but don't mark unhealthy
+          // The lease will expire and another caller can retry
+          return null;
+        }
         return { accessToken: decryptToken(secret.encrypted_secret_key), secretId: secret.id };
       }
 
@@ -224,8 +241,13 @@ async function refreshWithLease(
       return 'persistence_failed';
     }
     return 'refreshed';
-  } catch {
-    logger.error('[SQUARE-TOKEN] Provider timeout (lease will expire)');
+  } catch (err) {
+    const isTimeout = (err as Error).name === 'TimeoutError' || (err as Error).name === 'AbortError';
+    if (isTimeout) {
+      logger.error('[SQUARE-TOKEN] Provider timeout (transient, lease will expire)');
+      return 'transient_failure'; // NOT permanent — don't mark unhealthy
+    }
+    logger.error('[SQUARE-TOKEN] Provider error (no token details logged)');
     return 'provider_failed';
   }
 }

@@ -103,6 +103,10 @@
     {
       "path": "/api/cron/recover-reservations",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/confirmation-retry",
+      "schedule": "5,20,35,50 * * * *"
     }
   ]
 }

@@ -87,7 +87,11 @@ async function resolveMerchant(
 
   if (connErr) throw new Error(`Connection lookup error: ${connErr.message}`);
   if (!conn) {
-    logger.warn('[SQUARE-WEBHOOK] No active Square connection for merchant');
+    if (!squarePlatformMerchantId) {
+      logger.warn(`[SQUARE-WEBHOOK] No active Square connection for merchant_id "${webhookMerchantId}" and SQUARE_PLATFORM_MERCHANT_ID is not configured. Set SQUARE_PLATFORM_MERCHANT_ID if this is your platform merchant.`);
+    } else {
+      logger.warn('[SQUARE-WEBHOOK] No active Square connection for merchant');
+    }
     throw new Error('Unknown merchant — no active connection');
   }
   return { id: conn.id, business_id: conn.business_id, isConnect: true };

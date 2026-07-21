@@ -30,10 +30,12 @@ export async function getPlatformFees(
   // Waive flat fee on micro-transactions to protect small merchants
   // If flat fee would be more than 10% of the transaction, skip it
   const effectiveFeeFlat = (feeFlat > 0 && amount > 0 && feeFlat / amount > 0.10) ? 0 : feeFlat;
-  // Round to 2 decimal places (not to integer) to preserve cent precision.
-  // fee_total column is NUMERIC(12,2) — safe for fractional amounts.
+  // Round to 2 decimal places. Two-stage rounding avoids IEEE 754 mid-point
+  // errors: 333 * 2.5% = 8.325 mathematically, but 8.325*100 = 832.4999... in
+  // binary. By rounding to 3 decimals in integer domain first, then to 2,
+  // we get the correct 8.33.
   const rawFee = (amount * feePercentage / 100) + effectiveFeeFlat;
-  const feeTotal = Number(rawFee.toFixed(2));
+  const feeTotal = Math.round(Math.round(rawFee * 1000) / 10) / 100;
 
   return { feePercentage, feeFlat: effectiveFeeFlat, feeTotal };
 }

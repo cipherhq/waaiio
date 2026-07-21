@@ -52,8 +52,6 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     return { success: false, errorMessage: 'Refund amount must be greater than 0' };
   }
 
-  // Determine direct-split from the payment's immutable collection_mode, not the business's mutable payout_mode
-  const isDirectSplit = (payment.collection_mode as string) === 'connect' || (payment.collection_mode as string) === 'byo';
   const gatewayName = (payment.gateway || 'paystack') as PaymentGatewayName;
   const metadata = payment.metadata as Record<string, unknown> | null;
   const isSquare = gatewayName === 'square';
@@ -220,89 +218,111 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   }
 
   // ── Non-Square path (existing behavior) ──
-  // Idempotency guard
+  // Idempotency guard — supports retries with same logicalRefundId
   const { data: pendingRefund } = await supabase
     .from('refunds')
-    .select('id')
+    .select('id, provider_idempotency_key')
     .eq('payment_id', paymentId)
     .eq('status', 'pending')
     .limit(1)
     .maybeSingle();
 
+  let refundRecord: { id: string } | null = null;
+
   if (pendingRefund) {
-    return { success: false, errorMessage: 'A refund for this payment is already being processed' };
+    if (pendingRefund.provider_idempotency_key === opts.logicalRefundId) {
+      // Same logical request — resume with existing refund row
+      refundRecord = pendingRefund;
+      // Fall through to provider call
+    } else {
+      return { success: false, errorMessage: 'A different refund for this payment is already pending' };
+    }
   }
 
-  const existingRefund = Number(payment.refund_amount || 0);
-  const paymentAmount = Number(payment.amount);
-  const remaining = paymentAmount - existingRefund;
+  // Only create a new refund record if we didn't resume an existing one
+  if (!refundRecord) {
+    const existingRefund = Number(payment.refund_amount || 0);
+    const paymentAmount = Number(payment.amount);
+    const remaining = paymentAmount - existingRefund;
 
-  if (amount > remaining) {
-    return { success: false, errorMessage: `Refund amount (${amount}) exceeds remaining (${remaining})` };
-  }
+    if (amount > remaining) {
+      return { success: false, errorMessage: `Refund amount (${amount}) exceeds remaining (${remaining})` };
+    }
 
-  const refundType = amount >= remaining ? 'full' : 'partial';
+    const refundType = amount >= remaining ? 'full' : 'partial';
 
-  const { data: refundRecord, error: insertErr } = await supabase
-    .from('refunds')
-    .insert({
-      payment_id: paymentId,
-      business_id: businessId,
-      amount,
-      reason: reason || null,
-      status: 'pending',
-      gateway: payment.gateway,
-      refund_type: refundType,
-      is_direct_split: isDirectSplit,
-      initiated_by: initiatedBy,
-      initiated_by_role: initiatedByRole,
-      provider_idempotency_key: opts.logicalRefundId, // Record for audit
-    })
-    .select('id')
-    .single();
+    const { data: newRefundRecord, error: insertErr } = await supabase
+      .from('refunds')
+      .insert({
+        payment_id: paymentId,
+        business_id: businessId,
+        amount,
+        reason: reason || null,
+        status: 'pending',
+        gateway: payment.gateway,
+        refund_type: refundType,
+        is_direct_split: false, // Non-Square: Waaiio processes the refund via platform
+        initiated_by: initiatedBy,
+        initiated_by_role: initiatedByRole,
+        provider_idempotency_key: opts.logicalRefundId, // Record for audit
+      })
+      .select('id')
+      .single();
 
-  if (insertErr || !refundRecord) {
-    return { success: false, errorMessage: 'Failed to create refund record' };
+    if (insertErr || !newRefundRecord) {
+      return { success: false, errorMessage: 'Failed to create refund record' };
+    }
+    refundRecord = newRefundRecord;
   }
 
   let providerRefundRef: string | null = null;
   let providerResponse: Record<string, unknown> | null = null;
 
-  if (isDirectSplit) {
-    // Non-Square direct split: no provider call needed — finalize directly via RPC
-    // Do NOT update refund status here — the RPC does it atomically
-  } else {
-    // Platform managed: call gateway refund API
-    const gateway = getPaymentGatewayByName(gatewayName);
-    let byoKey = (metadata?.byo_secret_key as string) || undefined;
+  // ALL non-Square refunds call the gateway provider:
+  // - platform, managed_split: uses platform key (default)
+  // - connect (Stripe): uses platform key (Stripe destination charges are refundable by platform)
+  // - byo: uses merchant's byo_secret_key
+  // - flutterwave_mid: uses platform key
+  const gateway = getPaymentGatewayByName(gatewayName);
+  let byoKey: string | undefined;
 
-    const refundAmount = refundType === 'full' && existingRefund === 0 ? undefined : amount;
-
-    const result = await gateway.refundPayment({
-      gatewayReference: payment.gateway_reference,
-      amount: refundAmount,
-      currency: (payment.currency as string) || 'NGN',
-      reason,
-      metadata: metadata || undefined,
-      connectAccountId: (metadata?.connect_account_id as string) || undefined,
-      byoSecretKey: byoKey,
-      providerIdempotencyKey: refundRecord.id,
-    });
-
-    if (!result.success) {
-      const { error: failUpdateErr } = await supabase.from('refunds').update({
-        status: 'failed',
-        gateway_response: result.gatewayResponse || { error: result.errorMessage },
-      }).eq('id', refundRecord.id);
-      if (failUpdateErr) {
-        logger.error('[REFUND] Failed to mark refund as failed:', failUpdateErr.message);
-      }
-      return { success: false, refundId: refundRecord.id, isDirectSplit, errorMessage: result.errorMessage };
+  if (payment.collection_mode === 'byo') {
+    byoKey = (metadata?.byo_secret_key as string) || undefined;
+    if (!byoKey) {
+      // BYO without credential — cannot refund automatically
+      await supabase.from('refunds').update({ status: 'review_required' }).eq('id', refundRecord.id);
+      return { success: false, refundId: refundRecord.id, errorMessage: 'BYO refund requires merchant credential — manual review required', idempotencyKey: opts.logicalRefundId };
     }
-
-    providerRefundRef = result.gatewayRefundReference || null;
-    providerResponse = (result.gatewayResponse as Record<string, unknown>) || null;
   }
+
+  const existingRefundAmount = Number(payment.refund_amount || 0);
+  const refundType = amount >= (Number(payment.amount) - existingRefundAmount) ? 'full' : 'partial';
+  const refundAmount = refundType === 'full' && existingRefundAmount === 0 ? undefined : amount;
+
+  const result = await gateway.refundPayment({
+    gatewayReference: payment.gateway_reference,
+    amount: refundAmount,
+    currency: (payment.currency as string) || 'NGN',
+    reason,
+    metadata: metadata || undefined,
+    connectAccountId: (metadata?.connect_account_id as string) || undefined,
+    byoSecretKey: byoKey,
+    providerIdempotencyKey: refundRecord.id,
+  });
+
+  if (!result.success) {
+    const { error: failUpdateErr } = await supabase.from('refunds').update({
+      status: 'failed',
+      gateway_response: result.gatewayResponse || { error: result.errorMessage },
+    }).eq('id', refundRecord.id);
+    if (failUpdateErr) {
+      logger.error('[REFUND] Failed to mark refund as failed:', failUpdateErr.message);
+    }
+    return { success: false, refundId: refundRecord.id, isDirectSplit: false, errorMessage: result.errorMessage };
+  }
+
+  providerRefundRef = result.gatewayRefundReference || null;
+  providerResponse = (result.gatewayResponse as Record<string, unknown>) || null;
 
   // Finalize payment/ledger atomically via RPC (handles payment totals, booking/reservation
   // deposit status, fee reversal, and payout adjustments in a single transaction).
@@ -315,11 +335,11 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   });
   if (finalErr) {
     logger.error('[REFUND] Generic finalization RPC error:', finalErr.message);
-    return { success: false, refundId: refundRecord.id, isDirectSplit, errorMessage: 'Finalization failed' };
+    return { success: false, refundId: refundRecord.id, isDirectSplit: false, errorMessage: 'Finalization failed' };
   }
   if (!finalResult?.success) {
-    return { success: false, refundId: refundRecord.id, isDirectSplit, errorMessage: finalResult?.reason || 'Finalization rejected' };
+    return { success: false, refundId: refundRecord.id, isDirectSplit: false, errorMessage: finalResult?.reason || 'Finalization rejected' };
   }
 
-  return { success: true, refundId: refundRecord.id, isDirectSplit };
+  return { success: true, refundId: refundRecord.id, isDirectSplit: false };
 }

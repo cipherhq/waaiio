@@ -36,7 +36,7 @@ describe('Square payment-link idempotency', () => {
       id: 'existing-payment-uuid',
       gateway_reference: 'sq-init-REF-001',
       metadata: null, // no Square response yet
-      amount: 50, currency: 'USD', business_id: null,
+      amount: 50, currency: 'USD', business_id: null, user_id: 'u1',
       booking_id: null, invoice_id: null, campaign_id: null,
       reservation_id: null, collection_mode: 'platform', payout_account_id: null,
     };
@@ -55,7 +55,7 @@ describe('Square payment-link idempotency', () => {
       return { update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) }) };
     });
 
-    const rpcFn = vi.fn().mockResolvedValue({ data: null, error: null });
+    const rpcFn = vi.fn().mockResolvedValue({ data: { matched: true }, error: null });
     const result = await gw.initializePayment({
       supabase: { from: fromFn, rpc: rpcFn } as any,
       userId: 'u1', amount: 50, currency: 'USD',
@@ -137,7 +137,7 @@ describe('Square payment-link idempotency', () => {
     }));
 
     const result = await gw.initializePayment({
-      supabase: { from: fromFn, rpc: vi.fn().mockResolvedValue({ data: null, error: null }) } as any,
+      supabase: { from: fromFn, rpc: vi.fn().mockResolvedValue({ data: { matched: true }, error: null }) } as any,
       userId: 'u1', amount: 50, currency: 'USD',
       referenceCode: 'REF-C', businessName: 'Biz', phone: '+1',
       squareAccessToken: 'seller-token', squareMerchantId: 'ML', squareLocationId: 'L',
@@ -718,7 +718,7 @@ describe('Square checkout redirect', () => {
     }));
 
     const result = await gw.initializePayment({
-      supabase: { from: fromFn, rpc: vi.fn().mockResolvedValue({ data: null, error: null }) } as any,
+      supabase: { from: fromFn, rpc: vi.fn().mockResolvedValue({ data: { matched: true }, error: null }) } as any,
       userId: 'u1', amount: 50, currency: 'USD',
       referenceCode: 'REF-REDIR', businessName: 'Biz', phone: '+1',
     });

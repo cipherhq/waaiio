@@ -259,8 +259,8 @@ describe('processRefund', () => {
     );
   });
 
-  it('handles direct_split refund (record-only, no gateway call)', async () => {
-    const mockRefundPayment = vi.fn();
+  it('connect-mode non-Square refund calls the provider (not record-only)', async () => {
+    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true, gatewayRefundReference: 'gw-ref-c' });
     mockGetGateway.mockReturnValue({ refundPayment: mockRefundPayment });
 
     const supabase = createMockSupabase({
@@ -290,9 +290,8 @@ describe('processRefund', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.isDirectSplit).toBe(true);
-    // Gateway refund should NOT be called for direct_split
-    expect(mockRefundPayment).not.toHaveBeenCalled();
+    // Connect-mode Paystack refund DOES call the provider (platform can refund destination charges)
+    expect(mockRefundPayment).toHaveBeenCalled();
   });
 
   it('returns failure when gateway refund fails', async () => {

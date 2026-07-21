@@ -109,9 +109,9 @@ describe('getPlatformFees', () => {
   it('rounds percentage fee to 2 decimal places', async () => {
     mockLoadSettings.mockResolvedValue(makePricingTiers());
 
-    // 333 * 2.5% = 8.325 in math, 8.324999... in IEEE 754 → toFixed(2) = 8.32
+    // 333 * 2.5% = 8.325 in math — epsilon rounding gives the mathematically correct 8.33
     const result = await getPlatformFees(333, 'free', false);
 
-    expect(result.feeTotal).toBe(8.32);
+    expect(result.feeTotal).toBe(8.33);
   });
 });
