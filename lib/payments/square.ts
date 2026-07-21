@@ -113,7 +113,7 @@ export class SquareGateway implements PaymentGateway {
 
         // Validate immutable parameters match on retry
         const { data: existingPayment } = await opts.supabase.from('payments')
-          .select('amount, currency, business_id')
+          .select('amount, currency, business_id, booking_id, invoice_id, campaign_id, reservation_id, collection_mode, payout_account_id')
           .eq('id', paymentId).single();
 
         if (existingPayment) {
@@ -127,6 +127,30 @@ export class SquareGateway implements PaymentGateway {
           }
           if (existingPayment.business_id !== (opts.businessId || null)) {
             logger.error('[SQUARE] Parameter mismatch on retry: businessId');
+            return null;
+          }
+          if (existingPayment.booking_id !== (opts.bookingId || null)) {
+            logger.error('[SQUARE] Parameter mismatch on retry: bookingId');
+            return null;
+          }
+          if (existingPayment.invoice_id !== (opts.invoiceId || null)) {
+            logger.error('[SQUARE] Parameter mismatch on retry: invoiceId');
+            return null;
+          }
+          if (existingPayment.campaign_id !== (opts.campaignId || null)) {
+            logger.error('[SQUARE] Parameter mismatch on retry: campaignId');
+            return null;
+          }
+          if (existingPayment.reservation_id !== (opts.reservationId || null)) {
+            logger.error('[SQUARE] Parameter mismatch on retry: reservationId');
+            return null;
+          }
+          if ((existingPayment.collection_mode as string) !== (opts.collectionMode || 'platform')) {
+            logger.error('[SQUARE] Parameter mismatch on retry: collectionMode');
+            return null;
+          }
+          if (existingPayment.payout_account_id !== (opts.payoutAccountId || null)) {
+            logger.error('[SQUARE] Parameter mismatch on retry: payoutAccountId');
             return null;
           }
         }
@@ -252,30 +276,26 @@ export class SquareGateway implements PaymentGateway {
       const squareRef = paymentLink.id as string;
       const orderId = paymentLink.order_id as string | undefined;
 
-      // Step 3: Update the payment row with Square's actual references
-      // Re-read current metadata to avoid overwriting webhook-written fields (e.g. square_payment_id)
-      const { data: currentRow } = await opts.supabase.from('payments')
-        .select('metadata').eq('id', paymentId).single();
-      const currentMeta = (currentRow?.metadata as Record<string, unknown>) || {};
-
-      // Store the checkout URL and short ref in metadata for retry recovery
-      const { error: updateErr } = await opts.supabase.from('payments').update({
-        gateway_reference: squareRef,
-        provider_order_ref: orderId || null,
-        metadata: {
-          ...currentMeta,
-          square_payment_link_id: squareRef,
-          square_order_id: orderId || null,
-          square_checkout_url: paymentLink.url as string,
-          checkout_short_ref: insertShortRef,
-          reference_code: opts.referenceCode,
-          channel: 'whatsapp',
-          order_id: opts.orderId || null,
-        },
-      }).eq('id', paymentId);
+      // Step 3: Atomic JSONB merge — preserves existing keys (e.g. square_payment_id
+      // written by a concurrent webhook) while adding new fields.
+      const newMetaFields = {
+        square_payment_link_id: squareRef,
+        square_order_id: orderId || null,
+        square_checkout_url: paymentLink.url as string,
+        checkout_short_ref: insertShortRef,
+        reference_code: opts.referenceCode,
+        channel: 'whatsapp',
+        order_id: opts.orderId || null,
+      };
+      const { error: updateErr } = await opts.supabase.rpc('merge_payment_metadata', {
+        p_payment_id: paymentId,
+        p_new_fields: newMetaFields,
+        p_gateway_reference: squareRef,
+        p_provider_order_ref: orderId || null,
+      });
 
       if (updateErr) {
-        logger.error('[SQUARE] Payment row update failed:', updateErr.message);
+        logger.error('[SQUARE] Payment metadata merge failed:', updateErr.message);
         return null;
       }
 

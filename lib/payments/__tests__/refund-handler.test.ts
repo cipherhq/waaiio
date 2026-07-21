@@ -269,12 +269,10 @@ describe('processRefund', () => {
           data: {
             id: 'pay-1', amount: 5000, refund_amount: 0, status: 'success',
             gateway: 'paystack', gateway_reference: 'ref-1', booking_id: null, metadata: null,
+            collection_mode: 'connect',
           },
           error: null,
         },
-      },
-      businesses: {
-        selectResult: { data: { payout_mode: 'direct_split' }, error: null },
       },
       refunds: {
         insertResult: { data: { id: 'refund-3' }, error: null },

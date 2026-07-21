@@ -15,6 +15,8 @@ interface PaymentRecord {
   order_id?: string | null;
   metadata?: Record<string, unknown> | null;
   gateway_fee?: number;
+  /** Payment's immutable collection mode — used to skip fee recording for connect payments */
+  collection_mode?: string;
 }
 
 /**
@@ -55,6 +57,7 @@ export async function processSuccessfulPayment(
         paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
+        collectionMode: payment.collection_mode,
       });
     } catch (feeErr) {
       Sentry.captureException(feeErr, { tags: { type: 'platform_fee_failure', entity: 'booking' } });
@@ -153,6 +156,7 @@ export async function processSuccessfulPayment(
         paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
+        collectionMode: payment.collection_mode,
       });
 
       // Decrement stock only if we actually confirmed the order (prevents double-decrement
@@ -208,6 +212,7 @@ export async function processSuccessfulPayment(
         paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
+        collectionMode: payment.collection_mode,
       });
     } catch (err) {
       logger.error('[PROCESS-SUCCESS] Reservation confirmation error:', err);
@@ -252,6 +257,8 @@ export async function recordPlatformFee(
     paymentId?: string;
     paymentAmount: number;
     gatewayFee?: number;
+    /** Payment's immutable collection mode — use this, not business.payout_mode */
+    collectionMode?: string;
   },
 ): Promise<void> {
   let businessId = opts.businessId;
@@ -312,7 +319,11 @@ export async function recordPlatformFee(
     throw new Error(`Business lookup failed in recordPlatformFee: ${bizErr.message}`);
   }
   if (!business) return;
-  if (business.payout_mode === 'direct_split') return;
+  // Use the payment's immutable collection_mode if provided, else fall back to business.payout_mode
+  // collection_mode is set at payment creation and never changes, while payout_mode can be changed
+  const isConnectPayment = opts.collectionMode === 'connect';
+  if (isConnectPayment) return; // Gateway already collected the fee at payment time
+  if (!opts.collectionMode && business.payout_mode === 'direct_split') return; // Legacy fallback
 
   const tier = (business.subscription_tier || 'free') as SubscriptionTier;
   const isInTrial = tier === 'free' && new Date(business.trial_ends_at) > new Date();

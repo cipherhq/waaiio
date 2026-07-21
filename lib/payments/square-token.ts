@@ -30,6 +30,8 @@ function getSquareBaseUrl(): string {
 
 const PERMANENT_ERRORS = ['invalid_grant', 'unauthorized', 'ACCESS_TOKEN_REVOKED'];
 
+type RefreshOutcome = 'refreshed' | 'lease_held' | 'provider_failed' | 'persistence_failed' | 'lease_acquire_failed';
+
 /**
  * Resolve a Square access token for a connection.
  * Returns null (fail closed) if the token cannot be resolved — NEVER falls
@@ -41,7 +43,7 @@ export async function resolveSquareToken(
 ): Promise<{ accessToken: string; secretId: string } | null> {
   const { data: secret } = await supabase
     .from('business_connection_secrets')
-    .select('id, encrypted_secret_key, encrypted_refresh_token, token_expires_at, token_refreshed_at, refresh_lease_expires_at')
+    .select('id, payout_account_id, encrypted_secret_key, encrypted_refresh_token, token_expires_at, token_refreshed_at, refresh_lease_expires_at')
     .eq('payout_account_id', connectionId)
     .is('revoked_at', null)
     .maybeSingle();
@@ -89,27 +91,72 @@ export async function resolveSquareToken(
       return { accessToken: decryptToken(secret.encrypted_secret_key), secretId: secret.id };
     }
 
-    const refreshed = await refreshWithLease(supabase, secret.id, refreshToken);
-    if (refreshed) {
-      // Re-read the credential — another worker may have completed a newer refresh
-      const { data: fresh } = await supabase
-        .from('business_connection_secrets')
-        .select('encrypted_secret_key')
-        .eq('id', secret.id)
-        .is('revoked_at', null)
-        .single();
-      if (fresh?.encrypted_secret_key) {
-        return { accessToken: decryptToken(fresh.encrypted_secret_key), secretId: secret.id };
-      }
-      return null;
-    }
+    const outcome = await refreshWithLease(supabase, secret.id, refreshToken);
 
-    // Refresh failed
-    if (isExpired) {
-      await markConnectionUnhealthy(supabase, secret.id, 'token_expired_refresh_failed');
-      return null;
+    switch (outcome) {
+      case 'refreshed': {
+        // Restore healthy status after successful refresh
+        if (secret.payout_account_id) {
+          await supabase.from('payout_accounts').update({
+            health_status: 'healthy', connection_status: 'active',
+          }).eq('id', secret.payout_account_id);
+        }
+        // Re-read the credential — another worker may have completed a newer refresh
+        const { data: fresh } = await supabase
+          .from('business_connection_secrets')
+          .select('encrypted_secret_key')
+          .eq('id', secret.id)
+          .is('revoked_at', null)
+          .single();
+        if (fresh?.encrypted_secret_key) {
+          return { accessToken: decryptToken(fresh.encrypted_secret_key), secretId: secret.id };
+        }
+        return null;
+      }
+
+      case 'lease_held':
+      case 'lease_acquire_failed': {
+        // Another worker is refreshing — wait and re-read if expired
+        if (isExpired) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          const { data: refreshedSecret } = await supabase
+            .from('business_connection_secrets')
+            .select('encrypted_secret_key, token_expires_at')
+            .eq('id', secret.id)
+            .is('revoked_at', null)
+            .single();
+          if (refreshedSecret?.token_expires_at) {
+            const newExpiry = new Date(refreshedSecret.token_expires_at).getTime();
+            if (newExpiry > now) {
+              return { accessToken: decryptToken(refreshedSecret.encrypted_secret_key), secretId: secret.id };
+            }
+          }
+          return null;
+        }
+        // Not expired — use current token
+        return { accessToken: decryptToken(secret.encrypted_secret_key), secretId: secret.id };
+      }
+
+      case 'provider_failed': {
+        // Provider rejected — mark unhealthy only for expired tokens (permanent failure)
+        if (isExpired) {
+          await markConnectionUnhealthy(supabase, secret.id, 'token_expired_refresh_failed');
+          return null;
+        }
+        // Not expired — use current token despite refresh failure
+        return { accessToken: decryptToken(secret.encrypted_secret_key), secretId: secret.id };
+      }
+
+      case 'persistence_failed': {
+        // Refresh succeeded at provider but failed to persist — don't mark unhealthy
+        // The token at Square is new but we couldn't save it. Use current if not expired.
+        if (isExpired) {
+          logger.error('[SQUARE-TOKEN] Token expired and persistence failed — cannot recover');
+          return null;
+        }
+        return { accessToken: decryptToken(secret.encrypted_secret_key), secretId: secret.id };
+      }
     }
-    return { accessToken: decryptToken(secret.encrypted_secret_key), secretId: secret.id };
   }
 
   if (isExpired) {
@@ -124,7 +171,7 @@ async function refreshWithLease(
   supabase: SupabaseClient,
   secretId: string,
   refreshToken: string,
-): Promise<boolean> {
+): Promise<RefreshOutcome> {
   const claimToken = randomUUID();
 
   const { data: leaseResult } = await supabase.rpc('acquire_refresh_lease', {
@@ -132,7 +179,9 @@ async function refreshWithLease(
     p_claim_token: claimToken,
     p_lease_seconds: 60,
   });
-  if (!leaseResult?.acquired) return false;
+  if (!leaseResult?.acquired) {
+    return leaseResult?.reason === 'lease_held' ? 'lease_held' : 'lease_acquire_failed';
+  }
 
   try {
     const res = await fetch(`${getSquareBaseUrl()}/oauth2/token`, {
@@ -154,7 +203,7 @@ async function refreshWithLease(
         await markConnectionUnhealthy(supabase, secretId, errorType);
       }
       logger.error('[SQUARE-TOKEN] Refresh rejected (no token details logged)');
-      return false;
+      return 'provider_failed';
     }
 
     const encryptedAccess = encryptToken(data.access_token as string);
@@ -172,12 +221,12 @@ async function refreshWithLease(
 
     if (!completeResult?.success) {
       logger.warn('[SQUARE-TOKEN] Lease completion rejected:', completeResult?.reason);
-      return false;
+      return 'persistence_failed';
     }
-    return true;
+    return 'refreshed';
   } catch {
     logger.error('[SQUARE-TOKEN] Provider timeout (lease will expire)');
-    return false;
+    return 'provider_failed';
   }
 }
 

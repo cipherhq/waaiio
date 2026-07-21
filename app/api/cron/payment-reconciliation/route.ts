@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
   // Find stale pending payments (only Stripe and Paystack — we can verify those)
   const { data: stalePayments, error: queryError } = await supabase
     .from('payments')
-    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata')
+    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata, collection_mode')
     .eq('status', 'pending')
     .lt('created_at', twoHoursAgo.toISOString())
     .in('gateway', ['stripe', 'paystack'])
@@ -74,6 +74,7 @@ export async function GET(request: NextRequest) {
           campaign_id: payment.campaign_id,
           order_id: payment.order_id,
           metadata: payment.metadata as Record<string, unknown> | null,
+          collection_mode: (payment.collection_mode as string) || undefined,
         });
 
         try {

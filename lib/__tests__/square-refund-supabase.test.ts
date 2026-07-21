@@ -261,7 +261,7 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
     const { error: feeInsertErr } = await supabase.from('platform_fees').insert({
       business_id: testBusinessId,
       payment_id: pid,
-      fee_total: 3, // $3 (Math.round(100 * 2.5 / 100))
+      fee_total: 2.50, // $3 (Math.round(100 * 2.5 / 100))
       fee_percentage: 2.5,
       transaction_amount: 100,
       tier: 'free',
@@ -328,7 +328,7 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
     const { error: feeInsErr } = await supabase.from('platform_fees').insert({
       business_id: testBusinessId,
       payment_id: pid,
-      fee_total: 3, // $3
+      fee_total: 2.50, // $3
       fee_percentage: 2.5,
       transaction_amount: 100,
       tier: 'free',
@@ -350,14 +350,14 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
       .eq('id', claim.refund_id).single();
     expect(Number(refund!.planned_fee_reversal)).toBe(0);
 
-    // Verify the platform_fees row was NOT reduced (fee_total unchanged at 3)
+    // Verify the platform_fees row was NOT reduced (fee_total unchanged at 2.50)
     const { data: fee } = await supabase.from('platform_fees')
       .select('fee_total')
       .eq('payment_id', pid)
       .is('refunded_at', null)
       .single();
     expect(fee).not.toBeNull();
-    expect(Number(fee!.fee_total)).toBe(3);
+    expect(Number(fee!.fee_total)).toBe(2.50);
   });
 
   it('concurrent claims do not double-reserve', async () => {

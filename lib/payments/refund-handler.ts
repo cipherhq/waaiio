@@ -52,13 +52,8 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     return { success: false, errorMessage: 'Refund amount must be greater than 0' };
   }
 
-  const { data: business } = await supabase
-    .from('businesses')
-    .select('payout_mode')
-    .eq('id', businessId)
-    .single();
-
-  const isDirectSplit = business?.payout_mode === 'direct_split';
+  // Determine direct-split from the payment's immutable collection_mode, not the business's mutable payout_mode
+  const isDirectSplit = (payment.collection_mode as string) === 'connect' || (payment.collection_mode as string) === 'byo';
   const gatewayName = (payment.gateway || 'paystack') as PaymentGatewayName;
   const metadata = payment.metadata as Record<string, unknown> | null;
   const isSquare = gatewayName === 'square';
@@ -270,9 +265,12 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     return { success: false, errorMessage: 'Failed to create refund record' };
   }
 
+  let providerRefundRef: string | null = null;
+  let providerResponse: Record<string, unknown> | null = null;
+
   if (isDirectSplit) {
-    // Non-Square direct split: record-only, mark success then finalize atomically
-    await supabase.from('refunds').update({ status: 'success' }).eq('id', refundRecord.id);
+    // Non-Square direct split: no provider call needed — finalize directly via RPC
+    // Do NOT update refund status here — the RPC does it atomically
   } else {
     // Platform managed: call gateway refund API
     const gateway = getPaymentGatewayByName(gatewayName);
@@ -292,25 +290,28 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     });
 
     if (!result.success) {
-      await supabase.from('refunds').update({
+      const { error: failUpdateErr } = await supabase.from('refunds').update({
         status: 'failed',
         gateway_response: result.gatewayResponse || { error: result.errorMessage },
       }).eq('id', refundRecord.id);
+      if (failUpdateErr) {
+        logger.error('[REFUND] Failed to mark refund as failed:', failUpdateErr.message);
+      }
       return { success: false, refundId: refundRecord.id, isDirectSplit, errorMessage: result.errorMessage };
     }
 
-    // Provider succeeded — update refund row with gateway reference before atomic finalization
-    await supabase.from('refunds').update({
-      gateway_refund_reference: result.gatewayRefundReference || null,
-      gateway_response: result.gatewayResponse || null,
-    }).eq('id', refundRecord.id);
+    providerRefundRef = result.gatewayRefundReference || null;
+    providerResponse = (result.gatewayResponse as Record<string, unknown>) || null;
   }
 
   // Finalize payment/ledger atomically via RPC (handles payment totals, booking/reservation
-  // deposit status, fee reversal, and payout adjustments in a single transaction)
+  // deposit status, fee reversal, and payout adjustments in a single transaction).
+  // Pass the provider reference so the RPC persists it atomically with the status change.
   const { data: finalResult, error: finalErr } = await supabase.rpc('finalize_refund_generic', {
     p_refund_id: refundRecord.id,
+    p_gateway_refund_ref: providerRefundRef,
     p_final_status: 'success',
+    p_gateway_response: providerResponse,
   });
   if (finalErr) {
     logger.error('[REFUND] Generic finalization RPC error:', finalErr.message);

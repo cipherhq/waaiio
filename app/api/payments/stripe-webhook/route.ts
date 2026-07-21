@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
       if (paymentStatus === 'paid' && sessionId) {
         const { data: payment } = await supabase
           .from('payments')
-          .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status')
+          .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, collection_mode')
           .eq('gateway_reference', sessionId)
           .single();
 
@@ -143,6 +143,7 @@ export async function POST(request: NextRequest) {
             reservation_id: payment.reservation_id || null,
             order_id: payment.order_id || null,
             gateway_fee: stripeGatewayFee,
+            collection_mode: (payment.collection_mode as string) || undefined,
           };
 
           // Confirm booking, record platform fees, process invoice/campaign

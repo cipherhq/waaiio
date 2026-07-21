@@ -37,7 +37,7 @@ export default async function PaymentSuccessPage({
       if (params.paymentId) {
         payment = (await supabase
           .from('payments')
-          .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code, subscription_tier)')
+          .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, collection_mode, businesses(phone, name, country_code, subscription_tier)')
           .eq('id', params.paymentId)
           .maybeSingle()).data;
       }
@@ -46,7 +46,7 @@ export default async function PaymentSuccessPage({
       if (!payment && lookupRef) {
         payment = (await supabase
           .from('payments')
-          .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code, subscription_tier)')
+          .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, collection_mode, businesses(phone, name, country_code, subscription_tier)')
           .eq('gateway_reference', lookupRef)
           .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
       }
@@ -61,7 +61,7 @@ export default async function PaymentSuccessPage({
         if (booking) {
           payment = (await supabase
             .from('payments')
-            .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code, subscription_tier)')
+            .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, collection_mode, businesses(phone, name, country_code, subscription_tier)')
             .eq('booking_id', booking.id)
             .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
         }
@@ -174,6 +174,7 @@ export default async function PaymentSuccessPage({
               campaign_id: payment.campaign_id,
               order_id: payment.order_id || null,
               reservation_id: payment.reservation_id || null,
+              collection_mode: (payment.collection_mode as string) || undefined,
             });
           } catch (pipeErr) {
             logger.error('[PAYMENT-SUCCESS] Pipeline error:', pipeErr);

@@ -314,6 +314,7 @@ export async function POST(request: NextRequest) {
           reservation_id: matchedPayment.reservation_id || null,
           order_id: matchedPayment.order_id || null,
           gateway_fee: squareGatewayFee,
+          collection_mode: matchedPayment.collection_mode || undefined,
         }, { strict: true });
 
         // Atomic notification via sendProactiveConfirmation.

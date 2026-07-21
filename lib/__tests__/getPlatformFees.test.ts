@@ -106,12 +106,12 @@ describe('getPlatformFees', () => {
     expect(result.feeTotal).toBe(200 + 150); // 10000 * 2% + 150
   });
 
-  it('rounds percentage fee to nearest integer', async () => {
+  it('rounds percentage fee to 2 decimal places', async () => {
     mockLoadSettings.mockResolvedValue(makePricingTiers());
 
-    // 333 * 2.5% = 8.325 -> rounded to 8
+    // 333 * 2.5% = 8.325 in math, 8.324999... in IEEE 754 → toFixed(2) = 8.32
     const result = await getPlatformFees(333, 'free', false);
 
-    expect(result.feeTotal).toBe(8);
+    expect(result.feeTotal).toBe(8.32);
   });
 });
