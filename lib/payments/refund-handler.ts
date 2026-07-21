@@ -62,6 +62,9 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   const gatewayName = (payment.gateway || 'paystack') as PaymentGatewayName;
   const metadata = payment.metadata as Record<string, unknown> | null;
   const isSquare = gatewayName === 'square';
+  // isDirectSplit for Square is only true for Connect mode, not platform
+  const isSquareConnect = isSquare && payment.collection_mode === 'connect';
+  const isConnectPayment = payment.collection_mode === 'connect';
 
   // ── Square Connect path: atomic reservation → provider call → async finalization ──
   if (isSquare) {
@@ -104,7 +107,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
         return {
           success: storedStatus === 'success' || storedStatus === 'processing',
           refundId,
-          isDirectSplit: true,
+          isDirectSplit: isSquareConnect,
           providerStatus: storedStatus,
           idempotencyKey: providerIdempotencyKey,
         };
@@ -144,7 +147,8 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       metadata: metadata || undefined,
       byoSecretKey: sellerToken,
       providerIdempotencyKey,
-      appFeeRefundAmount: (plannedFeeReversal && plannedFeeReversal > 0) ? plannedFeeReversal : undefined,
+      // Only send app_fee_money for Connect payments (platform payments don't collect Square app fees)
+      appFeeRefundAmount: isConnectPayment && plannedFeeReversal && plannedFeeReversal > 0 ? plannedFeeReversal : undefined,
     });
 
     if (!result.success) {
@@ -153,7 +157,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
         status: 'review_required',
         gateway_response: result.gatewayResponse || { error: result.errorMessage },
       }).eq('id', refundId);
-      return { success: false, refundId, isDirectSplit: true, errorMessage: result.errorMessage, providerStatus: 'review_required', idempotencyKey: providerIdempotencyKey };
+      return { success: false, refundId, isDirectSplit: isSquareConnect, errorMessage: result.errorMessage, providerStatus: 'review_required', idempotencyKey: providerIdempotencyKey };
     }
 
     // Square returned a response — check the provider's status
@@ -207,14 +211,14 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
         planned_fee_reversal: actualFeeReversal,
       }).eq('id', refundId);
       if (feeErr) {
-        logger.error('[REFUND] Failed to persist actual fee reversal:', feeErr.message);
+        throw new Error(`Failed to persist actual fee reversal: ${feeErr.message}`);
       }
     }
 
     return {
       success: squareStatus !== 'FAILED' && squareStatus !== 'REJECTED',
       refundId,
-      isDirectSplit: true,
+      isDirectSplit: isSquareConnect,
       providerStatus: squareStatus,
       idempotencyKey: providerIdempotencyKey,
     };

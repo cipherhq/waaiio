@@ -16,28 +16,41 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient();
 
-  // Look up payment by gateway_reference (exact match)
+  // Primary: exact match on checkout_short_ref (Square short URLs)
   const safeRef = ref.replace(/[%_\\]/g, '\\$&');
   let payment = (await supabase
     .from('payments')
     .select('gateway, gateway_reference, metadata')
-    .eq('gateway_reference', safeRef)
+    .filter('metadata->>checkout_short_ref', 'eq', safeRef)
     .eq('status', 'pending')
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()).data;
 
-  // Fallback: look up by short ref in metadata (used by Square short URLs)
+  // Fallback: exact match on gateway_reference
   if (!payment) {
-    const { data: shortMatch } = await supabase
+    const { data: exactMatch } = await supabase
       .from('payments')
       .select('gateway, gateway_reference, metadata')
-      .filter('metadata->>checkout_short_ref', 'eq', safeRef)
+      .eq('gateway_reference', safeRef)
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (shortMatch) payment = shortMatch;
+    if (exactMatch) payment = exactMatch;
+  }
+
+  // Fallback: suffix match on gateway_reference (Stripe/Paystack short URLs)
+  if (!payment) {
+    const { data: suffixMatch } = await supabase
+      .from('payments')
+      .select('gateway, gateway_reference, metadata')
+      .like('gateway_reference', `%${safeRef}`)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (suffixMatch) payment = suffixMatch;
   }
 
   if (payment) {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { processRefund } from '@/lib/payments/refund-handler';
 import { logger } from '@/lib/logger';
 
@@ -55,8 +56,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Payment not found for this business' }, { status: 404 });
     }
 
+    const serviceClient = createServiceClient();
     const result = await processRefund({
-      supabase,
+      supabase: serviceClient,
       paymentId,
       businessId,
       amount,

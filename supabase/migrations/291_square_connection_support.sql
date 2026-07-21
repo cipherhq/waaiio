@@ -133,11 +133,12 @@ BEGIN
       WHERE payout_account_id = ANY(v_old_ids) AND revoked_at IS NULL;
   END IF;
 
-  -- 5-condition default check across ALL providers
+  -- Check if ANY active connection already claims default (regardless of health).
+  -- If any active connection has is_default = true, don't compete — insert as non-default.
+  -- This prevents two rows having is_default = true (one unhealthy, one healthy).
   SELECT EXISTS(
     SELECT 1 FROM public.payout_accounts
       WHERE business_id = p_business_id AND is_default = true AND is_active = true
-        AND connection_status = 'active' AND verified_at IS NOT NULL AND health_status = 'healthy'
   ) INTO v_has_default;
 
   INSERT INTO public.payout_accounts (

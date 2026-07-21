@@ -99,6 +99,7 @@ export class SquareGateway implements PaymentGateway {
       // gateway + business + reference_code to prevent cross-tenant collisions.
       const attemptKey = `square:${opts.businessId || 'platform'}:${opts.referenceCode}`;
       let paymentId: string;
+      let insertShortRef: string = randomUUID(); // Generated once, persisted atomically at insert
 
       // Check for existing attempt (retry recovery) via the immutable key
       const { data: existingAttempt } = await opts.supabase.from('payments')
@@ -108,19 +109,21 @@ export class SquareGateway implements PaymentGateway {
 
       if (existingAttempt) {
         paymentId = existingAttempt.id;
-        // If Square already succeeded (checkout URL stored), return without re-calling Square
         const existingMeta = existingAttempt.metadata as Record<string, unknown> | null;
+        // Recover the shortRef from the existing row
+        if (existingMeta?.checkout_short_ref) {
+          insertShortRef = existingMeta.checkout_short_ref as string;
+        }
+        // If Square already succeeded (checkout URL stored), return without re-calling Square
         if (existingMeta?.square_checkout_url && existingMeta?.square_payment_link_id) {
           return {
             url: existingMeta.square_checkout_url as string,
             reference: paymentId,
-            shortRef: existingMeta.checkout_short_ref as string, // already persisted at creation
+            shortRef: insertShortRef,
           };
         }
       } else {
         // First attempt: create the payment row with the immutable attempt key
-        // Generate shortRef at insert time so it's set atomically with row creation
-        const insertShortRef = randomUUID();
         const { data: newPayment, error: insertErr } = await opts.supabase.from('payments').insert({
           booking_id: opts.bookingId || null,
           invoice_id: opts.invoiceId || null,
@@ -150,9 +153,14 @@ export class SquareGateway implements PaymentGateway {
           // Unique violation on attempt_key means another concurrent call created it
           if (insertErr?.code === '23505') {
             const { data: concurrent } = await opts.supabase.from('payments')
-              .select('id').eq('payment_attempt_key', attemptKey).single();
+              .select('id, metadata').eq('payment_attempt_key', attemptKey).single();
             if (concurrent) {
               paymentId = concurrent.id;
+              // Use the winner's shortRef
+              const concurrentMeta = concurrent.metadata as Record<string, unknown> | null;
+              if (concurrentMeta?.checkout_short_ref) {
+                insertShortRef = concurrentMeta.checkout_short_ref as string;
+              }
             } else {
               return null;
             }
@@ -164,9 +172,6 @@ export class SquareGateway implements PaymentGateway {
           paymentId = newPayment.id;
         }
       }
-
-      // Generate unique short ref for URL shortening (128-bit UUID, globally unique)
-      const shortRef = randomUUID();
 
       // Step 2: Use the payment row ID as the stable idempotency key
       const idempotencyKey = paymentId;
@@ -235,7 +240,7 @@ export class SquareGateway implements PaymentGateway {
           square_payment_link_id: squareRef,
           square_order_id: orderId || null,
           square_checkout_url: paymentLink.url as string,
-          checkout_short_ref: shortRef,
+          checkout_short_ref: insertShortRef,
           reference_code: opts.referenceCode,
           channel: 'whatsapp',
           order_id: opts.orderId || null,
@@ -254,7 +259,7 @@ export class SquareGateway implements PaymentGateway {
         await opts.supabase.from('invoices').update({ payment_id: paymentId }).eq('id', opts.invoiceId);
       }
 
-      return { url: paymentLink.url as string, reference: paymentId, shortRef };
+      return { url: paymentLink.url as string, reference: paymentId, shortRef: insertShortRef };
     } catch (error) {
       logger.error('[SQUARE] init error:', (error as Error).message);
       return null;

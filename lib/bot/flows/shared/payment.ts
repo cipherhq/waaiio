@@ -257,8 +257,13 @@ export async function initializePayment(
 
     // Shorten the checkout URL for WhatsApp messages
     let shortUrl = result.url;
-    if (result.url.length > 100 && result.shortRef) {
-      shortUrl = `${getAppUrl()}/api/pay?ref=${result.shortRef}`;
+    if (result.url.length > 100) {
+      if (result.shortRef) {
+        shortUrl = `${getAppUrl()}/api/pay?ref=${result.shortRef}`;
+      } else {
+        // Non-Square: use last 8 of gateway_reference for suffix matching
+        shortUrl = `${getAppUrl()}/api/pay?ref=${result.reference.slice(-8)}`;
+      }
     }
 
     return { url: shortUrl, reference: result.reference };

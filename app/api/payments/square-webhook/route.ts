@@ -451,18 +451,25 @@ export async function POST(request: NextRequest) {
 
               // Try to bind to a matching claim (same payment and approximately same amount)
               if (unmatchedClaims && unmatchedClaims.length > 0) {
-                const matchingClaim = unmatchedClaims.find(c =>
+                const matchingClaims = unmatchedClaims.filter(c =>
                   c.payment_id === refPayment.id && Math.abs(Number(c.amount) - refundAmount) < 0.01
                 );
-                if (matchingClaim) {
-                  const { error: bindErr } = await supabase.from('refunds')
+                if (matchingClaims.length > 1) {
+                  throw new Error('Multiple matching unmatched claims — ambiguous, fail closed');
+                }
+                if (matchingClaims.length === 1) {
+                  const { data: bound, error: bindErr } = await supabase.from('refunds')
                     .update({ gateway_refund_reference: squareRefundId, status: 'processing' })
-                    .eq('id', matchingClaim.id)
-                    .is('gateway_refund_reference', null); // CAS
-                  if (!bindErr) {
-                    boundRefundId = matchingClaim.id;
-                    logger.info(`[SQUARE-WEBHOOK] Bound Square refund ${squareRefundId} to existing claim ${matchingClaim.id}`);
+                    .eq('id', matchingClaims[0].id)
+                    .is('gateway_refund_reference', null) // CAS
+                    .select('id')
+                    .maybeSingle();
+                  if (bindErr) throw new Error(`Refund bind error: ${bindErr.message}`);
+                  if (bound) {
+                    boundRefundId = bound.id;
+                    logger.info(`[SQUARE-WEBHOOK] Bound Square refund ${squareRefundId} to existing claim ${matchingClaims[0].id}`);
                   }
+                  // If CAS failed (another worker bound it), fall through to insert
                 }
               }
 
@@ -501,7 +508,7 @@ export async function POST(request: NextRequest) {
                   p_refund_id: refundRowId,
                   p_square_refund_id: squareRefundId,
                   p_final_status: reconFinalStatus,
-                  p_fee_reversed: feeReversal > 0 ? feeReversal : null,
+                  p_fee_reversed: feeReversal, // preserve 0 — don't convert to null
                 });
                 if (reconErr) throw new Error(`Refund reconciliation RPC error: ${reconErr.message}`);
                 if (!reconResult?.success && reconResult?.reason !== 'already_finalized') {

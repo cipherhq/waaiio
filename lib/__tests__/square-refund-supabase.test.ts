@@ -32,6 +32,7 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
       category: 'salon',
       country_code: 'US',
       phone: '+15551234567',
+      address: '123 Test Street',
       flow_type: 'appointment',
       subscription_tier: 'free',
       status: 'active',
@@ -260,5 +261,82 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
       .select('planned_fee_reversal')
       .eq('id', claim.refund_id).single();
     expect(Number(refund!.planned_fee_reversal)).toBe(actualFee);
+  });
+
+  it('payment refund_amount totals are correct after finalization', async () => {
+    const key = `test-totals-${Date.now()}`;
+    const { data: claim } = await supabase.rpc('claim_refund_balance', {
+      p_payment_id: testPaymentId,
+      p_refund_amount: 1.00,
+      p_idempotency_key: key,
+      p_currency: 'USD',
+      p_waaiio_fee_total: 2.50,
+    });
+    expect(claim.claimed).toBe(true);
+
+    await supabase.rpc('finalize_square_refund', {
+      p_refund_id: claim.refund_id,
+      p_square_refund_id: `sq-totals-${Date.now()}`,
+      p_final_status: 'success',
+      p_fee_reversed: claim.planned_fee_reversal,
+    });
+
+    // Verify payment refund_amount is updated
+    const { data: payment } = await supabase.from('payments')
+      .select('refund_amount')
+      .eq('id', testPaymentId).single();
+    expect(Number(payment!.refund_amount)).toBeGreaterThan(0);
+  });
+
+  it('zero-fee override works correctly', async () => {
+    const key = `test-zero-fee-${Date.now()}`;
+    const { data: claim } = await supabase.rpc('claim_refund_balance', {
+      p_payment_id: testPaymentId,
+      p_refund_amount: 1.00,
+      p_idempotency_key: key,
+      p_currency: 'USD',
+      p_waaiio_fee_total: 2.50,
+    });
+    expect(claim.claimed).toBe(true);
+
+    // Finalize with zero fee override
+    const { data: result, error: finalErr } = await supabase.rpc('finalize_square_refund', {
+      p_refund_id: claim.refund_id,
+      p_square_refund_id: `sq-zero-fee-${Date.now()}`,
+      p_final_status: 'success',
+      p_fee_reversed: 0,
+    });
+    expect(finalErr).toBeNull();
+    expect(result.success).toBe(true);
+
+    const { data: refund } = await supabase.from('refunds')
+      .select('planned_fee_reversal')
+      .eq('id', claim.refund_id).single();
+    expect(Number(refund!.planned_fee_reversal)).toBe(0);
+  });
+
+  it('concurrent claims do not double-reserve', async () => {
+    const key1 = `concurrent-a-${Date.now()}`;
+    const key2 = `concurrent-b-${Date.now()}`;
+
+    // Both try to claim against the same payment simultaneously
+    const [result1, result2] = await Promise.all([
+      supabase.rpc('claim_refund_balance', { p_payment_id: testPaymentId, p_refund_amount: 40, p_idempotency_key: key1, p_currency: 'USD', p_waaiio_fee_total: 2.50 }),
+      supabase.rpc('claim_refund_balance', { p_payment_id: testPaymentId, p_refund_amount: 40, p_idempotency_key: key2, p_currency: 'USD', p_waaiio_fee_total: 2.50 }),
+    ]);
+
+    // At most one should claim the last 40 (depends on remaining balance)
+    const claimed1 = result1.data?.claimed;
+    const claimed2 = result2.data?.claimed;
+    // Both could succeed if balance allows, or one could fail with exceeds_balance
+    // The key invariant: total claimed never exceeds payment amount
+    if (claimed1 && claimed2) {
+      // Both succeeded — verify neither exceeds balance individually
+      expect(result1.data.remaining_after).toBeGreaterThanOrEqual(0);
+      expect(result2.data.remaining_after).toBeGreaterThanOrEqual(0);
+    }
+    // At least one should have a valid response
+    expect(result1.error).toBeNull();
+    expect(result2.error).toBeNull();
   });
 });

@@ -253,7 +253,9 @@ export default function PropertyDetailPage() {
         );
         if (shouldRefund) {
           try {
-            const idempotencyKey = `cancel-${id}-${reservation.payment_id}`;
+            // Keep under Square's 45-char idempotency key limit (UUID dashes removed: 32 hex each)
+            const raw = id.replace(/-/g, '') + (reservation.payment_id || '').replace(/-/g, '');
+            const idempotencyKey = raw.slice(0, 45);
             const res = await fetch('/api/payments/refund', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },

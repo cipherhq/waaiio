@@ -239,6 +239,26 @@ export async function sendProactiveConfirmation(
     }
   }
 
+  // ── 3b. Try campaign donation for phone + business resolution ──
+  if (!customerPhone && payment.campaign_id) {
+    const { data: donation } = await supabase
+      .from('campaign_donations')
+      .select('donor_phone, campaigns(business_id, businesses(name, country_code))')
+      .eq('campaign_id', payment.campaign_id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (donation?.donor_phone) {
+      customerPhone = donation.donor_phone;
+      const campaign = donation.campaigns as unknown as { business_id: string; businesses: { name: string; country_code?: string } | null } | null;
+      if (campaign?.business_id && !businessId) {
+        businessId = campaign.business_id;
+        if (campaign.businesses?.name) businessName = campaign.businesses.name;
+        if (campaign.businesses?.country_code) countryCode = campaign.businesses.country_code as CountryCode;
+      }
+    }
+  }
+
   if (!businessId) {
     // No business found — clear claim for retry
     await supabase.from('payments').update({
@@ -585,6 +605,7 @@ export async function sendProactiveConfirmation(
             quantity: ticketBooking.party_size || 1,
             amount: payment.amount, countryCode,
           });
+          deliverySucceeded = true;
         }
       }
     } catch (ticketErr) {
@@ -681,6 +702,7 @@ export async function sendProactiveConfirmation(
               whitelabel: isWl,
             });
             await sendEmail({ to: donorEmail, ...emailContent });
+            deliverySucceeded = true;
             logger.info(`${logPrefix} Donation receipt email sent to ${donorEmail}`);
           }
         }
@@ -735,4 +757,36 @@ export async function sendProactiveConfirmation(
     Sentry.captureException(err, { tags: { component: 'send-confirmation', operation: 'send-confirmation' } });
     throw err; // propagate so caller knows delivery failed
   }
+}
+
+/**
+ * Retry confirmation for successful payments that have no confirmation_sent_at.
+ * Called by cron or webhook handlers to recover from delivery failures.
+ */
+export async function retryUndeliveredConfirmations(
+  supabase: SupabaseClient,
+  limit = 10,
+): Promise<number> {
+  const { data: undelivered, error } = await supabase
+    .from('payments')
+    .select('id, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id')
+    .eq('status', 'success')
+    .is('confirmation_sent_at', null)
+    .is('confirmation_claimed_at', null)
+    .gte('paid_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+    .order('paid_at', { ascending: true })
+    .limit(limit);
+
+  if (error || !undelivered) return 0;
+
+  let retried = 0;
+  for (const payment of undelivered) {
+    try {
+      await sendProactiveConfirmation(supabase, payment, '[RETRY]');
+      retried++;
+    } catch {
+      // Individual failures are logged inside sendProactiveConfirmation
+    }
+  }
+  return retried;
 }
