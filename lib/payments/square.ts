@@ -90,7 +90,6 @@ export class SquareGateway implements PaymentGateway {
 
       const amountInCents = Math.round(opts.amount * 100);
       const { getAppUrl } = await import('@/lib/get-app-url');
-      const callbackUrl = opts.callbackUrl || getAppUrl();
       const useToken = opts.squareAccessToken || squareAccessToken;
       const useLocation = opts.squareLocationId || squareLocationId;
 
@@ -173,7 +172,7 @@ export class SquareGateway implements PaymentGateway {
           location_id: useLocation,
         },
         checkout_options: {
-          redirect_url: `${callbackUrl}/api/payments/square-callback?ref=${idempotencyKey}`,
+          redirect_url: `${getAppUrl()}/payment-success?paymentId=${paymentId}`,
           accepted_payment_methods: { cash_app_pay: true, apple_pay: true, google_pay: true },
         },
         pre_populated_data: {
@@ -247,7 +246,7 @@ export class SquareGateway implements PaymentGateway {
         await opts.supabase.from('invoices').update({ payment_id: paymentId }).eq('id', opts.invoiceId);
       }
 
-      return { url: paymentLink.url as string, reference: squareRef };
+      return { url: paymentLink.url as string, reference: paymentId };
     } catch (error) {
       logger.error('[SQUARE] init error:', (error as Error).message);
       return null;
@@ -284,7 +283,7 @@ export class SquareGateway implements PaymentGateway {
       // Look up the order ID from the payment metadata
       const { data: paymentRecord } = await supabase
         .from('payments')
-        .select('id, booking_id, amount, metadata')
+        .select('id, booking_id, amount, currency, metadata')
         .eq('gateway_reference', reference)
         .single();
 
@@ -305,14 +304,33 @@ export class SquareGateway implements PaymentGateway {
       const order = orderResult.order as Record<string, unknown> | undefined;
 
       if (order?.state === 'COMPLETED') {
+        // Validate currency
+        const orderMoney = order.total_money as { amount?: number; currency?: string } | undefined;
+        const orderCurrency = orderMoney?.currency || '';
+        const storedCurrency = (paymentRecord.currency as string) || 'USD';
+        if (orderCurrency && orderCurrency.toUpperCase() !== storedCurrency.toUpperCase()) {
+          logger.warn('[SQUARE] Verification currency mismatch');
+          return false;
+        }
+
+        // Validate amount
+        const orderAmountCents = orderMoney?.amount || 0;
+        const expectedCents = Math.round(paymentRecord.amount * 100);
+        if (orderAmountCents > 0 && Math.abs(orderAmountCents - expectedCents) > 1) {
+          logger.warn('[SQUARE] Verification amount mismatch');
+          return false;
+        }
+
         // Detect actual payment method from order tenders
-        const tenders = (order.tenders || []) as Array<{ type?: string }>;
+        const tenders = (order.tenders || []) as Array<{ type?: string; payment_id?: string }>;
         const tenderType = tenders[0]?.type || '';
+        const squarePaymentId = tenders[0]?.payment_id;
         const paymentMethod = tenderType === 'CASH_APP' ? 'cash_app_pay'
           : tenderType === 'WALLET' ? 'apple_pay'
           : tenderType === 'CARD' ? 'card'
           : 'square';
 
+        // Persist square_payment_id and transition only from pending
         await supabase
           .from('payments')
           .update({
@@ -320,8 +338,13 @@ export class SquareGateway implements PaymentGateway {
             gateway_status: 'completed',
             payment_method: paymentMethod,
             paid_at: new Date().toISOString(),
+            metadata: {
+              ...((paymentRecord.metadata as Record<string, unknown>) || {}),
+              square_payment_id: squarePaymentId || null,
+            },
           })
-          .eq('id', paymentRecord.id);
+          .eq('id', paymentRecord.id)
+          .in('status', ['pending']);
 
         if (paymentRecord.booking_id) {
           await supabase

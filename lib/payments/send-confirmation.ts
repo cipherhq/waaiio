@@ -36,13 +36,16 @@ export async function sendProactiveConfirmation(
 ): Promise<void> {
   // Dedup: only the first caller sends confirmation.
   // Atomic: UPDATE ... WHERE confirmation_sent_at IS NULL — only one path can claim it.
-  const { count } = await supabase
+  // Uses .select('id').maybeSingle() to check if the update matched a row (count is not returned by default).
+  const { data: claimed } = await supabase
     .from('payments')
     .update({ confirmation_sent_at: new Date().toISOString() })
     .eq('id', payment.id)
-    .is('confirmation_sent_at', null);
+    .is('confirmation_sent_at', null)
+    .select('id')
+    .maybeSingle();
 
-  if (!count || count === 0) {
+  if (!claimed) {
     logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
     return;
   }
@@ -624,7 +627,12 @@ export async function sendProactiveConfirmation(
         .in('current_step', ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking']);
     }
   } catch (err) {
-    logger.error(`${logPrefix} Send confirmation error:`, err);
+    // Clear the claim so retry can succeed
+    await supabase.from('payments')
+      .update({ confirmation_sent_at: null })
+      .eq('id', payment.id);
+    logger.error(`${logPrefix} Send confirmation error (claim cleared for retry):`, err);
     Sentry.captureException(err, { tags: { component: 'send-confirmation', operation: 'send-confirmation' } });
+    throw err; // propagate so caller knows delivery failed
   }
 }

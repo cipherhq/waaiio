@@ -67,6 +67,12 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     // Use the logical refund ID as the stable provider idempotency key.
     // Callers MUST provide this — it must be the same across retries.
     const providerIdempotencyKey = opts.logicalRefundId;
+
+    // Square has a 45-character max for idempotency keys
+    if (providerIdempotencyKey.length > 45) {
+      return { success: false, errorMessage: 'Refund idempotency key exceeds 45 characters' };
+    }
+
     const { data: claimResult, error: claimErr } = await supabase.rpc('claim_refund_balance', {
       p_payment_id: paymentId,
       p_refund_amount: amount,
@@ -90,8 +96,9 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       const { data: existingRefund } = await supabase.from('refunds')
         .select('status, gateway_refund_reference').eq('id', refundId).single();
       const storedStatus = existingRefund?.status || 'pending';
-      // If provider call never occurred (pending), resume below. Otherwise return stored state.
-      if (storedStatus !== 'pending') {
+      // If provider call never occurred (pending) or needs retry (review_required), resume below.
+      // Otherwise return stored state.
+      if (storedStatus !== 'pending' && storedStatus !== 'review_required') {
         return {
           success: storedStatus === 'success' || storedStatus === 'processing',
           refundId,

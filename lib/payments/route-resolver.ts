@@ -68,11 +68,16 @@ export async function resolvePaymentRoute(
   countryCode: CountryCode = 'NG',
 ): Promise<PaymentRoute> {
   // 1. Fetch business tier for fee calculation
-  const { data: business } = await supabase
+  const { data: business, error: bizErr } = await supabase
     .from('businesses')
     .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat, payout_mode')
     .eq('id', businessId)
     .single();
+
+  if (bizErr) {
+    logger.error('[PAYMENT-ROUTE] Business lookup failed — fail closed:', bizErr.message);
+    return platformFallback(countryCode, 0, 'Database error — fail closed');
+  }
 
   const tier = (business?.subscription_tier || 'free') as SubscriptionTier;
   const isInTrial = tier === 'free' && business?.trial_ends_at && new Date(business.trial_ends_at) > new Date();
@@ -82,7 +87,7 @@ export async function resolvePaymentRoute(
   });
 
   // 2. Look for default connection first, then any active verified connection
-  const { data: connections } = await supabase
+  const { data: connections, error: connErr } = await supabase
     .from('payout_accounts')
     .select('id, gateway, subaccount_code, stripe_account_id, flutterwave_mid, square_merchant_id, square_location_id, connection_mode, connection_status, is_default, is_active, verified_at, health_status, country_code')
     .eq('business_id', businessId)
@@ -90,6 +95,11 @@ export async function resolvePaymentRoute(
     .in('connection_status', ['active'])
     .not('verified_at', 'is', null)
     .order('is_default', { ascending: false }); // default first
+
+  if (connErr) {
+    logger.error('[PAYMENT-ROUTE] Connection lookup failed — fail closed:', connErr.message);
+    return platformFallback(countryCode, feeTotal, 'Database error — fail closed');
+  }
 
   if (!connections || connections.length === 0) {
     return platformFallback(countryCode, feeTotal);

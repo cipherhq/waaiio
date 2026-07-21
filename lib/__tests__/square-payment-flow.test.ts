@@ -681,6 +681,278 @@ describe('Square connected verification', () => {
   });
 });
 
+// ── Item 1: Redirect URL uses getAppUrl() and paymentId ──
+describe('Square checkout redirect', () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it('redirect_url uses getAppUrl()/payment-success and reference returns paymentId', async () => {
+    vi.resetModules();
+    process.env.SQUARE_ACCESS_TOKEN = 'mock-token';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({
+        payment_link: { id: 'link-1', url: 'https://square.link/u/test', order_id: 'order-1' },
+      }),
+    }));
+
+    const { SquareGateway } = await import('@/lib/payments/square');
+    const gw = new SquareGateway();
+
+    const insertFn = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({ data: { id: 'pay-uuid-123' }, error: null }),
+      }),
+    });
+    const updateFn = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) });
+    const fromFn = vi.fn(() => ({
+      select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: null }),
+      insert: insertFn,
+      update: updateFn,
+    }));
+
+    const result = await gw.initializePayment({
+      supabase: { from: fromFn } as any,
+      userId: 'u1', amount: 50, currency: 'USD',
+      referenceCode: 'REF-REDIR', businessName: 'Biz', phone: '+1',
+    });
+
+    expect(result).not.toBeNull();
+    // reference should be the paymentId, not the squareRef
+    expect(result!.reference).toBe('pay-uuid-123');
+
+    // The redirect_url in the fetch body should use getAppUrl()/payment-success
+    const fetchCall = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body);
+    expect(body.checkout_options.redirect_url).toContain('/payment-success?paymentId=pay-uuid-123');
+    // Should NOT contain /api/payments/square-callback
+    expect(body.checkout_options.redirect_url).not.toContain('/api/payments/square-callback');
+
+    vi.unstubAllGlobals();
+    delete process.env.SQUARE_ACCESS_TOKEN;
+  });
+});
+
+// ── Item 2: Refund idempotency key >45 chars rejected ──
+describe('Square refund idempotency key length', () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it('rejects idempotency key exceeding 45 characters', async () => {
+    vi.resetModules();
+    vi.doMock('@/lib/payments/factory', () => ({
+      getPaymentGatewayByName: vi.fn().mockReturnValue({
+        refundPayment: vi.fn().mockResolvedValue({ success: true }),
+      }),
+    }));
+
+    const rpcFn = vi.fn(); // should not be called
+    const fromFn = vi.fn(() => ({
+      select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({
+        data: {
+          id: 'pay-1', amount: 100, currency: 'USD', status: 'success',
+          gateway: 'square', gateway_reference: 'ref', business_id: 'biz-1',
+          payout_account_id: 'pa-1', waaiio_fee: 0, refund_amount: 0,
+          metadata: {}, collection_mode: 'connect',
+        },
+      }),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { payout_mode: 'direct_split' } }),
+    }));
+
+    const { processRefund } = await import('@/lib/payments/refund-handler');
+    const longKey = 'a'.repeat(46); // 46 chars > 45 limit
+    const result = await processRefund({
+      supabase: { from: fromFn, rpc: rpcFn } as any,
+      paymentId: 'pay-1', businessId: 'biz-1', amount: 50,
+      reason: 'test', initiatedBy: 'u1', initiatedByRole: 'business',
+      logicalRefundId: longKey,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errorMessage).toContain('45 characters');
+    // RPC should not have been called
+    expect(rpcFn).not.toHaveBeenCalled();
+  });
+});
+
+// ── Item 3: review_required allows retry ──
+describe('Square refund review_required retry', () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it('review_required status falls through to retry the provider call', async () => {
+    vi.resetModules();
+    const rpcFn = vi.fn().mockResolvedValue({
+      data: { claimed: true, refund_id: 'ref-review', existing: true }, error: null,
+    });
+    const fromFn = vi.fn((table: string) => ({
+      select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({
+        data: table === 'refunds'
+          ? { id: 'ref-review', status: 'review_required', gateway_refund_reference: null }
+          : table === 'payments'
+          ? { id: 'pay-1', amount: 100, currency: 'USD', status: 'success', gateway: 'square',
+              gateway_reference: 'ref', business_id: 'biz-1', payout_account_id: 'pa-1',
+              waaiio_fee: 0, refund_amount: 0, metadata: { square_payment_id: 'sq-pay' }, collection_mode: 'connect' }
+          : { payout_mode: 'direct_split' },
+      }),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { payout_mode: 'direct_split' } }),
+      update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) }),
+    }));
+
+    vi.doMock('@/lib/payments/square-token', () => ({
+      resolveSquareToken: vi.fn().mockResolvedValue({ accessToken: 'tok', secretId: 's' }),
+    }));
+    const mockRefundPayment = vi.fn().mockResolvedValue({
+      success: true, gatewayRefundReference: 'sq-ref-retry',
+      gatewayResponse: { refund: { id: 'sq-ref-retry', status: 'COMPLETED' } },
+    });
+    vi.doMock('@/lib/payments/factory', () => ({
+      getPaymentGatewayByName: vi.fn().mockReturnValue({ refundPayment: mockRefundPayment }),
+    }));
+
+    const { processRefund } = await import('@/lib/payments/refund-handler');
+    const result = await processRefund({
+      supabase: { from: fromFn, rpc: rpcFn } as any,
+      paymentId: 'pay-1', businessId: 'biz-1', amount: 50,
+      reason: 'retry', initiatedBy: 'u1', initiatedByRole: 'business',
+      logicalRefundId: 'retry-review-key',
+    });
+
+    // Should have called the provider (fell through review_required)
+    expect(mockRefundPayment).toHaveBeenCalled();
+    expect(result.success).toBe(true);
+  });
+});
+
+// ── Item 10: Verification validates amount/currency ──
+describe('Square verification hardening', () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it('rejects verification on currency mismatch', async () => {
+    vi.resetModules();
+    process.env.SQUARE_ACCESS_TOKEN = 'mock-token';
+    // Order returns GBP but payment is USD
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({
+        order: {
+          state: 'COMPLETED',
+          total_money: { amount: 5000, currency: 'GBP' },
+          tenders: [{ type: 'CARD', payment_id: 'sq-pay-1' }],
+        },
+      }),
+    }));
+
+    const { SquareGateway } = await import('@/lib/payments/square');
+    const gw = new SquareGateway();
+
+    const updateFn = vi.fn();
+    const supabase = {
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: {
+            id: 'pay-1', booking_id: null, amount: 50, currency: 'USD',
+            metadata: { square_order_id: 'order-1' },
+          },
+        }),
+        update: updateFn,
+      })),
+    };
+
+    const result = await gw.verifyPayment(supabase as any, 'ref-123');
+    expect(result).toBe(false);
+    // update should NOT have been called (no status change on mismatch)
+    expect(updateFn).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+    delete process.env.SQUARE_ACCESS_TOKEN;
+  });
+
+  it('rejects verification on amount mismatch', async () => {
+    vi.resetModules();
+    process.env.SQUARE_ACCESS_TOKEN = 'mock-token';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({
+        order: {
+          state: 'COMPLETED',
+          total_money: { amount: 9999, currency: 'USD' },
+          tenders: [{ type: 'CARD', payment_id: 'sq-pay-1' }],
+        },
+      }),
+    }));
+
+    const { SquareGateway } = await import('@/lib/payments/square');
+    const gw = new SquareGateway();
+
+    const supabase = {
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: {
+            id: 'pay-1', booking_id: null, amount: 50, currency: 'USD',
+            metadata: { square_order_id: 'order-1' },
+          },
+        }),
+        update: vi.fn(),
+      })),
+    };
+
+    const result = await gw.verifyPayment(supabase as any, 'ref-123');
+    expect(result).toBe(false);
+
+    vi.unstubAllGlobals();
+    delete process.env.SQUARE_ACCESS_TOKEN;
+  });
+
+  it('persists square_payment_id from tenders and only transitions pending', async () => {
+    vi.resetModules();
+    process.env.SQUARE_ACCESS_TOKEN = 'mock-token';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({
+        order: {
+          state: 'COMPLETED',
+          total_money: { amount: 5000, currency: 'USD' },
+          tenders: [{ type: 'CASH_APP', payment_id: 'sq-actual-pay-id' }],
+        },
+      }),
+    }));
+
+    const { SquareGateway } = await import('@/lib/payments/square');
+    const gw = new SquareGateway();
+
+    const updateChain = {
+      eq: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({ error: null }),
+    };
+    const updateFn = vi.fn().mockReturnValue(updateChain);
+    const supabase = {
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: {
+            id: 'pay-1', booking_id: 'book-1', amount: 50, currency: 'USD',
+            metadata: { square_order_id: 'order-1', some_existing: 'value' },
+          },
+        }),
+        update: updateFn,
+      })),
+    };
+
+    const result = await gw.verifyPayment(supabase as any, 'ref-123');
+    expect(result).toBe(true);
+
+    // Check the update call includes square_payment_id and .in('status', ['pending'])
+    expect(updateFn).toHaveBeenCalled();
+    const updateArg = updateFn.mock.calls[0][0];
+    expect(updateArg.metadata.square_payment_id).toBe('sq-actual-pay-id');
+    expect(updateArg.payment_method).toBe('cash_app_pay');
+    // Verify .in was called with ['pending']
+    expect(updateChain.in).toHaveBeenCalledWith('status', ['pending']);
+
+    vi.unstubAllGlobals();
+    delete process.env.SQUARE_ACCESS_TOKEN;
+  });
+});
+
 // ── Sandbox limitations ──
 describe('Square Sandbox limitations', () => {
   it('Cash App Pay on hosted checkout is production-only', () => {

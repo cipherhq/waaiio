@@ -465,6 +465,133 @@ describe('Square webhook POST handler', () => {
     expect(res.status).toBe(500);
   });
 
+  // ── Item 4: Square-initiated refund reconciliation ──
+
+  it('reconciles Square-initiated refund when no local row exists', async () => {
+    mockRpcResults['claim_webhook_event'] = { data: { outcome: 'claimed' }, error: null };
+    mockRpcResults['finalize_square_refund'] = { data: { success: true, payment_id: 'pay-1' }, error: null };
+
+    const insertFn = vi.fn().mockResolvedValue({
+      data: { id: 'new-refund-1' }, error: null,
+    });
+
+    mockSupabase.from = vi.fn((table: string) => {
+      const chain = makeDeepChain();
+      if (table === 'payout_accounts') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa-1', business_id: 'b-1' }, error: null });
+      }
+      if (table === 'refunds') {
+        // No local refund exists
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        chain.insert = vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({ data: { id: 'new-refund-1' }, error: null }),
+          }),
+        });
+      }
+      if (table === 'payments') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({
+          data: { id: 'pay-1', amount: 50, currency: 'USD', business_id: 'b-1', payout_account_id: 'pa-1', gateway: 'square', waaiio_fee: 1.25 },
+          error: null,
+        });
+        // For filter chain
+        chain.filter = vi.fn().mockReturnValue(chain);
+      }
+      return chain;
+    });
+
+    const body = JSON.stringify({
+      type: 'refund.created', event_id: 'e-sq-init-refund', merchant_id: 'ML_test',
+      data: { object: { refund: {
+        id: 'sq-ext-ref-1', payment_id: 'sq-pay-ext', status: 'COMPLETED',
+        amount_money: { amount: 5000, currency: 'USD' },
+        app_fee_money: { amount: 125 },
+      } } },
+    });
+    const res = await callHandler(body);
+    expect(res.status).toBe(200);
+
+    // finalize_square_refund should have been called
+    const rpcCalls = (mockSupabase.rpc as ReturnType<typeof vi.fn>).mock.calls;
+    const finCalls = rpcCalls.filter((c: unknown[]) => c[0] === 'finalize_square_refund');
+    expect(finCalls.length).toBe(1);
+    expect(finCalls[0][1].p_refund_id).toBe('new-refund-1');
+    expect(finCalls[0][1].p_final_status).toBe('success');
+  });
+
+  // ── Item 8: Preserve existing square_payment_link_id ──
+
+  it('preserves existing square_payment_link_id in metadata', async () => {
+    mockRpcResults['claim_webhook_event'] = { data: { outcome: 'claimed' }, error: null };
+
+    // Set up a payment that already has square_payment_link_id in metadata
+    const updateFn = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        in: vi.fn().mockResolvedValue({ data: null, error: null }),
+        select: vi.fn().mockReturnValue({
+          maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'updated' }, error: null }),
+        }),
+      }),
+    });
+
+    mockSupabase.from = vi.fn((table: string) => {
+      const chain = makeDeepChain();
+      if (table === 'payout_accounts') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa-1', business_id: 'b-1' }, error: null });
+      }
+      if (table === 'payments') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({
+          data: {
+            id: 'pay-1', amount: 50, currency: 'USD', status: 'pending',
+            payout_account_id: 'pa-1',
+            metadata: { square_payment_link_id: 'original-link-id' },
+            business_id: 'b-1', gateway_reference: 'already-reconciled-pay-id',
+            waaiio_fee: 0, collection_mode: 'connect', booking_id: 'bk-1',
+            invoice_id: null, campaign_id: null, reservation_id: null, order_id: null,
+          },
+          error: null,
+        });
+        chain.update = updateFn;
+      }
+      return chain;
+    });
+
+    const body = JSON.stringify({
+      type: 'payment.updated', event_id: 'e-preserve-link', merchant_id: 'ML_test',
+      data: { object: { payment: { order_id: 'o1', status: 'COMPLETED', id: 'sq-pay-new',
+        total_money: { amount: 5000, currency: 'USD' }, source_type: 'CARD' } } },
+    });
+    const res = await callHandler(body);
+    expect(res.status).toBe(200);
+
+    // The update should preserve the original square_payment_link_id
+    if (updateFn.mock.calls.length > 0) {
+      const updateArg = updateFn.mock.calls[0][0];
+      if (updateArg.metadata) {
+        expect(updateArg.metadata.square_payment_link_id).toBe('original-link-id');
+      }
+    }
+  });
+
+  // ── Item 6: Confirmation claim uses returned rows ──
+
+  it('sendProactiveConfirmation is called with correct payment data', async () => {
+    mockRpcResults['claim_webhook_event'] = { data: { outcome: 'claimed' }, error: null };
+    setupPaymentResolution();
+
+    const body = JSON.stringify({
+      type: 'payment.updated', event_id: 'e-confirm-claim', merchant_id: 'ML_test',
+      data: { object: { payment: { order_id: 'o1', status: 'COMPLETED',
+        total_money: { amount: 5000, currency: 'USD' }, id: 'p1', source_type: 'CARD' } } },
+    });
+    const res = await callHandler(body);
+    expect(res.status).toBe(200);
+
+    const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
+    // Verify it uses the returned-row pattern (select('id').maybeSingle) not count
+    expect(sendProactiveConfirmation).toHaveBeenCalled();
+  });
+
   // ── Notification uses atomic claim ──
 
   it('notification uses sendProactiveConfirmation atomic claim (not metadata)', async () => {

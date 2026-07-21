@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
 
     // Stable refund-request ID: client-supplied for retry recovery, or generated once per request.
     // The client SHOULD persist this and resend on retry to ensure idempotency.
-    const logicalRefundId = idempotencyKey || `biz-refund-${paymentId}-${randomUUID()}`;
+    const logicalRefundId = idempotencyKey || randomUUID();
 
     // Verify the user owns the business
     const { data: business } = await supabase

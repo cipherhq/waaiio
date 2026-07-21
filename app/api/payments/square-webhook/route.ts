@@ -236,7 +236,7 @@ export async function POST(request: NextRequest) {
         const reconciledMetadata = {
           ...existingMeta,
           square_payment_id: squarePaymentId,
-          square_payment_link_id: matchedPayment.gateway_reference,
+          square_payment_link_id: existingMeta.square_payment_link_id || matchedPayment.gateway_reference,
           square_app_fee: squareAppFee,
           square_merchant_net: merchantNet > 0 ? merchantNet : null,
         };
@@ -367,6 +367,73 @@ export async function POST(request: NextRequest) {
               if (finalErr) throw new Error(`Refund finalization RPC error: ${finalErr.message}`);
               if (!finalResult?.success && finalResult?.reason !== 'already_finalized') {
                 throw new Error(`Refund finalization rejected: ${finalResult?.reason}`);
+              }
+            }
+          } else if (!localRefund) {
+            // Square-initiated refund: no local row exists yet — reconcile
+            const squarePaymentId = refund.payment_id as string | undefined;
+            if (squarePaymentId) {
+              // Find the local payment by Square payment ID in metadata
+              const { data: refPayment, error: refPayErr } = await supabase
+                .from('payments')
+                .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee')
+                .eq('gateway', 'square')
+                .eq('payout_account_id', conn.id)
+                .filter('metadata->>square_payment_id', 'eq', squarePaymentId)
+                .maybeSingle();
+
+              if (refPayErr) throw new Error(`Refund payment lookup error: ${refPayErr.message}`);
+
+              if (refPayment) {
+                // Calculate refund amount from Square's amount_money
+                const refundAmountMoney = refund.amount_money as { amount?: number; currency?: string } | undefined;
+                const refundAmountCents = refundAmountMoney?.amount || 0;
+                const refundAmount = refundAmountCents / 100;
+
+                // Calculate fee reversal from app_fee_money if present
+                const appFeeMoney = refund.app_fee_money as { amount?: number } | undefined;
+                const feeReversalCents = appFeeMoney?.amount || 0;
+                const feeReversal = feeReversalCents / 100;
+
+                // Create a local refund row
+                const { data: newRefund, error: insertErr } = await supabase
+                  .from('refunds')
+                  .insert({
+                    payment_id: refPayment.id,
+                    business_id: refPayment.business_id,
+                    amount: refundAmount,
+                    status: 'pending',
+                    gateway: 'square',
+                    gateway_refund_reference: squareRefundId,
+                    refund_type: refundAmount >= Number(refPayment.amount) ? 'full' : 'partial',
+                    planned_fee_reversal: feeReversal,
+                    is_direct_split: true,
+                    initiated_by_role: 'admin',
+                  })
+                  .select('id')
+                  .single();
+
+                if (insertErr) throw new Error(`Refund insert error: ${insertErr.message}`);
+
+                // Finalize if COMPLETED or FAILED
+                const reconFinalStatus = refundStatus === 'COMPLETED' ? 'success'
+                  : (refundStatus === 'FAILED' || refundStatus === 'REJECTED') ? 'failed'
+                  : null;
+
+                if (reconFinalStatus && newRefund) {
+                  const { data: reconResult, error: reconErr } = await supabase.rpc('finalize_square_refund', {
+                    p_refund_id: newRefund.id,
+                    p_square_refund_id: squareRefundId,
+                    p_final_status: reconFinalStatus,
+                    p_fee_reversed: feeReversal > 0 ? feeReversal : null,
+                  });
+                  if (reconErr) throw new Error(`Refund reconciliation RPC error: ${reconErr.message}`);
+                  if (!reconResult?.success && reconResult?.reason !== 'already_finalized') {
+                    throw new Error(`Refund reconciliation rejected: ${reconResult?.reason}`);
+                  }
+                }
+
+                logger.info(`[SQUARE-WEBHOOK] Reconciled Square-initiated refund ${squareRefundId} for payment ${refPayment.id}`);
               }
             }
           }

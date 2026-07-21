@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Stable refund-request ID: client-supplied for retry recovery, or generated once per request.
-    const logicalRefundId = idempotencyKey || `admin-refund-${paymentId}-${randomUUID()}`;
+    const logicalRefundId = idempotencyKey || randomUUID();
 
     const serviceClient = createServiceClient();
 

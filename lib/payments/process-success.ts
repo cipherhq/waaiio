@@ -92,7 +92,7 @@ export async function processSuccessfulPayment(
             customerPhone: booking.guest_phone,
             serviceId: booking.service_id,
             bookingId: payment.booking_id,
-          });
+          }, strict);
         } catch (pkgErr) {
           logger.error('[PROCESS-SUCCESS] Package session deduction error:', pkgErr);
           Sentry.captureException(pkgErr, { tags: { component: 'process-success', operation: 'package-session-deduction' } });
@@ -500,6 +500,7 @@ async function deductPackageSession(
     serviceId: string;
     bookingId: string;
   },
+  strict = false,
 ): Promise<void> {
   try {
     const { data: deducted, error } = await supabase.rpc('deduct_package_session', {
@@ -521,5 +522,6 @@ async function deductPackageSession(
   } catch (err) {
     logger.error('[PACKAGE-DEDUCT] Error:', err);
     Sentry.captureException(err, { tags: { area: 'package-deduction' } });
+    if (strict) throw err;
   }
 }

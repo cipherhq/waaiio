@@ -96,6 +96,9 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'reason', 'business_not_found');
   END IF;
 
+  -- Lock the business row BEFORE inspecting payout accounts to prevent concurrent mutations
+  PERFORM id FROM public.businesses WHERE id = p_business_id FOR UPDATE;
+
   -- Lock ALL connections for this business (not just Square) to protect default invariant
   PERFORM id FROM public.payout_accounts
     WHERE business_id = p_business_id FOR UPDATE;
@@ -141,7 +144,9 @@ BEGIN
     NOW(), 'oauth_exchange'
   );
 
-  UPDATE public.businesses SET payout_mode = 'direct_split' WHERE id = p_business_id;
+  IF NOT v_has_default THEN
+    UPDATE public.businesses SET payout_mode = 'direct_split' WHERE id = p_business_id;
+  END IF;
 
   RETURN jsonb_build_object(
     'success', true, 'connection_id', v_new_id,
@@ -303,7 +308,7 @@ BEGIN
   IF v_refund IS NULL THEN
     RETURN jsonb_build_object('success', false, 'reason', 'refund_not_found');
   END IF;
-  IF v_refund.status NOT IN ('pending', 'processing') THEN
+  IF v_refund.status NOT IN ('pending', 'processing', 'review_required') THEN
     RETURN jsonb_build_object('success', false, 'reason', 'already_finalized');
   END IF;
   IF v_refund.gateway_refund_reference IS NOT NULL
@@ -327,7 +332,7 @@ BEGIN
 
   -- Lock and read the payment
   SELECT id, amount, refund_amount, booking_id, reservation_id, invoice_id,
-         campaign_id, order_id, business_id, gateway_reference
+         campaign_id, order_id, business_id, gateway_reference, collection_mode
     INTO v_payment FROM public.payments WHERE id = v_refund.payment_id FOR UPDATE;
 
   IF v_payment IS NULL THEN
@@ -388,19 +393,21 @@ BEGIN
     END IF;
   END IF;
 
-  -- Payout adjustment: if a payout was already sent for this period
-  SELECT bp.id INTO v_payout
-    FROM public.business_payouts bp, public.payments p
-    WHERE p.id = v_refund.payment_id
-      AND bp.business_id = v_refund.business_id
-      AND bp.status = 'paid'
-      AND bp.period_end >= p.created_at
-    LIMIT 1;
+  -- Payout adjustment: only for platform-collected payments (not direct_split)
+  IF v_payment.collection_mode != 'connect' THEN
+    SELECT bp.id INTO v_payout
+      FROM public.business_payouts bp, public.payments p
+      WHERE p.id = v_refund.payment_id
+        AND bp.business_id = v_refund.business_id
+        AND bp.status = 'paid'
+        AND bp.period_end >= p.created_at
+      LIMIT 1;
 
-  IF v_payout IS NOT NULL THEN
-    INSERT INTO public.payout_adjustments (business_id, payout_id, amount, reason, payment_id)
-    VALUES (v_refund.business_id, v_payout.id, -v_refund.amount,
-            'Refund for payment ' || v_payment.gateway_reference, v_refund.payment_id);
+    IF v_payout IS NOT NULL THEN
+      INSERT INTO public.payout_adjustments (business_id, payout_id, amount, reason, payment_id)
+      VALUES (v_refund.business_id, v_payout.id, -v_refund.amount,
+              'Refund for payment ' || v_payment.gateway_reference, v_refund.payment_id);
+    END IF;
   END IF;
 
   RETURN jsonb_build_object('success', true, 'payment_id', v_refund.payment_id, 'financial', true,
