@@ -4,7 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { verifyOAuthState, consumeOAuthState } from '@/lib/payments/oauth-state';
 import { encryptToken } from '@/lib/encryption';
 import { getAppUrl } from '@/lib/get-app-url';
-import { SQUARE_OAUTH_SCOPE_STRING } from '@/lib/payments/square-scopes';
+import { SQUARE_OAUTH_SCOPE_STRING, getSquareRedirectUri } from '@/lib/payments/square-scopes';
 import { logger } from '@/lib/logger';
 
 const squareAppId = process.env.SQUARE_OAUTH_APP_ID || process.env.SQUARE_APPLICATION_ID || '';
@@ -106,6 +106,7 @@ export async function GET(request: NextRequest) {
         client_secret: squareAppSecret,
         code,
         grant_type: 'authorization_code',
+        redirect_uri: getSquareRedirectUri(appUrl),
       }),
     });
     const tokenData = await tokenRes.json();

@@ -19,3 +19,12 @@ export const SQUARE_OAUTH_SCOPES = [
 ] as const;
 
 export const SQUARE_OAUTH_SCOPE_STRING = SQUARE_OAUTH_SCOPES.join(' ');
+
+/**
+ * Canonical Square OAuth redirect URI.
+ * One source of truth — used by both the authorize request and the token exchange.
+ * Must match exactly or Square returns MISSING_REQUIRED_PARAMETER / redirect_uri mismatch.
+ */
+export function getSquareRedirectUri(appUrl: string): string {
+  return `${appUrl}/api/payouts/square-callback`;
+}
