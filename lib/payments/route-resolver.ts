@@ -36,6 +36,9 @@ export interface PaymentRoute {
   byoPlatformSubaccount?: string;
   // Paystack managed-split specific
   paystackBearer?: 'account' | 'subaccount';
+  // Square Connect specific
+  squareMerchantId?: string;
+  squareLocationId?: string;
   // Warnings for the business dashboard
   warning?: string;
 }
@@ -81,7 +84,7 @@ export async function resolvePaymentRoute(
   // 2. Look for default connection first, then any active verified connection
   const { data: connections } = await supabase
     .from('payout_accounts')
-    .select('id, gateway, subaccount_code, stripe_account_id, flutterwave_mid, connection_mode, connection_status, is_default, is_active, verified_at, health_status, country_code')
+    .select('id, gateway, subaccount_code, stripe_account_id, flutterwave_mid, square_merchant_id, square_location_id, connection_mode, connection_status, is_default, is_active, verified_at, health_status, country_code')
     .eq('business_id', businessId)
     .eq('is_active', true)
     .in('connection_status', ['active'])
@@ -133,18 +136,38 @@ export async function resolvePaymentRoute(
       };
     }
 
-    case 'connect':
-      if (!defaultConn.stripe_account_id) {
-        return platformFallback(countryCode, feeTotal, 'Connect connection missing stripe_account_id');
+    case 'connect': {
+      // Stripe Connect: requires stripe_account_id
+      if (defaultConn.gateway === 'stripe') {
+        if (!defaultConn.stripe_account_id) {
+          return platformFallback(countryCode, feeTotal, 'Stripe Connect connection missing stripe_account_id');
+        }
+        return {
+          mode: 'connect',
+          provider: 'stripe',
+          connectionId: defaultConn.id,
+          feeBearerMode: 'merchant',
+          platformFeeAmount: feeTotal,
+          stripeAccountId: defaultConn.stripe_account_id,
+        };
       }
-      return {
-        mode: 'connect',
-        provider: defaultConn.gateway,
-        connectionId: defaultConn.id,
-        feeBearerMode: 'merchant',
-        platformFeeAmount: feeTotal,
-        stripeAccountId: defaultConn.stripe_account_id,
-      };
+      // Square Connect: requires square_merchant_id + square_location_id
+      if (defaultConn.gateway === 'square') {
+        if (!defaultConn.square_merchant_id || !defaultConn.square_location_id) {
+          return platformFallback(countryCode, feeTotal, 'Square Connect connection missing merchant_id or location_id');
+        }
+        return {
+          mode: 'connect',
+          provider: 'square',
+          connectionId: defaultConn.id,
+          feeBearerMode: 'merchant',
+          platformFeeAmount: feeTotal,
+          squareMerchantId: defaultConn.square_merchant_id,
+          squareLocationId: defaultConn.square_location_id,
+        };
+      }
+      return platformFallback(countryCode, feeTotal, `Unsupported connect gateway: ${defaultConn.gateway}`);
+    }
 
     case 'byo': {
       const { data: secret } = await supabase

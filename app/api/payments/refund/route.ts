@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { processRefund } from '@/lib/payments/refund-handler';
 import { logger } from '@/lib/logger';
@@ -13,16 +14,21 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { paymentId, businessId, amount, reason } = body as {
+    const { paymentId, businessId, amount, reason, idempotencyKey } = body as {
       paymentId: string;
       businessId: string;
       amount: number;
       reason?: string;
+      idempotencyKey?: string;
     };
 
     if (!paymentId || !businessId || !amount || typeof amount !== 'number' || amount <= 0) {
       return NextResponse.json({ error: 'Missing or invalid fields: paymentId, businessId, amount (must be positive number)' }, { status: 400 });
     }
+
+    // Stable refund-request ID: client-supplied for retry recovery, or generated once per request.
+    // The client SHOULD persist this and resend on retry to ensure idempotency.
+    const logicalRefundId = idempotencyKey || `biz-refund-${paymentId}-${randomUUID()}`;
 
     // Verify the user owns the business
     const { data: business } = await supabase
@@ -56,6 +62,7 @@ export async function POST(request: NextRequest) {
       reason,
       initiatedBy: user.id,
       initiatedByRole: 'business',
+      logicalRefundId,
     });
 
     if (!result.success) {
@@ -66,6 +73,7 @@ export async function POST(request: NextRequest) {
       success: true,
       refundId: result.refundId,
       isDirectSplit: result.isDirectSplit,
+      idempotencyKey: logicalRefundId,
     });
   } catch (error) {
     logger.error('Refund API error:', error);

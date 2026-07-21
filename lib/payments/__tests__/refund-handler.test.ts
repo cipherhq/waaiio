@@ -93,6 +93,7 @@ describe('processRefund', () => {
       amount: 1000,
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(false);
@@ -116,6 +117,7 @@ describe('processRefund', () => {
       amount: 5000,
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(false);
@@ -139,6 +141,7 @@ describe('processRefund', () => {
       amount: 3000, // Only 2000 remaining
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(false);
@@ -162,6 +165,7 @@ describe('processRefund', () => {
       amount: 0,
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(false);
@@ -202,6 +206,7 @@ describe('processRefund', () => {
       reason: 'Customer request',
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(true);
@@ -243,6 +248,7 @@ describe('processRefund', () => {
       amount: 2000, // Partial: 2000 of 5000
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(true);
@@ -281,6 +287,7 @@ describe('processRefund', () => {
       amount: 5000,
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(true);
@@ -323,6 +330,7 @@ describe('processRefund', () => {
       amount: 5000,
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(false);
@@ -359,6 +367,7 @@ describe('processRefund', () => {
       amount: 3000, // Remaining 3000
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(true);

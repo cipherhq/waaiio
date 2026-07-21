@@ -21,6 +21,8 @@ export interface InitPaymentOpts {
   /** Square OAuth merchant ID + access token for split payments */
   squareMerchantId?: string;
   squareAccessToken?: string;
+  /** Square connected merchant location ID */
+  squareLocationId?: string;
   /** Platform fee in base currency units (e.g. naira, dollars — NOT kobo/cents) */
   platformFeeAmount?: number;
   /** BYO: use business's own gateway API key instead of platform key */
@@ -60,7 +62,7 @@ export interface VerifyResult {
 
 export interface RefundPaymentOpts {
   gatewayReference: string;
-  /** Amount to refund in base currency units (e.g. naira, dollars — NOT kobo/cents). Omit for full refund. */
+  /** Amount to refund in base currency units (e.g. naira, dollars — NOT kobo/cents). Always send for Square. */
   amount?: number;
   currency: string;
   reason?: string;
@@ -69,6 +71,8 @@ export interface RefundPaymentOpts {
   byoSecretKey?: string;
   /** Paystack Connect account ID */
   connectAccountId?: string;
+  /** Stable provider idempotency key — stored before calling provider, reused on retry */
+  providerIdempotencyKey?: string;
 }
 
 export interface RefundResult {

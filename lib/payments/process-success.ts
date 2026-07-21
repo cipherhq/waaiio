@@ -30,10 +30,12 @@ interface PaymentRecord {
 export async function processSuccessfulPayment(
   supabase: SupabaseClient,
   payment: PaymentRecord,
+  opts?: { strict?: boolean },
 ): Promise<void> {
+  const strict = opts?.strict ?? false;
   // 1. Confirm booking (only if still pending — idempotent)
   if (payment.booking_id) {
-    await supabase
+    const { error: bookingErr } = await supabase
       .from('bookings')
       .update({
         deposit_status: 'paid',
@@ -42,6 +44,10 @@ export async function processSuccessfulPayment(
       })
       .eq('id', payment.booking_id)
       .in('status', ['pending']);
+
+    if (bookingErr && strict) {
+      throw new Error(`Booking confirmation failed: ${bookingErr.message}`);
+    }
 
     try {
       await recordPlatformFee(supabase, {
@@ -53,16 +59,20 @@ export async function processSuccessfulPayment(
     } catch (feeErr) {
       Sentry.captureException(feeErr, { tags: { type: 'platform_fee_failure', entity: 'booking' } });
       logger.error('[PLATFORM-FEE] Failed to record fee for booking:', feeErr);
-      // Don't block the booking confirmation — but ops is alerted via Sentry
+      if (strict) throw feeErr; // Strict mode: propagate to caller
     }
 
     // Track waitlist conversion: if this customer was notified via waitlist, mark as converted
     try {
-      const { data: booking } = await supabase
+      const { data: booking, error: bookingReadErr } = await supabase
         .from('bookings')
         .select('business_id, service_id, guest_phone')
         .eq('id', payment.booking_id)
         .single();
+
+      if (bookingReadErr && strict) {
+        throw new Error(`Booking read failed: ${bookingReadErr.message}`);
+      }
 
       if (booking?.guest_phone) {
         await markWaitlistConverted({
@@ -86,33 +96,36 @@ export async function processSuccessfulPayment(
         } catch (pkgErr) {
           logger.error('[PROCESS-SUCCESS] Package session deduction error:', pkgErr);
           Sentry.captureException(pkgErr, { tags: { component: 'process-success', operation: 'package-session-deduction' } });
+          if (strict) throw pkgErr; // Required entitlement mutation
         }
       }
     } catch (err) {
-      logger.error('[PROCESS-SUCCESS] Waitlist conversion tracking error:', err);
+      logger.error('[PROCESS-SUCCESS] Waitlist/package error:', err);
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'waitlist-conversion' } });
+      if (strict) throw err; // Required business/entitlement mutation
     }
   }
 
-  // 2. Process invoice payment (guard: only if payment not already marked success)
+  // 2. Process invoice payment
   if (payment.invoice_id) {
-    const { data: paymentRecord } = await supabase
-      .from('payments')
-      .select('status')
-      .eq('id', payment.id)
-      .single();
-    // Only process invoice accumulation if this payment hasn't already been applied.
-    // The webhook handler marks payment as 'success' before calling this function,
-    // so on first call it will be 'success'. On retry, we check the invoice's amount_paid
-    // to see if it already includes this payment's amount.
-    if (paymentRecord) {
+    try {
       await processInvoicePayment(supabase, payment.invoice_id, payment.id, payment.amount, payment.gateway_fee);
+    } catch (invoiceErr) {
+      logger.error('[PROCESS-SUCCESS] Invoice payment error:', invoiceErr);
+      Sentry.captureException(invoiceErr, { tags: { component: 'process-success', operation: 'invoice-payment' } });
+      if (strict) throw invoiceErr;
     }
   }
 
   // 3. Process campaign donation
   if (payment.campaign_id) {
-    await processCampaignDonation(supabase, payment.id, payment.campaign_id, payment.amount, payment.gateway_fee);
+    try {
+      await processCampaignDonation(supabase, payment.id, payment.campaign_id, payment.amount, payment.gateway_fee);
+    } catch (campaignErr) {
+      logger.error('[PROCESS-SUCCESS] Campaign donation error:', campaignErr);
+      Sentry.captureException(campaignErr, { tags: { component: 'process-success', operation: 'campaign-donation' } });
+      if (strict) throw campaignErr;
+    }
   }
 
   // 4. Confirm order
@@ -120,7 +133,7 @@ export async function processSuccessfulPayment(
   if (orderId) {
     try {
       // Only confirm if still pending (idempotent). Check if update actually matched.
-      const { data: confirmedOrder } = await supabase
+      const { data: confirmedOrder, error: orderConfirmErr } = await supabase
         .from('orders')
         .update({
           status: 'confirmed',
@@ -130,6 +143,10 @@ export async function processSuccessfulPayment(
         .in('status', ['pending'])
         .select('id')
         .maybeSingle();
+
+      if (orderConfirmErr && strict) {
+        throw new Error(`Order confirmation failed: ${orderConfirmErr.message}`);
+      }
 
       await recordPlatformFee(supabase, {
         orderId,
@@ -141,17 +158,23 @@ export async function processSuccessfulPayment(
       // Decrement stock only if we actually confirmed the order (prevents double-decrement
       // when bot "I've Paid" path already decremented stock before webhook fires)
       if (confirmedOrder) {
-        const { data: orderItems } = await supabase
+        const { data: orderItems, error: itemsErr } = await supabase
           .from('order_items')
           .select('product_id, variant_id, quantity')
           .eq('order_id', orderId);
 
+        if (itemsErr && strict) {
+          throw new Error(`Order items read failed: ${itemsErr.message}`);
+        }
+
         if (orderItems) {
           for (const item of orderItems) {
             if (item.variant_id) {
-              await supabase.rpc('decrement_variant_stock', { p_variant_id: item.variant_id, qty: item.quantity });
+              const { error: variantErr } = await supabase.rpc('decrement_variant_stock', { p_variant_id: item.variant_id, qty: item.quantity });
+              if (variantErr && strict) throw new Error(`Stock decrement failed: ${variantErr.message}`);
             } else if (item.product_id) {
-              await supabase.rpc('decrement_stock', { p_product_id: item.product_id, qty: item.quantity });
+              const { error: stockErr } = await supabase.rpc('decrement_stock', { p_product_id: item.product_id, qty: item.quantity });
+              if (stockErr && strict) throw new Error(`Stock decrement failed: ${stockErr.message}`);
             }
           }
         }
@@ -159,13 +182,14 @@ export async function processSuccessfulPayment(
     } catch (err) {
       logger.error('[PROCESS-SUCCESS] Order confirmation error:', err);
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'order-confirmation' } });
+      if (strict) throw err;
     }
   }
 
   // 5. Confirm reservation
   if (payment.reservation_id) {
     try {
-      await supabase
+      const { error: reservationErr } = await supabase
         .from('reservations')
         .update({
           deposit_status: 'paid',
@@ -174,6 +198,10 @@ export async function processSuccessfulPayment(
         })
         .eq('id', payment.reservation_id)
         .in('status', ['pending']); // Only confirm if still pending (idempotent)
+
+      if (reservationErr && strict) {
+        throw new Error(`Reservation confirmation failed: ${reservationErr.message}`);
+      }
 
       await recordPlatformFee(supabase, {
         reservationId: payment.reservation_id,
@@ -184,6 +212,7 @@ export async function processSuccessfulPayment(
     } catch (err) {
       logger.error('[PROCESS-SUCCESS] Reservation confirmation error:', err);
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'reservation-confirmation' } });
+      if (strict) throw err;
     }
   }
 }
@@ -273,12 +302,15 @@ export async function recordPlatformFee(
 
   if (!businessId) return;
 
-  const { data: business } = await supabase
+  const { data: business, error: bizErr } = await supabase
     .from('businesses')
     .select('subscription_tier, trial_ends_at, payout_mode, custom_fee_percentage, custom_fee_flat, reseller_id')
     .eq('id', businessId)
     .single();
 
+  if (bizErr) {
+    throw new Error(`Business lookup failed in recordPlatformFee: ${bizErr.message}`);
+  }
   if (!business) return;
   if (business.payout_mode === 'direct_split') return;
 
@@ -329,13 +361,15 @@ export async function recordPlatformFee(
     reseller_commission: resellerCommission,
   });
   if (feeErr) {
+    const isDuplicate = feeErr.message?.includes('duplicate') || feeErr.message?.includes('unique');
     console.error('[PLATFORM-FEE] Insert error (possible duplicate):', feeErr.message);
-    // Only report to Sentry if it's not a duplicate key violation
-    if (!feeErr.message?.includes('duplicate') && !feeErr.message?.includes('unique')) {
+    if (!isDuplicate) {
       Sentry.captureException(new Error(`Platform fee insert error: ${feeErr.message}`), {
         tags: { component: 'process-success', operation: 'platform-fee' },
         extra: { businessId, bookingId: opts.bookingId, invoiceId: opts.invoiceId },
       });
+      // Throw non-duplicate errors so strict-mode callers can propagate
+      throw new Error(`Platform fee insert error: ${feeErr.message}`);
     }
   }
 }
@@ -351,12 +385,15 @@ export async function processInvoicePayment(
   paymentAmount: number,
   gatewayFee?: number,
 ): Promise<void> {
-  const { data: invoice } = await supabase
+  const { data: invoice, error: invoiceLookupErr } = await supabase
     .from('invoices')
     .select('business_id, total_amount, amount_paid, status')
     .eq('id', invoiceId)
     .single();
 
+  if (invoiceLookupErr) {
+    throw new Error(`Invoice lookup failed: ${invoiceLookupErr.message}`);
+  }
   if (!invoice) return;
 
   // Skip if already fully paid (saves a roundtrip — RPC also checks internally)
@@ -378,7 +415,7 @@ export async function processInvoicePayment(
       return; // Idempotent — already applied
     }
     logger.error('[INVOICE-PAYMENT] RPC error:', rpcError.message);
-    return;
+    throw new Error(`Invoice payment RPC error: ${rpcError.message}`);
   }
 
   // Alert on overpayment — money already received, needs human review
@@ -419,8 +456,8 @@ export async function processCampaignDonation(
   });
 
   if (rpcError) {
-    // Log but don't throw — payment confirmation should not be blocked
     logger.error('[CAMPAIGN-DONATION] RPC error:', rpcError.message);
+    throw new Error(`Campaign donation RPC error: ${rpcError.message}`);
   }
 
   if (!result?.success) {
@@ -429,11 +466,15 @@ export async function processCampaignDonation(
   }
 
   // Record platform fee (unique index on payment_id prevents duplicates)
-  const { data: campaign } = await supabase
+  const { data: campaign, error: campaignLookupErr } = await supabase
     .from('campaigns')
     .select('business_id')
     .eq('id', campaignId)
     .single();
+
+  if (campaignLookupErr) {
+    throw new Error(`Campaign lookup failed: ${campaignLookupErr.message}`);
+  }
 
   if (campaign?.business_id) {
     await recordPlatformFee(supabase, {
@@ -471,7 +512,7 @@ async function deductPackageSession(
     if (error) {
       logger.error('[PACKAGE-DEDUCT] RPC error:', error.message);
       Sentry.captureException(error, { tags: { area: 'package-deduction' } });
-      return;
+      throw new Error(`Package session deduction RPC failed: ${error.message}`);
     }
 
     if (deducted) {

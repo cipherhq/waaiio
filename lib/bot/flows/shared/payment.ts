@@ -73,6 +73,17 @@ export async function verifyPayment(
       byoSecretKey = decryptToken(secret.encrypted_secret_key);
     }
 
+    // For Square Connect payments, resolve the seller token — fail closed if missing
+    if (payment.collection_mode === 'connect' && payment.gateway === 'square' && payment.payout_account_id) {
+      const { resolveSquareToken } = await import('@/lib/payments/square-token');
+      const resolved = await resolveSquareToken(supabase, payment.payout_account_id);
+      if (!resolved) {
+        logger.warn('[VERIFY] Square Connect seller token unresolvable');
+        return false;
+      }
+      byoSecretKey = resolved.accessToken;
+    }
+
     const gateway = getPaymentGatewayByName(payment.gateway as PaymentGatewayName);
     return await gateway.verifyPayment(supabase, gatewayReference, byoSecretKey);
   } catch (err) {
@@ -131,6 +142,9 @@ export async function initializePayment(
     let byoPlatformSubaccount: string | undefined;
     let isByo = false;
     let byoBusinessId: string | undefined;
+    let squareMerchantId: string | undefined;
+    let squareAccessToken: string | undefined;
+    let squareLocationId: string | undefined;
 
     if (route) {
       platformFeeAmount = route.platformFeeAmount;
@@ -142,7 +156,21 @@ export async function initializePayment(
           break;
 
         case 'connect':
-          stripeAccountId = route.stripeAccountId;
+          if (route.provider === 'stripe') {
+            stripeAccountId = route.stripeAccountId;
+          } else if (route.provider === 'square' && route.connectionId) {
+            // Fail closed: if Square token cannot be resolved, do NOT fall back
+            // to platform credentials. Return null to prevent payment initialization.
+            const { resolveSquareToken } = await import('@/lib/payments/square-token');
+            const resolved = await resolveSquareToken(supabase, route.connectionId);
+            if (!resolved) {
+              logger.error('[PAYMENT] Square token unresolvable — failing closed');
+              return null;
+            }
+            squareMerchantId = route.squareMerchantId;
+            squareLocationId = route.squareLocationId;
+            squareAccessToken = resolved.accessToken;
+          }
           break;
 
         case 'byo':
@@ -207,6 +235,9 @@ export async function initializePayment(
       byoPlatformSubaccount,
       isByo,
       byoBusinessId,
+      squareMerchantId,
+      squareAccessToken,
+      squareLocationId,
       campaignId: opts.campaignId,
       channels,
       callbackUrl: `${getAppUrl()}/payment-success`,

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { processRefund } from '@/lib/payments/refund-handler';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -24,16 +25,20 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { paymentId, businessId, amount, reason } = body as {
+    const { paymentId, businessId, amount, reason, idempotencyKey } = body as {
       paymentId: string;
       businessId: string;
       amount: number;
       reason?: string;
+      idempotencyKey?: string;
     };
 
     if (!paymentId || !businessId || !amount) {
       return NextResponse.json({ error: 'paymentId, businessId, and amount are required' }, { status: 400 });
     }
+
+    // Stable refund-request ID: client-supplied for retry recovery, or generated once per request.
+    const logicalRefundId = idempotencyKey || `admin-refund-${paymentId}-${randomUUID()}`;
 
     const serviceClient = createServiceClient();
 
@@ -45,6 +50,7 @@ export async function POST(request: NextRequest) {
       reason: reason || '',
       initiatedBy: user.id,
       initiatedByRole: 'admin',
+      logicalRefundId,
     });
 
     if (!result.success) {
@@ -73,6 +79,7 @@ export async function POST(request: NextRequest) {
       success: true,
       refundId: result.refundId,
       isDirectSplit: result.isDirectSplit,
+      idempotencyKey: logicalRefundId,
     });
   } catch (error) {
     logger.error('[ADMIN-REFUND] Error:', error);

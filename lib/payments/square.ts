@@ -42,14 +42,30 @@ export class SquareGateway implements PaymentGateway {
   name = 'square' as const;
 
   async initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null> {
-    const idempotencyKey = randomUUID();
+    // Validate positive amount
+    if (!opts.amount || opts.amount <= 0) {
+      logger.error('[SQUARE] Invalid payment amount:', opts.amount);
+      return null;
+    }
+
+    // Validate fee bounds
+    if (opts.platformFeeAmount != null && opts.platformFeeAmount < 0) {
+      logger.error('[SQUARE] Negative platform fee');
+      return null;
+    }
+    if (opts.platformFeeAmount != null && opts.platformFeeAmount >= opts.amount) {
+      logger.error('[SQUARE] Platform fee exceeds payment amount');
+      return null;
+    }
 
     try {
-      if (!squareAccessToken) {
+      // Mock mode: only when NEITHER platform nor connected seller token exists
+      const hasAnyToken = squareAccessToken || opts.squareAccessToken;
+      if (!hasAnyToken) {
         if (process.env.NODE_ENV === 'production') {
-          throw new Error('Payment gateway not configured: missing Square access token');
+          throw new Error('Payment gateway not configured: no Square access token');
         }
-        const mockRef = `mock_square_${idempotencyKey}`;
+        const mockRef = `mock_square_${randomUUID()}`;
         await opts.supabase.from('payments').insert({
           booking_id: opts.bookingId || null,
           invoice_id: opts.invoiceId || null,
@@ -68,34 +84,97 @@ export class SquareGateway implements PaymentGateway {
           waaiio_fee: opts.waaiioFee ?? 0,
           metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null },
         });
-        return { url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/pay?ref=${mockRef}`, reference: mockRef };
+        const { getAppUrl } = await import('@/lib/get-app-url');
+        return { url: `${getAppUrl()}/pay?ref=${mockRef}`, reference: mockRef };
       }
 
-      // Square uses smallest currency unit (cents for USD)
       const amountInCents = Math.round(opts.amount * 100);
-      const callbackUrl = opts.callbackUrl || process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-
-      // Use merchant's own token + location if connected via OAuth, else platform's
+      const { getAppUrl } = await import('@/lib/get-app-url');
+      const callbackUrl = opts.callbackUrl || getAppUrl();
       const useToken = opts.squareAccessToken || squareAccessToken;
-      const useLocation = squareLocationId; // TODO: fetch merchant's location via their token
+      const useLocation = opts.squareLocationId || squareLocationId;
+
+      // Step 1: Create or recover the payment attempt row.
+      // Uses an immutable payment_attempt_key for retry recovery.
+      // This key survives gateway_reference overwrites and is scoped by
+      // gateway + business + reference_code to prevent cross-tenant collisions.
+      const attemptKey = `square:${opts.businessId || 'platform'}:${opts.referenceCode}`;
+      let paymentId: string;
+
+      // Check for existing attempt (retry recovery) via the immutable key
+      const { data: existingAttempt } = await opts.supabase.from('payments')
+        .select('id, gateway_reference, metadata')
+        .eq('payment_attempt_key', attemptKey)
+        .maybeSingle();
+
+      if (existingAttempt) {
+        paymentId = existingAttempt.id;
+        // If Square already succeeded (checkout URL stored), return without re-calling Square
+        const existingMeta = existingAttempt.metadata as Record<string, unknown> | null;
+        if (existingMeta?.square_checkout_url && existingMeta?.square_payment_link_id) {
+          return {
+            url: existingMeta.square_checkout_url as string,
+            reference: existingMeta.square_payment_link_id as string,
+          };
+        }
+      } else {
+        // First attempt: create the payment row with the immutable attempt key
+        const { data: newPayment, error: insertErr } = await opts.supabase.from('payments').insert({
+          booking_id: opts.bookingId || null,
+          invoice_id: opts.invoiceId || null,
+          campaign_id: opts.campaignId || null,
+          reservation_id: opts.reservationId || null,
+          business_id: opts.businessId || null,
+          user_id: opts.userId,
+          amount: opts.amount,
+          currency: opts.currency,
+          gateway: 'square',
+          gateway_reference: `sq-init-${opts.referenceCode}`,
+          payment_attempt_key: attemptKey,
+          status: 'pending',
+          collection_mode: opts.collectionMode || 'platform',
+          fee_bearer: opts.feeBearerMode || 'platform',
+          payout_account_id: opts.payoutAccountId || null,
+          waaiio_fee: opts.waaiioFee ?? 0,
+          metadata: {
+            reference_code: opts.referenceCode,
+            channel: 'whatsapp',
+            order_id: opts.orderId || null,
+          },
+        }).select('id').single();
+
+        if (insertErr || !newPayment) {
+          // Unique violation on attempt_key means another concurrent call created it
+          if (insertErr?.code === '23505') {
+            const { data: concurrent } = await opts.supabase.from('payments')
+              .select('id').eq('payment_attempt_key', attemptKey).single();
+            if (concurrent) {
+              paymentId = concurrent.id;
+            } else {
+              return null;
+            }
+          } else {
+            logger.error('[SQUARE] Payment row creation failed:', insertErr?.message);
+            return null;
+          }
+        } else {
+          paymentId = newPayment.id;
+        }
+      }
+
+      // Step 2: Use the payment row ID as the stable idempotency key
+      const idempotencyKey = paymentId;
 
       const paymentLinkBody: Record<string, unknown> = {
         idempotency_key: idempotencyKey,
         quick_pay: {
           name: `${opts.businessName} - ${opts.referenceCode}`,
-          price_money: {
-            amount: amountInCents,
-            currency: opts.currency.toUpperCase(),
-          },
+          price_money: { amount: amountInCents, currency: opts.currency.toUpperCase() },
           location_id: useLocation,
         },
         checkout_options: {
           redirect_url: `${callbackUrl}/api/payments/square-callback?ref=${idempotencyKey}`,
-          accepted_payment_methods: {
-            cash_app_pay: true,
-            apple_pay: true,
-            google_pay: true,
-          },
+          accepted_payment_methods: { cash_app_pay: true, apple_pay: true, google_pay: true },
         },
         pre_populated_data: {
           buyer_email: opts.userEmail || undefined,
@@ -103,16 +182,13 @@ export class SquareGateway implements PaymentGateway {
         },
       };
 
-      // Add platform fee for connected merchants (split payment)
       if (opts.squareMerchantId && opts.platformFeeAmount) {
         const feeInCents = Math.round(opts.platformFeeAmount * 100);
         (paymentLinkBody.checkout_options as Record<string, unknown>).app_fee_money = {
-          amount: feeInCents,
-          currency: opts.currency.toUpperCase(),
+          amount: feeInCents, currency: opts.currency.toUpperCase(),
         };
       }
 
-      // Use the connected merchant's token if available
       const requestFn = opts.squareAccessToken
         ? async (path: string, body: Record<string, unknown>) => {
             const response = await fetch(`${getSquareBaseUrl()}${path}`, {
@@ -133,43 +209,42 @@ export class SquareGateway implements PaymentGateway {
 
       const paymentLink = result.payment_link as Record<string, unknown> | undefined;
       if (!paymentLink?.id || !paymentLink?.url) {
-        logger.error('[SQUARE] Payment link creation failed:', JSON.stringify(result).slice(0, 500));
+        // Do NOT delete the payment row on ambiguous outcomes (timeout, 5xx, malformed response).
+        // Square may have accepted the request. Preserve the row for retry recovery.
+        // Only a definitive error response (4xx with clear rejection) would be safe to clean up,
+        // but we keep the row regardless for safety — it will be recoverable on retry.
+        logger.error('[SQUARE] Payment link creation failed or ambiguous response');
         return null;
       }
 
       const squareRef = paymentLink.id as string;
       const orderId = paymentLink.order_id as string | undefined;
 
-      const { data: payment } = await opts.supabase.from('payments').insert({
-        booking_id: opts.bookingId || null,
-        invoice_id: opts.invoiceId || null,
-        campaign_id: opts.campaignId || null,
-        reservation_id: opts.reservationId || null,
-        business_id: opts.businessId || null,
-        user_id: opts.userId,
-        amount: opts.amount,
-        currency: opts.currency,
-        gateway: 'square',
+      // Step 3: Update the payment row with Square's actual references
+      // Store the checkout URL in metadata for retry recovery
+      const { error: updateErr } = await opts.supabase.from('payments').update({
         gateway_reference: squareRef,
-        status: 'pending',
-        collection_mode: opts.collectionMode || 'platform',
-        fee_bearer: opts.feeBearerMode || 'platform',
-        payout_account_id: opts.payoutAccountId || null,
-        waaiio_fee: opts.waaiioFee ?? 0,
+        provider_order_ref: orderId || null,
         metadata: {
           square_payment_link_id: squareRef,
           square_order_id: orderId || null,
+          square_checkout_url: paymentLink.url as string,
           reference_code: opts.referenceCode,
           channel: 'whatsapp',
           order_id: opts.orderId || null,
         },
-      }).select().single();
+      }).eq('id', paymentId);
 
-      if (payment && opts.bookingId) {
-        await opts.supabase.from('bookings').update({ payment_id: payment.id }).eq('id', opts.bookingId);
+      if (updateErr) {
+        logger.error('[SQUARE] Payment row update failed:', updateErr.message);
+        return null;
       }
-      if (payment && opts.invoiceId) {
-        await opts.supabase.from('invoices').update({ payment_id: payment.id }).eq('id', opts.invoiceId);
+
+      if (opts.bookingId) {
+        await opts.supabase.from('bookings').update({ payment_id: paymentId }).eq('id', opts.bookingId);
+      }
+      if (opts.invoiceId) {
+        await opts.supabase.from('invoices').update({ payment_id: paymentId }).eq('id', opts.invoiceId);
       }
 
       return { url: paymentLink.url as string, reference: squareRef };
@@ -179,10 +254,11 @@ export class SquareGateway implements PaymentGateway {
     }
   }
 
-  async verifyPayment(supabase: SupabaseClient, reference: string): Promise<boolean> {
-    if (!squareAccessToken || reference.startsWith('mock_')) {
+  async verifyPayment(supabase: SupabaseClient, reference: string, byoSecretKey?: string): Promise<boolean> {
+    const hasToken = squareAccessToken || byoSecretKey;
+    if (!hasToken || reference.startsWith('mock_')) {
       if (process.env.NODE_ENV === 'production') {
-        throw new Error('Payment gateway not configured: missing Square access token');
+        throw new Error('Payment gateway not configured: no Square access token');
       }
       await supabase
         .from('payments')
@@ -219,7 +295,13 @@ export class SquareGateway implements PaymentGateway {
 
       if (!squareOrderId) return false;
 
-      const orderResult = await squareGet(`/v2/orders/${encodeURIComponent(squareOrderId)}`);
+      // Use seller token for connected merchants, platform token for platform payments
+      const verifyToken = byoSecretKey || squareAccessToken;
+      const orderResult = verifyToken !== squareAccessToken
+        ? await fetch(`${getSquareBaseUrl()}/v2/orders/${encodeURIComponent(squareOrderId)}`, {
+            headers: { 'Square-Version': '2024-12-18', Authorization: `Bearer ${verifyToken}` },
+          }).then(r => r.json() as Promise<Record<string, unknown>>)
+        : await squareGet(`/v2/orders/${encodeURIComponent(squareOrderId)}`);
       const order = orderResult.order as Record<string, unknown> | undefined;
 
       if (order?.state === 'COMPLETED') {
@@ -257,53 +339,106 @@ export class SquareGateway implements PaymentGateway {
   }
 
   async refundPayment(opts: RefundPaymentOpts): Promise<RefundResult> {
-    // Mock mode
-    if (!squareAccessToken || opts.gatewayReference.startsWith('mock_')) {
-      if (process.env.NODE_ENV === 'production') {
-        throw new Error('Payment gateway not configured: missing Square access token');
-      }
+    // Mock mode: only when NEITHER platform NOR connected seller token AND not production
+    const hasAnyRefundToken = squareAccessToken || opts.byoSecretKey;
+    if ((!hasAnyRefundToken && process.env.NODE_ENV !== 'production') || opts.gatewayReference.startsWith('mock_')) {
       return {
         success: true,
         gatewayRefundReference: `mock_refund_square_${Date.now()}`,
         gatewayResponse: { mock: true },
       };
     }
+    if (!hasAnyRefundToken && process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: no Square access token');
+    }
 
     try {
-      // Square payment links use order IDs — we need to find the payment_id from the order
-      // The gateway_reference for Square is the payment link ID; the order ID is in metadata.
-      // First, try to retrieve the order to find associated payment IDs.
-      const orderResult = await squareGet(`/v2/orders/${encodeURIComponent(opts.gatewayReference)}`);
-      let paymentId: string | undefined;
+      // Only refund using an explicitly persisted Square payment ID.
+      // gateway_reference holds the payment_link_id at init time — NEVER use it as payment_id.
+      // metadata.square_payment_id is set by the webhook after reconciliation.
+      let paymentId = opts.metadata?.square_payment_id as string | undefined;
 
-      const order = orderResult.order as Record<string, unknown> | undefined;
-      if (order) {
-        // Extract payment ID from order tenders
-        const tenders = (order.tenders || []) as Array<{ id?: string; payment_id?: string }>;
-        paymentId = tenders[0]?.payment_id || tenders[0]?.id;
+      if (!paymentId) {
+        // Recover payment ID from Square order using the seller credential.
+        // Validates ownership, currency, and amount before extracting the payment ID.
+        const orderId = opts.metadata?.square_order_id as string | undefined;
+        if (orderId) {
+          const useToken = opts.byoSecretKey || squareAccessToken;
+          if (!useToken) {
+            return { success: false, errorMessage: 'No Square access token for order lookup' };
+          }
+          const orderResult = await (useToken !== squareAccessToken
+            ? fetch(`${getSquareBaseUrl()}/v2/orders/${encodeURIComponent(orderId)}`, {
+                headers: { 'Square-Version': '2024-12-18', Authorization: `Bearer ${useToken}` },
+              }).then(r => r.json() as Promise<Record<string, unknown>>)
+            : squareGet(`/v2/orders/${encodeURIComponent(orderId)}`));
+
+          const order = orderResult.order as Record<string, unknown> | undefined;
+          if (order) {
+            // Validate currency
+            const orderMoney = order.total_money as Record<string, unknown> | undefined;
+            const orderCurrency = (orderMoney?.currency as string) || '';
+            if (!orderCurrency || orderCurrency.toUpperCase() !== (opts.currency || 'USD').toUpperCase()) {
+              return { success: false, errorMessage: 'Order currency mismatch — cannot safely refund' };
+            }
+
+            // Validate amount
+            const orderAmountCents = (orderMoney?.amount as number) || 0;
+            const expectedCents = Math.round((opts.amount ?? 0) * 100);
+            if (expectedCents > 0 && orderAmountCents > 0 && orderAmountCents < expectedCents) {
+              return { success: false, errorMessage: 'Order amount less than refund — cannot safely refund' };
+            }
+
+            const tenders = (order.tenders || []) as Array<{ payment_id?: string }>;
+            paymentId = tenders[0]?.payment_id;
+
+            if (paymentId) {
+              logger.info('[SQUARE] Recovered payment ID from order lookup (validated)');
+            }
+          }
+        }
       }
 
-      // If the reference is already a payment ID (starts with a known pattern or order lookup failed)
       if (!paymentId) {
-        // Assume the gateway_reference might be a payment ID directly
-        paymentId = opts.gatewayReference;
+        return { success: false, errorMessage: 'Square payment ID not found — payment may not be completed yet' };
+      }
+
+      // Use the stable provider idempotency key from the refund claim.
+      // This key was stored before calling Square and must be reused on retry.
+      if (!opts.providerIdempotencyKey) {
+        return { success: false, errorMessage: 'Missing provider idempotency key — refund not claimed' };
       }
 
       const refundBody: Record<string, unknown> = {
-        idempotency_key: randomUUID(),
+        idempotency_key: opts.providerIdempotencyKey,
         payment_id: paymentId,
         reason: opts.reason || 'Refund requested',
       };
 
-      // Amount is optional — omit for full refund
-      if (opts.amount != null) {
-        refundBody.amount_money = {
-          amount: Math.round(opts.amount * 100), // convert to cents
-          currency: (opts.currency || 'USD').toUpperCase(),
-        };
+      // Always send exact amount in minor units (Square requires amount_money for
+      // connected-account refunds to calculate proportional app_fee reversal).
+      const refundAmount = opts.amount ?? 0;
+      if (refundAmount <= 0) {
+        return { success: false, errorMessage: 'Refund amount must be positive' };
       }
+      refundBody.amount_money = {
+        amount: Math.round(refundAmount * 100),
+        currency: (opts.currency || 'USD').toUpperCase(),
+      };
 
-      const result = await squareRequest('/v2/refunds', refundBody);
+      // Use the connected merchant's token if available
+      const useToken = opts.byoSecretKey || squareAccessToken;
+      const result = useToken !== squareAccessToken
+        ? await fetch(`${getSquareBaseUrl()}/v2/refunds`, {
+            method: 'POST',
+            headers: {
+              'Square-Version': '2024-12-18',
+              Authorization: `Bearer ${useToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(refundBody),
+          }).then(r => r.json() as Promise<Record<string, unknown>>)
+        : await squareRequest('/v2/refunds', refundBody);
 
       const refund = result.refund as Record<string, unknown> | undefined;
       if (refund?.id) {
