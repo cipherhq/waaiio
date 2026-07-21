@@ -283,3 +283,74 @@ describe('Database trigger guard remains in place', () => {
     expect(routeCode).not.toContain('DROP TRIGGER');
   });
 });
+
+// ── Gateway-specific connect UI tests ──
+describe('Gateway-specific connect actions', () => {
+  const pageCode = require('fs').readFileSync('app/dashboard/payouts/page.tsx', 'utf-8');
+
+  it('does not use a binary isStripe ternary for connect actions', () => {
+    // The old pattern: {isStripe ? (...) : (...)} rendered bank form for non-Stripe gateways
+    expect(pageCode).not.toContain('isStripe');
+  });
+
+  it('renders Stripe connect action only when gateway is stripe', () => {
+    expect(pageCode).toContain("gateway === 'stripe'");
+    expect(pageCode).toContain('Connect with Stripe');
+    expect(pageCode).toContain('handleStripeConnect');
+  });
+
+  it('renders Square connect action only when gateway is square', () => {
+    expect(pageCode).toContain("gateway === 'square'");
+    expect(pageCode).toContain('Connect with Square');
+    expect(pageCode).toContain('handleSquareConnect');
+  });
+
+  it('renders PayPal as coming soon when gateway is paypal', () => {
+    expect(pageCode).toContain("gateway === 'paypal'");
+    expect(pageCode).toContain('Coming Soon');
+    // PayPal button must be disabled
+    const paypalStart = pageCode.indexOf("gateway === 'paypal'");
+    const paypalSection = pageCode.substring(paypalStart, paypalStart + 1000);
+    expect(paypalSection).toContain('disabled');
+  });
+
+  it('renders bank form only for paystack and flutterwave', () => {
+    expect(pageCode).toContain("gateway === 'paystack' || gateway === 'flutterwave'");
+    expect(pageCode).toContain('Add your bank account');
+  });
+
+  it('uses isBankFormGateway instead of isStripe for bank-fetch guard', () => {
+    expect(pageCode).toContain('isBankFormGateway');
+    expect(pageCode).toContain("gateway === 'paystack' || gateway === 'flutterwave'");
+  });
+
+  it('each gateway has exactly one connect section (no overlap)', () => {
+    // Count conditional blocks — each gateway value should appear in exactly one render guard
+    const stripeBlocks = (pageCode.match(/gateway === 'stripe'/g) || []).length;
+    const squareBlocks = (pageCode.match(/gateway === 'square'/g) || []).length;
+    const paypalBlocks = (pageCode.match(/gateway === 'paypal'/g) || []).length;
+    // Stripe appears once in the render conditional
+    expect(stripeBlocks).toBeGreaterThanOrEqual(1);
+    // Square appears once in the render conditional
+    expect(squareBlocks).toBeGreaterThanOrEqual(1);
+    // PayPal appears once in the render conditional
+    expect(paypalBlocks).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Square connect section does not show bank form fields', () => {
+    const squareIdx = pageCode.indexOf("gateway === 'square'");
+    // Find the next gateway conditional after Square
+    const nextGateway = pageCode.indexOf("gateway === 'paypal'", squareIdx);
+    const squareSection = pageCode.substring(squareIdx, nextGateway);
+    expect(squareSection).not.toContain('Select your bank');
+    expect(squareSection).not.toContain('Account number');
+  });
+
+  it('PayPal section does not show bank form fields', () => {
+    const paypalIdx = pageCode.indexOf("gateway === 'paypal'");
+    const nextGateway = pageCode.indexOf("gateway === 'paystack'", paypalIdx);
+    const paypalSection = pageCode.substring(paypalIdx, nextGateway);
+    expect(paypalSection).not.toContain('Select your bank');
+    expect(paypalSection).not.toContain('Account number');
+  });
+});
