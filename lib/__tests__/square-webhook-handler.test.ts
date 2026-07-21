@@ -89,8 +89,10 @@ describe('Square webhook POST handler', () => {
     setupMocks();
     origEnv.SQUARE_WEBHOOK_SIGNATURE_KEY = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY;
     origEnv.SQUARE_WEBHOOK_NOTIFICATION_URL = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL;
+    origEnv.SQUARE_PLATFORM_MERCHANT_ID = process.env.SQUARE_PLATFORM_MERCHANT_ID;
     process.env.SQUARE_WEBHOOK_SIGNATURE_KEY = WEBHOOK_KEY;
     process.env.SQUARE_WEBHOOK_NOTIFICATION_URL = WEBHOOK_URL;
+    process.env.SQUARE_PLATFORM_MERCHANT_ID = 'ML_PLATFORM_TEST';
 
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => mockSupabase) }));
     vi.doMock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
@@ -106,6 +108,7 @@ describe('Square webhook POST handler', () => {
   afterEach(() => {
     process.env.SQUARE_WEBHOOK_SIGNATURE_KEY = origEnv.SQUARE_WEBHOOK_SIGNATURE_KEY;
     process.env.SQUARE_WEBHOOK_NOTIFICATION_URL = origEnv.SQUARE_WEBHOOK_NOTIFICATION_URL;
+    process.env.SQUARE_PLATFORM_MERCHANT_ID = origEnv.SQUARE_PLATFORM_MERCHANT_ID;
     vi.restoreAllMocks();
   });
 

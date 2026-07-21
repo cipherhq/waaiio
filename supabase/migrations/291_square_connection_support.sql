@@ -91,6 +91,13 @@ ALTER TABLE public.refunds
   ADD COLUMN IF NOT EXISTS provider_idempotency_key TEXT,
   ADD COLUMN IF NOT EXISTS planned_fee_reversal NUMERIC(12,2) DEFAULT 0;
 
+-- ── 6a. Provider execution claim columns ──
+ALTER TABLE public.refunds
+  ADD COLUMN IF NOT EXISTS provider_execution_token TEXT,
+  ADD COLUMN IF NOT EXISTS provider_execution_started_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS provider_outcome TEXT DEFAULT 'not_started'
+    CHECK (provider_outcome IN ('not_started', 'in_progress', 'succeeded', 'definitively_failed', 'ambiguous', 'review_required'));
+
 -- Expand refund status
 ALTER TABLE public.refunds DROP CONSTRAINT IF EXISTS refunds_status_check;
 ALTER TABLE public.refunds ADD CONSTRAINT refunds_status_check
@@ -104,6 +111,68 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_refunds_provider_idempotency
 CREATE UNIQUE INDEX IF NOT EXISTS idx_refunds_gateway_ref_unique
   ON public.refunds (gateway, gateway_refund_reference)
   WHERE gateway_refund_reference IS NOT NULL;
+
+-- ── 6c. Provider execution claim RPC ──
+CREATE OR REPLACE FUNCTION public.claim_refund_provider_execution(
+  p_refund_id UUID,
+  p_execution_token TEXT,
+  p_lease_seconds INT DEFAULT 30
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v_refund RECORD;
+BEGIN
+  IF p_refund_id IS NULL OR p_execution_token IS NULL THEN
+    RETURN jsonb_build_object('acquired', false, 'reason', 'invalid_input');
+  END IF;
+
+  SELECT id, status, provider_outcome, provider_execution_token,
+         provider_execution_started_at, gateway_refund_reference, gateway_response
+    INTO v_refund FROM public.refunds WHERE id = p_refund_id FOR UPDATE;
+
+  IF v_refund IS NULL THEN
+    RETURN jsonb_build_object('acquired', false, 'reason', 'not_found');
+  END IF;
+
+  -- Already fully succeeded — return stored result
+  IF v_refund.status = 'success' THEN
+    RETURN jsonb_build_object('acquired', false, 'reason', 'already_succeeded',
+      'gateway_refund_reference', v_refund.gateway_refund_reference,
+      'gateway_response', v_refund.gateway_response);
+  END IF;
+
+  -- Provider already succeeded — resume finalization without calling provider
+  IF v_refund.provider_outcome = 'succeeded' THEN
+    RETURN jsonb_build_object('acquired', false, 'reason', 'provider_already_succeeded',
+      'gateway_refund_reference', v_refund.gateway_refund_reference,
+      'gateway_response', v_refund.gateway_response);
+  END IF;
+
+  -- Ambiguous outcome — do not retry automatically
+  IF v_refund.provider_outcome = 'ambiguous' THEN
+    RETURN jsonb_build_object('acquired', false, 'reason', 'ambiguous_outcome');
+  END IF;
+
+  -- Active lease — another worker is executing
+  IF v_refund.provider_outcome = 'in_progress'
+     AND v_refund.provider_execution_started_at IS NOT NULL
+     AND v_refund.provider_execution_started_at + (p_lease_seconds || ' seconds')::INTERVAL > NOW() THEN
+    RETURN jsonb_build_object('acquired', false, 'reason', 'execution_in_progress');
+  END IF;
+
+  -- Expired lease with in_progress — allow reclaim only if not ambiguous
+  -- (If we reach here, either not_started, definitively_failed, review_required, or expired in_progress)
+
+  UPDATE public.refunds SET
+    provider_execution_token = p_execution_token,
+    provider_execution_started_at = NOW(),
+    provider_outcome = 'in_progress'
+  WHERE id = p_refund_id;
+
+  RETURN jsonb_build_object('acquired', true);
+END; $$;
+
+REVOKE ALL ON FUNCTION public.claim_refund_provider_execution(UUID, TEXT, INT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_refund_provider_execution(UUID, TEXT, INT) TO service_role;
 
 -- ── 6b. Square merchant tenant identity — one active connection per merchant ──
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payout_accounts_square_merchant_active
@@ -268,12 +337,16 @@ GRANT EXECUTE ON FUNCTION public.complete_refresh_lease(UUID, TEXT, TEXT, TEXT, 
 -- ── 9. Atomic refund reservation ──
 CREATE OR REPLACE FUNCTION public.claim_refund_balance(
   p_payment_id UUID, p_refund_amount NUMERIC(12,2), p_idempotency_key TEXT,
-  p_currency VARCHAR(3) DEFAULT 'USD', p_waaiio_fee_total NUMERIC(12,2) DEFAULT 0
+  p_currency VARCHAR(3) DEFAULT 'USD', p_waaiio_fee_total NUMERIC(12,2) DEFAULT 0,
+  p_business_id UUID DEFAULT NULL,
+  p_reason TEXT DEFAULT NULL,
+  p_initiated_by UUID DEFAULT NULL,
+  p_initiated_by_role TEXT DEFAULT NULL
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   v_payment RECORD; v_total_refunded NUMERIC(12,2); v_total_fee_reversed NUMERIC(12,2);
-  v_remaining NUMERIC(12,2); v_planned_reversal NUMERIC(12,2); v_refund_id UUID; v_existing_id UUID;
-  v_existing_fee NUMERIC(12,2); v_existing_amount NUMERIC(12,2);
+  v_remaining NUMERIC(12,2); v_planned_reversal NUMERIC(12,2); v_refund_id UUID;
+  v_existing RECORD;
 BEGIN
   IF p_payment_id IS NULL OR p_refund_amount IS NULL OR p_refund_amount <= 0 THEN
     RETURN jsonb_build_object('claimed', false, 'reason', 'invalid_input');
@@ -287,32 +360,61 @@ BEGIN
   IF v_payment.status != 'success' THEN
     -- Allow replay of completed full refund (status='refunded')
     IF v_payment.status = 'refunded' THEN
-      SELECT id, planned_fee_reversal, amount INTO v_existing_id, v_existing_fee, v_existing_amount
+      SELECT id, planned_fee_reversal, amount, business_id, reason, initiated_by, initiated_by_role
+        INTO v_existing
         FROM public.refunds
         WHERE payment_id = p_payment_id AND provider_idempotency_key = p_idempotency_key;
-      IF v_existing_id IS NOT NULL THEN
-        -- Reject key reuse with changed parameters
-        IF v_existing_amount != p_refund_amount THEN
+      IF v_existing IS NOT NULL THEN
+        -- Validate ALL immutable fields on replay
+        IF v_existing.amount != p_refund_amount THEN
           RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'amount');
         END IF;
-        RETURN jsonb_build_object('claimed', true, 'refund_id', v_existing_id, 'existing', true,
-          'planned_fee_reversal', COALESCE(v_existing_fee, 0));
+        IF p_business_id IS NOT NULL AND v_existing.business_id IS DISTINCT FROM p_business_id THEN
+          RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'business_id');
+        END IF;
+        IF p_currency != v_payment.currency THEN
+          RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'currency');
+        END IF;
+        IF p_reason IS NOT NULL AND v_existing.reason IS DISTINCT FROM p_reason THEN
+          RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'reason');
+        END IF;
+        IF p_initiated_by IS NOT NULL AND v_existing.initiated_by IS DISTINCT FROM p_initiated_by THEN
+          RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'initiated_by');
+        END IF;
+        IF p_initiated_by_role IS NOT NULL AND v_existing.initiated_by_role IS DISTINCT FROM p_initiated_by_role THEN
+          RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'initiated_by_role');
+        END IF;
+        RETURN jsonb_build_object('claimed', true, 'refund_id', v_existing.id, 'existing', true,
+          'planned_fee_reversal', COALESCE(v_existing.planned_fee_reversal, 0));
       END IF;
     END IF;
     RETURN jsonb_build_object('claimed', false, 'reason', 'payment_not_successful');
   END IF;
   IF p_currency != v_payment.currency THEN RETURN jsonb_build_object('claimed', false, 'reason', 'currency_mismatch'); END IF;
 
-  SELECT id, planned_fee_reversal, amount INTO v_existing_id, v_existing_fee, v_existing_amount
+  SELECT id, planned_fee_reversal, amount, business_id, reason, initiated_by, initiated_by_role
+    INTO v_existing
     FROM public.refunds
     WHERE payment_id = p_payment_id AND provider_idempotency_key = p_idempotency_key;
-  IF v_existing_id IS NOT NULL THEN
-    -- Reject key reuse with changed parameters
-    IF v_existing_amount != p_refund_amount THEN
+  IF v_existing IS NOT NULL THEN
+    -- Validate ALL immutable fields on replay
+    IF v_existing.amount != p_refund_amount THEN
       RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'amount');
     END IF;
-    RETURN jsonb_build_object('claimed', true, 'refund_id', v_existing_id, 'existing', true,
-      'planned_fee_reversal', COALESCE(v_existing_fee, 0));
+    IF p_business_id IS NOT NULL AND v_existing.business_id IS DISTINCT FROM p_business_id THEN
+      RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'business_id');
+    END IF;
+    IF p_reason IS NOT NULL AND v_existing.reason IS DISTINCT FROM p_reason THEN
+      RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'reason');
+    END IF;
+    IF p_initiated_by IS NOT NULL AND v_existing.initiated_by IS DISTINCT FROM p_initiated_by THEN
+      RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'initiated_by');
+    END IF;
+    IF p_initiated_by_role IS NOT NULL AND v_existing.initiated_by_role IS DISTINCT FROM p_initiated_by_role THEN
+      RETURN jsonb_build_object('claimed', false, 'reason', 'parameter_mismatch', 'detail', 'initiated_by_role');
+    END IF;
+    RETURN jsonb_build_object('claimed', true, 'refund_id', v_existing.id, 'existing', true,
+      'planned_fee_reversal', COALESCE(v_existing.planned_fee_reversal, 0));
   END IF;
 
   SELECT COALESCE(SUM(amount), 0), COALESCE(SUM(COALESCE(planned_fee_reversal, 0)), 0)
@@ -335,19 +437,21 @@ BEGIN
 
   INSERT INTO public.refunds (
     payment_id, business_id, amount, status, gateway,
-    provider_idempotency_key, planned_fee_reversal, refund_type
+    provider_idempotency_key, planned_fee_reversal, refund_type,
+    reason, initiated_by, initiated_by_role
   ) VALUES (
-    p_payment_id, v_payment.business_id, p_refund_amount, 'pending',
+    p_payment_id, COALESCE(p_business_id, v_payment.business_id), p_refund_amount, 'pending',
     v_payment.gateway, p_idempotency_key, v_planned_reversal,
-    CASE WHEN p_refund_amount >= v_payment.amount THEN 'full' ELSE 'partial' END
+    CASE WHEN p_refund_amount >= v_payment.amount THEN 'full' ELSE 'partial' END,
+    p_reason, p_initiated_by, p_initiated_by_role
   ) RETURNING id INTO v_refund_id;
 
   RETURN jsonb_build_object('claimed', true, 'refund_id', v_refund_id,
     'planned_fee_reversal', v_planned_reversal, 'remaining_after', v_remaining - p_refund_amount);
 END; $$;
 
-REVOKE ALL ON FUNCTION public.claim_refund_balance(UUID, NUMERIC, TEXT, VARCHAR, NUMERIC) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.claim_refund_balance(UUID, NUMERIC, TEXT, VARCHAR, NUMERIC) TO service_role;
+REVOKE ALL ON FUNCTION public.claim_refund_balance(UUID, NUMERIC, TEXT, VARCHAR, NUMERIC, UUID, TEXT, UUID, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_refund_balance(UUID, NUMERIC, TEXT, VARCHAR, NUMERIC, UUID, TEXT, UUID, TEXT) TO service_role;
 
 -- ── 10. Comprehensive atomic refund finalization ──
 -- One transaction: refund status + payment totals + booking/reservation + fee reversal + payout adjustment
@@ -363,8 +467,6 @@ DECLARE
   v_new_refund_amount NUMERIC(12,2);
   v_is_fully_refunded BOOLEAN;
   v_fee RECORD;
-  v_fee_entity_col TEXT;
-  v_fee_entity_val UUID;
   v_payout RECORD;
 BEGIN
   IF p_refund_id IS NULL OR p_square_refund_id IS NULL THEN
@@ -407,11 +509,16 @@ BEGIN
 
   -- Lock and read the payment
   SELECT id, amount, refund_amount, booking_id, reservation_id, invoice_id,
-         campaign_id, order_id, business_id, gateway_reference, collection_mode
+         campaign_id, order_id, business_id, gateway_reference, collection_mode, gateway
     INTO v_payment FROM public.payments WHERE id = v_refund.payment_id FOR UPDATE;
 
   IF v_payment IS NULL THEN
     RETURN jsonb_build_object('success', false, 'reason', 'payment_not_found');
+  END IF;
+
+  -- Enforce balance invariant while holding the payment lock
+  IF COALESCE(v_payment.refund_amount, 0) + v_refund.amount > v_payment.amount THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'refund_balance_exceeded');
   END IF;
 
   -- Update payment refund totals
@@ -433,20 +540,6 @@ BEGIN
     UPDATE public.reservations SET deposit_status = 'refunded' WHERE id = v_payment.reservation_id;
   END IF;
 
-  -- Fee reversal
-  v_fee_entity_col := CASE
-    WHEN v_payment.booking_id IS NOT NULL THEN 'booking_id'
-    WHEN v_payment.invoice_id IS NOT NULL THEN 'invoice_id'
-    WHEN v_payment.campaign_id IS NOT NULL THEN 'campaign_id'
-    WHEN v_payment.order_id IS NOT NULL THEN 'order_id'
-    WHEN v_payment.reservation_id IS NOT NULL THEN 'reservation_id'
-    ELSE NULL
-  END;
-  v_fee_entity_val := COALESCE(
-    v_payment.booking_id, v_payment.invoice_id, v_payment.campaign_id,
-    v_payment.order_id, v_payment.reservation_id
-  );
-
   -- Fee reversal — scoped by payment_id to avoid affecting other payments' fees
   -- platform_fees has a payment_id column (migration 248)
   IF v_is_fully_refunded THEN
@@ -467,10 +560,9 @@ BEGIN
     END IF;
   END IF;
 
-  -- Payout adjustment: only when Waaiio held the funds
-  -- Platform and managed_split: Waaiio collected and must return
-  -- Connect, BYO, flutterwave_mid: provider/merchant collected — no payout adjustment needed
-  IF v_payment.collection_mode IN ('platform', 'managed_split') THEN
+  -- Payout adjustment: only when Waaiio held and disbursed the funds (platform mode).
+  -- Square Connect uses reverse_transfer for recovery — no payout adjustment needed.
+  IF v_payment.collection_mode = 'platform' THEN
     SELECT bp.id INTO v_payout
       FROM public.business_payouts bp, public.payments p
       WHERE p.id = v_refund.payment_id
@@ -592,6 +684,7 @@ DECLARE
   v_new_refund_amount NUMERIC(12,2);
   v_is_fully_refunded BOOLEAN;
   v_fee RECORD;
+  v_payout RECORD;
 BEGIN
   -- Input validation
   IF p_refund_id IS NULL THEN
@@ -606,7 +699,21 @@ BEGIN
   IF v_refund IS NULL THEN
     RETURN jsonb_build_object('success', false, 'reason', 'refund_not_found');
   END IF;
-  IF v_refund.status IN ('success', 'failed') THEN
+
+  -- Idempotent replay: already success with matching reference
+  IF v_refund.status = 'success' THEN
+    IF p_gateway_refund_ref IS NOT NULL AND v_refund.gateway_refund_reference IS NOT NULL
+       AND v_refund.gateway_refund_reference = p_gateway_refund_ref THEN
+      RETURN jsonb_build_object('success', true, 'existing', true, 'financial', false);
+    ELSIF p_gateway_refund_ref IS NOT NULL AND v_refund.gateway_refund_reference IS NOT NULL
+       AND v_refund.gateway_refund_reference != p_gateway_refund_ref THEN
+      RETURN jsonb_build_object('success', false, 'reason', 'provider_reference_mismatch');
+    ELSE
+      RETURN jsonb_build_object('success', true, 'existing', true, 'financial', false);
+    END IF;
+  END IF;
+
+  IF v_refund.status = 'failed' THEN
     RETURN jsonb_build_object('success', false, 'reason', 'already_finalized');
   END IF;
 
@@ -624,10 +731,15 @@ BEGIN
 
   -- Lock and read payment
   SELECT id, amount, refund_amount, booking_id, reservation_id, invoice_id,
-         campaign_id, order_id, business_id, gateway_reference, collection_mode
+         campaign_id, order_id, business_id, gateway_reference, collection_mode, gateway
     INTO v_payment FROM public.payments WHERE id = v_refund.payment_id FOR UPDATE;
   IF v_payment IS NULL THEN
     RETURN jsonb_build_object('success', false, 'reason', 'payment_not_found');
+  END IF;
+
+  -- Enforce balance invariant while holding the payment lock
+  IF COALESCE(v_payment.refund_amount, 0) + v_refund.amount > v_payment.amount THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'refund_balance_exceeded');
   END IF;
 
   -- Update payment refund totals
@@ -662,25 +774,22 @@ BEGIN
     END IF;
   END IF;
 
-  -- Payout adjustment: only create when Waaiio held the funds
-  -- Platform and managed_split: Waaiio collected and must return
-  -- Connect, BYO, flutterwave_mid: provider/merchant collected — no payout adjustment needed
-  IF v_payment.collection_mode IN ('platform', 'managed_split') THEN
-    DECLARE v_payout RECORD;
-    BEGIN
-      SELECT bp.id INTO v_payout
-        FROM public.business_payouts bp, public.payments p
-        WHERE p.id = v_refund.payment_id
-          AND bp.business_id = v_refund.business_id
-          AND bp.status = 'paid'
-          AND bp.period_end >= p.created_at
-        LIMIT 1;
-      IF v_payout IS NOT NULL THEN
-        INSERT INTO public.payout_adjustments (business_id, payout_id, amount, reason, payment_id)
-        VALUES (v_refund.business_id, v_payout.id, -v_refund.amount,
-                'Refund for payment ' || v_payment.gateway_reference, v_refund.payment_id);
-      END IF;
-    END;
+  -- Payout adjustment: only when Waaiio held and disbursed the funds (platform mode).
+  -- Skip for managed_split/connect (reverse_transfer handles recovery on Stripe),
+  -- byo (merchant held funds), and flutterwave_mid (merchant held funds).
+  IF v_payment.collection_mode = 'platform' THEN
+    SELECT bp.id INTO v_payout
+      FROM public.business_payouts bp, public.payments p
+      WHERE p.id = v_refund.payment_id
+        AND bp.business_id = v_refund.business_id
+        AND bp.status = 'paid'
+        AND bp.period_end >= p.created_at
+      LIMIT 1;
+    IF v_payout IS NOT NULL THEN
+      INSERT INTO public.payout_adjustments (business_id, payout_id, amount, reason, payment_id)
+      VALUES (v_refund.business_id, v_payout.id, -v_refund.amount,
+              'Refund for payment ' || v_payment.gateway_reference, v_refund.payment_id);
+    END IF;
   END IF;
 
   RETURN jsonb_build_object('success', true, 'financial', true, 'fully_refunded', v_is_fully_refunded);
@@ -689,3 +798,8 @@ $$;
 
 REVOKE ALL ON FUNCTION public.finalize_refund_generic(UUID, TEXT, TEXT, JSONB) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.finalize_refund_generic(UUID, TEXT, TEXT, JSONB) TO service_role;
+
+-- ── 14. Square init snapshot columns ──
+ALTER TABLE public.payments
+  ADD COLUMN IF NOT EXISTS square_merchant_id_at_creation TEXT,
+  ADD COLUMN IF NOT EXISTS square_location_id_at_creation TEXT;

@@ -40,6 +40,12 @@ function generateTicketCode(): string {
   return `TK-${code}`;
 }
 
+export interface TicketDeliveryResult {
+  success: boolean;
+  whatsappDelivered: boolean;
+  emailDelivered: boolean;
+}
+
 /**
  * After a ticket purchase:
  * 1. Generate unique ticket codes
@@ -48,13 +54,15 @@ function generateTicketCode(): string {
  * 4. Upload to Supabase Storage
  * 5. Send PDF via WhatsApp
  */
-export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promise<void> {
+export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promise<TicketDeliveryResult> {
   const {
     supabase, sender, businessId, bookingId, eventId,
     eventName, eventDate, eventTime, venue,
     guestName, guestPhone, referenceCode, quantity,
   } = opts;
   const t = opts.translate ?? ((text: string) => Promise.resolve(text));
+  let whatsappDelivered = false;
+  let emailDelivered = false;
 
   logger.info('[TICKETS] Starting sendTicketsAfterPurchase | booking:', bookingId, '| event:', eventName, '| qty:', quantity);
 
@@ -104,7 +112,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
 
     if (insertError) {
       logger.error('[TICKETS] Failed to insert event_tickets:', insertError.message, insertError.code);
-      return;
+      throw new Error(`Ticket insert failed: ${insertError.message}`);
     }
     logger.info('[TICKETS] Inserted', tickets.length, 'event_tickets');
   }
@@ -177,6 +185,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
         await sender.sendText({ to: phone, text: await t(caption) }).catch(err => logger.error('[TICKETS] Text fallback send failed:', err));
       }
     }
+    whatsappDelivered = true;
     logger.info('[TICKETS] WhatsApp ticket delivery complete for', phone, '| booking:', bookingId);
   } else {
     logger.info('[TICKETS] No WhatsApp sender — skipping WhatsApp delivery for booking:', bookingId);
@@ -223,6 +232,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
       });
 
       await sendEmail({ to: email, ...emailContent });
+      emailDelivered = true;
       logger.info('[TICKETS] Email sent to', email, '| booking:', bookingId);
     } catch (emailErr) {
       logger.error('[TICKETS] Email send error:', emailErr);
@@ -255,4 +265,10 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
       total_tickets: evt.total_tickets,
     }).catch(err => logger.error('[TICKETS] Sold-out webhook error:', err));
   }
+
+  const success = whatsappDelivered || emailDelivered;
+  if (!success) {
+    throw new Error('Ticket delivery failed — neither WhatsApp nor email succeeded');
+  }
+  return { success, whatsappDelivered, emailDelivered };
 }

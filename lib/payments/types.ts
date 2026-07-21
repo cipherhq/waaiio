@@ -79,8 +79,11 @@ export interface RefundPaymentOpts {
   appFeeRefundAmount?: number;
 }
 
+export type RefundOutcome = 'succeeded' | 'definitively_failed' | 'ambiguous';
+
 export interface RefundResult {
   success: boolean;
+  outcome: RefundOutcome;
   gatewayRefundReference?: string;
   gatewayResponse?: Record<string, unknown>;
   errorMessage?: string;

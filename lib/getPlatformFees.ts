@@ -1,11 +1,15 @@
+import Decimal from 'decimal.js';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import type { SubscriptionTier } from '@/lib/constants';
+
+// Configure ROUND_HALF_UP globally for financial rounding
+Decimal.set({ rounding: Decimal.ROUND_HALF_UP });
 
 /**
  * Centralized async fee calculator — reads tier config from DB-backed
  * platform_settings (with 60s cache and hardcoded fallback).
  *
- * @param amount   Transaction amount in minor units (e.g. kobo / cents)
+ * @param amount   Transaction amount in major currency units (dollars, naira — NOT cents/kobo)
  * @param tier     Business subscription tier
  * @param isInTrial Whether the business is currently in its free trial
  * @returns Fee breakdown: feePercentage, feeFlat, feeTotal
@@ -30,12 +34,11 @@ export async function getPlatformFees(
   // Waive flat fee on micro-transactions to protect small merchants
   // If flat fee would be more than 10% of the transaction, skip it
   const effectiveFeeFlat = (feeFlat > 0 && amount > 0 && feeFlat / amount > 0.10) ? 0 : feeFlat;
-  // Round to 2 decimal places. Two-stage rounding avoids IEEE 754 mid-point
-  // errors: 333 * 2.5% = 8.325 mathematically, but 8.325*100 = 832.4999... in
-  // binary. By rounding to 3 decimals in integer domain first, then to 2,
-  // we get the correct 8.33.
-  const rawFee = (amount * feePercentage / 100) + effectiveFeeFlat;
-  const feeTotal = Math.round(Math.round(rawFee * 1000) / 10) / 100;
+
+  // Use Decimal.js for precise financial arithmetic — avoids IEEE 754 mid-point errors
+  // e.g. 333 * 2.5% = 8.325 exactly, rounds to 8.33 with ROUND_HALF_UP
+  const rawFee = new Decimal(amount).mul(feePercentage).div(100).plus(effectiveFeeFlat);
+  const feeTotal = rawFee.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
 
   return { feePercentage, feeFlat: effectiveFeeFlat, feeTotal };
 }

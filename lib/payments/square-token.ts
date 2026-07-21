@@ -69,15 +69,16 @@ export async function resolveSquareToken(
     if (leaseExpires > now) {
       // Another refresh in progress
       if (isExpired) {
-        // Token is expired but another worker is refreshing — bounded backoff wait
-        for (let i = 0; i < 3; i++) {
-          await new Promise(resolve => setTimeout(resolve, 1500));
-          const { data: refreshedSecret } = await supabase
+        // Token is expired but another worker is refreshing — poll for up to 20 seconds
+        for (let i = 0; i < 20; i++) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          const { data: refreshedSecret, error: readErr } = await supabase
             .from('business_connection_secrets')
-            .select('encrypted_secret_key, token_expires_at, refresh_lease_expires_at')
+            .select('encrypted_secret_key, token_expires_at')
             .eq('id', secret.id)
             .is('revoked_at', null)
             .single();
+          if (readErr) continue; // Read error — keep polling
           if (refreshedSecret?.token_expires_at) {
             const newExpiry = new Date(refreshedSecret.token_expires_at).getTime();
             if (newExpiry > Date.now()) {
@@ -86,7 +87,7 @@ export async function resolveSquareToken(
             }
           }
         }
-        // Still expired after ~4.5s — the winner may have failed
+        // Still expired after ~20s — the winner may have failed
         return null;
       }
       // Not expired, just near expiry — use current token while another worker refreshes
@@ -107,30 +108,34 @@ export async function resolveSquareToken(
           }
         }
         // Re-read the credential — another worker may have completed a newer refresh
-        const { data: fresh } = await supabase
+        const { data: fresh, error: freshErr } = await supabase
           .from('business_connection_secrets')
           .select('encrypted_secret_key')
           .eq('id', secret.id)
           .is('revoked_at', null)
           .single();
+        if (freshErr) {
+          logger.error('[SQUARE-TOKEN] Failed to re-read refreshed credential:', freshErr.message);
+          return null;
+        }
         if (fresh?.encrypted_secret_key) {
           return { accessToken: decryptToken(fresh.encrypted_secret_key), secretId: secret.id };
         }
         return null;
       }
 
-      case 'lease_held':
-      case 'lease_acquire_failed': {
-        // Another worker is refreshing — wait with bounded backoff and re-read if expired
+      case 'lease_held': {
+        // Another worker is refreshing — wait with polling and re-read if expired
         if (isExpired) {
-          for (let i = 0; i < 3; i++) {
-            await new Promise(resolve => setTimeout(resolve, 1500));
-            const { data: refreshedSecret } = await supabase
+          for (let i = 0; i < 20; i++) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            const { data: refreshedSecret, error: readErr } = await supabase
               .from('business_connection_secrets')
               .select('encrypted_secret_key, token_expires_at')
               .eq('id', secret.id)
               .is('revoked_at', null)
               .single();
+            if (readErr) continue; // Read error — keep polling
             if (refreshedSecret?.token_expires_at) {
               const newExpiry = new Date(refreshedSecret.token_expires_at).getTime();
               if (newExpiry > Date.now()) {
@@ -138,10 +143,18 @@ export async function resolveSquareToken(
               }
             }
           }
-          return null; // Winner hasn't completed after ~4.5s
+          return null; // Winner hasn't completed after ~20s
         }
         // Not expired — use current token
         return { accessToken: decryptToken(secret.encrypted_secret_key), secretId: secret.id };
+      }
+
+      case 'lease_acquire_failed': {
+        // DB error acquiring lease — use existing token if not expired
+        if (!isExpired) {
+          return { accessToken: decryptToken(secret.encrypted_secret_key), secretId: secret.id };
+        }
+        return null;
       }
 
       case 'transient_failure': {
@@ -229,7 +242,9 @@ async function refreshWithLease(
       const errorType = (data.error as string) || '';
       if (PERMANENT_ERRORS.includes(errorType)) {
         await markConnectionUnhealthy(supabase, secretId, errorType);
+        return 'provider_failed'; // Only for permanent errors
       }
+      // Non-permanent, non-transient rejection
       logger.error('[SQUARE-TOKEN] Refresh rejected (no token details logged)');
       return 'provider_failed';
     }
@@ -239,7 +254,7 @@ async function refreshWithLease(
       ? encryptToken(data.refresh_token as string) : '';
     const newExpiresAt = (data.expires_at as string) || null;
 
-    const { data: completeResult } = await supabase.rpc('complete_refresh_lease', {
+    const { data: completeResult, error: completeErr } = await supabase.rpc('complete_refresh_lease', {
       p_secret_id: secretId,
       p_claim_token: claimToken,
       p_new_access_token: encryptedAccess,
@@ -247,19 +262,19 @@ async function refreshWithLease(
       p_new_expires_at: newExpiresAt ? new Date(newExpiresAt).toISOString() : null,
     });
 
+    if (completeErr) {
+      logger.error('[SQUARE-TOKEN] Complete lease DB error:', completeErr.message);
+      return 'persistence_failed';
+    }
     if (!completeResult?.success) {
       logger.warn('[SQUARE-TOKEN] Lease completion rejected:', completeResult?.reason);
       return 'persistence_failed';
     }
     return 'refreshed';
   } catch (err) {
-    const isTimeout = (err as Error).name === 'TimeoutError' || (err as Error).name === 'AbortError';
-    if (isTimeout) {
-      logger.error('[SQUARE-TOKEN] Provider timeout (transient, lease will expire)');
-      return 'transient_failure'; // NOT permanent — don't mark unhealthy
-    }
-    logger.error('[SQUARE-TOKEN] Provider error (no token details logged)');
-    return 'provider_failed';
+    // Timeout, AbortError, network failure — all transient
+    logger.error('[SQUARE-TOKEN] Provider call error (transient)');
+    return 'transient_failure';
   }
 }
 

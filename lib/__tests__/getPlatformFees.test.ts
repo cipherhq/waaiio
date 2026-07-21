@@ -109,7 +109,7 @@ describe('getPlatformFees', () => {
   it('rounds percentage fee to 2 decimal places', async () => {
     mockLoadSettings.mockResolvedValue(makePricingTiers());
 
-    // 333 * 2.5% = 8.325 in math — epsilon rounding gives the mathematically correct 8.33
+    // 333 * 2.5% = 8.325 in math — Decimal.js ROUND_HALF_UP gives the correct 8.33
     const result = await getPlatformFees(333, 'free', false);
 
     expect(result.feeTotal).toBe(8.33);
@@ -121,17 +121,17 @@ describe('getPlatformFees', () => {
     expect(result.feeTotal).toBe(1.01);
   });
 
-  it('rounds 1.0049 via two-stage to 1.01', async () => {
-    // 100 * 1.0049% = 1.0049 → stage1: round(1004.9)=1005 → stage2: round(100.5)=101 → 1.01
+  it('rounds 1.0049 correctly to 1.00', async () => {
+    // 100 * 1.0049% = 1.0049 → Decimal.js ROUND_HALF_UP to 2dp → 1.00
     mockLoadSettings.mockResolvedValue(makePricingTiers({ free: { feePercentage: 1.0049, feeFlat: 0 } }));
     const result = await getPlatformFees(100, 'free', false);
-    expect(result.feeTotal).toBe(1.01);
+    expect(result.feeTotal).toBe(1.00);
   });
 
   it('handles fractional transaction amount', async () => {
     mockLoadSettings.mockResolvedValue(makePricingTiers());
     const result = await getPlatformFees(10.50, 'free', false);
-    // 10.50 * 2.5% = 0.2625 → round(round(262.5)/10)/100 = round(26.25)/100 = 26/100 = 0.26
+    // 10.50 * 2.5% = 0.2625 → Decimal.js ROUND_HALF_UP to 2dp → 0.26
     expect(result.feeTotal).toBe(0.26);
   });
 });

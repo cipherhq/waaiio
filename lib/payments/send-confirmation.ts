@@ -248,12 +248,29 @@ export async function sendProactiveConfirmation(
       .maybeSingle();
     if (donation?.donor_phone) {
       customerPhone = donation.donor_phone;
+    }
+    if (donation) {
       const campaign = donation.campaigns as unknown as { business_id: string; businesses: { name: string; country_code?: string } | null } | null;
       if (campaign?.business_id && !businessId) {
         businessId = campaign.business_id;
         if (campaign.businesses?.name) businessName = campaign.businesses.name;
         if (campaign.businesses?.country_code) countryCode = campaign.businesses.country_code as CountryCode;
       }
+    }
+  }
+
+  // Always resolve business from campaign if not yet resolved (independent of phone)
+  if (payment.campaign_id && !businessId) {
+    const { data: campDonation } = await supabase
+      .from('campaign_donations')
+      .select('campaigns(business_id, businesses(name, country_code))')
+      .eq('payment_id', payment.id)
+      .maybeSingle();
+    if (campDonation) {
+      const camp = campDonation.campaigns as any;
+      if (camp?.business_id) businessId = camp.business_id;
+      if (camp?.businesses?.name) businessName = camp.businesses.name;
+      if (camp?.businesses?.country_code) countryCode = camp.businesses.country_code as CountryCode;
     }
   }
 
@@ -506,10 +523,7 @@ export async function sendProactiveConfirmation(
         const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
         const { data: donation } = await supabase.from('campaign_donations')
           .select('donor_name, reference_code, campaigns(title)')
-          .eq('campaign_id', payment.campaign_id)
-          .eq('status', 'success')
-          .order('created_at', { ascending: false })
-          .limit(1)
+          .eq('payment_id', payment.id)
           .maybeSingle();
 
         const campaignTitle = (donation?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
@@ -587,7 +601,7 @@ export async function sendProactiveConfirmation(
           });
 
           const { sendTicketsAfterPurchase } = await import('@/lib/bot/flows/shared/send-tickets');
-          await sendTicketsAfterPurchase({
+          const ticketResult = await sendTicketsAfterPurchase({
             supabase,
             sender: resolved?.sender,  // undefined for web-only purchases (email-only delivery)
             businessId,
@@ -603,7 +617,9 @@ export async function sendProactiveConfirmation(
             quantity: ticketBooking.party_size || 1,
             amount: payment.amount, countryCode,
           });
-          deliverySucceeded = true;
+          if (ticketResult.success) {
+            deliverySucceeded = true;
+          }
         }
       }
     } catch (ticketErr) {
@@ -669,10 +685,7 @@ export async function sendProactiveConfirmation(
         const { data: donation } = await supabase
           .from('campaign_donations')
           .select('donor_name, donor_phone, reference_code, campaigns(title)')
-          .eq('campaign_id', payment.campaign_id)
-          .eq('status', 'success')
-          .order('created_at', { ascending: false })
-          .limit(1)
+          .eq('payment_id', payment.id)
           .maybeSingle();
 
         if (donation?.donor_phone) {

@@ -39,6 +39,7 @@ describe('Square payment-link idempotency', () => {
       amount: 50, currency: 'USD', business_id: null, user_id: 'u1',
       booking_id: null, invoice_id: null, campaign_id: null,
       reservation_id: null, collection_mode: 'platform', payout_account_id: null,
+      order_id: null, square_merchant_id_at_creation: null, square_location_id_at_creation: null,
     };
     const updateFn = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) });
     const fromFn = vi.fn((table: string) => {
@@ -939,6 +940,7 @@ describe('Square verification hardening', () => {
     const updateChain = { eq: vi.fn().mockReturnValue({ in: inFn }) };
     const updateFn = vi.fn().mockReturnValue(updateChain);
     const supabase = {
+      rpc: vi.fn().mockResolvedValue({ data: { matched: true }, error: null }),
       from: vi.fn((table: string) => ({
         select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({
@@ -959,11 +961,17 @@ describe('Square verification hardening', () => {
     const result = await gw.verifyPayment(supabase as any, 'ref-123');
     expect(result).toBe(true);
 
-    // Check the update call includes square_payment_id and .in('status', ['pending'])
+    // Check the RPC was called to merge metadata (square_payment_id)
+    const rpcFn = supabase.rpc as ReturnType<typeof vi.fn>;
+    const mergeCalls = rpcFn.mock.calls.filter((c: unknown[]) => c[0] === 'merge_payment_metadata');
+    expect(mergeCalls.length).toBe(1);
+    expect(mergeCalls[0][1].p_new_fields.square_payment_id).toBe('sq-actual-pay-id');
+
+    // Check the status update has payment_method but NOT metadata (metadata via RPC)
     expect(updateFn).toHaveBeenCalled();
     const updateArg = updateFn.mock.calls[0][0];
-    expect(updateArg.metadata.square_payment_id).toBe('sq-actual-pay-id');
     expect(updateArg.payment_method).toBe('cash_app_pay');
+    expect(updateArg.metadata).toBeUndefined(); // metadata via merge RPC, not direct update
     // Verify .in was called with ['pending']
     expect(inFn).toHaveBeenCalledWith('status', ['pending']);
 

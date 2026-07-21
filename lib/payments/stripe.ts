@@ -222,6 +222,7 @@ export class StripeGateway implements PaymentGateway {
       }
       return {
         success: true,
+        outcome: 'succeeded',
         gatewayRefundReference: `mock_refund_stripe_${Date.now()}`,
         gatewayResponse: { mock: true },
       };
@@ -234,7 +235,7 @@ export class StripeGateway implements PaymentGateway {
         const session = await stripeGet(`/checkout/sessions/${encodeURIComponent(opts.gatewayReference)}`);
         paymentIntent = session.payment_intent as string;
         if (!paymentIntent) {
-          return { success: false, errorMessage: 'Could not resolve checkout session to payment intent' };
+          return { success: false, outcome: 'definitively_failed', errorMessage: 'Could not resolve checkout session to payment intent' };
         }
       }
 
@@ -275,20 +276,26 @@ export class StripeGateway implements PaymentGateway {
       if (data.id) {
         return {
           success: true,
+          outcome: 'succeeded',
           gatewayRefundReference: data.id as string,
           gatewayResponse: data,
         };
       }
 
       const error = data.error as Record<string, unknown> | undefined;
+      const errCode = error?.code as string | undefined;
+      const definitiveErrors = ['charge_already_refunded', 'amount_too_large', 'refund_not_allowed', 'invalid_charge', 'charge_not_found'];
+      const isDefinitive = errCode && definitiveErrors.includes(errCode);
       return {
         success: false,
+        outcome: isDefinitive ? 'definitively_failed' : 'ambiguous',
         errorMessage: (error?.message as string) || 'Stripe refund failed',
         gatewayResponse: data,
       };
     } catch (error) {
       return {
         success: false,
+        outcome: 'ambiguous',
         errorMessage: `Stripe refund error: ${(error as Error).message}`,
       };
     }

@@ -87,11 +87,6 @@ async function resolveMerchant(
 
   if (connErr) throw new Error(`Connection lookup error: ${connErr.message}`);
   if (!conn) {
-    if (!squarePlatformMerchantId) {
-      // SQUARE_PLATFORM_MERCHANT_ID is required to distinguish platform from unknown merchants.
-      // Without it, we cannot safely determine if this is a platform webhook or a stale connection.
-      throw new Error('SQUARE_PLATFORM_MERCHANT_ID not configured — cannot process Square webhooks for unrecognized merchant');
-    }
     logger.warn('[SQUARE-WEBHOOK] No active Square connection for merchant');
     throw new Error('Unknown merchant — no active connection');
   }
@@ -112,6 +107,11 @@ export async function POST(request: NextRequest) {
     }
     if (!verifySquareSignature(rawBody, signature)) {
       return NextResponse.json({ message: 'Invalid signature' }, { status: 400 });
+    }
+
+    // Require SQUARE_PLATFORM_MERCHANT_ID to be configured for any Square webhook processing
+    if (!squarePlatformMerchantId) {
+      return NextResponse.json({ message: 'Square platform merchant ID not configured' }, { status: 500 });
     }
 
     const body = JSON.parse(rawBody);

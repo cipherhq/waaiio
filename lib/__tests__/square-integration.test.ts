@@ -154,7 +154,7 @@ describe('finalize_square_refund payout adjustment', () => {
     // Verify the migration SQL contains the collection_mode guard
     const fs = await import('fs');
     const sql = fs.readFileSync('supabase/migrations/291_square_connection_support.sql', 'utf-8');
-    expect(sql).toContain("IN ('platform', 'managed_split')");
+    expect(sql).toContain("= 'platform'");
     expect(sql).toContain('payout_adjustments');
   });
 });

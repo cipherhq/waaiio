@@ -46,6 +46,7 @@ async function squareGet(path: string): Promise<Record<string, unknown>> {
 function validateInitParams(
   existing: Record<string, unknown>,
   opts: InitPaymentOpts,
+  resolvedLocationId?: string | null,
 ): string | null {
   if (Number(existing.amount) !== opts.amount) return 'amount';
   if ((existing.currency as string) !== opts.currency) return 'currency';
@@ -57,6 +58,9 @@ function validateInitParams(
   if (existing.reservation_id !== (opts.reservationId || null)) return 'reservation_id';
   if (existing.collection_mode !== (opts.collectionMode || 'platform')) return 'collection_mode';
   if (existing.payout_account_id !== (opts.payoutAccountId || null)) return 'payout_account_id';
+  if (existing.order_id !== (opts.orderId || null)) return 'order_id';
+  if (existing.square_merchant_id_at_creation !== (opts.squareMerchantId || null)) return 'square_merchant_id_at_creation';
+  if (existing.square_location_id_at_creation !== (resolvedLocationId || null)) return 'square_location_id_at_creation';
   return null; // all match
 }
 
@@ -140,7 +144,7 @@ export class SquareGateway implements PaymentGateway {
 
         // Validate immutable parameters match on retry
         const { data: existingPayment, error: existingPaymentErr } = await opts.supabase.from('payments')
-          .select('amount, currency, business_id, user_id, booking_id, invoice_id, campaign_id, reservation_id, collection_mode, payout_account_id')
+          .select('amount, currency, business_id, user_id, booking_id, invoice_id, campaign_id, reservation_id, collection_mode, payout_account_id, order_id, square_merchant_id_at_creation, square_location_id_at_creation')
           .eq('id', paymentId).single();
 
         if (existingPaymentErr) {
@@ -149,7 +153,7 @@ export class SquareGateway implements PaymentGateway {
         }
 
         if (existingPayment) {
-          const mismatchField = validateInitParams(existingPayment, opts);
+          const mismatchField = validateInitParams(existingPayment, opts, useLocation);
           if (mismatchField) {
             logger.error(`[SQUARE] Parameter mismatch on retry: ${mismatchField}`);
             return null;
@@ -175,6 +179,7 @@ export class SquareGateway implements PaymentGateway {
           invoice_id: opts.invoiceId || null,
           campaign_id: opts.campaignId || null,
           reservation_id: opts.reservationId || null,
+          order_id: opts.orderId || null,
           business_id: opts.businessId || null,
           user_id: opts.userId,
           amount: opts.amount,
@@ -187,6 +192,8 @@ export class SquareGateway implements PaymentGateway {
           fee_bearer: opts.feeBearerMode || 'platform',
           payout_account_id: opts.payoutAccountId || null,
           waaiio_fee: opts.waaiioFee ?? 0,
+          square_merchant_id_at_creation: opts.squareMerchantId || null,
+          square_location_id_at_creation: useLocation || null,
           metadata: {
             reference_code: opts.referenceCode,
             channel: 'whatsapp',
@@ -199,14 +206,14 @@ export class SquareGateway implements PaymentGateway {
           // Unique violation on attempt_key means another concurrent call created it
           if (insertErr?.code === '23505') {
             const { data: concurrent, error: concurrentErr } = await opts.supabase.from('payments')
-              .select('id, amount, currency, business_id, user_id, booking_id, invoice_id, campaign_id, reservation_id, collection_mode, payout_account_id, metadata')
+              .select('id, amount, currency, business_id, user_id, booking_id, invoice_id, campaign_id, reservation_id, collection_mode, payout_account_id, order_id, square_merchant_id_at_creation, square_location_id_at_creation, metadata')
               .eq('payment_attempt_key', attemptKey).single();
             if (concurrentErr || !concurrent) {
               logger.error('[SQUARE] Concurrent winner lookup failed:', concurrentErr?.message);
               return null;
             }
             // Validate the concurrent winner's parameters match ours
-            const concurrentMismatch = validateInitParams(concurrent, opts);
+            const concurrentMismatch = validateInitParams(concurrent, opts, useLocation);
             if (concurrentMismatch) {
               logger.error(`[SQUARE] Parameter mismatch with concurrent winner: ${concurrentMismatch}`);
               return null;
@@ -436,7 +443,17 @@ export class SquareGateway implements PaymentGateway {
           }
         }
 
-        // Conditional update: only transition from pending, verify the row was actually updated
+        // 1. Atomic metadata merge — preserves any concurrent webhook-written fields
+        const { data: mergeResult, error: mergeErr } = await supabase.rpc('merge_payment_metadata', {
+          p_payment_id: paymentRecord.id,
+          p_new_fields: { square_payment_id: squarePaymentId || null },
+        });
+        if (mergeErr || !mergeResult?.matched) {
+          logger.error('[SQUARE] Metadata merge failed in verification');
+          return false;
+        }
+
+        // 2. Conditional status update — only from pending
         const { data: updatedRow, error: updateErr } = await supabase
           .from('payments')
           .update({
@@ -444,10 +461,6 @@ export class SquareGateway implements PaymentGateway {
             gateway_status: 'completed',
             payment_method: paymentMethod,
             paid_at: new Date().toISOString(),
-            metadata: {
-              ...((paymentRecord.metadata as Record<string, unknown>) || {}),
-              square_payment_id: squarePaymentId || null,
-            },
           })
           .eq('id', paymentRecord.id)
           .in('status', ['pending'])
@@ -459,7 +472,7 @@ export class SquareGateway implements PaymentGateway {
           return false;
         }
 
-        // Only confirm booking/order if the update actually matched (returned a row)
+        // Only confirm booking/order if the status actually transitioned
         if (updatedRow && paymentRecord.booking_id) {
           await supabase
             .from('bookings')
@@ -481,6 +494,7 @@ export class SquareGateway implements PaymentGateway {
     if ((!hasAnyRefundToken && process.env.NODE_ENV !== 'production') || opts.gatewayReference.startsWith('mock_')) {
       return {
         success: true,
+        outcome: 'succeeded',
         gatewayRefundReference: `mock_refund_square_${Date.now()}`,
         gatewayResponse: { mock: true },
       };
@@ -502,7 +516,7 @@ export class SquareGateway implements PaymentGateway {
         if (orderId) {
           const useToken = opts.byoSecretKey || squareAccessToken;
           if (!useToken) {
-            return { success: false, errorMessage: 'No Square access token for order lookup' };
+            return { success: false, outcome: 'definitively_failed', errorMessage: 'No Square access token for order lookup' };
           }
           const orderResult = await (useToken !== squareAccessToken
             ? fetch(`${getSquareBaseUrl()}/v2/orders/${encodeURIComponent(orderId)}`, {
@@ -516,14 +530,14 @@ export class SquareGateway implements PaymentGateway {
             const orderMoney = order.total_money as Record<string, unknown> | undefined;
             const orderCurrency = (orderMoney?.currency as string) || '';
             if (!orderCurrency || orderCurrency.toUpperCase() !== (opts.currency || 'USD').toUpperCase()) {
-              return { success: false, errorMessage: 'Order currency mismatch — cannot safely refund' };
+              return { success: false, outcome: 'definitively_failed', errorMessage: 'Order currency mismatch — cannot safely refund' };
             }
 
             // Validate amount
             const orderAmountCents = (orderMoney?.amount as number) || 0;
             const expectedCents = Math.round((opts.amount ?? 0) * 100);
             if (expectedCents > 0 && orderAmountCents > 0 && orderAmountCents < expectedCents) {
-              return { success: false, errorMessage: 'Order amount less than refund — cannot safely refund' };
+              return { success: false, outcome: 'definitively_failed', errorMessage: 'Order amount less than refund — cannot safely refund' };
             }
 
             const tenders = (order.tenders || []) as Array<{ payment_id?: string }>;
@@ -537,13 +551,13 @@ export class SquareGateway implements PaymentGateway {
       }
 
       if (!paymentId) {
-        return { success: false, errorMessage: 'Square payment ID not found — payment may not be completed yet' };
+        return { success: false, outcome: 'definitively_failed', errorMessage: 'Square payment ID not found — payment may not be completed yet' };
       }
 
       // Use the stable provider idempotency key from the refund claim.
       // This key was stored before calling Square and must be reused on retry.
       if (!opts.providerIdempotencyKey) {
-        return { success: false, errorMessage: 'Missing provider idempotency key — refund not claimed' };
+        return { success: false, outcome: 'definitively_failed', errorMessage: 'Missing provider idempotency key — refund not claimed' };
       }
 
       const refundBody: Record<string, unknown> = {
@@ -556,7 +570,7 @@ export class SquareGateway implements PaymentGateway {
       // connected-account refunds to calculate proportional app_fee reversal).
       const refundAmount = opts.amount ?? 0;
       if (refundAmount <= 0) {
-        return { success: false, errorMessage: 'Refund amount must be positive' };
+        return { success: false, outcome: 'definitively_failed', errorMessage: 'Refund amount must be positive' };
       }
       refundBody.amount_money = {
         amount: Math.round(refundAmount * 100),
@@ -589,19 +603,26 @@ export class SquareGateway implements PaymentGateway {
       if (refund?.id) {
         return {
           success: true,
+          outcome: 'succeeded',
           gatewayRefundReference: refund.id as string,
           gatewayResponse: result,
         };
       }
 
       // Check for errors in the response
-      const errors = result.errors as Array<{ detail?: string }> | undefined;
+      const errors = result.errors as Array<{ detail?: string; code?: string; category?: string }> | undefined;
       const errorMsg = errors?.[0]?.detail || 'Square refund failed';
+      const errorCode = errors?.[0]?.code || '';
+      const errorCategory = errors?.[0]?.category || '';
+      // Square definitive errors: INVALID_REQUEST_ERROR category or specific codes
+      const definitiveCategories = ['INVALID_REQUEST_ERROR'];
+      const definitiveCodes = ['REFUND_ALREADY_PENDING', 'REFUND_AMOUNT_INVALID', 'PAYMENT_NOT_REFUNDABLE', 'NOT_FOUND'];
+      const isDefinitive = definitiveCategories.includes(errorCategory) || definitiveCodes.includes(errorCode);
       logger.error('[SQUARE] Refund failed:', JSON.stringify(result).slice(0, 500));
-      return { success: false, errorMessage: errorMsg, gatewayResponse: result };
+      return { success: false, outcome: isDefinitive ? 'definitively_failed' : 'ambiguous', errorMessage: errorMsg, gatewayResponse: result };
     } catch (error) {
       logger.error('[SQUARE] Refund error:', (error as Error).message);
-      return { success: false, errorMessage: (error as Error).message };
+      return { success: false, outcome: 'ambiguous', errorMessage: (error as Error).message };
     }
   }
 }

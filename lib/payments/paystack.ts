@@ -227,6 +227,7 @@ export class PaystackGateway implements PaymentGateway {
       }
       return {
         success: true,
+        outcome: 'succeeded',
         gatewayRefundReference: `mock_refund_ps_${Date.now()}`,
         gatewayResponse: { mock: true },
       };
@@ -260,19 +261,28 @@ export class PaystackGateway implements PaymentGateway {
       if (data.status === true) {
         return {
           success: true,
+          outcome: 'succeeded',
           gatewayRefundReference: data.data?.transaction?.reference || data.data?.id?.toString(),
           gatewayResponse: data.data,
         };
       }
 
+      // Paystack returns clear rejection messages for definitive failures
+      // Paystack rejection pattern matching
+      const errorText = (data.message as string || '').toLowerCase();
+      const isPermanent = ['transaction has been fully reversed', 'transaction not found', 'refund not allowed', 'amount greater than']
+        .some(pattern => errorText.indexOf(pattern) >= 0);
+
       return {
         success: false,
+        outcome: isPermanent ? 'definitively_failed' : 'ambiguous',
         errorMessage: data.message || 'Paystack refund failed',
         gatewayResponse: data,
       };
     } catch (error) {
       return {
         success: false,
+        outcome: 'ambiguous',
         errorMessage: `Paystack refund error: ${(error as Error).message}`,
       };
     }

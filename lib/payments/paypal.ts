@@ -44,14 +44,17 @@ async function getAccessToken(): Promise<string> {
   return cachedToken.token;
 }
 
-async function paypalRequest(path: string, body: Record<string, unknown>, method = 'POST'): Promise<Record<string, unknown>> {
+async function paypalRequest(
+  path: string, body: Record<string, unknown>, method = 'POST',
+  requestId?: string,
+): Promise<Record<string, unknown>> {
   const token = await getAccessToken();
   const response = await fetch(`${getPayPalBaseUrl()}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
-      'PayPal-Request-Id': randomUUID(),
+      'PayPal-Request-Id': requestId || randomUUID(),
     },
     ...(method !== 'GET' ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(15000),
@@ -327,6 +330,7 @@ export class PayPalGateway implements PaymentGateway {
       }
       return {
         success: true,
+        outcome: 'succeeded',
         gatewayRefundReference: `mock_refund_paypal_${Date.now()}`,
         gatewayResponse: { mock: true },
       };
@@ -339,7 +343,7 @@ export class PayPalGateway implements PaymentGateway {
       const captureId = purchaseUnits[0]?.payments?.captures?.[0]?.id;
 
       if (!captureId) {
-        return { success: false, errorMessage: 'Could not find PayPal capture ID for refund' };
+        return { success: false, outcome: 'definitively_failed', errorMessage: 'Could not find PayPal capture ID for refund' };
       }
 
       const refundBody: Record<string, unknown> = {};
@@ -353,24 +357,38 @@ export class PayPalGateway implements PaymentGateway {
         refundBody.note_to_payer = opts.reason.slice(0, 255);
       }
 
-      const refundData = await paypalRequest(`/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, refundBody);
+      // Use providerIdempotencyKey as PayPal-Request-Id for stable idempotency
+      const refundData = await paypalRequest(
+        `/v2/payments/captures/${encodeURIComponent(captureId)}/refund`,
+        refundBody,
+        'POST',
+        opts.providerIdempotencyKey || undefined,
+      );
 
       if (refundData.id && refundData.status === 'COMPLETED') {
         return {
           success: true,
+          outcome: 'succeeded',
           gatewayRefundReference: refundData.id as string,
           gatewayResponse: refundData,
         };
       }
 
+      // PayPal definitive failure patterns
+      const errorName = (refundData.name as string) || '';
+      const definitiveErrors = ['CAPTURE_FULLY_REFUNDED', 'INVALID_RESOURCE_ID', 'CAPTURE_NOT_FOUND', 'REFUND_NOT_ALLOWED', 'REFUND_AMOUNT_EXCEEDED'];
+      const isDefinitive = definitiveErrors.includes(errorName);
+
       return {
         success: false,
+        outcome: isDefinitive ? 'definitively_failed' : 'ambiguous',
         errorMessage: (refundData.message as string) || 'PayPal refund failed',
         gatewayResponse: refundData,
       };
     } catch (error) {
       return {
         success: false,
+        outcome: 'ambiguous',
         errorMessage: `PayPal refund error: ${(error as Error).message}`,
       };
     }

@@ -41,11 +41,9 @@ function createMockSupabase(tableConfigs: Record<string, MockTableConfig> = {}) 
   return {
     from: vi.fn((table: string) => {
       const config = tableConfigs[table] || {};
-      const updateFn = vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          is: vi.fn().mockResolvedValue(config.updateResult || { data: null, error: null }),
-        }),
-      });
+      const updateFn = vi.fn().mockReturnValue(
+        makeChainable(config.updateResult || { data: null, error: null }),
+      );
       const insertFn = vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
           single: vi.fn().mockResolvedValue(config.insertResult || { data: { id: 'refund-1' }, error: null }),
@@ -73,6 +71,9 @@ function createMockSupabase(tableConfigs: Record<string, MockTableConfig> = {}) 
       if (name === 'claim_refund_balance') {
         return Promise.resolve({ data: { claimed: true, refund_id: 'refund-1', planned_fee_reversal: 0 }, error: null });
       }
+      if (name === 'claim_refund_provider_execution') {
+        return Promise.resolve({ data: { acquired: true }, error: null });
+      }
       if (name === 'finalize_refund_generic') {
         return Promise.resolve({ data: { success: true, financial: true }, error: null });
       }
@@ -86,7 +87,7 @@ describe('processRefund', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetGateway.mockReturnValue({
-      refundPayment: vi.fn().mockResolvedValue({ success: true, gatewayRefundReference: 'gw-ref-1' }),
+      refundPayment: vi.fn().mockResolvedValue({ success: true, outcome: 'succeeded', gatewayRefundReference: 'gw-ref-1' }),
     });
   });
 
@@ -189,6 +190,7 @@ describe('processRefund', () => {
   it('processes full refund via gateway and updates payment to refunded', async () => {
     const mockRefundPayment = vi.fn().mockResolvedValue({
       success: true,
+      outcome: 'succeeded',
       gatewayRefundReference: 'gw-ref-1',
       gatewayResponse: { status: 'reversed' },
     });
@@ -235,7 +237,7 @@ describe('processRefund', () => {
   });
 
   it('processes partial refund without changing payment status', async () => {
-    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true });
+    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true, outcome: 'succeeded' });
     mockGetGateway.mockReturnValue({ refundPayment: mockRefundPayment });
 
     const supabase = createMockSupabase({
@@ -275,7 +277,7 @@ describe('processRefund', () => {
   });
 
   it('connect-mode non-Square refund calls the provider (not record-only)', async () => {
-    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true, gatewayRefundReference: 'gw-ref-c' });
+    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true, outcome: 'succeeded', gatewayRefundReference: 'gw-ref-c' });
     mockGetGateway.mockReturnValue({ refundPayment: mockRefundPayment });
 
     const supabase = createMockSupabase({
@@ -313,6 +315,7 @@ describe('processRefund', () => {
     mockGetGateway.mockReturnValue({
       refundPayment: vi.fn().mockResolvedValue({
         success: false,
+        outcome: 'definitively_failed',
         errorMessage: 'Insufficient balance',
         gatewayResponse: { error: 'Insufficient balance' },
       }),
@@ -350,7 +353,7 @@ describe('processRefund', () => {
   });
 
   it('allows refund on already-partially-refunded payment', async () => {
-    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true });
+    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true, outcome: 'succeeded' });
     mockGetGateway.mockReturnValue({ refundPayment: mockRefundPayment });
 
     const supabase = createMockSupabase({

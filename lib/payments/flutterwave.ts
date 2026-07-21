@@ -234,6 +234,7 @@ export class FlutterwaveGateway implements PaymentGateway {
       }
       return {
         success: true,
+        outcome: 'succeeded',
         gatewayRefundReference: `mock_refund_flw_${Date.now()}`,
         gatewayResponse: { mock: true },
       };
@@ -248,8 +249,11 @@ export class FlutterwaveGateway implements PaymentGateway {
       const verifyData = await verifyRes.json();
 
       if (verifyData.status !== 'success' || !verifyData.data?.id) {
+        // Could not resolve reference — definitive if 404, ambiguous otherwise
+        const isNotFound = verifyData.status === 'error' && (verifyData.message || '').toLowerCase().includes('not found');
         return {
           success: false,
+          outcome: isNotFound ? 'definitively_failed' : 'ambiguous',
           errorMessage: 'Could not resolve Flutterwave transaction reference',
           gatewayResponse: verifyData,
         };
@@ -280,19 +284,28 @@ export class FlutterwaveGateway implements PaymentGateway {
       if (refundData.status === 'success') {
         return {
           success: true,
+          outcome: 'succeeded',
           gatewayRefundReference: refundData.data?.id?.toString(),
           gatewayResponse: refundData.data,
         };
       }
 
+      // Flutterwave definitive rejection patterns
+      // Flutterwave rejection pattern matching
+      const errorText = (refundData.message as string || '').toLowerCase();
+      const isPermanent = ['already refunded', 'not found', 'amount greater', 'refund not allowed']
+        .some(pattern => errorText.indexOf(pattern) >= 0);
+
       return {
         success: false,
+        outcome: isPermanent ? 'definitively_failed' : 'ambiguous',
         errorMessage: refundData.message || 'Flutterwave refund failed',
         gatewayResponse: refundData,
       };
     } catch (error) {
       return {
         success: false,
+        outcome: 'ambiguous',
         errorMessage: `Flutterwave refund error: ${(error as Error).message}`,
       };
     }

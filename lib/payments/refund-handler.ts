@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { randomUUID } from 'crypto';
 import { getPaymentGatewayByName } from './factory';
 import type { PaymentGatewayName } from '@/lib/constants';
 import { logger } from '@/lib/logger';
@@ -76,6 +77,10 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       p_idempotency_key: providerIdempotencyKey,
       p_currency: (payment.currency as string) || 'USD',
       p_waaiio_fee_total: Number(payment.waaiio_fee) || 0,
+      p_business_id: businessId,
+      p_reason: reason || null,
+      p_initiated_by: initiatedBy,
+      p_initiated_by_role: initiatedByRole,
     });
 
     if (claimErr) {
@@ -225,6 +230,10 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     p_idempotency_key: providerKey,
     p_currency: (payment.currency as string) || 'USD',
     p_waaiio_fee_total: Number(payment.waaiio_fee) || 0,
+    p_business_id: businessId,
+    p_reason: reason || null,
+    p_initiated_by: initiatedBy,
+    p_initiated_by_role: initiatedByRole,
   });
 
   if (claimErr) {
@@ -248,9 +257,6 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   }
 
   const refundRecord = { id: refundId };
-
-  let providerRefundRef: string | null = null;
-  let providerResponse: Record<string, unknown> | null = null;
 
   // ALL non-Square refunds call the gateway provider:
   // - platform, managed_split: uses platform key (default)
@@ -283,6 +289,48 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     return { success: false, refundId: refundRecord.id, errorMessage: 'BYO payment missing payout account — manual review required', providerStatus: 'review_required', idempotencyKey: providerKey };
   }
 
+  // ── Claim provider execution atomically — prevents duplicate provider calls ──
+  const executionToken = randomUUID();
+  const { data: execClaim, error: execErr } = await supabase.rpc('claim_refund_provider_execution', {
+    p_refund_id: refundRecord.id,
+    p_execution_token: executionToken,
+    p_lease_seconds: 30,
+  });
+
+  if (execErr) {
+    return { success: false, refundId: refundRecord.id, errorMessage: `Provider execution claim failed: ${execErr.message}`, idempotencyKey: providerKey };
+  }
+
+  if (!execClaim?.acquired) {
+    const execReason = execClaim?.reason;
+
+    // Provider already succeeded — skip to finalization
+    if (execReason === 'already_succeeded') {
+      return { success: true, refundId: refundRecord.id, idempotencyKey: providerKey };
+    }
+    if (execReason === 'provider_already_succeeded') {
+      // Resume finalization with stored provider result
+      const { data: finalResult, error: finalErr } = await supabase.rpc('finalize_refund_generic', {
+        p_refund_id: refundRecord.id,
+        p_gateway_refund_ref: (execClaim.gateway_refund_reference as string) || null,
+        p_final_status: 'success',
+        p_gateway_response: execClaim.gateway_response || null,
+      });
+      if (finalErr || !finalResult?.success) {
+        return { success: false, refundId: refundRecord.id, errorMessage: 'Finalization failed after provider success', idempotencyKey: providerKey };
+      }
+      return { success: true, refundId: refundRecord.id, idempotencyKey: providerKey };
+    }
+    if (execReason === 'ambiguous_outcome') {
+      return { success: false, refundId: refundRecord.id, errorMessage: 'Previous provider call was ambiguous — manual review required', providerStatus: 'review_required', idempotencyKey: providerKey };
+    }
+    if (execReason === 'execution_in_progress') {
+      return { success: false, refundId: refundRecord.id, errorMessage: 'Another worker is executing the provider refund', idempotencyKey: providerKey };
+    }
+    return { success: false, refundId: refundRecord.id, errorMessage: `Provider execution claim rejected: ${execReason}`, idempotencyKey: providerKey };
+  }
+
+  // ── Now call the provider ──
   const existingRefundAmount = Number(payment.refund_amount || 0);
   const refundType = amount >= (Number(payment.amount) - existingRefundAmount) ? 'full' : 'partial';
   const refundAmount = refundType === 'full' && existingRefundAmount === 0 ? undefined : amount;
@@ -298,36 +346,44 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     providerIdempotencyKey: providerKey,
   });
 
-  if (!result.success) {
-    const { error: failUpdateErr } = await supabase.from('refunds').update({
-      status: 'failed',
-      gateway_response: result.gatewayResponse || { error: result.errorMessage },
-    }).eq('id', refundRecord.id);
-    if (failUpdateErr) {
-      logger.error('[REFUND] Failed to mark refund as failed:', failUpdateErr.message);
+  // ── Persist provider outcome atomically ──
+  if (result.outcome === 'succeeded') {
+    // Persist provider success atomically
+    await supabase.from('refunds').update({
+      provider_outcome: 'succeeded',
+      gateway_refund_reference: result.gatewayRefundReference || null,
+      gateway_response: result.gatewayResponse || null,
+    }).eq('id', refundRecord.id).eq('provider_execution_token', executionToken);
+
+    // Then finalize locally
+    const { data: finalResult, error: finalErr } = await supabase.rpc('finalize_refund_generic', {
+      p_refund_id: refundRecord.id,
+      p_gateway_refund_ref: result.gatewayRefundReference || null,
+      p_final_status: 'success',
+      p_gateway_response: result.gatewayResponse || null,
+    });
+    if (finalErr) {
+      logger.error('[REFUND] Generic finalization RPC error:', finalErr.message);
+      return { success: false, refundId: refundRecord.id, isDirectSplit: false, errorMessage: 'Finalization failed' };
     }
-    return { success: false, refundId: refundRecord.id, isDirectSplit: false, errorMessage: result.errorMessage };
+    if (!finalResult?.success) {
+      return { success: false, refundId: refundRecord.id, isDirectSplit: false, errorMessage: finalResult?.reason || 'Finalization rejected' };
+    }
+    return { success: true, refundId: refundRecord.id, isDirectSplit: false };
+  } else if (result.outcome === 'definitively_failed') {
+    await supabase.from('refunds').update({
+      provider_outcome: 'definitively_failed',
+      status: 'failed',
+      gateway_response: result.gatewayResponse || null,
+    }).eq('id', refundRecord.id).eq('provider_execution_token', executionToken);
+    return { success: false, refundId: refundRecord.id, isDirectSplit: false, errorMessage: result.errorMessage, idempotencyKey: providerKey };
+  } else {
+    // ambiguous
+    await supabase.from('refunds').update({
+      provider_outcome: 'ambiguous',
+      status: 'review_required',
+      gateway_response: result.gatewayResponse || null,
+    }).eq('id', refundRecord.id).eq('provider_execution_token', executionToken);
+    return { success: false, refundId: refundRecord.id, isDirectSplit: false, errorMessage: 'Provider result ambiguous — manual review required', providerStatus: 'review_required', idempotencyKey: providerKey };
   }
-
-  providerRefundRef = result.gatewayRefundReference || null;
-  providerResponse = (result.gatewayResponse as Record<string, unknown>) || null;
-
-  // Finalize payment/ledger atomically via RPC (handles payment totals, booking/reservation
-  // deposit status, fee reversal, and payout adjustments in a single transaction).
-  // Pass the provider reference so the RPC persists it atomically with the status change.
-  const { data: finalResult, error: finalErr } = await supabase.rpc('finalize_refund_generic', {
-    p_refund_id: refundRecord.id,
-    p_gateway_refund_ref: providerRefundRef,
-    p_final_status: 'success',
-    p_gateway_response: providerResponse,
-  });
-  if (finalErr) {
-    logger.error('[REFUND] Generic finalization RPC error:', finalErr.message);
-    return { success: false, refundId: refundRecord.id, isDirectSplit: false, errorMessage: 'Finalization failed' };
-  }
-  if (!finalResult?.success) {
-    return { success: false, refundId: refundRecord.id, isDirectSplit: false, errorMessage: finalResult?.reason || 'Finalization rejected' };
-  }
-
-  return { success: true, refundId: refundRecord.id, isDirectSplit: false };
 }
