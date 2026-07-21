@@ -443,7 +443,7 @@ BEGIN
     p_payment_id, COALESCE(p_business_id, v_payment.business_id), p_refund_amount, 'pending',
     v_payment.gateway, p_idempotency_key, v_planned_reversal,
     CASE WHEN p_refund_amount >= v_payment.amount THEN 'full' ELSE 'partial' END,
-    p_reason, p_initiated_by, p_initiated_by_role
+    p_reason, p_initiated_by, COALESCE(p_initiated_by_role, 'business')
   ) RETURNING id INTO v_refund_id;
 
   RETURN jsonb_build_object('claimed', true, 'refund_id', v_refund_id,
