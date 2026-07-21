@@ -44,7 +44,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     return { success: false, errorMessage: `Payment status "${payment.status}" is not refundable` };
   }
 
-  if (payment.business_id && payment.business_id !== businessId) {
+  if (!payment.business_id || payment.business_id !== businessId) {
     return { success: false, errorMessage: 'Business ID does not match the payment record' };
   }
 
@@ -217,63 +217,37 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     };
   }
 
-  // ── Non-Square path (existing behavior) ──
-  // Idempotency guard — supports retries with same logicalRefundId
-  const { data: pendingRefund } = await supabase
-    .from('refunds')
-    .select('id, provider_idempotency_key')
-    .eq('payment_id', paymentId)
-    .eq('status', 'pending')
-    .limit(1)
-    .maybeSingle();
+  // ── Non-Square path: atomic balance reservation via claim_refund_balance ──
+  const providerKey = opts.logicalRefundId;
+  const { data: claimResult, error: claimErr } = await supabase.rpc('claim_refund_balance', {
+    p_payment_id: paymentId,
+    p_refund_amount: amount,
+    p_idempotency_key: providerKey,
+    p_currency: (payment.currency as string) || 'USD',
+    p_waaiio_fee_total: Number(payment.waaiio_fee) || 0,
+  });
 
-  let refundRecord: { id: string } | null = null;
-
-  if (pendingRefund) {
-    if (pendingRefund.provider_idempotency_key === opts.logicalRefundId) {
-      // Same logical request — resume with existing refund row
-      refundRecord = pendingRefund;
-      // Fall through to provider call
-    } else {
-      return { success: false, errorMessage: 'A different refund for this payment is already pending' };
-    }
+  if (claimErr) {
+    return { success: false, errorMessage: `Refund claim failed: ${claimErr.message}`, idempotencyKey: providerKey };
+  }
+  if (!claimResult?.claimed) {
+    return { success: false, errorMessage: claimResult?.reason || 'Refund rejected', idempotencyKey: providerKey };
   }
 
-  // Only create a new refund record if we didn't resume an existing one
-  if (!refundRecord) {
-    const existingRefund = Number(payment.refund_amount || 0);
-    const paymentAmount = Number(payment.amount);
-    const remaining = paymentAmount - existingRefund;
+  const refundId = claimResult.refund_id as string;
 
-    if (amount > remaining) {
-      return { success: false, errorMessage: `Refund amount (${amount}) exceeds remaining (${remaining})` };
+  // If existing claim (retry), check if already finalized
+  if (claimResult.existing) {
+    const { data: existingRefund } = await supabase.from('refunds')
+      .select('status, gateway_refund_reference').eq('id', refundId).single();
+    const storedStatus = existingRefund?.status || 'pending';
+    if (storedStatus === 'success' || storedStatus === 'failed') {
+      return { success: storedStatus === 'success', refundId, providerStatus: storedStatus, idempotencyKey: providerKey };
     }
-
-    const refundType = amount >= remaining ? 'full' : 'partial';
-
-    const { data: newRefundRecord, error: insertErr } = await supabase
-      .from('refunds')
-      .insert({
-        payment_id: paymentId,
-        business_id: businessId,
-        amount,
-        reason: reason || null,
-        status: 'pending',
-        gateway: payment.gateway,
-        refund_type: refundType,
-        is_direct_split: false, // Non-Square: Waaiio processes the refund via platform
-        initiated_by: initiatedBy,
-        initiated_by_role: initiatedByRole,
-        provider_idempotency_key: opts.logicalRefundId, // Record for audit
-      })
-      .select('id')
-      .single();
-
-    if (insertErr || !newRefundRecord) {
-      return { success: false, errorMessage: 'Failed to create refund record' };
-    }
-    refundRecord = newRefundRecord;
+    // pending/processing/review_required: fall through to provider call
   }
+
+  const refundRecord = { id: refundId };
 
   let providerRefundRef: string | null = null;
   let providerResponse: Record<string, unknown> | null = null;
@@ -286,13 +260,27 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   const gateway = getPaymentGatewayByName(gatewayName);
   let byoKey: string | undefined;
 
-  if (payment.collection_mode === 'byo') {
-    byoKey = (metadata?.byo_secret_key as string) || undefined;
-    if (!byoKey) {
-      // BYO without credential — cannot refund automatically
-      await supabase.from('refunds').update({ status: 'review_required' }).eq('id', refundRecord.id);
-      return { success: false, refundId: refundRecord.id, errorMessage: 'BYO refund requires merchant credential — manual review required', idempotencyKey: opts.logicalRefundId };
+  if (payment.collection_mode === 'byo' && payment.payout_account_id) {
+    const { data: secret, error: secretErr } = await supabase
+      .from('business_connection_secrets')
+      .select('encrypted_secret_key')
+      .eq('payout_account_id', payment.payout_account_id)
+      .is('revoked_at', null)
+      .maybeSingle();
+
+    if (secretErr) {
+      return { success: false, refundId: refundRecord.id, errorMessage: 'BYO credential lookup failed', idempotencyKey: providerKey };
     }
+    if (!secret?.encrypted_secret_key) {
+      // Mark review_required — retryable after credential restoration
+      await supabase.from('refunds').update({ status: 'review_required' }).eq('id', refundRecord.id);
+      return { success: false, refundId: refundRecord.id, errorMessage: 'BYO credential missing or revoked — manual review required', providerStatus: 'review_required', idempotencyKey: providerKey };
+    }
+    const { decryptToken } = await import('@/lib/encryption');
+    byoKey = decryptToken(secret.encrypted_secret_key);
+  } else if (payment.collection_mode === 'byo' && !payment.payout_account_id) {
+    await supabase.from('refunds').update({ status: 'review_required' }).eq('id', refundRecord.id);
+    return { success: false, refundId: refundRecord.id, errorMessage: 'BYO payment missing payout account — manual review required', providerStatus: 'review_required', idempotencyKey: providerKey };
   }
 
   const existingRefundAmount = Number(payment.refund_amount || 0);
@@ -304,10 +292,10 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     amount: refundAmount,
     currency: (payment.currency as string) || 'NGN',
     reason,
-    metadata: metadata || undefined,
+    metadata: { ...(metadata || {}), collection_mode: payment.collection_mode },
     connectAccountId: (metadata?.connect_account_id as string) || undefined,
     byoSecretKey: byoKey,
-    providerIdempotencyKey: refundRecord.id,
+    providerIdempotencyKey: providerKey,
   });
 
   if (!result.success) {

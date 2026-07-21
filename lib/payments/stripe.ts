@@ -248,7 +248,29 @@ export class StripeGateway implements PaymentGateway {
         refundParams.reason = 'requested_by_customer';
       }
 
-      const data = await stripeRequest('/refunds', refundParams);
+      // For Connect destination charges, reverse the transfer and refund application fee
+      const collectionMode = opts.metadata?.collection_mode as string | undefined;
+      if (collectionMode === 'managed_split' || collectionMode === 'connect') {
+        refundParams.reverse_transfer = 'true';
+        refundParams.refund_application_fee = 'true';
+      }
+
+      // Build request with idempotency key
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${getStripeKey()}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      };
+      if (opts.providerIdempotencyKey) {
+        headers['Idempotency-Key'] = opts.providerIdempotencyKey;
+      }
+
+      const response = await fetch('https://api.stripe.com/v1/refunds', {
+        method: 'POST',
+        headers,
+        body: new URLSearchParams(refundParams).toString(),
+        signal: AbortSignal.timeout(15000),
+      });
+      const data = await response.json() as Record<string, unknown>;
 
       if (data.id) {
         return {

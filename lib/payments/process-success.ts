@@ -459,11 +459,18 @@ export async function processCampaignDonation(
   // Atomic RPC: transitions donation + increments campaign in one transaction.
   // If donation is already processed, returns already_processed (idempotent).
   // Two concurrent calls produce one increment.
+  // Resolve business_id from campaign before RPC — empty string is invalid UUID
+  const { data: campaignForBiz } = await supabase
+    .from('campaigns')
+    .select('business_id')
+    .eq('id', campaignId)
+    .single();
+
   const { data: result, error: rpcError } = await supabase.rpc('apply_campaign_donation', {
     p_payment_id: paymentId,
     p_campaign_id: campaignId,
     p_amount: amount,
-    p_business_id: '', // Business ID resolved from campaign inside RPC
+    p_business_id: campaignForBiz?.business_id || '00000000-0000-0000-0000-000000000000', // Not used by RPC — business resolved from campaign
   });
 
   if (rpcError) {

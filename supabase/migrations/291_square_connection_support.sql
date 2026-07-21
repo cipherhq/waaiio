@@ -2,6 +2,11 @@
 -- 291: Square connection support + financial safety
 -- ═══════════════════════════════════════════════════════
 
+-- ── Fix payments.amount precision: INTEGER loses decimal values ──
+ALTER TABLE public.payments ALTER COLUMN amount TYPE NUMERIC(12,2);
+-- Fix dependent column
+ALTER TABLE public.businesses ALTER COLUMN custom_fee_flat TYPE NUMERIC(12,2);
+
 -- ── Fix fee precision: INTEGER rounds fees to whole units, losing cents ──
 ALTER TABLE public.platform_fees ALTER COLUMN fee_total TYPE NUMERIC(12,2);
 ALTER TABLE public.platform_fees ALTER COLUMN fee_flat TYPE NUMERIC(12,2);

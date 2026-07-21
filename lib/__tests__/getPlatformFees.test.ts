@@ -114,4 +114,24 @@ describe('getPlatformFees', () => {
 
     expect(result.feeTotal).toBe(8.33);
   });
+
+  it('rounds 1.005 correctly to 1.01', async () => {
+    mockLoadSettings.mockResolvedValue(makePricingTiers({ free: { feePercentage: 1.005, feeFlat: 0 } }));
+    const result = await getPlatformFees(100, 'free', false);
+    expect(result.feeTotal).toBe(1.01);
+  });
+
+  it('rounds 1.0049 via two-stage to 1.01', async () => {
+    // 100 * 1.0049% = 1.0049 → stage1: round(1004.9)=1005 → stage2: round(100.5)=101 → 1.01
+    mockLoadSettings.mockResolvedValue(makePricingTiers({ free: { feePercentage: 1.0049, feeFlat: 0 } }));
+    const result = await getPlatformFees(100, 'free', false);
+    expect(result.feeTotal).toBe(1.01);
+  });
+
+  it('handles fractional transaction amount', async () => {
+    mockLoadSettings.mockResolvedValue(makePricingTiers());
+    const result = await getPlatformFees(10.50, 'free', false);
+    // 10.50 * 2.5% = 0.2625 → round(round(262.5)/10)/100 = round(26.25)/100 = 26/100 = 0.26
+    expect(result.feeTotal).toBe(0.26);
+  });
 });

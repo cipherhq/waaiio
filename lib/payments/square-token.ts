@@ -191,11 +191,16 @@ async function refreshWithLease(
 ): Promise<RefreshOutcome> {
   const claimToken = randomUUID();
 
-  const { data: leaseResult } = await supabase.rpc('acquire_refresh_lease', {
+  const { data: leaseResult, error: leaseErr } = await supabase.rpc('acquire_refresh_lease', {
     p_secret_id: secretId,
     p_claim_token: claimToken,
     p_lease_seconds: 60,
   });
+  if (leaseErr) {
+    // Database error — transient, not a held lease
+    logger.error('[SQUARE-TOKEN] Lease acquire DB error:', leaseErr.message);
+    return 'lease_acquire_failed';
+  }
   if (!leaseResult?.acquired) {
     return leaseResult?.reason === 'lease_held' ? 'lease_held' : 'lease_acquire_failed';
   }
@@ -212,6 +217,12 @@ async function refreshWithLease(
       }),
       signal: AbortSignal.timeout(15000),
     });
+    // Treat HTTP 429 (rate limited) and 5xx (server error) as transient — don't mark unhealthy
+    if (res.status === 429 || res.status >= 500) {
+      logger.error(`[SQUARE-TOKEN] Refresh transient HTTP ${res.status} (no token details logged)`);
+      return 'transient_failure';
+    }
+
     const data = await res.json();
 
     if (data.error || !data.access_token) {

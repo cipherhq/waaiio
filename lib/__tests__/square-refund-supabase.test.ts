@@ -360,6 +360,72 @@ describe.skipIf(!isIntegration)('Square refund RPCs (real Supabase)', () => {
     expect(Number(fee!.fee_total)).toBe(2.50);
   });
 
+  // ── Generic (non-Square) refund finalization tests ──
+
+  it('finalize_refund_generic completes a non-Square refund and updates payment', async () => {
+    const pid = await createTestPayment(100, 2.50);
+    const idempotencyKey = `test-generic-finalize-${Date.now()}`;
+
+    // Claim
+    const { data: claim } = await supabase.rpc('claim_refund_balance', {
+      p_payment_id: pid,
+      p_refund_amount: 50.00,
+      p_idempotency_key: idempotencyKey,
+      p_currency: 'USD',
+      p_waaiio_fee_total: 2.50,
+    });
+    expect(claim.claimed).toBe(true);
+
+    // Finalize via generic RPC
+    const gatewayRef = `stripe-refund-${Date.now()}`;
+    const { data: result, error } = await supabase.rpc('finalize_refund_generic', {
+      p_refund_id: claim.refund_id,
+      p_gateway_refund_ref: gatewayRef,
+      p_final_status: 'success',
+      p_gateway_response: { id: gatewayRef, status: 'succeeded' },
+    });
+
+    expect(error).toBeNull();
+    expect(result.success).toBe(true);
+    expect(result.financial).toBe(true);
+
+    // Verify refund status
+    const { data: refund } = await supabase.from('refunds')
+      .select('status, gateway_refund_reference')
+      .eq('id', claim.refund_id).single();
+    expect(refund!.status).toBe('success');
+    expect(refund!.gateway_refund_reference).toBe(gatewayRef);
+  });
+
+  it('finalize_refund_generic rejects already-finalized refunds', async () => {
+    const pid = await createTestPayment(100, 2.50);
+    const key = `test-generic-double-${Date.now()}`;
+
+    const { data: claim } = await supabase.rpc('claim_refund_balance', {
+      p_payment_id: pid,
+      p_refund_amount: 10.00,
+      p_idempotency_key: key,
+      p_currency: 'USD',
+      p_waaiio_fee_total: 2.50,
+    });
+
+    // First finalization
+    await supabase.rpc('finalize_refund_generic', {
+      p_refund_id: claim.refund_id,
+      p_gateway_refund_ref: `gw-${Date.now()}`,
+      p_final_status: 'success',
+    });
+
+    // Second finalization should be rejected
+    const { data: second } = await supabase.rpc('finalize_refund_generic', {
+      p_refund_id: claim.refund_id,
+      p_gateway_refund_ref: `gw-${Date.now()}`,
+      p_final_status: 'success',
+    });
+    expect(second.success).toBe(false);
+    expect(second.reason).toBe('already_finalized');
+  });
+
   it('concurrent claims do not double-reserve', async () => {
     const pid = await createTestPayment(80, 0);
     const [r1, r2] = await Promise.all([
