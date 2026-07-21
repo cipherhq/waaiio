@@ -437,16 +437,28 @@ BEGIN
     IF v_planned_reversal < 0 THEN v_planned_reversal := 0; END IF;
   END IF;
 
-  INSERT INTO public.refunds (
-    payment_id, business_id, amount, status, gateway,
-    provider_idempotency_key, planned_fee_reversal, refund_type,
-    reason, initiated_by, initiated_by_role
-  ) VALUES (
-    p_payment_id, COALESCE(p_business_id, v_payment.business_id), p_refund_amount, 'pending',
-    v_payment.gateway, p_idempotency_key, v_planned_reversal,
-    CASE WHEN p_refund_amount >= v_payment.amount THEN 'full' ELSE 'partial' END,
-    p_reason, p_initiated_by, COALESCE(p_initiated_by_role, 'business')
-  ) RETURNING id INTO v_refund_id;
+  BEGIN
+    INSERT INTO public.refunds (
+      payment_id, business_id, amount, status, gateway,
+      provider_idempotency_key, planned_fee_reversal, refund_type,
+      reason, initiated_by, initiated_by_role
+    ) VALUES (
+      p_payment_id, COALESCE(p_business_id, v_payment.business_id), p_refund_amount, 'pending',
+      v_payment.gateway, p_idempotency_key, v_planned_reversal,
+      CASE WHEN p_refund_amount >= v_payment.amount THEN 'full' ELSE 'partial' END,
+      p_reason, p_initiated_by, COALESCE(p_initiated_by_role, 'business')
+    ) RETURNING id INTO v_refund_id;
+  EXCEPTION WHEN unique_violation THEN
+    -- Race condition: another call inserted first. Re-read the existing row.
+    SELECT id, planned_fee_reversal INTO v_refund_id, v_planned_reversal
+      FROM public.refunds
+      WHERE payment_id = p_payment_id AND provider_idempotency_key = p_idempotency_key;
+    IF v_refund_id IS NOT NULL THEN
+      RETURN jsonb_build_object('claimed', true, 'refund_id', v_refund_id, 'existing', true,
+        'planned_fee_reversal', COALESCE(v_planned_reversal, 0));
+    END IF;
+    RETURN jsonb_build_object('claimed', false, 'reason', 'insert_conflict');
+  END;
 
   RETURN jsonb_build_object('claimed', true, 'refund_id', v_refund_id,
     'planned_fee_reversal', v_planned_reversal, 'remaining_after', v_remaining - p_refund_amount);
