@@ -29,6 +29,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_attempt_key_unique
   ON public.payments (payment_attempt_key)
   WHERE payment_attempt_key IS NOT NULL;
 
+-- Unique index on checkout_short_ref for short URL lookups
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_checkout_short_ref
+  ON public.payments ((metadata->>'checkout_short_ref'))
+  WHERE metadata->>'checkout_short_ref' IS NOT NULL;
+
 -- Provider-scoped unique on order ref
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_provider_order_unique
   ON public.payments (gateway, payout_account_id, provider_order_ref)

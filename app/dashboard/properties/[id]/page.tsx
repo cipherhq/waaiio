@@ -253,6 +253,7 @@ export default function PropertyDetailPage() {
         );
         if (shouldRefund) {
           try {
+            const idempotencyKey = crypto.randomUUID();
             const res = await fetch('/api/payments/refund', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -261,6 +262,7 @@ export default function PropertyDetailPage() {
                 businessId: business.id,
                 amount: depositAmount,
                 reason: 'Reservation cancelled by business',
+                idempotencyKey,
               }),
             });
             const result = await res.json();

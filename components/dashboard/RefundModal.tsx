@@ -29,6 +29,8 @@ export function RefundModal({
   onSuccess,
 }: RefundModalProps) {
   const maxRefund = paymentAmount - existingRefundAmount;
+  // Generate once per modal instance — stable across retries
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
   const [amount, setAmount] = useState(String(maxRefund));
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
@@ -59,6 +61,7 @@ export function RefundModal({
           businessId,
           amount: refundAmount,
           reason: reason.trim() || undefined,
+          idempotencyKey,
         }),
       });
 

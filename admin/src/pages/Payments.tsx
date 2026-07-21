@@ -187,6 +187,7 @@ export default function Payments() {
     setRefundSuccess('');
 
     try {
+      const idempotencyKey = crypto.randomUUID();
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
@@ -203,6 +204,7 @@ export default function Payments() {
           businessId: selected.business_id,
           amount: amt,
           reason: refundReason.trim() || undefined,
+          idempotencyKey,
         }),
       });
 
@@ -296,7 +298,7 @@ export default function Payments() {
                         const res = await fetch(`${apiUrl}/api/admin/payments/refund`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({ paymentId: req.payment_id, businessId: req.business_id, amount: req.amount, reason: req.reason || 'Approved refund request' }),
+                          body: JSON.stringify({ paymentId: req.payment_id, businessId: req.business_id, amount: req.amount, reason: req.reason || 'Approved refund request', idempotencyKey: req.id }),
                         });
                         const data = await res.json();
                         if (!res.ok) { alert(data.error || 'Refund failed'); return; }

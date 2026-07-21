@@ -436,6 +436,15 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
         run: npx vitest run lib/__tests__/directory-search-integration.test.ts --reporter=verbose
 
+      - name: Run Square refund Supabase integration tests
+        if: always() && !cancelled()
+        env:
+          SUPABASE_INTEGRATION: 'true'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
+        run: npx vitest run lib/__tests__/square-refund-supabase.test.ts --reporter=verbose
+
       - name: Upload test results
         if: failure()
         uses: actions/upload-artifact@v4

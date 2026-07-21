@@ -258,9 +258,9 @@ export async function initializePayment(
     // Shorten the checkout URL for WhatsApp messages
     let shortUrl = result.url;
     if (result.url.length > 100) {
-      // Use shortRef from gateway if available (deterministic hash), otherwise fall back to reference suffix
+      // Use shortRef from gateway if available (UUID), otherwise fall back to reference suffix
       const ref = result.shortRef || result.reference.slice(-8);
-      shortUrl = `${getAppUrl()}/pay?ref=${ref}`;
+      shortUrl = `${getAppUrl()}/api/pay?ref=${ref}`;
     }
 
     return { url: shortUrl, reference: result.reference };

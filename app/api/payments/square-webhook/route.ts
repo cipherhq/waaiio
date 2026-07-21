@@ -402,6 +402,10 @@ export async function POST(request: NextRequest) {
               refPayment = fallbackPay;
             }
 
+            if (!refPayment) {
+              throw new Error('Square-initiated refund: payment not yet reconciled — retryable');
+            }
+
             if (refPayment) {
               // Calculate refund amount from Square's amount_money
               const refundAmountMoney = refund.amount_money as { amount?: number; currency?: string } | undefined;

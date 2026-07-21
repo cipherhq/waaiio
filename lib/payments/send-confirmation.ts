@@ -84,24 +84,24 @@ export async function sendProactiveConfirmation(
       const age = Date.now() - new Date(existingPayment.confirmation_claimed_at).getTime();
       if (age > STALE_CLAIM_MS) {
         logger.warn(`${logPrefix} Stale claim recovery for payment ${payment.id}`);
-        const { data: reclaimed } = await supabase
+        // Atomic compare-and-swap: only reclaim if the token matches what we read
+        const { data: reclaimed, error: reclaimErr } = await supabase
           .from('payments')
           .update({
             confirmation_claimed_at: new Date().toISOString(),
             confirmation_claim_token: claimToken,
           })
           .eq('id', payment.id)
+          .eq('confirmation_claimed_at', existingPayment.confirmation_claimed_at)
           .is('confirmation_sent_at', null)
           .select('id')
           .maybeSingle();
-        if (!reclaimed) {
-          logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
-          return;
+        if (reclaimErr) {
+          throw new Error(`Confirmation reclaim failed: ${reclaimErr.message}`);
         }
+        if (!reclaimed) return; // Another worker beat us
       } else {
-        // Another worker holds the claim
-        logger.info(`${logPrefix} Confirmation claim held by another worker for payment ${payment.id} — skipping`);
-        return;
+        return; // Another worker holds a fresh claim
       }
     } else {
       logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
@@ -687,15 +687,26 @@ export async function sendProactiveConfirmation(
     }
 
     // Step 3: Mark as sent AFTER delivery succeeds (guarded by claim token)
-    await supabase.from('payments').update({
-      confirmation_sent_at: new Date().toISOString(),
-    }).eq('id', payment.id).eq('confirmation_claim_token', claimToken);
+    const { data: confirmed, error: confirmErr } = await supabase
+      .from('payments')
+      .update({ confirmation_sent_at: new Date().toISOString() })
+      .eq('id', payment.id)
+      .eq('confirmation_claim_token', claimToken)
+      .select('id')
+      .maybeSingle();
+
+    if (confirmErr) {
+      logger.error(`${logPrefix} Failed to mark confirmation sent:`, confirmErr.message);
+    }
   } catch (err) {
     // Clear claim on failure (retryable) — guarded by claim token
-    await supabase.from('payments').update({
+    const { error: clearErr } = await supabase.from('payments').update({
       confirmation_claimed_at: null,
       confirmation_claim_token: null,
     }).eq('id', payment.id).eq('confirmation_claim_token', claimToken);
+    if (clearErr) {
+      logger.error(`${logPrefix} Failed to clear confirmation claim:`, clearErr.message);
+    }
     logger.error(`${logPrefix} Send confirmation error (claim cleared for retry):`, err);
     Sentry.captureException(err, { tags: { component: 'send-confirmation', operation: 'send-confirmation' } });
     throw err; // propagate so caller knows delivery failed

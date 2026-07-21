@@ -174,14 +174,9 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       }
     }
 
-    // Extract actual app fee from Square response and persist it
+    // Extract actual app fee from Square response for atomic finalization
     const actualAppFee = (squareRefund?.app_fee_money as { amount?: number } | undefined)?.amount;
-    if (actualAppFee != null) {
-      const actualFeeReversal = actualAppFee / 100;
-      await supabase.from('refunds').update({
-        planned_fee_reversal: actualFeeReversal,
-      }).eq('id', refundId);
-    }
+    const actualFeeReversal = actualAppFee != null ? actualAppFee / 100 : undefined;
 
     // Map Square status to finalization
     if (squareStatus === 'COMPLETED' || squareStatus === 'FAILED' || squareStatus === 'REJECTED') {
@@ -190,6 +185,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
         p_refund_id: refundId,
         p_square_refund_id: squareRefundId,
         p_final_status: finalStatus,
+        p_fee_reversed: actualFeeReversal ?? plannedFeeReversal ?? null,
         p_refund_reason: reason || null,
         p_initiated_by: initiatedBy,
       });

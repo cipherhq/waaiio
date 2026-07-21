@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { randomUUID, createHash } from 'crypto';
+import { randomUUID } from 'crypto';
 import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
 import { logger } from '@/lib/logger';
 
@@ -111,10 +111,17 @@ export class SquareGateway implements PaymentGateway {
         // If Square already succeeded (checkout URL stored), return without re-calling Square
         const existingMeta = existingAttempt.metadata as Record<string, unknown> | null;
         if (existingMeta?.square_checkout_url && existingMeta?.square_payment_link_id) {
+          let shortRef = existingMeta.checkout_short_ref as string;
+          if (!shortRef) {
+            shortRef = randomUUID();
+            await opts.supabase.from('payments').update({
+              metadata: { ...existingMeta, checkout_short_ref: shortRef },
+            }).eq('id', paymentId);
+          }
           return {
             url: existingMeta.square_checkout_url as string,
             reference: paymentId,
-            shortRef: (existingMeta.checkout_short_ref as string) || createHash('sha256').update(paymentId).digest('hex').slice(0, 8),
+            shortRef,
           };
         }
       } else {
@@ -162,8 +169,8 @@ export class SquareGateway implements PaymentGateway {
         }
       }
 
-      // Compute deterministic short ref for URL shortening
-      const shortRef = createHash('sha256').update(paymentId).digest('hex').slice(0, 8);
+      // Generate unique short ref for URL shortening (128-bit UUID, globally unique)
+      const shortRef = randomUUID();
 
       // Step 2: Use the payment row ID as the stable idempotency key
       const idempotencyKey = paymentId;
@@ -366,9 +373,9 @@ export class SquareGateway implements PaymentGateway {
             return false;
           }
         } else {
-          // Platform payment: validate against configured platform location
-          if (squareLocationId && squareLocationId !== order.location_id) {
-            logger.warn('[SQUARE] Verification: platform location_id mismatch');
+          // Platform payment: validate against configured platform location (fail closed)
+          if (!squareLocationId || squareLocationId !== order.location_id) {
+            logger.warn('[SQUARE] Verification: platform location missing or mismatch');
             return false;
           }
         }
