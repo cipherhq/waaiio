@@ -75,8 +75,7 @@ export async function resolvePaymentRoute(
     .single();
 
   if (bizErr) {
-    logger.error('[PAYMENT-ROUTE] Business lookup failed — fail closed:', bizErr.message);
-    return platformFallback(countryCode, 0, 'Database error — fail closed');
+    throw new Error(`[PAYMENT-ROUTE] Business lookup failed — aborting: ${bizErr.message}`);
   }
 
   const tier = (business?.subscription_tier || 'free') as SubscriptionTier;
@@ -97,8 +96,7 @@ export async function resolvePaymentRoute(
     .order('is_default', { ascending: false }); // default first
 
   if (connErr) {
-    logger.error('[PAYMENT-ROUTE] Connection lookup failed — fail closed:', connErr.message);
-    return platformFallback(countryCode, feeTotal, 'Database error — fail closed');
+    throw new Error(`[PAYMENT-ROUTE] Connection lookup failed — aborting: ${connErr.message}`);
   }
 
   if (!connections || connections.length === 0) {

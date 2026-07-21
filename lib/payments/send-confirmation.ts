@@ -37,17 +37,51 @@ export async function sendProactiveConfirmation(
   // Dedup: only the first caller sends confirmation.
   // Atomic: UPDATE ... WHERE confirmation_sent_at IS NULL — only one path can claim it.
   // Uses .select('id').maybeSingle() to check if the update matched a row (count is not returned by default).
-  const { data: claimed } = await supabase
+  // On failure, the catch block clears confirmation_sent_at to NULL so retries can succeed.
+  //
+  // Stale-claim recovery: if a previous claim set confirmation_sent_at but crashed before
+  // clearing it, the claim becomes stale. We check for claims older than 5 minutes and
+  // re-claim them by clearing first, then re-attempting.
+  const STALE_CLAIM_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+  let claimed = (await supabase
     .from('payments')
     .update({ confirmation_sent_at: new Date().toISOString() })
     .eq('id', payment.id)
     .is('confirmation_sent_at', null)
     .select('id')
-    .maybeSingle();
+    .maybeSingle()).data;
 
   if (!claimed) {
-    logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
-    return;
+    // Check if existing claim is stale (set but never completed — process crash)
+    const { data: existingPayment } = await supabase
+      .from('payments')
+      .select('confirmation_sent_at')
+      .eq('id', payment.id)
+      .single();
+
+    if (existingPayment?.confirmation_sent_at) {
+      const claimAge = Date.now() - new Date(existingPayment.confirmation_sent_at).getTime();
+      if (claimAge > STALE_CLAIM_THRESHOLD_MS) {
+        // Stale claim — clear and re-claim
+        logger.warn(`${logPrefix} Stale confirmation claim (${Math.round(claimAge / 1000)}s old) for payment ${payment.id} — re-claiming`);
+        await supabase.from('payments')
+          .update({ confirmation_sent_at: null })
+          .eq('id', payment.id);
+        claimed = (await supabase
+          .from('payments')
+          .update({ confirmation_sent_at: new Date().toISOString() })
+          .eq('id', payment.id)
+          .is('confirmation_sent_at', null)
+          .select('id')
+          .maybeSingle()).data;
+      }
+    }
+
+    if (!claimed) {
+      logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
+      return;
+    }
   }
 
   let customerPhone: string | null = null;

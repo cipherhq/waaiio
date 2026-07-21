@@ -372,29 +372,65 @@ export async function POST(request: NextRequest) {
           } else if (!localRefund) {
             // Square-initiated refund: no local row exists yet — reconcile
             const squarePaymentId = refund.payment_id as string | undefined;
-            if (squarePaymentId) {
-              // Find the local payment by Square payment ID in metadata
-              const { data: refPayment, error: refPayErr } = await supabase
-                .from('payments')
-                .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee')
+            if (!squarePaymentId) {
+              throw new Error('Refund event missing payment_id — cannot reconcile, fail closed for retry');
+            }
+
+            // Find the local payment by Square payment ID in metadata
+            const { data: refPayment, error: refPayErr } = await supabase
+              .from('payments')
+              .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee')
+              .eq('gateway', 'square')
+              .eq('payout_account_id', conn.id)
+              .filter('metadata->>square_payment_id', 'eq', squarePaymentId)
+              .maybeSingle();
+
+            if (refPayErr) throw new Error(`Refund payment lookup error: ${refPayErr.message}`);
+
+            if (refPayment) {
+              // Calculate refund amount from Square's amount_money
+              const refundAmountMoney = refund.amount_money as { amount?: number; currency?: string } | undefined;
+              const refundAmountCents = refundAmountMoney?.amount || 0;
+              const refundCurrency = refundAmountMoney?.currency as string | undefined;
+
+              // Validate positive amount
+              if (refundAmountCents <= 0) {
+                throw new Error('Refund amount is zero or negative — fail closed');
+              }
+
+              // Validate currency matches the payment currency
+              const paymentCurrency = ((refPayment.currency as string) || 'USD').toUpperCase();
+              if (refundCurrency && refundCurrency.toUpperCase() !== paymentCurrency) {
+                throw new Error(`Refund currency ${refundCurrency} does not match payment currency ${paymentCurrency} — fail closed`);
+              }
+
+              const refundAmount = refundAmountCents / 100;
+
+              // Calculate fee reversal from app_fee_money if present
+              const appFeeMoney = refund.app_fee_money as { amount?: number } | undefined;
+              const feeReversalCents = appFeeMoney?.amount || 0;
+              const feeReversal = feeReversalCents / 100;
+
+              // Check for unmatched claimed refund before creating a new one
+              const { data: unmatchedRefund } = await supabase
+                .from('refunds')
+                .select('id, status')
+                .eq('payment_id', refPayment.id)
                 .eq('gateway', 'square')
-                .eq('payout_account_id', conn.id)
-                .filter('metadata->>square_payment_id', 'eq', squarePaymentId)
+                .is('gateway_refund_reference', null)
+                .in('status', ['pending', 'processing', 'review_required'])
                 .maybeSingle();
 
-              if (refPayErr) throw new Error(`Refund payment lookup error: ${refPayErr.message}`);
+              let refundRowId: string;
 
-              if (refPayment) {
-                // Calculate refund amount from Square's amount_money
-                const refundAmountMoney = refund.amount_money as { amount?: number; currency?: string } | undefined;
-                const refundAmountCents = refundAmountMoney?.amount || 0;
-                const refundAmount = refundAmountCents / 100;
-
-                // Calculate fee reversal from app_fee_money if present
-                const appFeeMoney = refund.app_fee_money as { amount?: number } | undefined;
-                const feeReversalCents = appFeeMoney?.amount || 0;
-                const feeReversal = feeReversalCents / 100;
-
+              if (unmatchedRefund) {
+                // Bind the Square refund ID to the existing claim
+                await supabase.from('refunds')
+                  .update({ gateway_refund_reference: squareRefundId })
+                  .eq('id', unmatchedRefund.id);
+                refundRowId = unmatchedRefund.id;
+                logger.info(`[SQUARE-WEBHOOK] Bound Square refund ${squareRefundId} to existing claim ${unmatchedRefund.id}`);
+              } else {
                 // Create a local refund row
                 const { data: newRefund, error: insertErr } = await supabase
                   .from('refunds')
@@ -414,27 +450,34 @@ export async function POST(request: NextRequest) {
                   .single();
 
                 if (insertErr) throw new Error(`Refund insert error: ${insertErr.message}`);
-
-                // Finalize if COMPLETED or FAILED
-                const reconFinalStatus = refundStatus === 'COMPLETED' ? 'success'
-                  : (refundStatus === 'FAILED' || refundStatus === 'REJECTED') ? 'failed'
-                  : null;
-
-                if (reconFinalStatus && newRefund) {
-                  const { data: reconResult, error: reconErr } = await supabase.rpc('finalize_square_refund', {
-                    p_refund_id: newRefund.id,
-                    p_square_refund_id: squareRefundId,
-                    p_final_status: reconFinalStatus,
-                    p_fee_reversed: feeReversal > 0 ? feeReversal : null,
-                  });
-                  if (reconErr) throw new Error(`Refund reconciliation RPC error: ${reconErr.message}`);
-                  if (!reconResult?.success && reconResult?.reason !== 'already_finalized') {
-                    throw new Error(`Refund reconciliation rejected: ${reconResult?.reason}`);
-                  }
-                }
-
-                logger.info(`[SQUARE-WEBHOOK] Reconciled Square-initiated refund ${squareRefundId} for payment ${refPayment.id}`);
+                refundRowId = newRefund.id;
               }
+
+              // Finalize if COMPLETED or FAILED — leave PENDING as processing for later webhook
+              const reconFinalStatus = refundStatus === 'COMPLETED' ? 'success'
+                : (refundStatus === 'FAILED' || refundStatus === 'REJECTED') ? 'failed'
+                : null;
+
+              if (reconFinalStatus) {
+                const { data: reconResult, error: reconErr } = await supabase.rpc('finalize_square_refund', {
+                  p_refund_id: refundRowId,
+                  p_square_refund_id: squareRefundId,
+                  p_final_status: reconFinalStatus,
+                  p_fee_reversed: feeReversal > 0 ? feeReversal : null,
+                });
+                if (reconErr) throw new Error(`Refund reconciliation RPC error: ${reconErr.message}`);
+                if (!reconResult?.success && reconResult?.reason !== 'already_finalized') {
+                  throw new Error(`Refund reconciliation rejected: ${reconResult?.reason}`);
+                }
+              } else {
+                // PENDING: mark as processing, wait for COMPLETED webhook
+                await supabase.from('refunds')
+                  .update({ status: 'processing' })
+                  .eq('id', refundRowId)
+                  .in('status', ['pending']);
+              }
+
+              logger.info(`[SQUARE-WEBHOOK] Reconciled Square-initiated refund ${squareRefundId} for payment ${refPayment.id}`);
             }
           }
         }

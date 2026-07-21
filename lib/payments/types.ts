@@ -73,6 +73,8 @@ export interface RefundPaymentOpts {
   connectAccountId?: string;
   /** Stable provider idempotency key — stored before calling provider, reused on retry */
   providerIdempotencyKey?: string;
+  /** Amount of app fee to reverse on refund (in base currency units, NOT cents) */
+  appFeeRefundAmount?: number;
 }
 
 export interface RefundResult {

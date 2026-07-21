@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!result.success) {
-      return NextResponse.json({ error: result.errorMessage || 'Refund failed' }, { status: 400 });
+      return NextResponse.json({ error: result.errorMessage || 'Refund failed', idempotencyKey: logicalRefundId }, { status: 400 });
     }
 
     try {

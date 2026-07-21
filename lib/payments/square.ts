@@ -113,7 +113,7 @@ export class SquareGateway implements PaymentGateway {
         if (existingMeta?.square_checkout_url && existingMeta?.square_payment_link_id) {
           return {
             url: existingMeta.square_checkout_url as string,
-            reference: existingMeta.square_payment_link_id as string,
+            reference: paymentId,
           };
         }
       } else {
@@ -283,7 +283,7 @@ export class SquareGateway implements PaymentGateway {
       // Look up the order ID from the payment metadata
       const { data: paymentRecord } = await supabase
         .from('payments')
-        .select('id, booking_id, amount, currency, metadata')
+        .select('id, booking_id, amount, currency, metadata, payout_account_id')
         .eq('gateway_reference', reference)
         .single();
 
@@ -304,34 +304,52 @@ export class SquareGateway implements PaymentGateway {
       const order = orderResult.order as Record<string, unknown> | undefined;
 
       if (order?.state === 'COMPLETED') {
-        // Validate currency
+        // Validate currency (required, nonempty, exact match)
         const orderMoney = order.total_money as { amount?: number; currency?: string } | undefined;
         const orderCurrency = orderMoney?.currency || '';
         const storedCurrency = (paymentRecord.currency as string) || 'USD';
-        if (orderCurrency && orderCurrency.toUpperCase() !== storedCurrency.toUpperCase()) {
-          logger.warn('[SQUARE] Verification currency mismatch');
+        if (!orderCurrency || orderCurrency.toUpperCase() !== storedCurrency.toUpperCase()) {
+          logger.warn('[SQUARE] Verification currency mismatch or missing');
           return false;
         }
 
-        // Validate amount
+        // Validate amount within +/-1 cent
         const orderAmountCents = orderMoney?.amount || 0;
         const expectedCents = Math.round(paymentRecord.amount * 100);
-        if (orderAmountCents > 0 && Math.abs(orderAmountCents - expectedCents) > 1) {
+        if (orderAmountCents <= 0 || Math.abs(orderAmountCents - expectedCents) > 1) {
           logger.warn('[SQUARE] Verification amount mismatch');
           return false;
         }
 
-        // Detect actual payment method from order tenders
+        // Require at least one tender with a nonempty payment_id
         const tenders = (order.tenders || []) as Array<{ type?: string; payment_id?: string }>;
-        const tenderType = tenders[0]?.type || '';
-        const squarePaymentId = tenders[0]?.payment_id;
+        const validTender = tenders.find(t => !!t.payment_id);
+        if (!validTender) {
+          logger.warn('[SQUARE] Verification: no tender with payment_id');
+          return false;
+        }
+        const tenderType = validTender.type || '';
+        const squarePaymentId = validTender.payment_id;
         const paymentMethod = tenderType === 'CASH_APP' ? 'cash_app_pay'
           : tenderType === 'WALLET' ? 'apple_pay'
           : tenderType === 'CARD' ? 'card'
           : 'square';
 
-        // Persist square_payment_id and transition only from pending
-        await supabase
+        // Validate location_id matches expected square_location_id from payout_account
+        if (paymentRecord.payout_account_id && order.location_id) {
+          const { data: payoutAcct } = await supabase
+            .from('payout_accounts')
+            .select('square_location_id')
+            .eq('id', paymentRecord.payout_account_id)
+            .maybeSingle();
+          if (payoutAcct?.square_location_id && payoutAcct.square_location_id !== order.location_id) {
+            logger.warn('[SQUARE] Verification location_id mismatch');
+            return false;
+          }
+        }
+
+        // Conditional update: only transition from pending, verify the row was actually updated
+        const { data: updatedRow, error: updateErr } = await supabase
           .from('payments')
           .update({
             status: 'success',
@@ -344,9 +362,17 @@ export class SquareGateway implements PaymentGateway {
             },
           })
           .eq('id', paymentRecord.id)
-          .in('status', ['pending']);
+          .in('status', ['pending'])
+          .select('id')
+          .maybeSingle();
 
-        if (paymentRecord.booking_id) {
+        if (updateErr) {
+          logger.error('[SQUARE] Verification update error:', updateErr.message);
+          return false;
+        }
+
+        // Only confirm booking/order if the update actually matched (returned a row)
+        if (updatedRow && paymentRecord.booking_id) {
           await supabase
             .from('bookings')
             .update({ deposit_status: 'paid', status: 'confirmed', confirmed_at: new Date().toISOString() })
@@ -448,6 +474,14 @@ export class SquareGateway implements PaymentGateway {
         amount: Math.round(refundAmount * 100),
         currency: (opts.currency || 'USD').toUpperCase(),
       };
+
+      // Reverse proportional app fee if specified
+      if (opts.appFeeRefundAmount && opts.appFeeRefundAmount > 0) {
+        refundBody.app_fee_money = {
+          amount: Math.round(opts.appFeeRefundAmount * 100),
+          currency: (opts.currency || 'USD').toUpperCase(),
+        };
+      }
 
       // Use the connected merchant's token if available
       const useToken = opts.byoSecretKey || squareAccessToken;

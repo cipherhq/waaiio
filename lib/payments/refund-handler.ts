@@ -23,6 +23,7 @@ interface ProcessRefundResult {
   isDirectSplit?: boolean;
   errorMessage?: string;
   providerStatus?: string; // Square: PENDING, COMPLETED, FAILED, REJECTED
+  idempotencyKey?: string;
 }
 
 export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRefundResult> {
@@ -70,7 +71,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
 
     // Square has a 45-character max for idempotency keys
     if (providerIdempotencyKey.length > 45) {
-      return { success: false, errorMessage: 'Refund idempotency key exceeds 45 characters' };
+      return { success: false, errorMessage: 'Refund idempotency key exceeds 45 characters', idempotencyKey: providerIdempotencyKey };
     }
 
     const { data: claimResult, error: claimErr } = await supabase.rpc('claim_refund_balance', {
@@ -82,10 +83,10 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     });
 
     if (claimErr) {
-      return { success: false, errorMessage: `Refund reservation failed: ${claimErr.message}` };
+      return { success: false, errorMessage: `Refund reservation failed: ${claimErr.message}`, idempotencyKey: providerIdempotencyKey };
     }
     if (!claimResult?.claimed) {
-      return { success: false, errorMessage: claimResult?.reason || 'Refund reservation rejected' };
+      return { success: false, errorMessage: claimResult?.reason || 'Refund reservation rejected', idempotencyKey: providerIdempotencyKey };
     }
 
     const refundId = claimResult.refund_id as string;
@@ -104,6 +105,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
           refundId,
           isDirectSplit: true,
           providerStatus: storedStatus,
+          idempotencyKey: providerIdempotencyKey,
         };
       }
       // Pending: fall through to make the provider call
@@ -117,10 +119,13 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       if (!resolved) {
         // Token failure: mark refund as review_required (not failed — retryable later)
         await supabase.from('refunds').update({ status: 'review_required' }).eq('id', refundId);
-        return { success: false, refundId, errorMessage: 'Square seller token unresolvable', providerStatus: 'review_required' };
+        return { success: false, refundId, errorMessage: 'Square seller token unresolvable', providerStatus: 'review_required', idempotencyKey: providerIdempotencyKey };
       }
       sellerToken = resolved.accessToken;
     }
+
+    // Read planned_fee_reversal from the claim result for app fee refunding
+    const plannedFeeReversal = claimResult.planned_fee_reversal as number | undefined;
 
     // Call Square Refunds API
     const gateway = getPaymentGatewayByName('square');
@@ -132,6 +137,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       metadata: metadata || undefined,
       byoSecretKey: sellerToken,
       providerIdempotencyKey,
+      appFeeRefundAmount: (plannedFeeReversal && plannedFeeReversal > 0) ? plannedFeeReversal : undefined,
     });
 
     if (!result.success) {
@@ -140,7 +146,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
         status: 'review_required',
         gateway_response: result.gatewayResponse || { error: result.errorMessage },
       }).eq('id', refundId);
-      return { success: false, refundId, isDirectSplit: true, errorMessage: result.errorMessage, providerStatus: 'review_required' };
+      return { success: false, refundId, isDirectSplit: true, errorMessage: result.errorMessage, providerStatus: 'review_required', idempotencyKey: providerIdempotencyKey };
     }
 
     // Square returned a response — check the provider's status
@@ -150,11 +156,15 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
 
     // Store Square refund ID immediately (needed for webhook matching)
     if (squareRefundId) {
-      await supabase.from('refunds').update({
+      const { error: refUpdateErr } = await supabase.from('refunds').update({
         gateway_refund_reference: squareRefundId,
         gateway_response: result.gatewayResponse || null,
         status: squareStatus === 'PENDING' ? 'processing' : 'pending', // keep pending until finalized
       }).eq('id', refundId);
+      if (refUpdateErr) {
+        logger.error('[REFUND] Failed to persist Square refund ID:', refUpdateErr.message);
+        return { success: false, refundId, errorMessage: 'Failed to persist refund reference', providerStatus: squareStatus, idempotencyKey: providerIdempotencyKey };
+      }
     }
 
     // Map Square status to finalization
@@ -169,7 +179,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       });
       if (finalErr) {
         logger.error('[REFUND] Finalization RPC error:', finalErr.message);
-        return { success: false, refundId, errorMessage: 'Finalization failed', providerStatus: squareStatus };
+        return { success: false, refundId, errorMessage: 'Finalization failed', providerStatus: squareStatus, idempotencyKey: providerIdempotencyKey };
       }
     }
     // PENDING: stays processing until webhook finalizes via same RPC
@@ -179,6 +189,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       refundId,
       isDirectSplit: true,
       providerStatus: squareStatus,
+      idempotencyKey: providerIdempotencyKey,
     };
   }
 

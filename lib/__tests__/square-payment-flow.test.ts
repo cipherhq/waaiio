@@ -910,6 +910,7 @@ describe('Square verification hardening', () => {
       json: () => Promise.resolve({
         order: {
           state: 'COMPLETED',
+          location_id: 'LOC_1',
           total_money: { amount: 5000, currency: 'USD' },
           tenders: [{ type: 'CASH_APP', payment_id: 'sq-actual-pay-id' }],
         },
@@ -919,19 +920,24 @@ describe('Square verification hardening', () => {
     const { SquareGateway } = await import('@/lib/payments/square');
     const gw = new SquareGateway();
 
-    const updateChain = {
-      eq: vi.fn().mockReturnThis(),
-      in: vi.fn().mockResolvedValue({ error: null }),
-    };
+    // Build a deep chain that supports .update().eq().in().select().maybeSingle()
+    const selectMaybe = { maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'pay-1' }, error: null }) };
+    const inFn = vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(selectMaybe) });
+    const updateChain = { eq: vi.fn().mockReturnValue({ in: inFn }) };
     const updateFn = vi.fn().mockReturnValue(updateChain);
     const supabase = {
-      from: vi.fn(() => ({
+      from: vi.fn((table: string) => ({
         select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({
-          data: {
-            id: 'pay-1', booking_id: 'book-1', amount: 50, currency: 'USD',
-            metadata: { square_order_id: 'order-1', some_existing: 'value' },
-          },
+          data: table === 'payments'
+            ? { id: 'pay-1', booking_id: 'book-1', amount: 50, currency: 'USD',
+                payout_account_id: 'pa-1',
+                metadata: { square_order_id: 'order-1', some_existing: 'value' } }
+            : null,
+        }),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: table === 'payout_accounts' ? { square_location_id: 'LOC_1' } : null,
+          error: null,
         }),
         update: updateFn,
       })),
@@ -946,21 +952,106 @@ describe('Square verification hardening', () => {
     expect(updateArg.metadata.square_payment_id).toBe('sq-actual-pay-id');
     expect(updateArg.payment_method).toBe('cash_app_pay');
     // Verify .in was called with ['pending']
-    expect(updateChain.in).toHaveBeenCalledWith('status', ['pending']);
+    expect(inFn).toHaveBeenCalledWith('status', ['pending']);
 
     vi.unstubAllGlobals();
     delete process.env.SQUARE_ACCESS_TOKEN;
   });
 });
 
-// ── Sandbox limitations ──
-describe('Square Sandbox limitations', () => {
-  it('Cash App Pay on hosted checkout is production-only', () => {
-    // Acknowledged: Square Sandbox does NOT support Cash App Pay on hosted checkout
-    // This cannot be tested in Sandbox and must remain a production acceptance item
-    expect(true).toBe(true);
+// ── App fee money on refund ──
+describe('Square refund app_fee_money', () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it('includes app_fee_money in refund body when appFeeRefundAmount is provided', async () => {
+    vi.resetModules();
+    process.env.SQUARE_ACCESS_TOKEN = 'mock-token';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({ refund: { id: 'refund_fee', status: 'PENDING' } }),
+    }));
+
+    const { SquareGateway } = await import('@/lib/payments/square');
+    const gw = new SquareGateway();
+    await gw.refundPayment({
+      gatewayReference: 'ref',
+      amount: 50,
+      currency: 'USD',
+      metadata: { square_payment_id: 'pay-123' },
+      providerIdempotencyKey: 'key-fee-test',
+      appFeeRefundAmount: 2.5,
+    });
+
+    const fetchCall = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body);
+    expect(body.app_fee_money).toEqual({ amount: 250, currency: 'USD' });
+
+    vi.unstubAllGlobals();
+    delete process.env.SQUARE_ACCESS_TOKEN;
   });
-  it('app_fee_money on CreatePaymentLink is production-only', () => {
-    expect(true).toBe(true);
+
+  it('omits app_fee_money when appFeeRefundAmount is zero or undefined', async () => {
+    vi.resetModules();
+    process.env.SQUARE_ACCESS_TOKEN = 'mock-token';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({ refund: { id: 'refund_nofee', status: 'PENDING' } }),
+    }));
+
+    const { SquareGateway } = await import('@/lib/payments/square');
+    const gw = new SquareGateway();
+    await gw.refundPayment({
+      gatewayReference: 'ref',
+      amount: 50,
+      currency: 'USD',
+      metadata: { square_payment_id: 'pay-456' },
+      providerIdempotencyKey: 'key-nofee-test',
+    });
+
+    const fetchCall = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body);
+    expect(body.app_fee_money).toBeUndefined();
+
+    vi.unstubAllGlobals();
+    delete process.env.SQUARE_ACCESS_TOKEN;
+  });
+});
+
+// ── Verification rejects missing tender ──
+describe('Square verification tender requirement', () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it('rejects verification when no tender has a payment_id', async () => {
+    vi.resetModules();
+    process.env.SQUARE_ACCESS_TOKEN = 'mock-token';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({
+        order: {
+          state: 'COMPLETED',
+          total_money: { amount: 5000, currency: 'USD' },
+          tenders: [{ type: 'CARD' }], // no payment_id
+        },
+      }),
+    }));
+
+    const { SquareGateway } = await import('@/lib/payments/square');
+    const gw = new SquareGateway();
+
+    const supabase = {
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: {
+            id: 'pay-1', booking_id: null, amount: 50, currency: 'USD',
+            payout_account_id: null,
+            metadata: { square_order_id: 'order-1' },
+          },
+        }),
+      })),
+    };
+
+    const result = await gw.verifyPayment(supabase as any, 'ref-tender-test');
+    expect(result).toBe(false);
+
+    vi.unstubAllGlobals();
+    delete process.env.SQUARE_ACCESS_TOKEN;
   });
 });

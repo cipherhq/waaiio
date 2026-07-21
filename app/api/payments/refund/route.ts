@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!result.success) {
-      return NextResponse.json({ error: result.errorMessage }, { status: 400 });
+      return NextResponse.json({ error: result.errorMessage, idempotencyKey: logicalRefundId }, { status: 400 });
     }
 
     return NextResponse.json({

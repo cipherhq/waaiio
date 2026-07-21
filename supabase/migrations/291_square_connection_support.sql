@@ -62,6 +62,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_refunds_gateway_ref_unique
   ON public.refunds (gateway, gateway_refund_reference)
   WHERE gateway_refund_reference IS NOT NULL;
 
+-- ── 6b. Square merchant tenant identity — one active connection per merchant ──
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payout_accounts_square_merchant_active
+  ON public.payout_accounts (square_merchant_id)
+  WHERE square_merchant_id IS NOT NULL AND is_active = true;
+
 -- ── 7. Atomic Square replacement (payout + secret + payout_mode) ──
 CREATE OR REPLACE FUNCTION public.replace_square_connection_full(
   p_business_id           UUID,
@@ -234,7 +239,17 @@ BEGIN
   SELECT id, amount, status, business_id, gateway, currency INTO v_payment
     FROM public.payments WHERE id = p_payment_id FOR UPDATE;
   IF v_payment IS NULL THEN RETURN jsonb_build_object('claimed', false, 'reason', 'payment_not_found'); END IF;
-  IF v_payment.status != 'success' THEN RETURN jsonb_build_object('claimed', false, 'reason', 'payment_not_successful'); END IF;
+  IF v_payment.status != 'success' THEN
+    -- Allow replay of completed full refund (status='refunded')
+    IF v_payment.status = 'refunded' THEN
+      SELECT id INTO v_existing_id FROM public.refunds
+        WHERE payment_id = p_payment_id AND provider_idempotency_key = p_idempotency_key;
+      IF v_existing_id IS NOT NULL THEN
+        RETURN jsonb_build_object('claimed', true, 'refund_id', v_existing_id, 'existing', true);
+      END IF;
+    END IF;
+    RETURN jsonb_build_object('claimed', false, 'reason', 'payment_not_successful');
+  END IF;
   IF p_currency != v_payment.currency THEN RETURN jsonb_build_object('claimed', false, 'reason', 'currency_mismatch'); END IF;
 
   SELECT id INTO v_existing_id FROM public.refunds
@@ -463,15 +478,17 @@ GRANT EXECUTE ON FUNCTION public.claim_webhook_event(TEXT, TEXT, TEXT, TEXT, INT
 CREATE OR REPLACE FUNCTION public.revoke_square_connection(
   p_merchant_id TEXT
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
-DECLARE v_conn RECORD;
+DECLARE v_conn RECORD; v_was_default BOOLEAN;
 BEGIN
   IF p_merchant_id IS NULL THEN
     RETURN jsonb_build_object('revoked', false, 'reason', 'invalid_input');
   END IF;
-  SELECT id, business_id INTO v_conn FROM public.payout_accounts
+  SELECT id, business_id, is_default INTO v_conn FROM public.payout_accounts
     WHERE gateway = 'square' AND square_merchant_id = p_merchant_id AND is_active = true
     FOR UPDATE;
   IF v_conn IS NULL THEN RETURN jsonb_build_object('revoked', false, 'reason', 'not_found'); END IF;
+
+  v_was_default := v_conn.is_default;
 
   UPDATE public.payout_accounts
     SET is_active = false, connection_status = 'revoked', health_status = 'unhealthy',
@@ -480,6 +497,18 @@ BEGIN
   UPDATE public.business_connection_secrets
     SET revoked_at = NOW(), updated_at = NOW()
     WHERE payout_account_id = v_conn.id AND revoked_at IS NULL;
+
+  -- If the revoked connection was default, check if any other active healthy default exists
+  -- If not, reset payout_mode to platform_managed
+  IF v_was_default THEN
+    UPDATE public.businesses
+      SET payout_mode = 'platform_managed'
+      WHERE id = v_conn.business_id
+      AND NOT EXISTS (
+        SELECT 1 FROM public.payout_accounts
+        WHERE business_id = v_conn.business_id AND is_active = true AND is_default = true
+      );
+  END IF;
 
   RETURN jsonb_build_object('revoked', true, 'connection_id', v_conn.id);
 END; $$;

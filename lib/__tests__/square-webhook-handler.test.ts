@@ -414,9 +414,9 @@ describe('Square webhook POST handler', () => {
     mockRpcResults['claim_webhook_event'] = { data: { outcome: 'claimed' }, error: null };
     setupPaymentResolution();
 
-    vi.doMock('@/lib/payments/process-success', () => ({
-      processSuccessfulPayment: vi.fn().mockRejectedValue(new Error('Fee recording failed')),
-    }));
+    // Override the process-success mock to throw — must use the mock reference from beforeEach
+    const { processSuccessfulPayment } = await import('@/lib/payments/process-success');
+    (processSuccessfulPayment as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Fee recording failed'));
 
     const body = JSON.stringify({
       type: 'payment.updated', event_id: 'e-fin-fail', merchant_id: 'ML_test',

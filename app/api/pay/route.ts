@@ -18,22 +18,35 @@ export async function GET(request: NextRequest) {
 
   // Look up payment by gateway_reference (full or partial match)
   const safeRef = ref.replace(/[%_\\]/g, '\\$&');
-  const { data: payment } = await supabase
+  let payment = (await supabase
     .from('payments')
     .select('gateway, gateway_reference, metadata')
     .like('gateway_reference', `%${safeRef}`)
     .eq('status', 'pending')
     .order('created_at', { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle()).data;
+
+  // Fallback: for Square, reference is the payment row ID (UUID). Try partial ID match.
+  if (!payment) {
+    const { data: idMatch } = await supabase
+      .from('payments')
+      .select('gateway, gateway_reference, metadata')
+      .like('id', `%${safeRef}`)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (idMatch) payment = idMatch;
+  }
 
   if (payment) {
     const meta = (payment.metadata || {}) as Record<string, unknown>;
 
     // Use stored checkout URL if available (works for all gateways)
-    const storedUrl = meta.checkout_url as string;
+    const storedUrl = (meta.checkout_url || meta.square_checkout_url) as string;
     if (storedUrl) {
-      const ALLOWED_DOMAINS = ['paystack.com', 'checkout.paystack.com', 'stripe.com', 'checkout.stripe.com', 'js.stripe.com', 'checkout.flutterwave.com', 'squareup.com', 'sandbox.paypal.com', 'paypal.com', 'waaiio.com', 'www.waaiio.com'];
+      const ALLOWED_DOMAINS = ['paystack.com', 'checkout.paystack.com', 'stripe.com', 'checkout.stripe.com', 'js.stripe.com', 'checkout.flutterwave.com', 'squareup.com', 'square.link', 'squareupsandbox.com', 'sandbox.paypal.com', 'paypal.com', 'waaiio.com', 'www.waaiio.com'];
       try {
         const urlObj = new URL(storedUrl);
         if (!ALLOWED_DOMAINS.some(d => urlObj.hostname === d || urlObj.hostname.endsWith('.' + d))) {
