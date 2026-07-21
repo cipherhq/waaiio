@@ -97,7 +97,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Exchange authorization code for tokens
-    const tokenRes = await fetch(`${getSquareBaseUrl()}/oauth2/token`, {
+    const tokenEndpoint = `${getSquareBaseUrl()}/oauth2/token`;
+    const tokenRes = await fetch(tokenEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -109,9 +110,22 @@ export async function GET(request: NextRequest) {
     });
     const tokenData = await tokenRes.json();
 
-    if (tokenData.error || !tokenData.access_token) {
-      logger.error('[SQUARE-CALLBACK] Token exchange failed:', tokenData.error || 'no access_token');
-      return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=token_exchange_failed`);
+    if (tokenData.error || tokenData.errors || !tokenData.access_token) {
+      // Log sanitized diagnostics — never log code, secret, or tokens
+      const sqErrors = tokenData.errors as Array<{ category?: string; code?: string; detail?: string }> | undefined;
+      logger.error('[SQUARE-CALLBACK] Token exchange failed', {
+        httpStatus: tokenRes.status,
+        endpoint: tokenEndpoint,
+        clientIdFingerprint: squareAppId ? `...${squareAppId.slice(-6)}` : 'EMPTY',
+        secretPresent: !!squareAppSecret,
+        squareError: tokenData.error || sqErrors?.[0]?.detail || 'no access_token',
+        squareErrorCode: sqErrors?.[0]?.code,
+        squareCategory: sqErrors?.[0]?.category,
+        squareRequestId: tokenRes.headers.get('square-request-id') || undefined,
+      });
+      const diagCode = sqErrors?.[0]?.code || tokenData.error || 'unknown';
+      const diagDetail = encodeURIComponent(sqErrors?.[0]?.detail || 'no access_token');
+      return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=token_exchange_failed&sq_status=${tokenRes.status}&sq_code=${diagCode}&sq_detail=${diagDetail}`);
     }
 
     const accessToken = tokenData.access_token as string;
