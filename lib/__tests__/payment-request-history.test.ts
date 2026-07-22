@@ -79,6 +79,10 @@ describe('Payment request data access', () => {
   it('sorts newest first', () => {
     expect(pageCode).toContain("order('created_at', { ascending: false })");
   });
+
+  it('has deterministic sort with tie-breaker', () => {
+    expect(pageCode).toContain("order('id', { ascending: false })");
+  });
 });
 
 describe('Payment request table columns', () => {
@@ -264,5 +268,38 @@ describe('Detail view', () => {
   it('shows payment actions in detail view for pending', () => {
     expect(pageCode).toContain('Copy Payment Link');
     expect(pageCode).toContain('Open Payment Link');
+  });
+});
+
+describe('Async safety', () => {
+  it('uses a fetch ID counter to prevent stale responses', () => {
+    expect(pageCode).toContain('fetchIdRef');
+    expect(pageCode).toContain('fetchIdRef.current');
+  });
+
+  it('discards stale responses when a newer fetch has been initiated', () => {
+    // After await, checks if fetchId still matches current
+    expect(pageCode).toContain('if (fetchId !== fetchIdRef.current) return');
+  });
+});
+
+describe('Modal accessibility', () => {
+  it('modal container is focusable for initial focus placement', () => {
+    expect(pageCode).toContain('ref={modalRef}');
+    expect(pageCode).toContain('tabIndex={-1}');
+  });
+
+  it('saves trigger element reference for focus restoration', () => {
+    expect(pageCode).toContain('triggerRef');
+    expect(pageCode).toContain('triggerRef.current');
+  });
+
+  it('restores focus to trigger element on close', () => {
+    // useEffect checks !selectedRequest and focuses triggerRef
+    const effectSection = pageCode.substring(
+      pageCode.indexOf('Modal focus management'),
+      pageCode.indexOf('Modal focus management') + 300,
+    );
+    expect(effectSection).toContain('triggerRef.current.focus()');
   });
 });

@@ -85,6 +85,8 @@ export default function PaymentRequestPage() {
   const [sending, setSending] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [selectedRequest, setSelectedRequest] = useState<PaymentRequestRow | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
 
   // Bulk form
   const [bulkRecipients, setBulkRecipients] = useState('');
@@ -111,7 +113,10 @@ export default function PaymentRequestPage() {
     loadCustomers();
   }, [business.id]);
 
+  const fetchIdRef = useRef(0);
+
   const loadRequests = useCallback(async (page = currentPage, size = pageSize) => {
+    const fetchId = ++fetchIdRef.current;
     setFetching(true);
     setFetchError(null);
     try {
@@ -124,7 +129,9 @@ export default function PaymentRequestPage() {
         .eq('business_id', business.id)
         .eq('flow_type', 'payment')
         .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
         .range(from, to);
+      if (fetchId !== fetchIdRef.current) return; // stale response
       if (error) {
         setFetchError('Failed to load payment requests');
       } else {
@@ -132,6 +139,7 @@ export default function PaymentRequestPage() {
         setTotalCount(count ?? 0);
       }
     } catch {
+      if (fetchId !== fetchIdRef.current) return; // stale response
       setFetchError('Failed to load payment requests');
     }
     setFetching(false);
@@ -157,6 +165,26 @@ export default function PaymentRequestPage() {
 
     return () => { supabase.removeChannel(channel); };
   }, [business.id, loadRequests]);
+
+  // Modal focus management
+  useEffect(() => {
+    if (selectedRequest && modalRef.current) {
+      modalRef.current.focus();
+    }
+    if (!selectedRequest && triggerRef.current) {
+      triggerRef.current.focus();
+      triggerRef.current = null;
+    }
+  }, [selectedRequest]);
+
+  function openDetail(row: PaymentRequestRow, el: HTMLElement) {
+    triggerRef.current = el;
+    setSelectedRequest(row);
+  }
+
+  function closeDetail() {
+    setSelectedRequest(null);
+  }
 
   // Validation for single mode
   function isSingleFormValid(): boolean {
@@ -668,7 +696,7 @@ export default function PaymentRequestPage() {
                   const provider = getProvider(row);
                   const isPending = payStatus.label === 'Pending';
                   return (
-                    <tr key={row.id} className="border-b border-gray-50 hover:bg-gray-50/50 cursor-pointer focus-within:bg-gray-50/50" tabIndex={0} role="button" aria-label={`View payment request for ${row.guest_name || 'Customer'}, ${formatCurrency(row.total_amount, country)}, ${getPaymentStatus(row).label}`} onClick={() => setSelectedRequest(row)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedRequest(row); } }}>
+                    <tr key={row.id} className="border-b border-gray-50 hover:bg-gray-50/50 cursor-pointer focus-within:bg-gray-50/50" tabIndex={0} role="button" aria-label={`View payment request for ${row.guest_name || 'Customer'}, ${formatCurrency(row.total_amount, country)}, ${getPaymentStatus(row).label}`} onClick={e => openDetail(row, e.currentTarget)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(row, e.currentTarget); } }}>
                       <td className="py-3 pr-4">
                         <p className="font-medium text-gray-900">{row.guest_name || 'Customer'}</p>
                         <p className="text-xs text-gray-400 font-mono">{row.guest_phone}</p>
@@ -763,11 +791,11 @@ export default function PaymentRequestPage() {
 
       {/* Detail View Modal */}
       {selectedRequest && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" aria-labelledby="payment-detail-title" onClick={() => setSelectedRequest(null)} onKeyDown={e => { if (e.key === 'Escape') setSelectedRequest(null); }}>
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" aria-labelledby="payment-detail-title" onClick={closeDetail} onKeyDown={e => { if (e.key === 'Escape') closeDetail(); }}>
+          <div ref={modalRef} tabIndex={-1} className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl outline-none" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 id="payment-detail-title" className="text-lg font-semibold text-gray-900">Payment Request</h3>
-              <button onClick={() => setSelectedRequest(null)} aria-label="Close payment request details" className="text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand/50 rounded">
+              <button onClick={closeDetail} aria-label="Close payment request details" className="text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand/50 rounded">
                 <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
