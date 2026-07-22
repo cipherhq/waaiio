@@ -1,7 +1,86 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { getPlatformFees } from '@/lib/getPlatformFees';
+import type { SubscriptionTier } from '@/lib/constants';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
+
+export type SplitResult =
+  | { mode: 'no_split' }
+  | { mode: 'split'; subaccount: string; transactionChargeKobo: number }
+  | { mode: 'split_required_but_missing'; reason: string; businessId: string };
+
+/**
+ * Resolve Paystack split configuration for a business.
+ *
+ * Fail-closed for direct_split:
+ *   If payout_mode === 'direct_split' but the subaccount or payout account
+ *   is missing/invalid, returns split_required_but_missing — the caller MUST
+ *   NOT charge. This prevents money from going to the platform when the business
+ *   expects gateway-level splitting.
+ *
+ * For platform_managed or businesses without payout_mode set:
+ *   Returns no_split — the charge proceeds without split params.
+ */
+export async function resolvePaystackSplit(
+  supabase: SupabaseClient,
+  businessId: string,
+  amount: number,
+): Promise<SplitResult> {
+  // 1. Check payout mode
+  const { data: biz, error: bizErr } = await supabase
+    .from('businesses')
+    .select('payout_mode, subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
+    .eq('id', businessId)
+    .single();
+
+  if (bizErr) {
+    return { mode: 'split_required_but_missing', reason: `Business lookup failed: ${bizErr.message}`, businessId };
+  }
+
+  if (!biz) {
+    return { mode: 'split_required_but_missing', reason: 'Business not found', businessId };
+  }
+
+  if (biz.payout_mode !== 'direct_split') {
+    return { mode: 'no_split' };
+  }
+
+  // 2. direct_split: MUST have an active Paystack payout account with subaccount code
+  const { data: payout, error: payoutErr } = await supabase
+    .from('payout_accounts')
+    .select('subaccount_code')
+    .eq('business_id', businessId)
+    .eq('gateway', 'paystack')
+    .eq('is_active', true)
+    .not('subaccount_code', 'is', null)
+    .maybeSingle();
+
+  if (payoutErr) {
+    return { mode: 'split_required_but_missing', reason: `Payout account lookup failed: ${payoutErr.message}`, businessId };
+  }
+
+  if (!payout?.subaccount_code) {
+    return { mode: 'split_required_but_missing', reason: 'No active Paystack payout account with subaccount code', businessId };
+  }
+
+  // 3. Calculate platform fee using the same logic as one-time payments
+  const tier = (biz.subscription_tier || 'free') as SubscriptionTier;
+  const isInTrial = tier === 'free' && biz.trial_ends_at && new Date(biz.trial_ends_at) > new Date();
+  const feeResult = await getPlatformFees(amount, tier, !!isInTrial, {
+    feePercentage: biz.custom_fee_percentage ?? undefined,
+    feeFlat: biz.custom_fee_flat ?? undefined,
+  });
+
+  // transaction_charge = platform fee in kobo (same convention as paystack.ts:58-59)
+  const transactionChargeKobo = Math.round(feeResult.feeTotal * 100);
+
+  return {
+    mode: 'split',
+    subaccount: payout.subaccount_code,
+    transactionChargeKobo,
+  };
+}
 
 interface SavedMethod {
   id: string;
@@ -90,8 +169,33 @@ async function chargePaystackAuthorization(
 
   const amountInKobo = Math.round(opts.amount * 100);
 
+  // ── Step 1: Resolve split BEFORE creating any records ──
+  // Fail-closed: if direct_split config is broken, return immediately
+  // without creating a payment row or calling Paystack.
+  let splitParams: Record<string, unknown> = {};
+  if (!opts.byoSecretKey) {
+    const splitResult = await resolvePaystackSplit(supabase, opts.businessId, opts.amount);
+    if (splitResult.mode === 'split') {
+      splitParams = {
+        subaccount: splitResult.subaccount,
+        transaction_charge: splitResult.transactionChargeKobo,
+      };
+    } else if (splitResult.mode === 'split_required_but_missing') {
+      logger.error('[SAVED-CARD] Direct split config missing, blocking charge', {
+        businessId: opts.businessId,
+        reason: splitResult.reason,
+      });
+      return {
+        success: false,
+        reference: opts.reference,
+        message: 'Payment split configuration incomplete — charge blocked for retry',
+      };
+    }
+    // mode === 'no_split': proceed without split params (platform_managed)
+  }
+
   try {
-    // Create payment record first
+    // ── Step 2: Create payment record (only after split validation passes) ──
     await supabase.from('payments').insert({
       booking_id: opts.bookingId || null,
       invoice_id: opts.invoiceId || null,
@@ -110,7 +214,7 @@ async function chargePaystackAuthorization(
       metadata: { business_id: opts.businessId, saved_method: true },
     });
 
-    // Charge the authorization
+    // ── Step 3: Charge the authorization ──
     const res = await fetch('https://api.paystack.co/transaction/charge_authorization', {
       method: 'POST',
       headers: {
@@ -123,6 +227,7 @@ async function chargePaystackAuthorization(
         amount: amountInKobo,
         currency: opts.currency,
         reference: opts.reference,
+        ...splitParams,
         metadata: {
           business_id: opts.businessId,
           booking_id: opts.bookingId || null,
