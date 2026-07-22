@@ -99,7 +99,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create booking' }, { status: 500 });
     }
 
-    const bookingId = rpcResult;
+    // book_slot_atomic returns TABLE(booking_id uuid, reference_code text, slot_available boolean)
+    const bookingId = rpcResult?.booking_id;
+    if (!bookingId) {
+      logger.error('[MANUAL-BOOKING] RPC returned no booking_id:', JSON.stringify(rpcResult));
+      return NextResponse.json({ error: 'Failed to create booking' }, { status: 500 });
+    }
     const { data: booking } = await serviceClient.from('bookings').select('*').eq('id', bookingId).single();
     if (!booking) {
       return NextResponse.json({ error: 'Booking created but could not retrieve details' }, { status: 500 });
