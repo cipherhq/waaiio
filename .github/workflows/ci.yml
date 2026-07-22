@@ -111,7 +111,7 @@ jobs:
           PGDATABASE: waaiio_test
         run: |
           # Create the auth schema and functions that Supabase provides
-          psql -q <<'EOSQL'
+          psql -q -v ON_ERROR_STOP=1 <<'EOSQL'
           CREATE SCHEMA IF NOT EXISTS auth;
           CREATE SCHEMA IF NOT EXISTS extensions;
           CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -143,7 +143,8 @@ jobs:
 
           -- Realtime publication: required by ALTER PUBLICATION in migrations
           -- 001 (reservations), 020 (chat_messages), 025 (chat_conversations), 110 (queue_entries)
-          CREATE PUBLICATION IF NOT EXISTS supabase_realtime;
+          -- Note: CREATE PUBLICATION IF NOT EXISTS requires PG16+; CI uses PG15
+          DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
           -- Storage schema: required by bucket/object policies in migrations
           -- 018 (customer-reports bucket), 033 (business-documents bucket)
