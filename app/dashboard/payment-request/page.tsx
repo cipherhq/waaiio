@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -53,11 +54,23 @@ function parseBulkRecipients(text: string): { phones: string[]; emails: string[]
   return { phones, emails };
 }
 
+const PAGE_SIZES = [25, 50, 100] as const;
+
 export default function PaymentRequestPage() {
   const business = useBusiness();
   const country = (business.country_code || 'NG') as CountryCode;
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [requests, setRequests] = useState<PaymentRequestRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(25);
+  const currentPage = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const [newRequestCreated, setNewRequestCreated] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Mode
   const [mode, setMode] = useState<RequestMode>('single');
@@ -72,7 +85,6 @@ export default function PaymentRequestPage() {
   const [sending, setSending] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [selectedRequest, setSelectedRequest] = useState<PaymentRequestRow | null>(null);
-  const [copied, setCopied] = useState(false);
 
   // Bulk form
   const [bulkRecipients, setBulkRecipients] = useState('');
@@ -99,18 +111,32 @@ export default function PaymentRequestPage() {
     loadCustomers();
   }, [business.id]);
 
-  const loadRequests = useCallback(async () => {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from('bookings')
-      .select('id, reference_code, guest_name, guest_phone, total_amount, status, notes, created_at, channel, payments!payments_reservation_id_fkey(status, gateway, gateway_reference, amount, currency, created_at, metadata)')
-      .eq('business_id', business.id)
-      .eq('flow_type', 'payment')
-      .order('created_at', { ascending: false })
-      .limit(50);
-    setRequests((data || []) as PaymentRequestRow[]);
-    setLoading(false);
-  }, [business.id]);
+  const loadRequests = useCallback(async (page = currentPage, size = pageSize) => {
+    setFetching(true);
+    setFetchError(null);
+    try {
+      const supabase = createClient();
+      const from = (page - 1) * size;
+      const to = from + size - 1;
+      const { data, count, error } = await supabase
+        .from('bookings')
+        .select('id, reference_code, guest_name, guest_phone, total_amount, status, notes, created_at, channel, payments!payments_reservation_id_fkey(status, gateway, gateway_reference, amount, currency, created_at, metadata)', { count: 'exact' })
+        .eq('business_id', business.id)
+        .eq('flow_type', 'payment')
+        .order('created_at', { ascending: false })
+        .range(from, to);
+      if (error) {
+        setFetchError('Failed to load payment requests');
+      } else {
+        setRequests((data || []) as PaymentRequestRow[]);
+        setTotalCount(count ?? 0);
+      }
+    } catch {
+      setFetchError('Failed to load payment requests');
+    }
+    setFetching(false);
+    setInitialLoad(false);
+  }, [business.id, currentPage, pageSize]);
 
   useEffect(() => { loadRequests(); }, [loadRequests]);
 
@@ -125,7 +151,7 @@ export default function PaymentRequestPage() {
         table: 'payments',
         filter: `business_id=eq.${business.id}`,
       }, () => {
-        loadRequests();
+        loadRequests(currentPage, pageSize);
       })
       .subscribe();
 
@@ -181,7 +207,11 @@ export default function PaymentRequestPage() {
         setEmail('');
         setAmount('');
         setDescription('');
-        loadRequests();
+        if (currentPage === 1) {
+          loadRequests(1, pageSize);
+        } else {
+          setNewRequestCreated(true);
+        }
       } else {
         setStatusMessage(data.error || 'Failed to send payment request');
       }
@@ -248,9 +278,31 @@ export default function PaymentRequestPage() {
       setBulkRecipients('');
       setAmount('');
       setDescription('');
-      loadRequests();
+      if (currentPage === 1) {
+        loadRequests(1, pageSize);
+      } else {
+        setNewRequestCreated(true);
+      }
     }
     setSending(false);
+  }
+
+  function goToPage(page: number) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (page <= 1) {
+      params.delete('page');
+    } else {
+      params.set('page', String(page));
+    }
+    router.push(`/dashboard/payment-request?${params.toString()}`);
+  }
+
+  function handlePageSizeChange(size: number) {
+    setPageSize(size);
+    // Reset to page 1 when changing page size
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('page');
+    router.push(`/dashboard/payment-request?${params.toString()}`);
   }
 
   function getCheckoutUrl(row: PaymentRequestRow): string | null {
@@ -270,11 +322,11 @@ export default function PaymentRequestPage() {
     return row.channel || 'Unknown';
   }
 
-  async function copyLink(url: string) {
+  async function copyLink(url: string, rowId: string) {
     try {
       await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setCopiedId(rowId);
+      setTimeout(() => setCopiedId(null), 2000);
     } catch { /* clipboard not available */ }
   }
 
@@ -295,10 +347,11 @@ export default function PaymentRequestPage() {
     return { label: 'Pending', color: 'bg-amber-100 text-amber-700' };
   }
 
-  if (loading) {
+  if (initialLoad) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center">
+      <div className="flex min-h-[50vh] items-center justify-center" role="status" aria-label="Loading payment requests">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+        <span className="sr-only">Loading payment requests</span>
       </div>
     );
   }
@@ -574,26 +627,37 @@ export default function PaymentRequestPage() {
         )}
       </div>
 
+      {/* Error state */}
+      {fetchError && (
+        <div role="alert" className="mt-8 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {fetchError}
+          <button onClick={() => loadRequests()} className="ml-2 font-medium underline">Retry</button>
+        </div>
+      )}
+
       {/* Payment Requests */}
-      {requests.length === 0 ? (
+      {!fetchError && requests.length === 0 && !fetching ? (
         <EmptyState
           icon="💳"
           title="No payment requests yet"
           description="Requests you send will appear here. Enter a phone number or email and amount above to get started."
         />
-      ) : (
+      ) : !fetchError && (requests.length > 0 || fetching) ? (
         <div className="mt-8">
-          <h3 className="text-sm font-semibold text-gray-900">Payment Requests</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-gray-900">Payment Requests</h3>
+            {fetching && <div className="h-3 w-3 animate-spin rounded-full border border-brand border-t-transparent" role="status" aria-label="Refreshing"><span className="sr-only">Refreshing</span></div>}
+          </div>
           <div className="mt-3 overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-xs font-medium uppercase tracking-wider text-gray-400">
                   <th scope="col" className="pb-3 pr-4">Customer</th>
                   <th scope="col" className="pb-3 pr-4">Amount</th>
-                  <th scope="col" className="pb-3 pr-4">Sent</th>
+                  <th scope="col" className="pb-3 pr-4 hidden sm:table-cell">Sent</th>
                   <th scope="col" className="pb-3 pr-4">Status</th>
-                  <th scope="col" className="pb-3 pr-4">Via</th>
-                  <th scope="col" className="pb-3 pr-4">Provider</th>
+                  <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Via</th>
+                  <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Provider</th>
                   <th scope="col" className="pb-3">Actions</th>
                 </tr>
               </thead>
@@ -604,13 +668,13 @@ export default function PaymentRequestPage() {
                   const provider = getProvider(row);
                   const isPending = payStatus.label === 'Pending';
                   return (
-                    <tr key={row.id} className="border-b border-gray-50 hover:bg-gray-50/50 cursor-pointer" onClick={() => setSelectedRequest(row)}>
+                    <tr key={row.id} className="border-b border-gray-50 hover:bg-gray-50/50 cursor-pointer focus-within:bg-gray-50/50" tabIndex={0} role="button" aria-label={`View payment request for ${row.guest_name || 'Customer'}, ${formatCurrency(row.total_amount, country)}, ${getPaymentStatus(row).label}`} onClick={() => setSelectedRequest(row)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedRequest(row); } }}>
                       <td className="py-3 pr-4">
                         <p className="font-medium text-gray-900">{row.guest_name || 'Customer'}</p>
                         <p className="text-xs text-gray-400 font-mono">{row.guest_phone}</p>
                       </td>
                       <td className="py-3 pr-4 font-semibold text-gray-900">{formatCurrency(row.total_amount, country)}</td>
-                      <td className="py-3 pr-4 text-gray-500 text-xs">
+                      <td className="py-3 pr-4 text-gray-500 text-xs hidden sm:table-cell">
                         {new Date(row.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                       </td>
                       <td className="py-3 pr-4">
@@ -618,22 +682,24 @@ export default function PaymentRequestPage() {
                           {payStatus.label}
                         </span>
                       </td>
-                      <td className="py-3 pr-4 text-xs text-gray-500">{getDeliveryMethod(row)}</td>
-                      <td className="py-3 pr-4 text-xs text-gray-500 capitalize">{provider || '-'}</td>
+                      <td className="py-3 pr-4 text-xs text-gray-500 hidden md:table-cell">{getDeliveryMethod(row)}</td>
+                      <td className="py-3 pr-4 text-xs text-gray-500 capitalize hidden md:table-cell">{provider || '-'}</td>
                       <td className="py-3">
                         {isPending && checkoutUrl && (
                           <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
                             <button
-                              onClick={() => copyLink(checkoutUrl)}
-                              className="rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200 transition"
+                              onClick={() => copyLink(checkoutUrl, row.id)}
+                              aria-label={`Copy payment link for ${row.guest_name || 'Customer'}`}
+                              className="rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-brand/50 transition"
                             >
-                              {copied ? 'Copied!' : 'Copy Link'}
+                              {copiedId === row.id ? 'Copied!' : 'Copy Link'}
                             </button>
                             <a
                               href={checkoutUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="rounded-md bg-brand/10 px-2 py-1 text-xs font-medium text-brand hover:bg-brand/20 transition"
+                              aria-label={`Open payment link for ${row.guest_name || 'Customer'}`}
+                              className="rounded-md bg-brand/10 px-2 py-1 text-xs font-medium text-brand hover:bg-brand/20 focus:outline-none focus:ring-2 focus:ring-brand/50 transition"
                             >
                               Open
                             </a>
@@ -646,17 +712,63 @@ export default function PaymentRequestPage() {
               </tbody>
             </table>
           </div>
+
+          {/* New request banner when not on page 1 */}
+          {newRequestCreated && currentPage > 1 && (
+            <div className="mt-4 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 flex items-center justify-between">
+              <p className="text-sm text-blue-700">A new payment request was created. Return to page 1 to view the newest request.</p>
+              <button onClick={() => { setNewRequestCreated(false); goToPage(1); }} className="text-sm font-medium text-blue-700 hover:text-blue-900 underline ml-4 whitespace-nowrap">Go to page 1</button>
+            </div>
+          )}
+
+          {/* Pagination */}
+          {totalCount > 0 && (
+            <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm">
+              <div className="flex items-center gap-2 text-gray-500">
+                <span>Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, totalCount)} of {totalCount} payment requests</span>
+                <select
+                  value={pageSize}
+                  onChange={e => handlePageSizeChange(Number(e.target.value))}
+                  aria-label="Rows per page"
+                  className="ml-2 rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand/50"
+                >
+                  {PAGE_SIZES.map(s => (
+                    <option key={s} value={s}>{s} per page</option>
+                  ))}
+                </select>
+              </div>
+              <nav aria-label="Payment request pagination" className="flex items-center gap-3">
+                <button
+                  onClick={() => goToPage(currentPage - 1)}
+                  disabled={currentPage <= 1}
+                  aria-label="Previous page"
+                  className="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  &larr; Previous
+                </button>
+                <span className="text-xs text-gray-500" aria-current="page">Page {currentPage} of {totalPages}</span>
+                <button
+                  onClick={() => goToPage(currentPage + 1)}
+                  disabled={currentPage >= totalPages}
+                  aria-label="Next page"
+                  className="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  Next &rarr;
+                </button>
+              </nav>
+            </div>
+          )}
         </div>
-      )}
+      ) : null}
 
       {/* Detail View Modal */}
       {selectedRequest && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setSelectedRequest(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" aria-labelledby="payment-detail-title" onClick={() => setSelectedRequest(null)} onKeyDown={e => { if (e.key === 'Escape') setSelectedRequest(null); }}>
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900">Payment Request</h3>
-              <button onClick={() => setSelectedRequest(null)} className="text-gray-400 hover:text-gray-600">
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              <h3 id="payment-detail-title" className="text-lg font-semibold text-gray-900">Payment Request</h3>
+              <button onClick={() => setSelectedRequest(null)} aria-label="Close payment request details" className="text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand/50 rounded">
+                <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
 
@@ -716,16 +828,18 @@ export default function PaymentRequestPage() {
             {getPaymentStatus(selectedRequest).label === 'Pending' && getCheckoutUrl(selectedRequest) && (
               <div className="mt-5 flex gap-2">
                 <button
-                  onClick={() => copyLink(getCheckoutUrl(selectedRequest)!)}
-                  className="flex-1 rounded-lg bg-gray-100 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-200 transition"
+                  onClick={() => copyLink(getCheckoutUrl(selectedRequest)!, selectedRequest.id)}
+                  aria-label={`Copy payment link for ${selectedRequest.guest_name || 'Customer'}`}
+                  className="flex-1 rounded-lg bg-gray-100 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-brand/50 transition"
                 >
-                  {copied ? 'Copied!' : 'Copy Payment Link'}
+                  {copiedId === selectedRequest.id ? 'Copied!' : 'Copy Payment Link'}
                 </button>
                 <a
                   href={getCheckoutUrl(selectedRequest)!}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex-1 rounded-lg bg-brand px-4 py-2.5 text-center text-sm font-medium text-white hover:bg-brand-600 transition"
+                  aria-label={`Open payment link for ${selectedRequest.guest_name || 'Customer'}`}
+                  className="flex-1 rounded-lg bg-brand px-4 py-2.5 text-center text-sm font-medium text-white hover:bg-brand-600 focus:outline-none focus:ring-2 focus:ring-white/50 transition"
                 >
                   Open Payment Link
                 </a>

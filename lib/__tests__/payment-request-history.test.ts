@@ -143,23 +143,83 @@ describe('Empty state', () => {
 });
 
 describe('List refresh after send', () => {
-  it('calls loadRequests after successful single send', () => {
-    // After res.ok, the code calls loadRequests()
+  it('refreshes page 1 after successful single send when on page 1', () => {
     const sendSection = pageCode.substring(
       pageCode.indexOf("'Payment request sent!'"),
-      pageCode.indexOf("'Payment request sent!'") + 200,
+      pageCode.indexOf("'Payment request sent!'") + 300,
     );
-    expect(sendSection).toContain('loadRequests()');
+    expect(sendSection).toContain('loadRequests(1, pageSize)');
   });
 
-  it('calls loadRequests after successful bulk send', () => {
-    // After bulk send with sent > 0, loadRequests is called
+  it('refreshes after successful bulk send when on page 1', () => {
     expect(pageCode).toContain('if (sent > 0)');
     const bulkSection = pageCode.substring(
       pageCode.indexOf('if (sent > 0)'),
-      pageCode.indexOf('if (sent > 0)') + 200,
+      pageCode.indexOf('if (sent > 0)') + 300,
     );
-    expect(bulkSection).toContain('loadRequests()');
+    expect(bulkSection).toContain('loadRequests(1, pageSize)');
+  });
+});
+
+describe('Pagination', () => {
+  it('uses Supabase range() for server-side pagination', () => {
+    expect(pageCode).toContain('.range(from, to)');
+  });
+
+  it('requests exact count from server', () => {
+    expect(pageCode).toContain("{ count: 'exact' }");
+  });
+
+  it('reads page number from URL search params', () => {
+    expect(pageCode).toContain("searchParams.get('page')");
+  });
+
+  it('persists page number in URL on navigation', () => {
+    expect(pageCode).toContain("params.set('page'");
+    expect(pageCode).toContain('router.push');
+  });
+
+  it('supports page sizes 25, 50, and 100', () => {
+    expect(pageCode).toContain('[25, 50, 100]');
+  });
+
+  it('resets to page 1 when page size changes', () => {
+    expect(pageCode).toContain("params.delete('page')");
+  });
+
+  it('disables Previous button on first page', () => {
+    expect(pageCode).toContain('disabled={currentPage <= 1}');
+  });
+
+  it('disables Next button on last page', () => {
+    expect(pageCode).toContain('disabled={currentPage >= totalPages}');
+  });
+
+  it('shows page range indicator', () => {
+    expect(pageCode).toContain('of {totalCount} payment requests');
+  });
+
+  it('shows Page X of Y', () => {
+    expect(pageCode).toContain('Page {currentPage} of {totalPages}');
+  });
+
+  it('refetches page 1 when creating a request on page 1', () => {
+    expect(pageCode).toContain('currentPage === 1');
+    expect(pageCode).toContain('loadRequests(1, pageSize)');
+  });
+
+  it('shows banner when request created on page > 1', () => {
+    expect(pageCode).toContain('newRequestCreated');
+    expect(pageCode).toContain('Return to page 1 to view the newest request');
+  });
+
+  it('removes page 1 from URL (clean default)', () => {
+    // When navigating to page 1, page param should be deleted from URL
+    const goToPageFn = pageCode.substring(
+      pageCode.indexOf('function goToPage'),
+      pageCode.indexOf('function goToPage') + 300,
+    );
+    expect(goToPageFn).toContain("params.delete('page')");
   });
 });
 
