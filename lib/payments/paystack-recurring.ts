@@ -194,6 +194,7 @@ export async function chargeAuthorization(
   amountKobo: number,
   email: string,
   reference: string,
+  splitParams?: { subaccount: string; transaction_charge: number },
 ): Promise<{ success: boolean; reference?: string }> {
   if (!paystackSecretKey) {
     if (process.env.NODE_ENV === 'production') {
@@ -207,6 +208,7 @@ export async function chargeAuthorization(
     amount: amountKobo,
     email,
     reference,
+    ...(splitParams || {}),
   });
 
   const txData = data.data as Record<string, unknown> | undefined;

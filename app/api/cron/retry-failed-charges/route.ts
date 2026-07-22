@@ -3,6 +3,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { chargeAuthorization } from '@/lib/payments/paystack-recurring';
+import { resolvePaystackSplit } from '@/lib/payments/charge-saved';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { logger } from '@/lib/logger';
 
@@ -24,6 +25,7 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceClient();
   let retried = 0;
   let cancelled = 0;
+  let skipped = 0;
 
   try {
     // Find past_due subscriptions with fewer than 3 failures
@@ -44,12 +46,29 @@ export async function GET(request: NextRequest) {
         const amountKobo = Math.round((sub.amount || 0) * 100);
         const reference = `retry-${sub.id}-${Date.now().toString(36)}`;
 
+        // Resolve split configuration (fail-closed for direct_split)
+        const splitResult = await resolvePaystackSplit(supabase, sub.business_id, sub.amount || 0);
+        let splitParams: { subaccount: string; transaction_charge: number } | undefined;
+
+        if (splitResult.mode === 'split') {
+          splitParams = { subaccount: splitResult.subaccount, transaction_charge: splitResult.transactionChargeKobo };
+        } else if (splitResult.mode === 'split_required_but_missing') {
+          logger.error(`[RETRY-CHARGES] Direct split config missing for ${sub.id}, skipping charge`, {
+            businessId: sub.business_id,
+            reason: splitResult.reason,
+          });
+          skipped++;
+          continue;
+        }
+        // mode === 'no_split': proceed without split params
+
         try {
           const result = await chargeAuthorization(
             sub.authorization_code,
             amountKobo,
             sub.customer_email || '',
             reference,
+            splitParams,
           );
 
           if (result.success) {
@@ -133,7 +152,7 @@ export async function GET(request: NextRequest) {
       logger.info(`[RETRY-CHARGES] Cancelled ${sub.id} after 3 failures`);
     }
 
-    return NextResponse.json({ success: true, retried, cancelled });
+    return NextResponse.json({ success: true, retried, cancelled, skipped });
   } catch (error) {
     logger.error('[RETRY-CHARGES] Cron error:', error);
     Sentry.captureException(error, { tags: { cron: 'retry-failed-charges' } });
