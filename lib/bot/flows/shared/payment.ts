@@ -1,7 +1,96 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { type SubscriptionTier, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
-import { getPlatformFees } from '@/lib/getPlatformFees';
+import { type CountryCode, type PaymentGatewayName } from '@/lib/constants';
 import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/factory';
+import { resolvePaymentRoute, type PaymentRoute } from '@/lib/payments/route-resolver';
+import { decryptToken } from '@/lib/encryption';
+import { getAppUrl } from '@/lib/get-app-url';
+import { logger } from '@/lib/logger';
+
+// Re-exported for backwards compatibility with bot flows
+export { recordPlatformFee } from '@/lib/payments/process-success';
+
+/**
+ * Verify a payment via the gateway recorded on the payment record.
+ * Fail-closed: returns false if:
+ * - payment record is missing (no stored gateway to verify against)
+ * - stored gateway is not a recognized provider
+ * - BYO payment has no valid, non-revoked credential
+ * - database lookup returns an error
+ */
+export async function verifyPayment(
+  supabase: SupabaseClient,
+  gatewayReference: string,
+  _countryCode: CountryCode = 'NG',
+): Promise<boolean> {
+  // Look up the stored payment to determine which gateway processed it
+  const { data: payment, error: lookupErr } = await supabase
+    .from('payments')
+    .select('gateway, collection_mode, payout_account_id, metadata')
+    .eq('gateway_reference', gatewayReference)
+    .maybeSingle();
+
+  // Fail closed on DB error
+  if (lookupErr) {
+    logger.error('[VERIFY] Payment lookup error:', lookupErr.message);
+    return false;
+  }
+
+  // Fail closed if no payment record found
+  if (!payment || !payment.gateway) {
+    logger.warn('[VERIFY] No payment record found for reference:', gatewayReference);
+    return false;
+  }
+
+  // Validate the stored gateway is a recognized provider
+  const validGateways = ['paystack', 'stripe', 'flutterwave', 'square', 'paypal'];
+  if (!validGateways.includes(payment.gateway)) {
+    logger.warn('[VERIFY] Unsupported gateway on payment record:', payment.gateway);
+    return false;
+  }
+
+  try {
+    let byoSecretKey: string | undefined;
+
+    // For BYO payments, retrieve the merchant's credentials — fail closed if missing
+    if (payment.collection_mode === 'byo' && payment.payout_account_id) {
+      const { data: secret, error: secretErr } = await supabase
+        .from('business_connection_secrets')
+        .select('encrypted_secret_key')
+        .eq('payout_account_id', payment.payout_account_id)
+        .is('revoked_at', null)
+        .maybeSingle();
+
+      if (secretErr) {
+        logger.error('[VERIFY] BYO credential lookup error:', secretErr.message);
+        return false;
+      }
+
+      if (!secret?.encrypted_secret_key) {
+        logger.warn('[VERIFY] BYO payment has no valid credential for connection:', payment.payout_account_id);
+        return false;
+      }
+
+      byoSecretKey = decryptToken(secret.encrypted_secret_key);
+    }
+
+    // For Square Connect payments, resolve the seller token — fail closed if missing
+    if (payment.collection_mode === 'connect' && payment.gateway === 'square' && payment.payout_account_id) {
+      const { resolveSquareToken } = await import('@/lib/payments/square-token');
+      const resolved = await resolveSquareToken(supabase, payment.payout_account_id);
+      if (!resolved) {
+        logger.warn('[VERIFY] Square Connect seller token unresolvable');
+        return false;
+      }
+      byoSecretKey = resolved.accessToken;
+    }
+
+    const gateway = getPaymentGatewayByName(payment.gateway as PaymentGatewayName);
+    return await gateway.verifyPayment(supabase, gatewayReference, byoSecretKey);
+  } catch (err) {
+    logger.error('[VERIFY] Gateway verification error:', (err as Error).message);
+    return false;
+  }
+}
 
 export async function initializePayment(
   supabase: SupabaseClient,
@@ -17,9 +106,7 @@ export async function initializePayment(
     phone: string;
     userEmail?: string;
     countryCode?: CountryCode;
-    /** Per-business gateway override (from businesses.payment_gateway) */
-    gatewayOverride?: string | null;
-    /** Business ID for split payment lookup */
+    /** Business ID for payment routing */
     businessId?: string;
     /** Campaign ID for donation tracking */
     campaignId?: string;
@@ -30,152 +117,92 @@ export async function initializePayment(
   try {
     const countryCode = opts.countryCode || 'NG';
 
-    // Per-business gateway override takes priority
-    const gateway = opts.gatewayOverride
-      ? getPaymentGatewayByName(opts.gatewayOverride as PaymentGatewayName)
+    // ── Resolve payment route using the deterministic resolver ──
+    // The resolver is the SOLE authority for gateway selection.
+    // It checks default connection health, verification, country support, and
+    // falls back to platform collection when no valid connection exists.
+    let route: PaymentRoute | null = null;
+    if (opts.businessId) {
+      route = await resolvePaymentRoute(supabase, opts.businessId, opts.amount, countryCode);
+    }
+
+    // Select gateway: resolver route → country default (no override)
+    const gateway = route
+      ? getPaymentGatewayByName(route.provider as PaymentGatewayName)
       : getPaymentGateway(countryCode);
 
     const { getCountry } = await import('@/lib/countries');
     const currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
 
-    // Fetch payout account for split payments
+    // ── Build split params from resolver route ──
     let subaccountCode: string | undefined;
     let stripeAccountId: string | undefined;
-    let squareMerchantId: string | undefined;
-    let squareAccessToken: string | undefined;
     let platformFeeAmount: number | undefined;
-
-    // BYO credential fields
     let byoSecretKey: string | undefined;
     let byoPlatformSubaccount: string | undefined;
     let isByo = false;
     let byoBusinessId: string | undefined;
-    let connectAccountId: string | undefined;
+    let squareMerchantId: string | undefined;
+    let squareAccessToken: string | undefined;
+    let squareLocationId: string | undefined;
 
-    if (opts.businessId) {
-      // Check for BYO (Bring Your Own) gateway credentials first
-      const { data: byoCreds } = await supabase
-        .from('business_payment_credentials')
-        .select('secret_key, platform_subaccount_code, gateway, connect_account_id, connection_type')
-        .eq('business_id', opts.businessId)
-        .eq('is_active', true)
-        .not('verified_at', 'is', null)
-        .maybeSingle();
+    if (route) {
+      platformFeeAmount = route.platformFeeAmount;
 
-      if (byoCreds?.platform_subaccount_code && !byoCreds?.secret_key) {
-        // Subaccount-based connect: platform key + subaccount split
-        // (connect_account_id may also be set to satisfy DB constraint, but we use subaccount split)
-        subaccountCode = byoCreds.platform_subaccount_code;
+      switch (route.mode) {
+        case 'managed_split':
+          subaccountCode = route.subaccountCode;
+          stripeAccountId = route.stripeAccountId;
+          break;
 
-        const { data: business, error: bizError } = await supabase
-          .from('businesses')
-          .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
-          .eq('id', opts.businessId)
-          .single();
-
-        if (bizError) {
-          console.error('[PAYMENT] Failed to fetch business for subaccount split:', bizError.message);
-        }
-
-        if (business) {
-          const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-          const isInTrial = tier === 'free' && business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
-          const { getPlatformFees } = await import('@/lib/getPlatformFees');
-          const feeResult = await getPlatformFees(opts.amount, tier, !!isInTrial, {
-            feePercentage: business.custom_fee_percentage ?? undefined,
-            feeFlat: business.custom_fee_flat ?? undefined,
-          });
-          platformFeeAmount = feeResult.feeTotal;
-        }
-      } else if (byoCreds?.connect_account_id && !byoCreds?.platform_subaccount_code) {
-        // True Connect mode: use platform key + X-Connect-Account header
-        connectAccountId = byoCreds.connect_account_id;
-        byoBusinessId = opts.businessId;
-
-        const { data: business, error: bizError2 } = await supabase
-          .from('businesses')
-          .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
-          .eq('id', opts.businessId)
-          .single();
-
-        if (bizError2) {
-          console.error('[PAYMENT] Failed to fetch business for connect split:', bizError2.message);
-        }
-
-        if (business) {
-          const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-          const isInTrial = tier === 'free' && business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
-          const { getPlatformFees } = await import('@/lib/getPlatformFees');
-          const feeResult = await getPlatformFees(opts.amount, tier, !!isInTrial, {
-            feePercentage: business.custom_fee_percentage ?? undefined,
-            feeFlat: business.custom_fee_flat ?? undefined,
-          });
-          platformFeeAmount = feeResult.feeTotal;
-        }
-      } else if (byoCreds?.secret_key && byoCreds?.platform_subaccount_code) {
-        // BYO mode: use business's own gateway key with reversed split
-        isByo = true;
-        byoSecretKey = byoCreds.secret_key;
-        byoPlatformSubaccount = byoCreds.platform_subaccount_code;
-        byoBusinessId = opts.businessId;
-
-        // Calculate platform fee based on business tier
-        const { data: business, error: bizError3 } = await supabase
-          .from('businesses')
-          .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
-          .eq('id', opts.businessId)
-          .single();
-
-        if (bizError3) {
-          console.error('[PAYMENT] Failed to fetch business for BYO split:', bizError3.message);
-        }
-
-        if (business) {
-          const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-          const isInTrial = tier === 'free' && business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
-          const { getPlatformFees } = await import('@/lib/getPlatformFees');
-          const feeResult = await getPlatformFees(opts.amount, tier, !!isInTrial, {
-            feePercentage: business.custom_fee_percentage ?? undefined,
-            feeFlat: business.custom_fee_flat ?? undefined,
-          });
-          platformFeeAmount = feeResult.feeTotal;
-        }
-      } else {
-        // Normal platform flow: check payout mode
-        const { data: biz, error: bizError4 } = await supabase
-          .from('businesses')
-          .select('payout_mode')
-          .eq('id', opts.businessId)
-          .single();
-
-        if (bizError4) {
-          console.error('[PAYMENT] Failed to fetch business payout mode:', bizError4.message);
-        }
-
-        const { data: payout } = await supabase
-          .from('payout_accounts')
-          .select('subaccount_code, stripe_account_id, square_merchant_id, square_access_token, platform_percentage, gateway')
-          .eq('business_id', opts.businessId)
-          .eq('is_active', true)
-          .maybeSingle();
-
-        // Only add split params if payout account gateway matches payment gateway
-        if (biz?.payout_mode === 'direct_split' && payout) {
-          const payoutGw = payout.gateway || 'paystack';
-          const paymentGw = gateway.name;
-
-          // Only apply split params if gateways match
-          if (payoutGw === paymentGw || (payoutGw === 'paystack' && paymentGw === 'paystack') || (payoutGw === 'stripe' && paymentGw === 'stripe')) {
-            subaccountCode = payout.subaccount_code || undefined;
-            stripeAccountId = payout.stripe_account_id || undefined;
-            squareMerchantId = payout.square_merchant_id || undefined;
-            squareAccessToken = payout.square_access_token || undefined;
-            platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
+        case 'connect':
+          if (route.provider === 'stripe') {
+            stripeAccountId = route.stripeAccountId;
+          } else if (route.provider === 'square' && route.connectionId) {
+            // Fail closed: if Square token cannot be resolved, do NOT fall back
+            // to platform credentials. Return null to prevent payment initialization.
+            const { resolveSquareToken } = await import('@/lib/payments/square-token');
+            const resolved = await resolveSquareToken(supabase, route.connectionId);
+            if (!resolved) {
+              logger.error('[PAYMENT] Square token unresolvable — failing closed');
+              return null;
+            }
+            squareMerchantId = route.squareMerchantId;
+            squareLocationId = route.squareLocationId;
+            squareAccessToken = resolved.accessToken;
           }
-          // If gateways don't match (e.g., Paystack payout but Stripe payment),
-          // skip split — platform collects full amount
-        }
-        // platform_managed: no split params, full amount goes to platform
+          break;
+
+        case 'byo':
+          if (route.byoSecretId) {
+            // Fetch and decrypt the merchant's key (service-role only)
+            const { data: secret, error: secretErr } = await supabase
+              .from('business_connection_secrets')
+              .select('encrypted_secret_key')
+              .eq('id', route.byoSecretId)
+              .is('revoked_at', null)
+              .single();
+            if (secretErr) {
+              logger.error('[PAYMENT] BYO credential lookup error:', secretErr.message);
+              return null; // fail closed
+            }
+            if (secret?.encrypted_secret_key) {
+              byoSecretKey = decryptToken(secret.encrypted_secret_key);
+              byoPlatformSubaccount = route.byoPlatformSubaccount;
+              isByo = true;
+              byoBusinessId = opts.businessId;
+            }
+          }
+          break;
+
+        case 'flutterwave_mid':
+          // Flutterwave MID split uses subaccount with is_f4b_account
+          subaccountCode = route.flutterwaveMid;
+          break;
+
+        case 'platform':
+          // No split — full amount to platform
+          break;
       }
     }
 
@@ -192,6 +219,14 @@ export async function initializePayment(
       }
     }
 
+    logger.info('[PAYMENT] Calling gateway.initializePayment', {
+      provider: route?.provider || 'default',
+      mode: route?.mode || 'platform',
+      hasSquareToken: !!squareAccessToken,
+      hasSquareMerchant: !!squareMerchantId,
+      hasSquareLocation: !!squareLocationId,
+      connectionId: route?.connectionId ? `...${route.connectionId.slice(-6)}` : 'none',
+    });
     const result = await gateway.initializePayment({
       supabase,
       bookingId: opts.bookingId,
@@ -207,123 +242,39 @@ export async function initializePayment(
       userEmail: opts.userEmail,
       subaccountCode,
       stripeAccountId,
-      squareMerchantId,
-      squareAccessToken,
       platformFeeAmount,
       byoSecretKey,
       byoPlatformSubaccount,
       isByo,
       byoBusinessId,
-      connectAccountId,
+      squareMerchantId,
+      squareAccessToken,
+      squareLocationId,
       campaignId: opts.campaignId,
       channels,
+      callbackUrl: `${getAppUrl()}/payment-success`,
+      businessId: opts.businessId,
+      // Fee mode tracking — persisted on payment record
+      collectionMode: route?.mode || 'platform',
+      feeBearerMode: route?.feeBearerMode || 'platform',
+      payoutAccountId: route?.connectionId || undefined,
+      waaiioFee: route?.platformFeeAmount ?? 0,
     });
 
-    // Create donation record if this is a campaign payment
-    if (result?.reference && opts.campaignId) {
-      // Fetch the payment_id so the webhook can match the donation record
-      const { data: paymentRecord } = await supabase
-        .from('payments')
-        .select('id')
-        .eq('gateway_reference', result.reference)
-        .maybeSingle();
+    if (!result) return null;
 
-      await supabase.from('campaign_donations').insert({
-        campaign_id: opts.campaignId,
-        business_id: opts.businessId || '',
-        payment_id: paymentRecord?.id || null,
-        donor_phone: opts.phone.startsWith('+') ? opts.phone : `+${opts.phone}`,
-        donor_name: opts.donorName || null,
-        amount: opts.amount,
-        currency: currencyCode,
-        reference_code: opts.referenceCode,
-        status: 'pending',
-      });
+    // Shorten the checkout URL for WhatsApp messages
+    let shortUrl = result.url;
+    if (result.url.length > 100 && result.shortRef) {
+      shortUrl = `${getAppUrl()}/api/pay?ref=${result.shortRef}`;
     }
 
-    // Store original gateway URL in payment metadata, then shorten for WhatsApp
-    if (result?.url && result.reference) {
-      // Save the real checkout URL before shortening
-      const { data: paymentRecord } = await supabase
-        .from('payments')
-        .select('id, metadata')
-        .eq('gateway_reference', result.reference)
-        .maybeSingle();
-
-      if (paymentRecord) {
-        const existingMeta = (paymentRecord.metadata || {}) as Record<string, unknown>;
-        existingMeta.checkout_url = result.url;
-        await supabase.from('payments').update({ metadata: existingMeta }).eq('id', paymentRecord.id);
-      }
-
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-      const shortRef = result.reference.slice(-8);
-      result.url = `${appUrl}/api/pay?ref=${shortRef}`;
-    }
-
-    return result;
+    return { url: shortUrl, reference: result.reference };
   } catch (error) {
-    const err = error as Error;
-    console.error('[PAYMENT] initializePayment THREW:', err.message);
-    console.error('[PAYMENT] Stack:', err.stack?.split('\n').slice(0, 6).join(' | '));
-    (globalThis as Record<string, unknown>).__lastPaymentError = { message: err.message, stack: err.stack?.split('\n').slice(0, 6) };
+    const msg = error instanceof Error
+      ? `${error.message} | ${error.stack?.split('\n').slice(1, 3).map(l => l.trim()).join(' > ')}`
+      : `non-Error thrown: ${typeof error === 'object' ? JSON.stringify(error) : String(error)}`;
+    logger.error('[PAYMENT] initializePayment error:', msg);
     return null;
   }
-}
-
-export async function verifyPayment(
-  supabase: SupabaseClient,
-  reference: string,
-  countryCode: CountryCode = 'NG',
-): Promise<boolean> {
-  const gateway = getPaymentGateway(countryCode);
-  return gateway.verifyPayment(supabase, reference);
-}
-
-// Keep backward-compat aliases
-export const initializePaystackPayment = initializePayment;
-export const verifyPaystackPayment = (supabase: SupabaseClient, reference: string) =>
-  verifyPayment(supabase, reference, 'NG');
-
-export async function recordPlatformFee(
-  supabase: SupabaseClient,
-  opts: {
-    businessId: string;
-    bookingId?: string;
-    orderId?: string;
-    invoiceId?: string;
-    reservationId?: string;
-    transactionAmount: number;
-    tier: SubscriptionTier;
-    isInTrial: boolean;
-  },
-): Promise<void> {
-  // Skip fee for direct_split businesses — gateway already collected the fee
-  const { data: biz } = await supabase
-    .from('businesses')
-    .select('payout_mode, custom_fee_percentage, custom_fee_flat')
-    .eq('id', opts.businessId)
-    .single();
-  if (biz?.payout_mode === 'direct_split') return;
-
-  // Look up custom fee overrides for this business
-  let overrides: { feePercentage?: number | null; feeFlat?: number | null } | undefined;
-  if (biz && (biz.custom_fee_percentage != null || biz.custom_fee_flat != null)) {
-    overrides = { feePercentage: biz.custom_fee_percentage, feeFlat: biz.custom_fee_flat };
-  }
-  const fee = await getPlatformFees(opts.transactionAmount, opts.tier, opts.isInTrial, overrides);
-
-  await supabase.from('platform_fees').insert({
-    business_id: opts.businessId,
-    booking_id: opts.bookingId || null,
-    order_id: opts.orderId || null,
-    invoice_id: opts.invoiceId || null,
-    reservation_id: opts.reservationId || null,
-    transaction_amount: opts.transactionAmount,
-    fee_percentage: fee.feePercentage,
-    fee_flat: fee.feeFlat,
-    fee_total: fee.feeTotal,
-    tier: opts.tier,
-    waived: opts.isInTrial,
-  });
 }

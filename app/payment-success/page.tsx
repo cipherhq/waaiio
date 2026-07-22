@@ -13,7 +13,7 @@ export const metadata = {
 export default async function PaymentSuccessPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ref?: string; type?: string }>;
+  searchParams: Promise<{ ref?: string; type?: string; paymentId?: string }>;
 }) {
   const params = await searchParams;
   let businessPhone: string | undefined;
@@ -24,19 +24,35 @@ export default async function PaymentSuccessPage({
   let hasPhone = false;
   let subscriptionTier = 'free';
 
+  const lookupRef = params.ref || params.paymentId;
+
   // Verify payment and trigger WhatsApp confirmation automatically
-  if (params.ref) {
+  if (lookupRef) {
     try {
       const supabase = createServiceClient();
-      // ref can be gateway_reference (cs_test_xxx) OR booking reference_code (WA-BK-3218)
-      let payment = (await supabase
-        .from('payments')
-        .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code, subscription_tier)')
-        .eq('gateway_reference', params.ref)
-        .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
+
+      // Square redirects with ?paymentId=<uuid> — look up by id first
+      let payment: any = null;
+
+      if (params.paymentId) {
+        payment = (await supabase
+          .from('payments')
+          .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, collection_mode, businesses(phone, name, country_code, subscription_tier)')
+          .eq('id', params.paymentId)
+          .maybeSingle()).data;
+      }
+
+      // Fallback: ref can be gateway_reference (cs_test_xxx) OR booking reference_code (WA-BK-3218)
+      if (!payment && lookupRef) {
+        payment = (await supabase
+          .from('payments')
+          .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, collection_mode, businesses(phone, name, country_code, subscription_tier)')
+          .eq('gateway_reference', lookupRef)
+          .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
+      }
 
       // Fallback: match by booking reference_code
-      if (!payment) {
+      if (!payment && params.ref) {
         const { data: booking } = await supabase
           .from('bookings')
           .select('id')
@@ -45,7 +61,7 @@ export default async function PaymentSuccessPage({
         if (booking) {
           payment = (await supabase
             .from('payments')
-            .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code, subscription_tier)')
+            .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, collection_mode, businesses(phone, name, country_code, subscription_tier)')
             .eq('booking_id', booking.id)
             .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
         }
@@ -102,25 +118,21 @@ export default async function PaymentSuccessPage({
           // If gateway verification fails, do NOT blindly trust the redirect.
           // The webhook will handle confirmation when it arrives.
           if (!isVerified) {
-            logger.warn(`[PAYMENT-SUCCESS] Gateway verify failed for ${params.ref}, waiting for webhook`);
+            logger.warn(`[PAYMENT-SUCCESS] Gateway verify failed for ${lookupRef}, waiting for webhook`);
           }
 
           if (isVerified) {
-            // Update payment status
-            await supabase.from('payments')
-              .update({ status: 'success', paid_at: new Date().toISOString() })
-              .eq('id', payment.id)
-              .neq('status', 'success');
-
-            // Update booking/order status
-            if (payment.booking_id) {
-              await supabase.from('bookings')
-                .update({ status: 'confirmed', deposit_status: 'paid', confirmed_at: new Date().toISOString() })
-                .eq('id', payment.booking_id)
-                .neq('deposit_status', 'paid');
-            }
-
             confirmed = true;
+          } else {
+            // verifyPayment returned false — check if payment is already success (webhook handled it)
+            const { data: currentPayment } = await supabase
+              .from('payments')
+              .select('status')
+              .eq('id', payment.id)
+              .single();
+            if (currentPayment?.status === 'success') {
+              confirmed = true;
+            }
           }
         } else {
           confirmed = true;
@@ -162,6 +174,7 @@ export default async function PaymentSuccessPage({
               campaign_id: payment.campaign_id,
               order_id: payment.order_id || null,
               reservation_id: payment.reservation_id || null,
+              collection_mode: (payment.collection_mode as string) || undefined,
             });
           } catch (pipeErr) {
             logger.error('[PAYMENT-SUCCESS] Pipeline error:', pipeErr);

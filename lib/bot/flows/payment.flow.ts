@@ -354,7 +354,6 @@ export const paymentFlow: FlowDefinition = {
           businessName: ctx.business?.name || 'Business',
           phone: ctx.from,
           countryCode: cc,
-          gatewayOverride: ctx.business?.payment_gateway || null,
           businessId: ctx.business?.id,
         });
 
@@ -776,9 +775,7 @@ export const paymentFlow: FlowDefinition = {
               recordPlatformFee(ctx.supabase, {
                 businessId: ctx.business.id,
                 bookingId: d.booking_id as string,
-                transactionAmount: d.amount as number,
-                tier: ctx.business.subscription_tier as SubscriptionTier,
-                isInTrial,
+                paymentAmount: d.amount as number,
               }).catch(err => console.error('[PAYMENT] recordPlatformFee error:', err));
             }
 

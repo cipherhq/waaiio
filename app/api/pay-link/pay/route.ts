@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
-import type { PaymentGatewayName } from '@/lib/constants';
+import type { CountryCode } from '@/lib/constants';
 
 /**
  * POST /api/pay-link/pay — Public endpoint (CSRF-exempt).
@@ -76,67 +76,21 @@ export async function POST(request: NextRequest) {
     payment_gateway: string;
   };
 
-  // Determine currency from country
-  const currencyMap: Record<string, string> = {
-    NG: 'NGN',
-    GH: 'GHS',
-    GB: 'GBP',
-    CA: 'CAD',
-    US: 'USD',
-  };
-  const currency = link.currency || currencyMap[biz.country_code] || 'USD';
-  const gatewayName = (biz.payment_gateway || 'paystack') as PaymentGatewayName;
-
   const refCode = `PL-${Date.now().toString(36).toUpperCase()}`;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+  const email = customer_email || `${refCode.toLowerCase()}@pay.waaiio.com`;
 
-  // Create payment record
-  const { data: payment, error: payErr } = await supabase
-    .from('payments')
-    .insert({
-      business_id: link.business_id,
-      amount,
-      currency,
-      gateway: gatewayName,
-      gateway_reference: refCode,
-      status: 'pending',
-      metadata: {
-        payment_link_id: link.id,
-        customer_name: customer_name || null,
-        customer_phone: customer_phone || null,
-        source: 'scan_to_pay',
-      },
-    })
-    .select('id')
-    .single();
-
-  if (payErr) {
-    logger.error('[PAY-LINK] Failed to create payment record:', payErr);
-    return NextResponse.json(
-      { error: 'Failed to create payment' },
-      { status: 500 },
-    );
-  }
-
-  // Initialize gateway payment
+  // Route through the shared payment initializer (resolver determines gateway)
   try {
-    const { getPaymentGatewayByName } = await import('@/lib/payments/factory');
-    const gateway = getPaymentGatewayByName(gatewayName);
+    const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
 
-    const email =
-      customer_email ||
-      `${refCode.toLowerCase()}@pay.waaiio.com`;
-
-    const result = await gateway.initializePayment({
-      supabase,
+    const result = await initializePayment(supabase, {
       amount,
-      currency,
       referenceCode: refCode,
       businessName: biz.name,
       phone: customer_phone || '',
       userEmail: email,
       userId: '00000000-0000-0000-0000-000000000000', // anonymous payer
-      callbackUrl: `${appUrl}/payment-success?ref=${refCode}`,
+      countryCode: (biz.country_code || 'NG') as CountryCode,
       businessId: link.business_id,
     });
 

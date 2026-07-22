@@ -11,6 +11,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 // ── Public types ───────────────────────────────────────
 
@@ -81,7 +82,7 @@ export async function searchMarketplace(
   supabase: SupabaseClient,
   criteria: MarketplaceSearchCriteria,
 ): Promise<MarketplaceResult[]> {
-  const limit = Math.min(criteria.limit || 5, 10);
+  const limit = Math.min(criteria.limit || 20, 50);
 
   try {
     let query = supabase
@@ -91,14 +92,17 @@ export async function searchMarketplace(
         'latitude, longitude, discovery_enabled, discovery_description, price_band, ' +
         'supports_delivery, max_group_size, is_verified, metadata, operating_hours',
       )
-      .eq('is_active', true)
       .eq('status', 'active')
-      // Respect discovery_enabled: treat null as true (backward compat)
-      .or('discovery_enabled.is.null,discovery_enabled.eq.true');
+      // Only show businesses that explicitly opted into discovery
+      .eq('discovery_enabled', true);
 
-    // Category filter
+    // Category filter (category is an enum — use eq for exact or in for multiple)
     if (criteria.category) {
-      query = query.ilike('category', `%${criteria.category}%`);
+      const safeCat = sanitizeFilterValue(criteria.category).replace(/[%_'"\\]/g, '').toLowerCase();
+      if (safeCat.length > 0) {
+        // Enum comparison: exact match on the enum value
+        query = query.eq('category', safeCat);
+      }
     }
 
     // Country filter
@@ -119,7 +123,7 @@ export async function searchMarketplace(
     // Text search — name / description / category ILIKE
     if (criteria.query) {
       // Sanitize the query to prevent PostgREST injection
-      const safeQ = criteria.query.replace(/[%_'"\\]/g, '');
+      const safeQ = sanitizeFilterValue(criteria.query).replace(/[%_'"\\]/g, '');
       if (safeQ.length > 0) {
         query = query.or(
           `name.ilike.%${safeQ}%,description.ilike.%${safeQ}%,category.ilike.%${safeQ}%`,
@@ -164,19 +168,16 @@ export async function searchMarketplace(
 
       // Distance scoring (haversine)
       let distanceKm: number | undefined;
-      if (
-        criteria.latitude &&
-        criteria.longitude &&
-        biz.latitude &&
-        biz.longitude
-      ) {
+      const hasUserCoords = criteria.latitude != null && criteria.longitude != null;
+      const hasBizCoords = biz.latitude != null && biz.longitude != null;
+      if (hasUserCoords && hasBizCoords) {
         distanceKm = haversineDistance(
-          criteria.latitude,
-          criteria.longitude,
-          biz.latitude,
-          biz.longitude,
+          criteria.latitude!,
+          criteria.longitude!,
+          biz.latitude!,
+          biz.longitude!,
         );
-        if (criteria.radiusKm && distanceKm > criteria.radiusKm) {
+        if (criteria.radiusKm != null && criteria.radiusKm > 0 && distanceKm > criteria.radiusKm) {
           return null; // Outside requested radius
         }
         if (distanceKm < 2) score += 25;
@@ -220,8 +221,8 @@ export async function searchMarketplace(
         priceBand: biz.price_band as string | undefined,
         supportsDelivery: biz.supports_delivery as boolean | undefined,
         address: biz.address as string | undefined,
-        phone: biz.phone as string | undefined,
-        botCode: biz.bot_code as string | undefined,
+        // phone excluded from public search results (F-014 consistency)
+        botCode: biz.bot_code as string | undefined, // intentionally public: shown on business pages + QR
         city: biz.city as string | undefined,
         slug: biz.slug as string | undefined,
         countryCode: biz.country_code as string | undefined,

@@ -35,6 +35,12 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid date format' }, { status: 400 });
     }
 
+    // Reject past dates
+    const today = new Date().toISOString().split('T')[0];
+    if (newDate < today) {
+      return NextResponse.json({ error: 'Cannot reschedule to a past date' }, { status: 400 });
+    }
+
     // Validate time format (HH:MM or HH:MM:SS)
     if (!/^\d{2}:\d{2}(:\d{2})?$/.test(newTime)) {
       return NextResponse.json({ error: 'Invalid time format' }, { status: 400 });

@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     // Verify the admin is still valid (admin role)
     const { data: adminProfile } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role, email')
       .eq('id', tokenRecord.admin_id)
       .maybeSingle();
 
@@ -58,6 +58,14 @@ export async function POST(request: NextRequest) {
       .from('admin_impersonation_tokens')
       .update({ used_at: new Date().toISOString() })
       .eq('id', tokenRecord.id);
+
+    // Audit log: token validated
+    await supabase.from('impersonation_logs').insert({
+      admin_id: tokenRecord.admin_id,
+      admin_email: adminProfile?.email || 'unknown',
+      target_business_id: tokenRecord.business_id,
+      action: 'token_validated',
+    });
 
     // Set httpOnly cookies for impersonation
     const cookieStore = await cookies();

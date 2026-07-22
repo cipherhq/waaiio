@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { processRefund } from '@/lib/payments/refund-handler';
 import { logger } from '@/lib/logger';
 
@@ -13,16 +14,23 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { paymentId, businessId, amount, reason } = body as {
+    const { paymentId, businessId, amount, reason, idempotencyKey } = body as {
       paymentId: string;
       businessId: string;
       amount: number;
       reason?: string;
+      idempotencyKey?: string;
     };
 
     if (!paymentId || !businessId || !amount || typeof amount !== 'number' || amount <= 0) {
       return NextResponse.json({ error: 'Missing or invalid fields: paymentId, businessId, amount (must be positive number)' }, { status: 400 });
     }
+
+    if (!idempotencyKey) {
+      return NextResponse.json({ error: 'idempotencyKey is required for refund requests' }, { status: 400 });
+    }
+
+    const logicalRefundId = idempotencyKey;
 
     // Verify the user owns the business
     const { data: business } = await supabase
@@ -48,24 +56,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Payment not found for this business' }, { status: 404 });
     }
 
+    const serviceClient = createServiceClient();
     const result = await processRefund({
-      supabase,
+      supabase: serviceClient,
       paymentId,
       businessId,
       amount,
       reason,
       initiatedBy: user.id,
       initiatedByRole: 'business',
+      logicalRefundId,
     });
 
     if (!result.success) {
-      return NextResponse.json({ error: result.errorMessage }, { status: 400 });
+      return NextResponse.json({ error: result.errorMessage, idempotencyKey: logicalRefundId }, { status: 400 });
     }
 
     return NextResponse.json({
       success: true,
       refundId: result.refundId,
       isDirectSplit: result.isDirectSplit,
+      idempotencyKey: logicalRefundId,
     });
   } catch (error) {
     logger.error('Refund API error:', error);

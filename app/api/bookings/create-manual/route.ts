@@ -51,59 +51,70 @@ export async function POST(request: NextRequest) {
       .single();
     if (!biz) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-    // Get service details
+    // Get service details (including max_capacity for slot validation)
     const serviceClient = createServiceClient();
     const { data: service } = await serviceClient
       .from('services')
-      .select('name, price, duration_minutes')
+      .select('name, price, duration_minutes, max_capacity, buffer_minutes')
       .eq('id', serviceId)
       .eq('business_id', businessId)
       .single();
     if (!service) return NextResponse.json({ error: 'Service not found' }, { status: 404 });
 
-    // Check for time conflicts
-    const { count: conflictCount } = await serviceClient
-      .from('bookings')
-      .select('id', { count: 'exact', head: true })
-      .eq('business_id', businessId)
-      .eq('date', date)
-      .eq('time', time.padStart(5, '0'))
-      .in('status', ['confirmed', 'pending', 'in_progress']);
+    // Use atomic RPC with advisory lock — prevents double-booking and enforces max_capacity
+    const { data: rpcResult, error: rpcError } = await serviceClient.rpc('book_slot_atomic', {
+      p_business_id: businessId,
+      p_user_id: user.id,
+      p_service_id: serviceId,
+      p_staff_id: staffId || null,
+      p_date: date,
+      p_time: time.padStart(5, '0'),
+      p_party_size: partySize || 1,
+      p_max_capacity: service.max_capacity || 1,
+      p_flow_type: 'scheduling',
+      p_deposit_amount: 0,
+      p_deposit_status: 'none',
+      p_status: 'confirmed',
+      p_guest_name: customerName,
+      p_guest_phone: customerPhone,
+      p_guest_email: customerEmail || null,
+      p_special_requests: notes || null,
+      p_venue_address: null,
+      p_end_date: null,
+      p_addons_snapshot: null,
+      p_promo_code_id: null,
+      p_total_amount: service.price ?? 0,
+      p_staff_name: null,
+      p_location_id: null,
+      p_appointment_id: null,
+      p_buffer_minutes: service.buffer_minutes || 0,
+      p_duration: service.duration_minutes || 30,
+    });
 
-    if ((conflictCount ?? 0) > 0) {
-      return NextResponse.json({ error: 'This time slot is already booked' }, { status: 409 });
-    }
-
-    // Generate reference code
-    const refCode = `${businessId.slice(0, 4).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
-
-    // Insert booking directly (simpler than RPC for manual bookings -- no slot contention from dashboard)
-    const { data: booking, error: insertErr } = await serviceClient.from('bookings').insert({
-      business_id: businessId,
-      service_id: serviceId,
-      date,
-      time,
-      guest_name: customerName,
-      guest_phone: customerPhone,
-      guest_email: customerEmail || null,
-      party_size: partySize || 1,
-      staff_id: staffId || null,
-      staff_name: staffId ? undefined : null,
-      notes: notes || null,
-      reference_code: refCode,
-      status: 'confirmed',
-      flow_type: 'scheduling',
-      channel: 'dashboard',
-      total_amount: service.price ?? 0,
-      deposit_amount: 0,
-      deposit_status: 'not_required',
-      confirmed_at: new Date().toISOString(),
-    }).select('id, reference_code').single();
-
-    if (insertErr) {
-      logger.error('[MANUAL BOOKING] Insert error:', insertErr);
+    if (rpcError) {
+      if (rpcError.message?.includes('fully booked') || rpcError.message?.includes('slot_taken')) {
+        return NextResponse.json({ error: 'This time slot is fully booked' }, { status: 409 });
+      }
+      logger.error('[MANUAL-BOOKING] RPC error:', rpcError.message);
       return NextResponse.json({ error: 'Failed to create booking' }, { status: 500 });
     }
+
+    // book_slot_atomic returns TABLE(booking_id uuid, reference_code text, slot_available boolean)
+    const bookingId = rpcResult?.booking_id;
+    if (!bookingId) {
+      logger.error('[MANUAL-BOOKING] RPC returned no booking_id:', JSON.stringify(rpcResult));
+      return NextResponse.json({ error: 'Failed to create booking' }, { status: 500 });
+    }
+    const { data: booking } = await serviceClient.from('bookings').select('*').eq('id', bookingId).single();
+    if (!booking) {
+      return NextResponse.json({ error: 'Booking created but could not retrieve details' }, { status: 500 });
+    }
+
+    // Update with dashboard-specific fields
+    await serviceClient.from('bookings').update({
+      channel: 'dashboard',
+      confirmed_at: new Date().toISOString(),
+    }).eq('id', bookingId);
 
     // If staffId provided, look up staff name and update
     if (staffId) {
@@ -140,7 +151,7 @@ export async function POST(request: NextRequest) {
             `${service.name}`,
             `${dateLabel}`,
             `${time}`,
-            `Ref: *${refCode}*`,
+            `Ref: *${booking.reference_code || bookingId.slice(0, 8)}*`,
             '',
             'See you there!',
           ].join('\n');
@@ -166,7 +177,7 @@ export async function POST(request: NextRequest) {
                   'Service': service.name,
                   'Date': dateLabel,
                   'Time': time,
-                  'Reference': refCode,
+                  'Reference': booking.reference_code || bookingId.slice(0, 8),
                 },
               }).html,
             } : null,

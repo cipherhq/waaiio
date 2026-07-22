@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, timingSafeEqual, randomUUID } from 'crypto';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
@@ -8,30 +8,100 @@ import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 
 const squareWebhookSignatureKey = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || '';
 const squareWebhookNotificationUrl = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL || '';
+const squarePlatformMerchantId = process.env.SQUARE_PLATFORM_MERCHANT_ID || '';
 
 function verifySquareSignature(rawBody: string, signature: string): boolean {
   if (!squareWebhookSignatureKey || !signature) return false;
-
-  // Square HMAC-SHA256: sign(notification_url + raw_body)
   const payload = squareWebhookNotificationUrl + rawBody;
   const expected = createHmac('sha256', squareWebhookSignatureKey)
-    .update(payload)
-    .digest('base64');
-
+    .update(payload).digest('base64');
   try {
     return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
   } catch { return false; }
+}
+
+/** Mark event completed. Throws if the claim-token-guarded update affects zero rows. */
+async function markEventCompleted(
+  supabase: ReturnType<typeof createServiceClient>,
+  eventId: string,
+  claimToken: string,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('processed_webhook_events')
+    .update({
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      last_attempted_at: new Date().toISOString(),
+    })
+    .eq('event_id', eventId)
+    .eq('claim_token', claimToken)
+    .eq('status', 'processing')
+    .select('id')
+    .maybeSingle();
+
+  if (error) throw new Error(`Event completion DB error: ${error.message}`);
+  if (!data) throw new Error('Event completion matched zero rows — lease may have been reclaimed');
+}
+
+async function markEventFailed(
+  supabase: ReturnType<typeof createServiceClient>,
+  eventId: string,
+  claimToken: string,
+  errorCategory: string,
+): Promise<void> {
+  await supabase
+    .from('processed_webhook_events')
+    .update({
+      status: 'failed',
+      last_error: errorCategory.slice(0, 100),
+      last_attempted_at: new Date().toISOString(),
+    })
+    .eq('event_id', eventId)
+    .eq('claim_token', claimToken)
+    .eq('status', 'processing');
+}
+
+/** Resolve merchant_id → payout_account or platform mode. Throws on missing/unknown merchant. */
+async function resolveMerchant(
+  supabase: ReturnType<typeof createServiceClient>,
+  webhookMerchantId: string | undefined,
+): Promise<{ id: string | null; business_id: string | null; isConnect: boolean }> {
+  if (!webhookMerchantId) {
+    logger.warn('[SQUARE-WEBHOOK] Missing merchant_id — fail closed');
+    throw new Error('Missing merchant_id in webhook payload');
+  }
+
+  // Check if this is the platform merchant
+  if (squarePlatformMerchantId && webhookMerchantId === squarePlatformMerchantId) {
+    return { id: null, business_id: null, isConnect: false };
+  }
+
+  // Connect merchant — resolve via payout_accounts
+  const { data: conn, error: connErr } = await supabase
+    .from('payout_accounts')
+    .select('id, business_id')
+    .eq('gateway', 'square')
+    .eq('square_merchant_id', webhookMerchantId)
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (connErr) throw new Error(`Connection lookup error: ${connErr.message}`);
+  if (!conn) {
+    logger.warn('[SQUARE-WEBHOOK] No active Square connection for merchant');
+    throw new Error('Unknown merchant — no active connection');
+  }
+  return { id: conn.id, business_id: conn.business_id, isConnect: true };
 }
 
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   let eventId: string | null = null;
+  let claimToken: string | null = null;
   try {
     const rawBody = await request.text();
     const signature = request.headers.get('x-square-hmacsha256-signature') || '';
 
-    // Fail-closed: reject if webhook secret is not configured
     if (!squareWebhookSignatureKey) {
       return NextResponse.json({ message: 'Webhook not configured' }, { status: 500 });
     }
@@ -39,88 +109,207 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Invalid signature' }, { status: 400 });
     }
 
+    // Require SQUARE_PLATFORM_MERCHANT_ID to be configured for any Square webhook processing
+    if (!squarePlatformMerchantId) {
+      return NextResponse.json({ message: 'Square platform merchant ID not configured' }, { status: 500 });
+    }
+
     const body = JSON.parse(rawBody);
     const eventType = body.type as string;
     const data = body.data?.object as Record<string, unknown>;
-
     if (!data) {
       return NextResponse.json({ received: true });
     }
 
     const supabase = createServiceClient();
 
-    // Idempotency: check if already processed (mark AFTER processing succeeds)
+    // ── Atomic event claim ──
     eventId = (body.event_id as string) || null;
     if (eventId) {
-      const { data: existingEvent } = await supabase
-        .from('processed_webhook_events')
-        .select('id')
-        .eq('event_id', eventId)
-        .maybeSingle();
+      claimToken = randomUUID();
+      const { data: claimResult, error: claimErr } = await supabase.rpc('claim_webhook_event', {
+        p_event_id: eventId,
+        p_gateway: 'square',
+        p_event_type: `square_${eventType}`,
+        p_claim_token: claimToken,
+        p_lease_seconds: 120,
+      });
 
-      if (existingEvent) {
+      if (claimErr) {
+        logger.error('[SQUARE-WEBHOOK] Claim RPC error');
+        return NextResponse.json({ error: 'Claim failed' }, { status: 500 });
+      }
+
+      const outcome = claimResult?.outcome;
+      if (outcome === 'duplicate') {
         return NextResponse.json({ received: true, duplicate: true });
+      }
+      if (outcome === 'lease_active') {
+        return NextResponse.json({ error: 'Event being processed' }, { status: 500 });
+      }
+      if (outcome !== 'claimed' && outcome !== 'retry') {
+        return NextResponse.json({ error: 'Unexpected claim outcome' }, { status: 500 });
       }
     }
 
-    // Square fires payment.updated when status transitions (COMPLETED, FAILED, etc.)
+    const webhookMerchantId = body.merchant_id as string | undefined;
+
+    // ── Payment events ──
     if (eventType === 'payment.updated' || eventType === 'payment.created') {
       const payment = data.payment as Record<string, unknown> | undefined;
-      if (!payment) return NextResponse.json({ received: true });
+      if (!payment?.order_id) {
+        if (eventId && claimToken) await markEventCompleted(supabase, eventId, claimToken);
+        return NextResponse.json({ received: true });
+      }
 
-      const orderId = payment.order_id as string | undefined;
+      const orderId = payment.order_id as string;
       const paymentStatus = payment.status as string | undefined;
-      if (!orderId) return NextResponse.json({ received: true });
 
-      // Find our payment record by square_order_id in metadata
-      const { data: payments } = await supabase
-        .from('payments')
-        .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata')
-        .eq('gateway', 'square')
-        .neq('status', 'success');
+      // Resolve merchant — fails closed on missing/unknown
+      const conn = await resolveMerchant(supabase, webhookMerchantId);
 
-      const matchedPayment = payments?.find(p => {
-        const meta = p.metadata as Record<string, string> | null;
-        return meta?.square_order_id === orderId;
-      });
+      // Scoped payment lookup — Connect vs Platform mode
+      let matchedPayment: any = null;
+      const paymentSelectCols = 'id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, currency, status, metadata, business_id, payout_account_id, gateway_reference, waaiio_fee, collection_mode';
 
-      if (!matchedPayment) return NextResponse.json({ received: true });
+      if (conn.isConnect) {
+        // Connect: scope by payout_account_id
+        const { data, error: payLookupErr } = await supabase
+          .from('payments')
+          .select(paymentSelectCols)
+          .eq('gateway', 'square')
+          .eq('payout_account_id', conn.id!)
+          .eq('provider_order_ref', orderId)
+          .maybeSingle();
+        if (payLookupErr) throw new Error(`Payment lookup error: ${payLookupErr.message}`);
+        matchedPayment = data;
+      } else {
+        // Platform: scope by collection_mode='platform' + payout_account_id IS NULL
+        const { data, error: payLookupErr } = await supabase
+          .from('payments')
+          .select(paymentSelectCols)
+          .eq('gateway', 'square')
+          .eq('collection_mode', 'platform')
+          .is('payout_account_id', null)
+          .eq('provider_order_ref', orderId)
+          .maybeSingle();
+        if (payLookupErr) throw new Error(`Payment lookup error: ${payLookupErr.message}`);
+        matchedPayment = data;
+      }
+      if (!matchedPayment) {
+        if (eventId && claimToken) await markEventCompleted(supabase, eventId, claimToken);
+        return NextResponse.json({ received: true });
+      }
 
-      if (paymentStatus === 'COMPLETED' && matchedPayment.status !== 'success') {
-        // Verify amount matches (Square amount is in cents)
-        const totalMoney = payment.total_money as { amount?: number } | undefined;
-        const squareAmountCents = (totalMoney?.amount as number) || 0;
+      if (paymentStatus === 'COMPLETED') {
+        const totalMoney = payment.total_money as { amount?: number; currency?: string } | undefined;
+        const squareAmountCents = totalMoney?.amount as number | undefined;
+        const squareCurrency = totalMoney?.currency as string | undefined;
+        const squarePaymentId = payment.id as string | undefined;
         const expectedCents = Math.round(matchedPayment.amount * 100);
-        if (squareAmountCents > 0 && Math.abs(squareAmountCents - expectedCents) > 1) {
-          console.error(`[SQUARE-WEBHOOK] Amount mismatch: Square=${squareAmountCents}, expected=${expectedCents} for payment ${matchedPayment.id}`);
-          await supabase.from('payments').update({ status: 'failed', gateway_status: 'amount_mismatch' }).eq('id', matchedPayment.id);
+        const expectedCurrency = (matchedPayment.currency as string || 'USD').toUpperCase();
+
+        // Require nonempty Square payment ID for COMPLETED events
+        if (!squarePaymentId) {
+          throw new Error('COMPLETED event missing Square payment.id — fail closed');
+        }
+
+        // Missing currency — fail closed
+        if (!squareCurrency) {
+          throw new Error('COMPLETED event missing currency — fail closed');
+        }
+
+        // Currency mismatch — fail closed
+        if (squareCurrency !== expectedCurrency) {
+          logger.error('[SQUARE-WEBHOOK] Currency mismatch');
+          throw new Error('Currency mismatch — fail closed');
+        }
+
+        // Missing or zero provider amount — fail closed
+        if (squareAmountCents == null || squareAmountCents <= 0) {
+          throw new Error('COMPLETED event missing or zero provider amount — fail closed');
+        }
+
+        // Amount mismatch — NEVER downgrade success/refunded
+        if (Math.abs(squareAmountCents - expectedCents) > 1) {
+          const isTerminal = matchedPayment.status === 'success' || matchedPayment.status === 'refunded';
+          if (!isTerminal) {
+            const { error: mismatchErr } = await supabase.from('payments')
+              .update({ gateway_status: 'amount_mismatch' })
+              .eq('id', matchedPayment.id)
+              .in('status', ['pending', 'failed']);
+            if (mismatchErr) throw new Error(`Mismatch update error: ${mismatchErr.message}`);
+          }
+          if (eventId && claimToken) await markEventCompleted(supabase, eventId, claimToken);
           return NextResponse.json({ received: true, error: 'amount_mismatch' });
         }
 
         const sourceType = payment.source_type as string | undefined;
 
-        await supabase
+        // Extract fees for accounting
+        let squareGatewayFee = 0;
+        let squareAppFee = 0;
+        try {
+          const processingFee = (payment.processing_fee as Array<{ amount_money?: { amount?: number } }>) || [];
+          squareGatewayFee = Math.round(
+            processingFee.reduce((sum: number, f) => sum + (f.amount_money?.amount || 0), 0),
+          ) / 100;
+        } catch { /* non-blocking */ }
+        try {
+          const appFeeMoney = payment.app_fee_money as { amount?: number } | undefined;
+          if (appFeeMoney?.amount) squareAppFee = appFeeMoney.amount / 100;
+        } catch { /* non-blocking */ }
+
+        const paymentMethod = sourceType === 'CASH_APP' ? 'cash_app_pay' : sourceType?.toLowerCase() || 'card';
+        const merchantNet = matchedPayment.amount - squareGatewayFee - squareAppFee;
+        const existingMeta = (matchedPayment.metadata as Record<string, unknown>) || {};
+        const reconciledMetadata = {
+          ...existingMeta,
+          square_payment_id: squarePaymentId,
+          square_payment_link_id: existingMeta.square_payment_link_id || matchedPayment.gateway_reference,
+          square_app_fee: squareAppFee,
+          square_merchant_net: merchantNet > 0 ? merchantNet : null,
+        };
+
+        // ── STEP 1: Terminal-safe payment status transition ──
+        // Only transitions pending/failed → success. Already-success/refunded are unaffected.
+        const { error: transitionErr } = await supabase
           .from('payments')
           .update({
             status: 'success',
             gateway_status: 'completed',
-            payment_method: sourceType === 'CASH_APP' ? 'cash_app_pay' : sourceType?.toLowerCase() || 'card',
+            gateway_reference: squarePaymentId,
+            payment_method: paymentMethod,
             paid_at: new Date().toISOString(),
+            actual_gateway_fee: squareGatewayFee,
+            metadata: reconciledMetadata,
           })
-          .eq('id', matchedPayment.id);
+          .eq('id', matchedPayment.id)
+          .in('status', ['pending', 'failed']);
 
-        // Extract Square processing fee from webhook payload
-        let squareGatewayFee = 0;
-        try {
-          const processingFee = (payment.processing_fee as Array<{ amount_money?: { amount?: number } }>) || [];
-          const totalFeeCents = processingFee.reduce((sum: number, f) => sum + (f.amount_money?.amount || 0), 0);
-          // Square fees are in cents — convert to dollars
-          squareGatewayFee = Math.round(totalFeeCents) / 100;
-        } catch {
-          logger.warn('[SQUARE WEBHOOK] Failed to extract processing fee');
+        if (transitionErr) throw new Error(`Payment transition error: ${transitionErr.message}`);
+
+        // ── STEP 2: Accounting reconciliation (runs even if already success) ──
+        // Persists Square payment.id, fees, payment method, and provider status
+        // without regressing the payment state.
+        if (matchedPayment.status === 'success' || matchedPayment.status === 'refunded') {
+          // Already terminal — reconcile accounting data only (no status change)
+          const { error: reconErr } = await supabase
+            .from('payments')
+            .update({
+              gateway_reference: squarePaymentId,
+              gateway_status: 'completed',
+              payment_method: paymentMethod,
+              actual_gateway_fee: squareGatewayFee,
+              metadata: reconciledMetadata,
+            })
+            .eq('id', matchedPayment.id);
+
+          if (reconErr) throw new Error(`Accounting reconciliation error: ${reconErr.message}`);
         }
 
-        // Confirm booking, record platform fees
+        // Financial work — only for non-terminal state (idempotent via UNIQUE constraints)
+        // If bot "I've Paid" already confirmed, the UNIQUE constraints prevent double-recording.
         await processSuccessfulPayment(supabase, {
           id: matchedPayment.id,
           amount: matchedPayment.amount,
@@ -130,9 +319,12 @@ export async function POST(request: NextRequest) {
           reservation_id: matchedPayment.reservation_id || null,
           order_id: matchedPayment.order_id || null,
           gateway_fee: squareGatewayFee,
-        });
+          collection_mode: matchedPayment.collection_mode || undefined,
+        }, { strict: true });
 
-        // Proactive confirmation: send WhatsApp message + post-completion
+        // Atomic notification via sendProactiveConfirmation.
+        // It uses an atomic claim (UPDATE ... WHERE confirmation_sent_at IS NULL)
+        // so only one caller sends. No metadata-based dedup needed.
         try {
           await sendProactiveConfirmation(supabase, {
             id: matchedPayment.id,
@@ -144,48 +336,308 @@ export async function POST(request: NextRequest) {
             order_id: matchedPayment.order_id || null,
           }, '[SQUARE WEBHOOK]');
         } catch (confirmErr) {
-          logger.error('[SQUARE WEBHOOK] Proactive confirmation error:', confirmErr);
+          logger.error('[SQUARE WEBHOOK] Notification error (non-fatal):', confirmErr);
         }
       } else if (paymentStatus === 'FAILED') {
-        await supabase
+        // Only from pending — NEVER downgrade success/refunded
+        const { error: failErr } = await supabase
           .from('payments')
           .update({ status: 'failed', gateway_status: 'failed' })
-          .eq('id', matchedPayment.id);
+          .eq('id', matchedPayment.id)
+          .in('status', ['pending']);
+        if (failErr) throw new Error(`Failed transition error: ${failErr.message}`);
       }
     }
 
-    // Mark event as processed AFTER all financial writes succeeded
-    if (eventId) {
-      await supabase
-        .from('processed_webhook_events')
-        .upsert(
-          { event_id: eventId, gateway: 'square', event_type: `square_${eventType}`, processed_at: new Date().toISOString() },
-          { onConflict: 'event_id', ignoreDuplicates: true },
-        );
+    // ── Refund events ──
+    if (eventType === 'refund.created' || eventType === 'refund.updated') {
+      const refund = data.refund as Record<string, unknown> | undefined;
+      if (refund) {
+        const squareRefundId = refund.id as string;
+        const refundStatus = refund.status as string | undefined;
+
+        if (squareRefundId && refundStatus) {
+          // Refund events MUST be scoped through merchant → payout_account → payment
+          const conn = await resolveMerchant(supabase, webhookMerchantId);
+
+          // Look up the refund via its payment's payout_account/business
+          const { data: localRefund, error: refLookupErr } = await supabase
+            .from('refunds')
+            .select('id, status, payment_id')
+            .eq('gateway', 'square')
+            .eq('gateway_refund_reference', squareRefundId)
+            .maybeSingle();
+
+          if (refLookupErr) throw new Error(`Refund lookup error: ${refLookupErr.message}`);
+
+          // Verify refund belongs to this merchant's business
+          if (localRefund?.payment_id) {
+            let refPayment;
+            if (conn.isConnect) {
+              const { data } = await supabase
+                .from('payments')
+                .select('payout_account_id')
+                .eq('id', localRefund.payment_id)
+                .eq('payout_account_id', conn.id!)
+                .maybeSingle();
+              refPayment = data;
+            } else {
+              const { data } = await supabase
+                .from('payments')
+                .select('payout_account_id')
+                .eq('id', localRefund.payment_id)
+                .eq('collection_mode', 'platform')
+                .is('payout_account_id', null)
+                .maybeSingle();
+              refPayment = data;
+            }
+
+            if (!refPayment) {
+              throw new Error('Refund payment does not belong to this merchant — scoping violation');
+            }
+          }
+
+          if (localRefund && !['success', 'failed'].includes(localRefund.status)) {
+            const finalStatus = refundStatus === 'COMPLETED' ? 'success'
+              : (refundStatus === 'FAILED' || refundStatus === 'REJECTED') ? 'failed'
+              : null;
+
+            if (finalStatus) {
+              // Extract fee reversal from Square's app_fee_money if present
+              // Use != null to preserve explicit zero (amount === 0 means no fee reversal, not "unknown")
+              const appFeeMoneyLocal = refund.app_fee_money as { amount?: number } | undefined;
+              const feeReversalLocal = appFeeMoneyLocal?.amount != null ? appFeeMoneyLocal.amount / 100 : null;
+
+              const { data: finalResult, error: finalErr } = await supabase.rpc('finalize_square_refund', {
+                p_refund_id: localRefund.id,
+                p_square_refund_id: squareRefundId,
+                p_final_status: finalStatus,
+                p_fee_reversed: feeReversalLocal,
+              });
+              if (finalErr) throw new Error(`Refund finalization RPC error: ${finalErr.message}`);
+              if (!finalResult?.success && finalResult?.reason !== 'already_finalized') {
+                throw new Error(`Refund finalization rejected: ${finalResult?.reason}`);
+              }
+            }
+          } else if (!localRefund) {
+            // Square-initiated refund: no local row exists yet — reconcile
+            const squarePaymentId = refund.payment_id as string | undefined;
+            if (!squarePaymentId) {
+              throw new Error('Refund event missing payment_id — cannot reconcile, fail closed for retry');
+            }
+
+            // Find the local payment by Square payment ID in metadata
+            let refPayment: { id: string; amount: number; currency: string; business_id: string; payout_account_id: string; gateway: string; waaiio_fee: number; collection_mode: string | null } | null = null;
+
+            if (conn.isConnect) {
+              // Connect: scope by payout_account_id
+              const { data: metaPayment, error: refPayErr } = await supabase
+                .from('payments')
+                .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee, collection_mode')
+                .eq('gateway', 'square')
+                .eq('payout_account_id', conn.id!)
+                .filter('metadata->>square_payment_id', 'eq', squarePaymentId)
+                .maybeSingle();
+              if (refPayErr) throw new Error(`Refund payment lookup error: ${refPayErr.message}`);
+              refPayment = metaPayment;
+
+              // Fallback: older reconciled payments have Square payment ID as gateway_reference
+              if (!refPayment) {
+                const { data: fallbackPay, error: fallbackErr } = await supabase
+                  .from('payments')
+                  .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee, collection_mode')
+                  .eq('gateway', 'square')
+                  .eq('payout_account_id', conn.id!)
+                  .eq('gateway_reference', squarePaymentId)
+                  .maybeSingle();
+                if (fallbackErr) throw new Error(`Refund payment fallback lookup error: ${fallbackErr.message}`);
+                refPayment = fallbackPay;
+              }
+            } else {
+              // Platform: scope by collection_mode='platform' + payout_account_id IS NULL
+              const { data: metaPayment, error: refPayErr } = await supabase
+                .from('payments')
+                .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee, collection_mode')
+                .eq('gateway', 'square')
+                .eq('collection_mode', 'platform')
+                .is('payout_account_id', null)
+                .filter('metadata->>square_payment_id', 'eq', squarePaymentId)
+                .maybeSingle();
+              if (refPayErr) throw new Error(`Refund payment lookup error: ${refPayErr.message}`);
+              refPayment = metaPayment;
+
+              if (!refPayment) {
+                const { data: fallbackPay, error: fallbackErr } = await supabase
+                  .from('payments')
+                  .select('id, amount, currency, business_id, payout_account_id, gateway, waaiio_fee, collection_mode')
+                  .eq('gateway', 'square')
+                  .eq('collection_mode', 'platform')
+                  .is('payout_account_id', null)
+                  .eq('gateway_reference', squarePaymentId)
+                  .maybeSingle();
+                if (fallbackErr) throw new Error(`Refund payment fallback lookup error: ${fallbackErr.message}`);
+                refPayment = fallbackPay;
+              }
+            }
+
+            if (!refPayment) {
+              throw new Error('Square-initiated refund: payment not yet reconciled — retryable');
+            }
+
+            if (refPayment) {
+              // Calculate refund amount from Square's amount_money
+              const refundAmountMoney = refund.amount_money as { amount?: number; currency?: string } | undefined;
+              const refundAmountCents = refundAmountMoney?.amount || 0;
+              const refundCurrency = refundAmountMoney?.currency as string | undefined;
+
+              // Validate positive amount
+              if (refundAmountCents <= 0) {
+                throw new Error('Refund amount is zero or negative — fail closed');
+              }
+
+              // Validate currency matches the payment currency
+              const paymentCurrency = ((refPayment.currency as string) || 'USD').toUpperCase();
+              if (!refundCurrency || refundCurrency.toUpperCase() !== paymentCurrency) {
+                throw new Error('Square-initiated refund currency mismatch');
+              }
+
+              const refundAmount = refundAmountCents / 100;
+
+              // Calculate fee reversal from app_fee_money if present
+              // Use != null to preserve explicit zero
+              const appFeeMoney = refund.app_fee_money as { amount?: number } | undefined;
+              const feeReversalCents = appFeeMoney?.amount != null ? appFeeMoney.amount : 0;
+              const feeReversal = feeReversalCents / 100;
+
+              // Check for unmatched claimed refund for this specific payment
+              const { data: unmatchedClaims, error: unmatchErr } = await supabase
+                .from('refunds')
+                .select('id, status, payment_id, amount')
+                .eq('payment_id', refPayment.id)
+                .eq('gateway', 'square')
+                .is('gateway_refund_reference', null)
+                .in('status', ['pending', 'processing', 'review_required'])
+                .order('created_at', { ascending: true });
+              if (unmatchErr) throw new Error(`Unmatched refund lookup error: ${unmatchErr.message}`);
+
+              let refundRowId: string;
+              let boundRefundId: string | null = null;
+
+              // Try to bind to a matching claim (same payment and approximately same amount)
+              if (unmatchedClaims && unmatchedClaims.length > 0) {
+                const matchingClaims = unmatchedClaims.filter(c =>
+                  c.payment_id === refPayment!.id && Math.abs(Number(c.amount) - refundAmount) < 0.01
+                );
+                if (matchingClaims.length > 1) {
+                  throw new Error('Multiple matching unmatched claims — ambiguous, fail closed');
+                }
+                if (matchingClaims.length === 0) {
+                  // Incompatible claims exist but none match — fail closed for review
+                  throw new Error('Square-initiated refund: incompatible claims exist, manual review required');
+                }
+                if (matchingClaims.length === 1) {
+                  const { data: bound, error: bindErr } = await supabase.from('refunds')
+                    .update({ gateway_refund_reference: squareRefundId, status: 'processing' })
+                    .eq('id', matchingClaims[0].id)
+                    .is('gateway_refund_reference', null) // CAS
+                    .select('id')
+                    .maybeSingle();
+                  if (bindErr) throw new Error(`Refund bind error: ${bindErr.message}`);
+                  if (bound) {
+                    boundRefundId = bound.id;
+                    logger.info(`[SQUARE-WEBHOOK] Bound Square refund ${squareRefundId} to existing claim ${matchingClaims[0].id}`);
+                  } else {
+                    // CAS failed — another worker bound it. Re-read the winner
+                    const { data: winner } = await supabase.from('refunds')
+                      .select('id').eq('gateway_refund_reference', squareRefundId).maybeSingle();
+                    if (winner) boundRefundId = winner.id;
+                  }
+                }
+              }
+
+              if (boundRefundId) {
+                refundRowId = boundRefundId;
+              } else {
+                // Create a local refund row
+                const { data: newRefund, error: insertErr } = await supabase
+                  .from('refunds')
+                  .insert({
+                    payment_id: refPayment.id,
+                    business_id: refPayment.business_id,
+                    amount: refundAmount,
+                    status: 'pending',
+                    gateway: 'square',
+                    gateway_refund_reference: squareRefundId,
+                    refund_type: refundAmount >= Number(refPayment.amount) ? 'full' : 'partial',
+                    planned_fee_reversal: feeReversal,
+                    is_direct_split: refPayment.collection_mode === 'connect',
+                    initiated_by_role: 'admin',
+                  })
+                  .select('id')
+                  .single();
+
+                if (insertErr) throw new Error(`Refund insert error: ${insertErr.message}`);
+                refundRowId = newRefund.id;
+              }
+
+              // Finalize if COMPLETED or FAILED — leave PENDING as processing for later webhook
+              const reconFinalStatus = refundStatus === 'COMPLETED' ? 'success'
+                : (refundStatus === 'FAILED' || refundStatus === 'REJECTED') ? 'failed'
+                : null;
+
+              if (reconFinalStatus) {
+                const { data: reconResult, error: reconErr } = await supabase.rpc('finalize_square_refund', {
+                  p_refund_id: refundRowId,
+                  p_square_refund_id: squareRefundId,
+                  p_final_status: reconFinalStatus,
+                  p_fee_reversed: feeReversal, // preserve 0 — don't convert to null
+                });
+                if (reconErr) throw new Error(`Refund reconciliation RPC error: ${reconErr.message}`);
+                if (!reconResult?.success && reconResult?.reason !== 'already_finalized') {
+                  throw new Error(`Refund reconciliation rejected: ${reconResult?.reason}`);
+                }
+              } else {
+                // PENDING: mark as processing, wait for COMPLETED webhook
+                const { error: procErr } = await supabase.from('refunds')
+                  .update({ status: 'processing' })
+                  .eq('id', refundRowId)
+                  .in('status', ['pending']);
+                if (procErr) throw new Error(`Refund processing status update error: ${procErr.message}`);
+              }
+
+              logger.info(`[SQUARE-WEBHOOK] Reconciled Square-initiated refund ${squareRefundId} for payment ${refPayment.id}`);
+            }
+          }
+        }
+      }
+    }
+
+    // ── OAuth revocation ──
+    if (eventType === 'oauth.authorization.revoked') {
+      // Missing merchant_id on revocation MUST fail closed — cannot silently complete
+      if (!webhookMerchantId) {
+        throw new Error('OAuth revocation missing merchant_id — fail closed');
+      }
+      const { handleOAuthRevocation } = await import('@/lib/payments/square-token');
+      await handleOAuthRevocation(supabase, webhookMerchantId);
+    }
+
+    // Complete event — throws if claim-token guard fails
+    if (eventId && claimToken) {
+      await markEventCompleted(supabase, eventId, claimToken);
     }
 
     return NextResponse.json({ received: true });
   } catch (error) {
     Sentry.captureException(error);
 
-    // Mark event as failed so Square retries
-    if (eventId) {
+    if (eventId && claimToken) {
       try {
         const supabase = createServiceClient();
-        await supabase.from('processed_webhook_events')
-          .update({
-            status: 'failed',
-            last_error: String(error).slice(0, 500),
-            last_attempted_at: new Date().toISOString(),
-          })
-          .eq('event_id', eventId);
-      } catch {
-        // Best-effort — don't mask the original error
-      }
+        await markEventFailed(supabase, eventId, claimToken, 'processing_error');
+      } catch { /* best effort */ }
     }
 
-    // Return 500 so Square retries
     return NextResponse.json({ error: 'Processing failed' }, { status: 500 });
   }
 }
-

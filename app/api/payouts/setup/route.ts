@@ -154,6 +154,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to save payout account' }, { status: 500 });
     }
 
+    // Auto-set payout_mode to direct_split when merchant connects their provider
+    await supabase
+      .from('businesses')
+      .update({ payout_mode: 'direct_split' })
+      .eq('id', business_id);
+
     return NextResponse.json({ success: true, payout_account_id: payout.id });
   } catch (error) {
     logger.error('Setup payout error:', (error as Error).message);

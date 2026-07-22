@@ -24,9 +24,10 @@ describe('Webhook idempotency patterns', () => {
       expect(processSuccessSource).toContain(".in('status', ['pending'])");
     });
 
-    it('invoice payment checks if already paid before incrementing', () => {
-      // processInvoicePayment has an idempotency guard:
-      // if (invoice.status === 'paid') return;
+    it('invoice payment uses atomic RPC for idempotency', () => {
+      // processInvoicePayment delegates to apply_invoice_payment RPC
+      // which handles idempotency via UNIQUE payment_id and FOR UPDATE lock
+      expect(processSuccessSource).toContain("apply_invoice_payment");
       expect(processSuccessSource).toContain("invoice.status === 'paid'");
     });
 
@@ -46,9 +47,11 @@ describe('Webhook idempotency patterns', () => {
       expect(reservationSection).toContain(".in('status', ['pending'])");
     });
 
-    it('campaign donation uses pending status guard', () => {
-      // campaign_donations update is gated on pending status
-      expect(processSuccessSource).toContain(".eq('status', 'pending')");
+    it('campaign donation uses atomic RPC for idempotency', () => {
+      // processCampaignDonation delegates to apply_campaign_donation RPC
+      // which handles pending guard + increment atomically
+      expect(processSuccessSource).toContain("apply_campaign_donation");
+      expect(processSuccessSource).toContain("result?.success");
     });
 
     it('platform fee insert handles duplicate gracefully', () => {

@@ -5,6 +5,172 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-19
+
+### Phase 1 Close-out: Payment Routing & Connection Safety
+
+- **A: OAuth replay safety** — Replaced platform_settings-based OAuth nonce storage with dedicated `oauth_states` table (migration 288). Consumption is now truly atomic via `consume_oauth_state` RPC (UPDATE...WHERE consumed=false RETURNING). Concurrent test proves exactly one consumer wins. `consumeOAuthState()` now returns the full stored payload (user, business, provider, account bindings) instead of boolean. Stripe callback validates provider mismatch and propagates DB errors. Files: `lib/payments/oauth-state.ts`, `app/api/payouts/stripe-callback/route.ts`, migration 288.
+- **B: Authoritative routing** — Retired `gatewayOverride` parameter from `initializePayment()`. The resolver (`resolvePaymentRoute`) is now the sole authority for gateway selection. Removed `gatewayOverride` from all 13 callers (6 bot flows, 7 API routes). Added `is_active=true` filter to resolver query. Added provider-identifier fallback: managed connections without subaccount_code/stripe_account_id, connect without stripe_account_id, and flutterwave_mid without flutterwave_mid all safely fall back to platform with warning. Files: `lib/bot/flows/shared/payment.ts`, `lib/payments/route-resolver.ts`, all flow files, all payment API routes.
+- **C: All payment boundaries** — `pay-link/pay` now routes through the shared `initializePayment` (removes duplicate payment INSERT that gateway also creates). `recurring/setup` now uses `resolvePaymentRoute` for provider selection instead of hardcoded country check. Recurring subscriptions explicitly use platform collection mode (connected-provider recurring is Phase 2). Files: `app/api/pay-link/pay/route.ts`, `app/api/recurring/setup/route.ts`.
+- **D: Verification routing** — `verifyPayment()` now looks up the stored payment record's gateway instead of using the country default. For BYO payments, retrieves the merchant's decrypted credentials via the stored `payout_account_id`. Falls back to country default only if no payment record found. File: `lib/bot/flows/shared/payment.ts`.
+- **E: Persist route identity** — All 5 gateway implementations (Stripe, Paystack, Flutterwave, Square, PayPal) + charge-saved now persist `collection_mode`, `fee_bearer`, `payout_account_id`, and `waaiio_fee` on every payment INSERT (both mock and production paths). Added `feeBearerMode`, `payoutAccountId`, `waaiioFee` to `InitPaymentOpts`. Files: all gateway files in `lib/payments/`, `lib/payments/types.ts`.
+- **F: Sensitive-field authorization** — Created trigger `trg_payout_accounts_sensitive_fields` (migration 289) that blocks browser/authenticated clients from modifying `is_default`, `connection_status`, `connection_mode`, `health_status`, `verified_at`, `last_health_check_at`. Only service_role bypasses (for RPCs and admin routes). Addresses the gap where migration 285 had comments but no enforcement SQL.
+- **G: Runtime tests** — New test file `lib/__tests__/payment-phase1-closeout.test.ts` covers: concurrent OAuth consumption (5 parallel, exactly 1 wins), expired OAuth rejection, resolver route winning (no gatewayOverride), inactive default fallback, missing provider ID fallback, BYO fee fields passed through, verification using stored gateway, Paystack outbound bearer=subaccount payload. Updated existing invariant tests for new `consumeOAuthState` return type.
+
+**Could break:** Code that passes `gatewayOverride` to `initializePayment` will get a TypeScript error (parameter removed). Code that reads `consumed` as boolean from `consumeOAuthState` needs to check for null instead. `platform_settings`-based OAuth state rows will be orphaned (new states use `oauth_states` table).
+
+### Phase 1 Correction Round
+
+- **1: Meta catalog through shared initializer** — `handleCatalogOrder` in `app/api/webhook/meta-cloud/route.ts` now uses `initializePayment` from shared/payment.ts instead of direct `getPaymentGateway`/`getPaymentGatewayByName`. Removed the duplicate `payments` INSERT (gateway already creates the record). Source-level test proves no direct factory import and no duplicate INSERT.
+- **2: Sensitive-field enforcement expanded** — Migration 289 rewritten with server-controlled allowlist. UPDATE trigger now covers: `is_default`, `is_active`, `gateway`, `business_id`, `connection_mode`, `connection_status`, `subaccount_code`, `stripe_account_id`, `flutterwave_mid`, `verified_at`, `health_status`, `last_health_check_at`, `platform_percentage`. INSERT trigger forces safe defaults (`is_default=false`, `is_active=false`, `connection_status='pending'`, `health_status='unchecked'`, `verified_at=NULL`). Integration tests with real authenticated JWT prove rejection.
+- **3: Stripe callback uses service client** — All `payout_accounts` mutations now use `service` (service_role client), not the authenticated `supabase` client. Business ownership verified via RLS-enforced SELECT before mutations. Every DB error (revoke, insert, business update) is checked and redirects to error URL. Source-level test proves pattern.
+- **4: verifyPayment fail-closed** — Returns `false` for: missing payment record, unsupported gateway, BYO with no valid credential, database error. No country-default fallback. 4 dedicated unit tests.
+- **5: Handler-level tests** — Source-level verification that Meta catalog, pay-link, and recurring all route through the shared initializer or resolver. Stripe callback verified for service client usage and error checking.
+- **6: Resolver requires healthy** — Changed from `!== 'unhealthy'` to `!== 'healthy'` — now rejects both 'unhealthy' and 'unchecked'. Aligns with `set_default_connection` RPC. Integration test proves 'unchecked' → platform fallback.
+
+---
+
+## 2026-07-16
+
+### Pre-Launch Finance Safety Hardening
+- `app/api/admin/fee-invoices/[id]/route.ts` — **NEW** Server API for fee invoice mark-paid and waive actions with compare-and-set guards, mandatory audit logging, and audit-failure rollback
+- `app/api/admin/payouts/account/route.ts` — **NEW** Server endpoint for payout account details; always returns masked account_number (`****1234`) so full bank numbers never reach the browser
+- `admin/src/pages/FeeInvoices.tsx` — Rewired mark-paid and waive handlers from direct `adminDb.update()` to server API calls via `fetch()`. Removed `adminDb` and `logAudit` imports (audit now server-side only)
+- `admin/src/pages/Payouts.tsx` — Rewired `loadApproveAccount()` from direct DB query to server API. Added `canApprove` role check (`isFullAdmin`): finance users see the payout list read-only but cannot see Approve/Reject buttons or modals. Account number display no longer double-masks (API returns pre-masked value)
+- **Affects:** Fee invoice management, payout approval flow, payout account display. Finance role is now read-only on payouts. All fee invoice mutations are server-side with audit trail.
+
+### ResellerPayouts: Replace Direct DB Mutations with Server API Calls
+- `admin/src/pages/ResellerPayouts.tsx` — Security hardening:
+  1. Replaced direct `adminDb.from('reseller_payouts').insert()` with `fetch(POST /api/admin/reseller-payouts)` — server now handles commission calculation, duplicate detection, and audit logging
+  2. Replaced direct `adminDb.from('reseller_payouts').update()` with `fetch(PATCH /api/admin/reseller-payouts/[id])` — server now handles state validation, balance verification (mark_paid), and role enforcement
+  3. Removed client-side `logAudit()` calls — the server API routes already audit-log all actions
+  4. Action type renamed from `'pay'` to `'mark_paid'` to match API contract
+  5. Added `getAccessToken()` helper and session expiry handling
+  6. Approve/reject buttons already gated to `isFullAdmin` — matches server-side role enforcement (admin-only for approve/reject, admin+finance for mark_paid)
+- **Affects:** Reseller payout creation & status changes. All mutations now go through authenticated server routes with proper auth, role checks, balance verification, and duplicate detection. Read-only queries (load data, calculate commission preview) remain as client-side RLS-gated queries.
+
+### Admin UI Confirmation Dialogs & Audit Logging
+- `admin/src/pages/Payouts.tsx` — Added `window.confirm()` to approve and reject handlers before API call
+- `admin/src/pages/ResellerPayouts.tsx` — Added `window.confirm()` to approve, reject, and mark-as-paid actions
+- `admin/src/pages/FeeInvoices.tsx` — Added `window.confirm()` to mark-as-paid and waive handlers
+- `app/api/admin/reseller-payouts/[id]/route.ts` — Added `admin_audit_logs` insert after approve/reject/mark_paid status updates
+- `app/api/admin/reseller-payouts/route.ts` — Added `admin_audit_logs` insert after payout creation (POST handler)
+- **Affects:** All financial admin actions now require explicit confirmation. Reseller payout lifecycle fully audit-logged server-side.
+
+### Payout Approval Idempotency & State Transition Fixes
+- `app/api/admin/payouts/[id]/approve/route.ts` — 3 critical fixes:
+  1. Removed 'approved' from approvable states (`['pending', 'held']` only) — prevents double-approval triggering duplicate transfers
+  2. Added compare-and-set guard on UPDATE (`.in('status', ['pending', 'held'])` + `.maybeSingle()`) — returns 409 if another admin already processed it
+  3. Added `gateway_transfer_code` pre-check — rejects if transfer was already initiated (409)
+- `app/api/admin/payouts/route.ts` — Finance role access: `requireAdmin()` now accepts both 'admin' and 'finance' roles for GET (list payouts). Approve action remains admin-only.
+- `app/api/admin/query/route.ts` — Account number masking: non-admin roles see `****XXXX` for `payout_accounts.account_number`
+- **Affects:** Payout approval flow, admin panel payout list, admin query proxy. Prevents concurrent double-disbursement, adds finance role visibility, masks bank details for non-admin roles.
+
+### Discovery/Marketplace Safety Fixes
+- `lib/marketplace/search.ts` — 4 fixes:
+  1. `discovery_enabled` filter changed from `.or('discovery_enabled.is.null,discovery_enabled.eq.true')` to `.eq('discovery_enabled', true)` — NULL no longer treated as discoverable
+  2. Coordinate truthiness fix: `criteria.latitude &&` replaced with `criteria.latitude != null &&` (0 is a valid coordinate)
+  3. `criteria.radiusKm &&` replaced with `criteria.radiusKm != null && criteria.radiusKm > 0 &&` (0 is falsy)
+  4. `sanitizeFilterValue()` now used for both `category` and `query` params (was using manual regex only, missing PostgREST injection chars)
+- `app/(marketing)/directory/page.tsx` — Added `.eq('discovery_enabled', true)` filter to SEO server query (was missing, only checked status/bot_code)
+- `app/(marketing)/directory/DirectoryClient.tsx` — 2 fixes:
+  1. Country-aware WhatsApp numbers: replaced single `SHARED_WHATSAPP_NUMBER` with `SHARED_WHATSAPP_NUMBERS` record keyed by country code (NG/US/GB/CA/GH)
+  2. WhatsApp CTA button hidden when no number is configured for the business's country
+- **Affects:** Marketplace search, directory page, WhatsApp CTA links. Prevents non-opted-in businesses from appearing, fixes coordinate 0 bug, adds PostgREST injection protection, routes WhatsApp to correct country number.
+
+### Pre-Launch Finance & Booking Validation Hardening
+- `app/api/invoices/route.ts` — 5 new validations:
+  1. Percent discount > 100% rejected
+  2. Negative total from flat discount rejected (floor check after computation)
+  3. Recurring frequency validated against allowlist (weekly/biweekly/monthly/quarterly/yearly)
+  4. Line item count capped at 200
+  5. Item description length capped at 2000 characters
+- `app/api/bookings/public/create/route.ts` — 4 improvements:
+  1. Business status check added (`.eq('status', 'active')`) alongside existing `is_active`
+  2. Time format regex hardened from `\d{2}:\d{2}` to `([01]\d|2[0-3]):[0-5]\d` (rejects 99:99 etc.)
+  3. Date-in-past check now uses business timezone via `Intl.DateTimeFormat` instead of server UTC
+  4. Capability check added: requires `scheduling` or `appointment` capability enabled
+- **Affects:** Invoice creation, public booking creation. Prevents financial manipulation via oversized discounts, invalid recurring configs, and bookings on businesses without scheduling capability.
+
+### Auto-Payout Financial Integrity Hardening
+- `app/api/cron/auto-payout/route.ts` — Added comprehensive DB error handling across all queries and mutations:
+  1. Business fetch query now throws on error (exits cron with 500)
+  2. All 4 parallel batch queries (existing payouts, platform fees, adjustments, payout accounts) now check errors and throw on failure
+  3. Payout insert checks for error/null — logs + Sentry + skips business instead of proceeding to transfer
+  4. Adjustment update checks for error — logs inconsistency but does not skip (payout already created)
+  5. Both success and failure status updates on Paystack transfer now check for DB errors
+  6. Idempotent Paystack transfer: stores `transfer_reference` (payout_{id}) before calling Paystack, sends as `reference` field for dedup
+  7. Auto-approve limit no longer silently falls back to US/1000 for unknown countries — logs warning and defaults to 0 (forces manual review)
+  8. Added revenue comment clarifying `transaction_amount` is the fee-base amount from successful payments only
+- **Affects:** All weekly auto-payout runs. Prevents silent money transfer on failed DB inserts, prevents duplicate Paystack transfers on retry, forces manual review for unconfigured countries.
+
+### Package Session Deduction Safety Hardening
+- `supabase/migrations/247_package_session_deduction_safety.sql` — Replaces 1-param RPC with fully atomic 4-param `deduct_package_session(business_id, phone, service_id, booking_id)`. Enrollment lookup + row lock + deduction + replay protection all in one transaction. Creates `package_session_log` table with UNIQUE(enrollment_id, booking_id) to prevent double-deductions on webhook replay. RPC revoked from public/anon/authenticated, granted only to service_role.
+- `lib/payments/process-success.ts` — Simplified `deductPackageSession()` to call the new atomic RPC directly (no client-side enrollment lookup). Adds Sentry error capture. Internal try/catch so the function never throws.
+- **Affects:** All booking payment confirmations that trigger package session deduction. Fixes race condition where concurrent webhooks could double-deduct. Fixes replay vulnerability. No breaking changes to callers.
+
+### Auto-Deduct Package Sessions on Booking Confirmation
+- `supabase/migrations/246_deduct_package_session_rpc.sql` — New SECURITY DEFINER RPC `deduct_package_session(p_enrollment_id)`. Atomically increments `sessions_used` only if `sessions_used < sessions_total`, `is_active = true`, and `expires_at > NOW()`. Returns boolean.
+- `lib/payments/process-success.ts` — Added `deductPackageSession()` function. After booking confirmation, looks up the customer's active package enrollment (by business_id, guest_phone, service_id match in `service_packages.service_ids`). Uses soonest-expiring-first strategy. Calls RPC for atomic deduction. Non-blocking (errors caught and logged, never fails payment confirmation).
+- **Affects:** All booking confirmations via payment webhooks. Package enrollments now auto-decrement when a covered service is booked and paid for. No manual session tracking needed.
+
+### JSON-LD Structured Data for Event and Property Public Pages
+- `app/e/[slug]/page.tsx` — Enhanced existing JSON-LD with: combined date+time for startDate/endDate (ISO 8601), eventStatus, eventAttendanceMode, organizer URL, location address, per-ticket-type offers array with availability and URL. Uses `getCurrencyCode()` instead of inline currencyMap.
+- `app/property/[id]/page.tsx` — Added new JSON-LD `LodgingBusiness` schema with: name, description, image, address (PostalAddress), numberOfRooms, offer with price/currency/unitCode, brand organization link.
+- **Affects:** SEO and AI discoverability for public event and property pages. No visual or functional changes.
+
+### Auto-Upgrade Membership Tier on Spend Threshold
+- `supabase/migrations/245_auto_upgrade_membership_tier.sql` — New BEFORE UPDATE trigger on `customer_profiles.total_spent`. When total_spent increases, finds the highest qualifying `membership_tiers` row (by min_spend) and upgrades the customer. Never downgrades. Handles NULL tier (new customers), businesses with no tiers (no-op), and same-tier (no-op). SECURITY DEFINER. Sets `tier_earned_at` on upgrade.
+- **Affects:** Any code path that updates `customer_profiles.total_spent` (migration 165 `increment_customer_visit` RPC, any direct UPDATE). Membership tier changes are now automatic — no application-level code needed.
+
+### Field-Level Server-Side Validation on Critical API Routes
+- `app/api/bookings/public/create/route.ts` — Added UUID validation on serviceId, guestName max 200 chars, quantity positive integer with bounds (1-50), structured field-level error responses.
+- `app/api/invoices/route.ts` — Added UUID validation on business_id, customer_name max 200 chars, per-item validation (description required, quantity positive, unit_price non-negative), due_date format, tax_rate 0-100 range, discount_value non-negative.
+- `app/api/products/bulk/route.ts` — Added UUID validation on business_id, array type and emptiness checks with structured errors.
+- `app/api/events/purchase/route.ts` — Added UUID validation on ticketTypeId, guestName max 200 chars, consolidated email/quantity validation with field-specific error messages.
+- All routes now return `{ error: 'Validation failed', fields: { fieldName: 'message' } }` on 400 for client-friendly error handling.
+- **Affects:** All public booking/purchase flows, invoice creation, bulk product import. No breaking changes — existing valid requests pass through unchanged.
+
+### Pre-Launch Hardening: Ace AI Copilot (Critical Fix)
+- `app/api/copilot/query/route.ts` — **Complete rewrite.** Fixed 10 bugs: bookings used `created_at` instead of `date` column; revenue had no currency; week/month used rolling days not calendar; no business timezone; unpaid included cancelled; top products had wrong column filter and showed no names; used nonexistent `payment_status` column.
+- `lib/copilot/classify-intent.ts` — New file. Extracted intent classifier (20 report types, was 6). Supports: bookings (today/upcoming/week/month), orders (today/pending), revenue (today/week/month/compare), unpaid (bookings/invoices), top products, top services, new/returning customers, cancellation rate, check-ins, low stock, attention items.
+- `components/dashboard/Copilot.tsx` — Honest UI ("Quick answers about..." not "Ask anything"), capability-aware quick questions, follow-up context, auto-scroll, mobile responsive, whitespace-pre-line.
+- Role-based permissions: staff/support blocked from financial reports via `business_members` table.
+- **Tests:** 49 new intent classification tests in `lib/copilot/__tests__/classify-intent.test.ts`.
+- **Affects:** All dashboard copilot users. Team members can now access copilot with role-appropriate restrictions.
+
+### Pre-Launch Hardening: Remove Hardcoded WhatsApp Fallbacks (Critical)
+- `lib/support-contact.ts` — New centralized helper. `getSupportWhatsAppNumber()` and `getSupportWhatsAppLink()` read from `NEXT_PUBLIC_WHATSAPP_NUMBER_{country}` env vars. Returns empty string if not configured (safe).
+- Removed hardcoded `12029226251` from 11 files: Footer, layout, HomeClient, contact, directory, OnboardingWizard, StepAuth, dashboard page, support page, whatsapp connect, ReturnToWhatsApp.
+- `app/api/onboarding/subscribe/route.ts` — Uses `FALLBACK_EMAIL_DOMAIN` env var.
+- **Production requirement:** Set `NEXT_PUBLIC_WHATSAPP_NUMBER_US` in Vercel.
+- **Affects:** All marketing pages, onboarding, dashboard. WhatsApp buttons hidden if env var not set.
+
+### Pre-Launch Hardening: Dashboard Capability Gating (Security)
+- Added `useRequireCapability()` to 14 dashboard pages that were missing it. Users could bypass sidebar hiding by navigating directly to URLs like `/dashboard/invoices`.
+- Pages gated: invoices, properties (3 pages), forms, surveys, packages, locations, waivers, staff, team, contracts, reports, campaigns.
+- Redirects to `/dashboard/capabilities?upgrade={cap}` if capability missing.
+- **Affects:** All growth/business-tier feature pages. Free-tier pages unchanged.
+
+### Pre-Launch Hardening: API Capability Checks (Security)
+- `lib/api-auth.ts` — Extended `authenticateRequest` with `requireCapability` option.
+- Added capability verification to 12 POST API routes: invoices, broadcasts, surveys, packages, locations, waivers, contracts, staff, reports, campaigns, loyalty, referrals.
+- Returns 403 with clear error if capability not enabled.
+- **Affects:** All tier-gated API mutations. Prevents feature bleed via direct API calls.
+
+### Pre-Launch Hardening: Dashboard Finance Timezone Fix
+- `app/dashboard/financials/page.tsx` — Monthly revenue chart and date filters now use business timezone via `Intl.DateTimeFormat`. Was using UTC, causing late-night transactions to appear in wrong month.
+- `app/dashboard/payouts/history/page.tsx` — Monthly totals and chart buckets now use business timezone.
+- **Affects:** Financials and payout history for businesses in non-UTC timezones.
+
+### Pre-Launch Hardening: Auto-Approve Limits Admin-Configurable
+- `lib/platformSettings.ts` — Added `auto_approve_limits` to PlatformSettings interface and loader.
+- `app/api/cron/auto-payout/route.ts` — Replaced hardcoded `AUTO_APPROVE_LIMIT_NGN`/`AUTO_APPROVE_LIMIT_USD` with `settings.auto_approve_limits[countryCode]`.
+- `supabase/migrations/244_auto_approve_limits_setting.sql` — Seeds per-country limits in `platform_settings`.
+- **Affects:** Auto-payout cron. Admin can now adjust limits via PlatformSettings page.
+
+---
+
 ## 2026-07-14
 
 ### UX: Value-first onboarding redesign

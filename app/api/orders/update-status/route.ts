@@ -54,6 +54,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, notified: false });
     }
 
+    // Enforce state machine transitions
+    const ALLOWED_TRANSITIONS: Record<string, string[]> = {
+      pending: ['confirmed', 'cancelled'],
+      confirmed: ['processing', 'cancelled'],
+      processing: ['ready', 'cancelled'],
+      ready: ['shipped', 'delivered', 'cancelled'],
+      shipped: ['delivered'],
+      delivered: [],
+      cancelled: [],
+    };
+    if (!ALLOWED_TRANSITIONS[order.status]?.includes(status)) {
+      return NextResponse.json(
+        { error: `Cannot transition from ${order.status} to ${status}` },
+        { status: 400 },
+      );
+    }
+
     // Update order status
     await supabase
       .from('orders')

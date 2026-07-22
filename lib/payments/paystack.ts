@@ -13,10 +13,8 @@ export class PaystackGateway implements PaymentGateway {
     const amountInKobo = Math.round(opts.amount * 100);
     const email = opts.userEmail || `${opts.phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
 
-    // Connect mode: use platform key; BYO: business's own key; else: platform key
-    const secretKey = opts.connectAccountId
-      ? paystackSecretKey
-      : (opts.isByo && opts.byoSecretKey ? opts.byoSecretKey : paystackSecretKey);
+    // BYO: business's own key; else: platform key
+    const secretKey = opts.isByo && opts.byoSecretKey ? opts.byoSecretKey : paystackSecretKey;
 
     try {
       if (!secretKey) {
@@ -29,12 +27,17 @@ export class PaystackGateway implements PaymentGateway {
           invoice_id: opts.invoiceId || null,
           campaign_id: opts.campaignId || null,
           reservation_id: opts.reservationId || null,
+          business_id: opts.businessId || null,
           user_id: opts.userId,
           amount: opts.amount,
           currency: opts.currency,
           gateway: 'paystack',
           gateway_reference: mockRef,
           status: 'pending',
+          collection_mode: opts.collectionMode || 'platform',
+          fee_bearer: opts.feeBearerMode || 'platform',
+          payout_account_id: opts.payoutAccountId || null,
+          waaiio_fee: opts.waaiioFee ?? 0,
           metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null, byo: !!opts.isByo },
         });
         return { url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/pay?ref=${mockRef}`, reference: mockRef };
@@ -42,9 +45,7 @@ export class PaystackGateway implements PaymentGateway {
 
       // Build split params
       let splitParams: Record<string, unknown> = {};
-      if (opts.connectAccountId) {
-        // Connect mode: split is pre-configured at account level, no params needed
-      } else if (opts.isByo && opts.byoPlatformSubaccount && opts.platformFeeAmount != null) {
+      if (opts.isByo && opts.byoPlatformSubaccount && opts.platformFeeAmount != null) {
         // BYO reversed split: platform subaccount on business's account receives platform fee
         // transaction_charge = amount business keeps (total minus platform fee) in kobo
         const businessKeeps = Math.round((opts.amount - opts.platformFeeAmount) * 100);
@@ -53,21 +54,20 @@ export class PaystackGateway implements PaymentGateway {
           transaction_charge: businessKeeps,
         };
       } else if (opts.subaccountCode) {
-        // Normal platform split: business subaccount on platform account
+        // Managed split: business subaccount on platform account
+        // bearer=subaccount means the business bears the gateway fee
+        // transaction_charge = Waaiio's platform fee (what platform keeps)
         splitParams = {
           subaccount: opts.subaccountCode,
           transaction_charge: opts.platformFeeAmount ? Math.round(opts.platformFeeAmount * 100) : undefined,
+          bearer: 'subaccount',
         };
       }
 
-      // Build headers — add X-Connect-Account for Connect mode
       const headers: Record<string, string> = {
         Authorization: `Bearer ${secretKey}`,
         'Content-Type': 'application/json',
       };
-      if (opts.connectAccountId) {
-        headers['X-Connect-Account'] = opts.connectAccountId;
-      }
 
       const response = await fetch('https://api.paystack.co/transaction/initialize', {
         method: 'POST',
@@ -115,6 +115,10 @@ export class PaystackGateway implements PaymentGateway {
         gateway: 'paystack',
         gateway_reference: data.data.reference,
         status: 'pending',
+        collection_mode: opts.collectionMode || 'platform',
+        fee_bearer: opts.feeBearerMode || 'platform',
+        payout_account_id: opts.payoutAccountId || null,
+        waaiio_fee: opts.waaiioFee ?? 0,
         metadata: {
           access_code: data.data.access_code,
           reference_code: opts.referenceCode,
@@ -223,6 +227,7 @@ export class PaystackGateway implements PaymentGateway {
       }
       return {
         success: true,
+        outcome: 'succeeded',
         gatewayRefundReference: `mock_refund_ps_${Date.now()}`,
         gatewayResponse: { mock: true },
       };
@@ -256,19 +261,28 @@ export class PaystackGateway implements PaymentGateway {
       if (data.status === true) {
         return {
           success: true,
+          outcome: 'succeeded',
           gatewayRefundReference: data.data?.transaction?.reference || data.data?.id?.toString(),
           gatewayResponse: data.data,
         };
       }
 
+      // Paystack returns clear rejection messages for definitive failures
+      // Paystack rejection pattern matching
+      const errorText = (data.message as string || '').toLowerCase();
+      const isPermanent = ['transaction has been fully reversed', 'transaction not found', 'refund not allowed', 'amount greater than']
+        .some(pattern => errorText.indexOf(pattern) >= 0);
+
       return {
         success: false,
+        outcome: isPermanent ? 'definitively_failed' : 'ambiguous',
         errorMessage: data.message || 'Paystack refund failed',
         gatewayResponse: data,
       };
     } catch (error) {
       return {
         success: false,
+        outcome: 'ambiguous',
         errorMessage: `Paystack refund error: ${(error as Error).message}`,
       };
     }

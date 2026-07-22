@@ -9,11 +9,11 @@ import { logger, generateRequestId } from '@/lib/logger';
 import { transcribeAudio } from '@/lib/bot/transcription';
 import { checkAIFeature, incrementAIUsage, getVoiceNotSupportedMessage } from '@/lib/bot/ai-tier-guard';
 import { createWhatsAppUser } from '@/lib/bot/flows/shared/user';
-import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/factory';
 import { getCurrencyForCountry } from '@/lib/channels/catalog';
+import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
-import type { CountryCode, PaymentGatewayName } from '@/lib/constants';
+import type { CountryCode } from '@/lib/constants';
 
 /**
  * POST /api/webhook/meta-cloud
@@ -134,40 +134,22 @@ async function handleCatalogOrder(
 
   let paymentLine = '';
 
-  // Initialize payment if total > 0
+  // Initialize payment through the shared authoritative initializer
+  // (resolver determines gateway, creates single payment record, applies split params)
   if (totalAmount > 0) {
     try {
-      const gatewayName = (biz.payment_gateway || undefined) as PaymentGatewayName | undefined;
-      const gateway = gatewayName
-        ? getPaymentGatewayByName(gatewayName)
-        : getPaymentGateway((biz.country_code || 'NG') as CountryCode);
-
-      const paymentResult = await gateway.initializePayment({
-        supabase,
+      const paymentResult = await initializePayment(supabase, {
         orderId,
         userId,
         amount: totalAmount,
-        currency,
         referenceCode,
         businessName: biz.name,
         phone,
-        callbackUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/payment-success`,
+        countryCode: (biz.country_code || 'NG') as CountryCode,
         businessId: biz.id,
       });
 
       if (paymentResult?.url) {
-        // Create payment record
-        await supabase.from('payments').insert({
-          business_id: biz.id,
-          order_id: orderId,
-          user_id: userId,
-          amount: totalAmount,
-          currency,
-          gateway: gateway.name,
-          gateway_reference: referenceCode,
-          status: 'pending',
-        });
-
         paymentLine = `\nPay here:\n${paymentResult.url}`;
       }
     } catch (payErr) {

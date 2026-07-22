@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { randomUUID } from 'crypto';
 import * as Sentry from '@sentry/nextjs';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
@@ -35,16 +36,77 @@ export async function sendProactiveConfirmation(
   logPrefix = '[WEBHOOK]',
 ): Promise<void> {
   // Dedup: only the first caller sends confirmation.
-  // Atomic: UPDATE ... WHERE confirmation_sent_at IS NULL — only one path can claim it.
-  const { count } = await supabase
-    .from('payments')
-    .update({ confirmation_sent_at: new Date().toISOString() })
-    .eq('id', payment.id)
-    .is('confirmation_sent_at', null);
+  // Uses a two-phase claim: confirmation_claimed_at + confirmation_claim_token for lease,
+  // confirmation_sent_at set AFTER successful delivery.
+  // Stale-claim recovery: if a previous claim set confirmation_claimed_at but crashed before
+  // setting confirmation_sent_at, the claim becomes stale after 5 minutes and can be re-claimed.
+  const STALE_CLAIM_MS = 5 * 60 * 1000; // 5 minutes
+  const claimToken = randomUUID();
 
-  if (!count || count === 0) {
-    logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
-    return;
+  // Step 1: Atomic claim — set confirmation_claimed_at + token where not already claimed
+  const { data: claimed, error: claimErr } = await supabase
+    .from('payments')
+    .update({
+      confirmation_claimed_at: new Date().toISOString(),
+      confirmation_claim_token: claimToken,
+    })
+    .eq('id', payment.id)
+    .is('confirmation_claimed_at', null)
+    .is('confirmation_sent_at', null)
+    .select('id')
+    .maybeSingle();
+
+  if (claimErr) {
+    logger.error(`${logPrefix} Confirmation claim DB error:`, claimErr.message);
+    throw new Error(`Confirmation claim failed: ${claimErr.message}`);
+  }
+
+  if (!claimed) {
+    // Check for stale claim or already sent
+    const { data: existingPayment, error: readErr } = await supabase
+      .from('payments')
+      .select('confirmation_claimed_at, confirmation_sent_at')
+      .eq('id', payment.id)
+      .single();
+
+    if (readErr) {
+      throw new Error(`Confirmation read failed: ${readErr.message}`);
+    }
+
+    // Already fully sent
+    if (existingPayment?.confirmation_sent_at) {
+      logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id}`);
+      return;
+    }
+
+    // Stale claim recovery
+    if (existingPayment?.confirmation_claimed_at) {
+      const age = Date.now() - new Date(existingPayment.confirmation_claimed_at).getTime();
+      if (age > STALE_CLAIM_MS) {
+        logger.warn(`${logPrefix} Stale claim recovery for payment ${payment.id}`);
+        // Atomic compare-and-swap: only reclaim if the token matches what we read
+        const { data: reclaimed, error: reclaimErr } = await supabase
+          .from('payments')
+          .update({
+            confirmation_claimed_at: new Date().toISOString(),
+            confirmation_claim_token: claimToken,
+          })
+          .eq('id', payment.id)
+          .eq('confirmation_claimed_at', existingPayment.confirmation_claimed_at)
+          .is('confirmation_sent_at', null)
+          .select('id')
+          .maybeSingle();
+        if (reclaimErr) {
+          throw new Error(`Confirmation reclaim failed: ${reclaimErr.message}`);
+        }
+        if (!reclaimed) return; // Another worker beat us
+      } else {
+        return; // Another worker holds a fresh claim
+      }
+    } else {
+      logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
+      return;
+    }
   }
 
   let customerPhone: string | null = null;
@@ -177,8 +239,48 @@ export async function sendProactiveConfirmation(
     }
   }
 
+  // ── 3b. Try campaign donation for phone + business resolution ──
+  if (!customerPhone && payment.campaign_id) {
+    const { data: donation } = await supabase
+      .from('campaign_donations')
+      .select('donor_phone, campaigns(business_id, businesses(name, country_code))')
+      .eq('payment_id', payment.id)
+      .maybeSingle();
+    if (donation?.donor_phone) {
+      customerPhone = donation.donor_phone;
+    }
+    if (donation) {
+      const campaign = donation.campaigns as unknown as { business_id: string; businesses: { name: string; country_code?: string } | null } | null;
+      if (campaign?.business_id && !businessId) {
+        businessId = campaign.business_id;
+        if (campaign.businesses?.name) businessName = campaign.businesses.name;
+        if (campaign.businesses?.country_code) countryCode = campaign.businesses.country_code as CountryCode;
+      }
+    }
+  }
+
+  // Always resolve business from campaign if not yet resolved (independent of phone)
+  if (payment.campaign_id && !businessId) {
+    const { data: campDonation } = await supabase
+      .from('campaign_donations')
+      .select('campaigns(business_id, businesses(name, country_code))')
+      .eq('payment_id', payment.id)
+      .maybeSingle();
+    if (campDonation) {
+      const camp = campDonation.campaigns as any;
+      if (camp?.business_id) businessId = camp.business_id;
+      if (camp?.businesses?.name) businessName = camp.businesses.name;
+      if (camp?.businesses?.country_code) countryCode = camp.businesses.country_code as CountryCode;
+    }
+  }
+
   if (!businessId) {
-    logger.warn(`${logPrefix} Proactive confirmation skipped — no business`);
+    // No business found — clear claim for retry
+    await supabase.from('payments').update({
+      confirmation_claimed_at: null,
+      confirmation_claim_token: null,
+    }).eq('id', payment.id).eq('confirmation_claim_token', claimToken);
+    logger.warn(`${logPrefix} Proactive confirmation skipped — no business — claim released`);
     return;
   }
 
@@ -203,7 +305,12 @@ export async function sendProactiveConfirmation(
       guestEmail = emailBooking?.guest_email || null;
     }
     if (!guestEmail) {
-      logger.warn(`${logPrefix} Proactive confirmation skipped — no phone or email`);
+      // No recipient found — clear claim for retry
+      await supabase.from('payments').update({
+        confirmation_claimed_at: null,
+        confirmation_claim_token: null,
+      }).eq('id', payment.id).eq('confirmation_claim_token', claimToken);
+      logger.warn(`${logPrefix} No recipient found for payment ${payment.id} — claim released`);
       return;
     }
     // We have email but no phone — send email-only below
@@ -311,6 +418,8 @@ export async function sendProactiveConfirmation(
     lines.push('💳 Type *save card* to save this card for faster checkout next time');
   }
 
+  let deliverySucceeded = false;
+
   // ── 5. Resolve channel + send ──
   try {
     const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
@@ -348,6 +457,7 @@ export async function sendProactiveConfirmation(
     if (resolved && customerPhone) {
       const phone = stripPlus(customerPhone);
       await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
+      deliverySucceeded = true;
     } else {
       logger.info(`${logPrefix} No WhatsApp channel resolved — will attempt email-only confirmation`);
     }
@@ -413,10 +523,7 @@ export async function sendProactiveConfirmation(
         const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
         const { data: donation } = await supabase.from('campaign_donations')
           .select('donor_name, reference_code, campaigns(title)')
-          .eq('campaign_id', payment.campaign_id)
-          .eq('status', 'success')
-          .order('created_at', { ascending: false })
-          .limit(1)
+          .eq('payment_id', payment.id)
           .maybeSingle();
 
         const campaignTitle = (donation?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
@@ -494,7 +601,7 @@ export async function sendProactiveConfirmation(
           });
 
           const { sendTicketsAfterPurchase } = await import('@/lib/bot/flows/shared/send-tickets');
-          await sendTicketsAfterPurchase({
+          const ticketResult = await sendTicketsAfterPurchase({
             supabase,
             sender: resolved?.sender,  // undefined for web-only purchases (email-only delivery)
             businessId,
@@ -510,6 +617,9 @@ export async function sendProactiveConfirmation(
             quantity: ticketBooking.party_size || 1,
             amount: payment.amount, countryCode,
           });
+          if (ticketResult.success) {
+            deliverySucceeded = true;
+          }
         }
       }
     } catch (ticketErr) {
@@ -561,6 +671,7 @@ export async function sendProactiveConfirmation(
             whitelabel: isWl,
           });
           await sendEmail({ to: guestEmail, ...emailContent });
+          deliverySucceeded = true;
           logger.info(`${logPrefix} Email confirmation sent to ${guestEmail}`);
         }
       } catch (emailErr) {
@@ -574,10 +685,7 @@ export async function sendProactiveConfirmation(
         const { data: donation } = await supabase
           .from('campaign_donations')
           .select('donor_name, donor_phone, reference_code, campaigns(title)')
-          .eq('campaign_id', payment.campaign_id)
-          .eq('status', 'success')
-          .order('created_at', { ascending: false })
-          .limit(1)
+          .eq('payment_id', payment.id)
           .maybeSingle();
 
         if (donation?.donor_phone) {
@@ -605,6 +713,7 @@ export async function sendProactiveConfirmation(
               whitelabel: isWl,
             });
             await sendEmail({ to: donorEmail, ...emailContent });
+            deliverySucceeded = true;
             logger.info(`${logPrefix} Donation receipt email sent to ${donorEmail}`);
           }
         }
@@ -623,8 +732,88 @@ export async function sendProactiveConfirmation(
         .eq('is_active', true)
         .in('current_step', ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking']);
     }
+
+    // Step 3: Mark as sent AFTER delivery succeeds (guarded by claim token)
+    if (deliverySucceeded) {
+      const { data: confirmed, error: confirmErr } = await supabase
+        .from('payments')
+        .update({ confirmation_sent_at: new Date().toISOString() })
+        .eq('id', payment.id)
+        .eq('confirmation_claim_token', claimToken)
+        .select('id')
+        .maybeSingle();
+
+      if (confirmErr || !confirmed) {
+        logger.error(`${logPrefix} Final mark failed — claim may be stale`);
+        throw new Error('Confirmation final mark failed');
+      }
+    } else {
+      // No delivery succeeded — clear claim for retry
+      await supabase.from('payments').update({
+        confirmation_claimed_at: null,
+        confirmation_claim_token: null,
+      }).eq('id', payment.id).eq('confirmation_claim_token', claimToken);
+      logger.warn(`${logPrefix} No delivery succeeded for payment ${payment.id} — claim released`);
+    }
   } catch (err) {
-    logger.error(`${logPrefix} Send confirmation error:`, err);
+    // Clear claim on failure (retryable) — guarded by claim token
+    const { error: clearErr } = await supabase.from('payments').update({
+      confirmation_claimed_at: null,
+      confirmation_claim_token: null,
+    }).eq('id', payment.id).eq('confirmation_claim_token', claimToken);
+    if (clearErr) {
+      logger.error(`${logPrefix} Failed to clear confirmation claim:`, clearErr.message);
+    }
+    logger.error(`${logPrefix} Send confirmation error (claim cleared for retry):`, err);
     Sentry.captureException(err, { tags: { component: 'send-confirmation', operation: 'send-confirmation' } });
+    throw err; // propagate so caller knows delivery failed
   }
+}
+
+/**
+ * Retry confirmation for successful payments that have no confirmation_sent_at.
+ * Called by cron or webhook handlers to recover from delivery failures.
+ * Includes both unclaimed confirmations and stale claims (claimed but not sent within 5 minutes).
+ */
+export async function retryUndeliveredConfirmations(
+  supabase: SupabaseClient,
+  limit = 10,
+): Promise<number> {
+  const staleThresholdMs = 5 * 60 * 1000;
+  const staleThreshold = new Date(Date.now() - staleThresholdMs).toISOString();
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  // Unclaimed confirmations (no claim, no sent)
+  const { data: unclaimed } = await supabase
+    .from('payments')
+    .select('id, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id')
+    .eq('status', 'success')
+    .is('confirmation_sent_at', null)
+    .is('confirmation_claimed_at', null)
+    .gte('paid_at', oneDayAgo)
+    .order('paid_at', { ascending: true })
+    .limit(limit);
+
+  // Stale claims (claimed but not sent, older than threshold)
+  const { data: stale } = await supabase
+    .from('payments')
+    .select('id, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id')
+    .eq('status', 'success')
+    .is('confirmation_sent_at', null)
+    .not('confirmation_claimed_at', 'is', null)
+    .lt('confirmation_claimed_at', staleThreshold)
+    .order('paid_at', { ascending: true })
+    .limit(limit);
+
+  const all = [...(unclaimed || []), ...(stale || [])].slice(0, limit);
+  let retried = 0;
+  for (const payment of all) {
+    try {
+      await sendProactiveConfirmation(supabase, payment, '[RETRY]');
+      retried++;
+    } catch {
+      // Individual failures are logged inside sendProactiveConfirmation
+    }
+  }
+  return retried;
 }

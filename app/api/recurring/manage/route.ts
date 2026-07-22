@@ -30,6 +30,14 @@ export async function POST(request: NextRequest) {
 
     if (!sub) return NextResponse.json({ error: 'Subscription not found' }, { status: 404 });
 
+    // Validate status before action
+    if (action === 'resume' && sub.status !== 'paused') {
+      return NextResponse.json({ error: 'Only paused subscriptions can be resumed' }, { status: 400 });
+    }
+    if (action === 'pause' && sub.status !== 'active') {
+      return NextResponse.json({ error: 'Only active subscriptions can be paused' }, { status: 400 });
+    }
+
     // Verify user owns the business
     const { data: biz } = await supabase
       .from('businesses')

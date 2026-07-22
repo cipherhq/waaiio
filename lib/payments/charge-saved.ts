@@ -107,6 +107,10 @@ async function chargePaystackAuthorization(
       payment_method: 'saved_card',
       card_last_four: opts.savedMethod.card_last4,
       card_brand: opts.savedMethod.card_brand,
+      business_id: opts.businessId || null,
+      collection_mode: 'platform',
+      fee_bearer: 'platform',
+      waaiio_fee: 0,
       metadata: { business_id: opts.businessId, saved_method: true },
     });
 

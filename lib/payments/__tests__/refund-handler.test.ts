@@ -41,11 +41,9 @@ function createMockSupabase(tableConfigs: Record<string, MockTableConfig> = {}) 
   return {
     from: vi.fn((table: string) => {
       const config = tableConfigs[table] || {};
-      const updateFn = vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          is: vi.fn().mockResolvedValue(config.updateResult || { data: null, error: null }),
-        }),
-      });
+      const updateFn = vi.fn().mockReturnValue(
+        makeChainable(config.updateResult || { data: null, error: null }),
+      );
       const insertFn = vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
           single: vi.fn().mockResolvedValue(config.insertResult || { data: { id: 'refund-1' }, error: null }),
@@ -69,6 +67,18 @@ function createMockSupabase(tableConfigs: Record<string, MockTableConfig> = {}) 
         insert: insertFn,
       };
     }),
+    rpc: vi.fn().mockImplementation((name: string) => {
+      if (name === 'claim_refund_balance') {
+        return Promise.resolve({ data: { claimed: true, refund_id: 'refund-1', planned_fee_reversal: 0 }, error: null });
+      }
+      if (name === 'claim_refund_provider_execution') {
+        return Promise.resolve({ data: { acquired: true }, error: null });
+      }
+      if (name === 'finalize_refund_generic') {
+        return Promise.resolve({ data: { success: true, financial: true }, error: null });
+      }
+      return Promise.resolve({ data: { success: true, financial: true }, error: null });
+    }),
     _calls: calls,
   };
 }
@@ -77,7 +87,7 @@ describe('processRefund', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetGateway.mockReturnValue({
-      refundPayment: vi.fn().mockResolvedValue({ success: true, gatewayRefundReference: 'gw-ref-1' }),
+      refundPayment: vi.fn().mockResolvedValue({ success: true, outcome: 'succeeded', gatewayRefundReference: 'gw-ref-1' }),
     });
   });
 
@@ -93,6 +103,7 @@ describe('processRefund', () => {
       amount: 1000,
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(false);
@@ -103,7 +114,7 @@ describe('processRefund', () => {
     const supabase = createMockSupabase({
       payments: {
         selectResult: {
-          data: { id: 'pay-1', amount: 5000, refund_amount: 0, status: 'pending', gateway: 'paystack', gateway_reference: 'ref-1' },
+          data: { id: 'pay-1', amount: 5000, refund_amount: 0, status: 'pending', gateway: 'paystack', gateway_reference: 'ref-1', business_id: 'biz-1', waaiio_fee: 0, currency: 'USD' },
           error: null,
         },
       },
@@ -116,6 +127,7 @@ describe('processRefund', () => {
       amount: 5000,
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(false);
@@ -126,10 +138,15 @@ describe('processRefund', () => {
     const supabase = createMockSupabase({
       payments: {
         selectResult: {
-          data: { id: 'pay-1', amount: 5000, refund_amount: 3000, status: 'success', gateway: 'paystack', gateway_reference: 'ref-1' },
+          data: { id: 'pay-1', amount: 5000, refund_amount: 3000, status: 'success', gateway: 'paystack', gateway_reference: 'ref-1', business_id: 'biz-1', waaiio_fee: 0, currency: 'USD' },
           error: null,
         },
       },
+    });
+    // Override rpc to return exceeds_balance for this test
+    (supabase as any).rpc = vi.fn().mockResolvedValue({
+      data: { claimed: false, reason: 'exceeds_balance', remaining: 2000, requested: 3000 },
+      error: null,
     });
 
     const result = await processRefund({
@@ -139,17 +156,18 @@ describe('processRefund', () => {
       amount: 3000, // Only 2000 remaining
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(false);
-    expect(result.errorMessage).toContain('exceeds remaining');
+    expect(result.errorMessage).toContain('exceeds_balance');
   });
 
   it('rejects zero or negative refund amount', async () => {
     const supabase = createMockSupabase({
       payments: {
         selectResult: {
-          data: { id: 'pay-1', amount: 5000, refund_amount: 0, status: 'success', gateway: 'paystack', gateway_reference: 'ref-1' },
+          data: { id: 'pay-1', amount: 5000, refund_amount: 0, status: 'success', gateway: 'paystack', gateway_reference: 'ref-1', business_id: 'biz-1', waaiio_fee: 0, currency: 'USD' },
           error: null,
         },
       },
@@ -162,6 +180,7 @@ describe('processRefund', () => {
       amount: 0,
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(false);
@@ -171,6 +190,7 @@ describe('processRefund', () => {
   it('processes full refund via gateway and updates payment to refunded', async () => {
     const mockRefundPayment = vi.fn().mockResolvedValue({
       success: true,
+      outcome: 'succeeded',
       gatewayRefundReference: 'gw-ref-1',
       gatewayResponse: { status: 'reversed' },
     });
@@ -182,6 +202,7 @@ describe('processRefund', () => {
           data: {
             id: 'pay-1', amount: 5000, refund_amount: 0, status: 'success',
             gateway: 'paystack', gateway_reference: 'ref-1', booking_id: 'book-1', metadata: null,
+            business_id: 'biz-1', waaiio_fee: 0, currency: 'USD',
           },
           error: null,
         },
@@ -202,10 +223,11 @@ describe('processRefund', () => {
       reason: 'Customer request',
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(true);
-    expect(result.refundId).toBe('refund-1');
+    expect(result.refundId).toBe('refund-1'); // From claim_refund_balance RPC
     expect(mockRefundPayment).toHaveBeenCalledWith(
       expect.objectContaining({
         gatewayReference: 'ref-1',
@@ -215,7 +237,7 @@ describe('processRefund', () => {
   });
 
   it('processes partial refund without changing payment status', async () => {
-    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true });
+    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true, outcome: 'succeeded' });
     mockGetGateway.mockReturnValue({ refundPayment: mockRefundPayment });
 
     const supabase = createMockSupabase({
@@ -224,6 +246,7 @@ describe('processRefund', () => {
           data: {
             id: 'pay-1', amount: 5000, refund_amount: 0, status: 'success',
             gateway: 'paystack', gateway_reference: 'ref-1', booking_id: null, metadata: null,
+            business_id: 'biz-1', waaiio_fee: 0, currency: 'USD',
           },
           error: null,
         },
@@ -243,6 +266,7 @@ describe('processRefund', () => {
       amount: 2000, // Partial: 2000 of 5000
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(true);
@@ -252,8 +276,8 @@ describe('processRefund', () => {
     );
   });
 
-  it('handles direct_split refund (record-only, no gateway call)', async () => {
-    const mockRefundPayment = vi.fn();
+  it('connect-mode non-Square refund calls the provider (not record-only)', async () => {
+    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true, outcome: 'succeeded', gatewayRefundReference: 'gw-ref-c' });
     mockGetGateway.mockReturnValue({ refundPayment: mockRefundPayment });
 
     const supabase = createMockSupabase({
@@ -261,13 +285,11 @@ describe('processRefund', () => {
         selectResult: {
           data: {
             id: 'pay-1', amount: 5000, refund_amount: 0, status: 'success',
-            gateway: 'paystack', gateway_reference: 'ref-1', booking_id: null, metadata: null,
+            gateway: 'stripe', gateway_reference: 'ref-1', booking_id: null, metadata: null,
+            collection_mode: 'connect', business_id: 'biz-1', waaiio_fee: 0, currency: 'USD',
           },
           error: null,
         },
-      },
-      businesses: {
-        selectResult: { data: { payout_mode: 'direct_split' }, error: null },
       },
       refunds: {
         insertResult: { data: { id: 'refund-3' }, error: null },
@@ -281,18 +303,19 @@ describe('processRefund', () => {
       amount: 5000,
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(true);
-    expect(result.isDirectSplit).toBe(true);
-    // Gateway refund should NOT be called for direct_split
-    expect(mockRefundPayment).not.toHaveBeenCalled();
+    // Connect-mode Paystack refund DOES call the provider (platform can refund destination charges)
+    expect(mockRefundPayment).toHaveBeenCalled();
   });
 
   it('returns failure when gateway refund fails', async () => {
     mockGetGateway.mockReturnValue({
       refundPayment: vi.fn().mockResolvedValue({
         success: false,
+        outcome: 'definitively_failed',
         errorMessage: 'Insufficient balance',
         gatewayResponse: { error: 'Insufficient balance' },
       }),
@@ -304,15 +327,13 @@ describe('processRefund', () => {
           data: {
             id: 'pay-1', amount: 5000, refund_amount: 0, status: 'success',
             gateway: 'paystack', gateway_reference: 'ref-1', booking_id: null, metadata: null,
+            business_id: 'biz-1', waaiio_fee: 0, currency: 'USD',
           },
           error: null,
         },
       },
       businesses: {
         selectResult: { data: { payout_mode: 'platform_managed' }, error: null },
-      },
-      refunds: {
-        insertResult: { data: { id: 'refund-4' }, error: null },
       },
     });
 
@@ -323,15 +344,16 @@ describe('processRefund', () => {
       amount: 5000,
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(false);
     expect(result.errorMessage).toContain('Insufficient balance');
-    expect(result.refundId).toBe('refund-4');
+    expect(result.refundId).toBe('refund-1'); // From claim_refund_balance RPC
   });
 
   it('allows refund on already-partially-refunded payment', async () => {
-    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true });
+    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true, outcome: 'succeeded' });
     mockGetGateway.mockReturnValue({ refundPayment: mockRefundPayment });
 
     const supabase = createMockSupabase({
@@ -340,15 +362,13 @@ describe('processRefund', () => {
           data: {
             id: 'pay-1', amount: 5000, refund_amount: 2000, status: 'success',
             gateway: 'paystack', gateway_reference: 'ref-1', booking_id: null, metadata: null,
+            business_id: 'biz-1', waaiio_fee: 0, currency: 'USD',
           },
           error: null,
         },
       },
       businesses: {
         selectResult: { data: { payout_mode: 'platform_managed' }, error: null },
-      },
-      refunds: {
-        insertResult: { data: { id: 'refund-5' }, error: null },
       },
     });
 
@@ -359,6 +379,7 @@ describe('processRefund', () => {
       amount: 3000, // Remaining 3000
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
+      logicalRefundId: 'test-refund-id',
     });
 
     expect(result.success).toBe(true);

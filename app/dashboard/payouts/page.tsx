@@ -22,6 +22,7 @@ interface PayoutAccount {
   account_number: string | null;
   account_name: string | null;
   verified_at: string | null;
+  is_default: boolean;
 }
 
 interface TermsAcceptance {
@@ -95,7 +96,7 @@ export default function PayoutsPage() {
     (business as any).payment_gateway || defaultGateway,
   );
   const gateway = selectedGateway;
-  const isStripe = gateway === 'stripe';
+  const isBankFormGateway = gateway === 'paystack' || gateway === 'flutterwave';
 
   const [pageView, setPageView] = useState<PageView>('loading');
   const [existing, setExisting] = useState<PayoutAccount | null>(null);
@@ -118,13 +119,22 @@ export default function PayoutsPage() {
     async function load() {
       const supabase = createClient();
 
-      // Check for existing payout account
-      const { data: payoutAccount } = await supabase
+      // Check for existing payout account (prefer default, then most recent).
+      // Uses limit(1) + maybeSingle() so zero rows returns null (not an error)
+      // and multiple rows are prevented by the limit.
+      const { data: payoutAccount, error: payoutErr } = await supabase
         .from('payout_accounts')
-        .select('id, gateway, subaccount_code, stripe_account_id, bank_name, account_number, account_name, verified_at')
+        .select('id, gateway, subaccount_code, stripe_account_id, bank_name, account_number, account_name, verified_at, is_default')
         .eq('business_id', business.id)
         .eq('is_active', true)
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
+
+      if (payoutErr) {
+        console.error('Failed to load payout account:', payoutErr.message);
+      }
 
       // Check for terms acceptance
       const { data: terms } = await supabase
@@ -168,7 +178,7 @@ export default function PayoutsPage() {
 
   // Fetch banks for Paystack/Flutterwave
   useEffect(() => {
-    if (isStripe || pageView !== 'setup') return;
+    if (!isBankFormGateway || pageView !== 'setup') return;
     async function fetchBanks() {
       try {
         const res = await fetch(`/api/payouts/banks?gateway=${gateway}&country=${country}`);
@@ -179,7 +189,7 @@ export default function PayoutsPage() {
       }
     }
     fetchBanks();
-  }, [gateway, country, isStripe, pageView]);
+  }, [gateway, country, isBankFormGateway, pageView]);
 
   // Check URL params for Stripe callback
   useEffect(() => {
@@ -188,11 +198,17 @@ export default function PayoutsPage() {
       const supabase = createClient();
       supabase
         .from('payout_accounts')
-        .select('id, gateway, subaccount_code, stripe_account_id, bank_name, account_number, account_name, verified_at')
+        .select('id, gateway, subaccount_code, stripe_account_id, bank_name, account_number, account_name, verified_at, is_default')
         .eq('business_id', business.id)
         .eq('is_active', true)
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle()
-        .then(({ data }) => {
+        .then(({ data, error }) => {
+          if (error) {
+            console.error('Failed to load connected account:', error.message);
+          }
           setExisting(data);
           setPageView('connected');
         });
@@ -285,6 +301,7 @@ export default function PayoutsPage() {
         account_number: accountNumber,
         account_name: resolvedName,
         verified_at: new Date().toISOString(),
+        is_default: true,
       });
       setPageView('connected');
     } catch {
@@ -415,7 +432,7 @@ export default function PayoutsPage() {
   if (pageView === 'terms') {
     return (
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Payouts</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Payments</h1>
         <p className="mt-1 text-sm text-gray-500">Accept terms and choose how you receive {isFaith ? 'giving' : 'payments'}</p>
 
         <div className="mt-8 max-w-2xl">
@@ -427,7 +444,7 @@ export default function PayoutsPage() {
 
           {/* Terms panel */}
           <div className="rounded-xl border border-gray-200 bg-white p-6">
-            <h2 className="text-lg font-semibold text-gray-900">Payout Terms of Use</h2>
+            <h2 className="text-lg font-semibold text-gray-900">Payment Terms of Use</h2>
             <div className="mt-4 max-h-64 overflow-y-auto rounded-lg bg-gray-50 p-4 text-sm text-gray-600 leading-relaxed space-y-3">
               <p><strong>1. Payout Modes</strong></p>
               <p><strong>Direct Split (Instant):</strong> Customer payments are automatically split at the payment gateway level. Your share is deposited directly to your bank account after each transaction. You are responsible for handling refunds directly with your customers.</p>
@@ -525,19 +542,19 @@ export default function PayoutsPage() {
 
     return (
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Payouts</h1>
-        <p className="mt-1 text-sm text-gray-500">Receive {isFaith ? 'member giving' : 'customer payments'} directly to your account</p>
+        <h1 className="text-2xl font-bold text-gray-900">Payments</h1>
+        <p className="mt-1 text-sm text-gray-500">Manage your payment provider and {isFaith ? 'giving' : 'payout'} settings</p>
 
         {/* Tabs */}
         <div className="mt-4 flex gap-1 border-b border-gray-200">
           <span className="border-b-2 border-brand px-4 py-2 text-sm font-medium text-brand">
-            Account
+            Provider
           </span>
           <Link
             href="/dashboard/payouts/history"
             className="border-b-2 border-transparent px-4 py-2 text-sm font-medium text-gray-500 transition hover:text-gray-700 hover:border-gray-300"
           >
-            History
+            Payout History
           </Link>
         </div>
 
@@ -620,7 +637,7 @@ export default function PayoutsPage() {
           </div>
         )}
 
-        {/* Connected account details */}
+        {/* Payment Provider */}
         <div className="mt-6 max-w-lg rounded-xl border border-green-200 bg-green-50 p-6">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
@@ -629,7 +646,9 @@ export default function PayoutsPage() {
               </svg>
             </div>
             <div>
-              <p className="text-sm font-semibold text-green-900">Payout account connected</p>
+              <p className="text-sm font-semibold text-green-900">
+                {existing.gateway.charAt(0).toUpperCase() + existing.gateway.slice(1)} connected
+              </p>
               <p className="text-xs text-green-700">
                 {isPlatformManaged
                   ? 'Payouts are processed weekly to your bank account'
@@ -667,7 +686,14 @@ export default function PayoutsPage() {
             )}
             <div className="flex justify-between">
               <span className="text-green-700">Gateway</span>
-              <span className="font-medium text-green-900 capitalize">{existing.gateway}</span>
+              <span className="font-medium text-green-900 capitalize">
+                {existing.gateway}
+                {existing.is_default && (
+                  <span className="ml-2 inline-flex items-center rounded-full bg-green-200 px-2 py-0.5 text-xs font-medium text-green-800" role="status" aria-label="Default payment provider">
+                    Default
+                  </span>
+                )}
+              </span>
             </div>
           </div>
 
@@ -733,7 +759,9 @@ export default function PayoutsPage() {
                 <button
                   onClick={async () => {
                     if (!changePassword) { setError('Enter your password'); return; }
+                    if (!existing?.id) { setError('No account to disconnect'); return; }
                     setChangingAccount(true);
+                    setError('');
                     try {
                       const supabase = createClient();
                       const { data: { user } } = await supabase.auth.getUser();
@@ -741,24 +769,30 @@ export default function PayoutsPage() {
                       const { error: authErr } = await supabase.auth.signInWithPassword({ email: user.email, password: changePassword });
                       if (authErr) { setError('Incorrect password'); return; }
 
-                      // Deactivate payout account
-                      await supabase.from('payout_accounts').update({ is_active: false, updated_at: new Date().toISOString() }).eq('business_id', business.id).eq('is_active', true);
-                      // Reset business payout mode
-                      await supabase.from('businesses').update({ payout_mode: 'platform_managed' }).eq('id', business.id);
+                      // Server-side disconnect: revokes the specific account, secrets, and resets payout_mode
+                      const res = await fetch('/api/payouts/disconnect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ business_id: business.id, payout_account_id: existing.id }),
+                      });
+                      const result = await res.json();
+                      if (!res.ok || !result.success) {
+                        setError(result.error || 'Failed to disconnect account');
+                        return;
+                      }
 
-                      // Send notification
-                      try {
-                        await fetch('/api/email/send', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            to: user.email,
-                            subject: `⚠️ Payout account disconnected — ${business.name}`,
-                            html: `<p>The payout account for <strong>${business.name}</strong> has been disconnected.</p><p>Payments will be held until a new account is connected.</p><p>If this wasn't you, contact support immediately.</p>`,
-                          }),
-                        });
-                      } catch {}
+                      // Send notification (non-blocking)
+                      fetch('/api/email/send', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          to: user.email,
+                          subject: `\u26A0\uFE0F Payout account disconnected \u2014 ${business.name}`,
+                          html: `<p>The payout account for <strong>${business.name}</strong> has been disconnected.</p><p>Payments will be held until you connect a new account.</p><p>If this wasn't you, contact support immediately.</p>`,
+                        }),
+                      }).catch(() => {});
 
+                      // Only clear UI state after server confirms success
                       setExisting(null);
                       setShowDisconnectConfirm(false);
                       setChangePassword('');
@@ -781,11 +815,11 @@ export default function PayoutsPage() {
           )}
         </div>
 
-        {/* Recent Payouts */}
+        {/* Recent Transfers */}
         {(
           <div className="mt-6 max-w-lg rounded-xl border border-gray-200 bg-white p-5">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-900">Recent Payouts</h3>
+              <h3 className="text-sm font-semibold text-gray-900">Recent Transfers</h3>
               <Link
                 href="/dashboard/payouts/history"
                 className="text-xs font-medium text-brand hover:underline"
@@ -795,7 +829,7 @@ export default function PayoutsPage() {
             </div>
 
             {recentPayouts.length === 0 ? (
-              <p className="mt-4 text-sm text-gray-500">No payouts yet</p>
+              <p className="mt-4 text-sm text-gray-500">No transfers yet</p>
             ) : (
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full text-sm">
@@ -847,15 +881,15 @@ export default function PayoutsPage() {
   // Setup form (after terms accepted)
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900">Payouts</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Payments</h1>
       <p className="mt-1 text-sm text-gray-500">
-        Set up your bank account to receive {isFaith ? 'member giving' : 'customer payments'}
+        Set up your payment provider to receive {isFaith ? 'member giving' : 'customer payments'}
       </p>
 
       <PageHelp
         pageKey="payouts"
-        title="Payouts"
-        description="Connect your bank account to receive payments from customers. All payments collected through your WhatsApp bot are deposited here after processing."
+        title="Payment Setup"
+        description="Connect a payment provider to receive payments from customers. All payments collected through your WhatsApp bot are deposited to your connected account."
       />
 
       <div className="mt-8 max-w-lg">
@@ -950,8 +984,8 @@ export default function PayoutsPage() {
           </div>
         )}
 
-        {isStripe ? (
-          /* Stripe Connect Flow */
+        {/* Gateway-specific connect actions */}
+        {gateway === 'stripe' && (
           <div className="rounded-xl border border-gray-200 bg-white p-6">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-100">
@@ -984,31 +1018,71 @@ export default function PayoutsPage() {
                 'Connect with Stripe'
               )}
             </button>
+          </div>
+        )}
 
-            <div className="mt-4 flex items-center gap-3">
-              <div className="h-px flex-1 bg-gray-200" />
-              <span className="text-xs text-gray-400">or</span>
-              <div className="h-px flex-1 bg-gray-200" />
+        {gateway === 'square' && (
+          <div className="rounded-xl border border-gray-200 bg-white p-6">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
+                <span className="text-lg">⬛</span>
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">Connect with Square</h2>
+                <p className="text-xs text-gray-500">Accept CashApp, Apple Pay, and Google Pay</p>
+              </div>
             </div>
+
+            <p className="mt-4 text-sm text-gray-600">
+              You&apos;ll be redirected to Square to authorize your account.
+              Payments will be processed through your Square merchant account.
+            </p>
 
             <button
               onClick={handleSquareConnect}
               disabled={stripeLoading}
-              className="mt-4 w-full rounded-xl border-2 border-gray-200 bg-white px-6 py-3 text-sm font-bold text-gray-900 transition hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+              className="mt-5 w-full rounded-xl bg-gray-900 px-6 py-3 text-sm font-bold text-white transition hover:bg-gray-800 disabled:opacity-50"
             >
               {stripeLoading ? (
                 <span className="flex items-center justify-center gap-2">
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
                   Connecting...
                 </span>
               ) : (
-                'Connect with Square (CashApp)'
+                'Connect with Square'
               )}
             </button>
-            <p className="mt-2 text-center text-xs text-gray-400">Accept CashApp, Apple Pay &amp; Google Pay via Square</p>
           </div>
-        ) : (
-          /* Paystack/Flutterwave Bank Flow */
+        )}
+
+        {gateway === 'paypal' && (
+          <div className="rounded-xl border border-gray-200 bg-white p-6">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100">
+                <span className="text-lg">🔵</span>
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">PayPal</h2>
+                <p className="text-xs text-gray-500">PayPal merchant onboarding</p>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
+              <p className="text-sm text-amber-800">
+                PayPal merchant onboarding is coming soon. In the meantime, you can accept PayPal payments through Stripe.
+              </p>
+            </div>
+
+            <button
+              disabled
+              className="mt-5 w-full rounded-xl bg-gray-200 px-6 py-3 text-sm font-bold text-gray-400 cursor-not-allowed"
+            >
+              Coming Soon
+            </button>
+          </div>
+        )}
+
+        {(gateway === 'paystack' || gateway === 'flutterwave') && (
           <div className="rounded-xl border border-gray-200 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Add your bank account</h2>
             <p className="mt-1 text-xs text-gray-500">

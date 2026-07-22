@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { fastHash, getCachedSession, setCachedSession, shouldTouch } from '@/lib/security/session-check';
+import { getCsrfAllowedOrigins } from '@/lib/get-app-url';
 
 type CookieEntry = { name: string; value: string; options: CookieOptions };
 
@@ -46,7 +47,7 @@ function applySecurityHeaders(response: NextResponse): NextResponse {
       "img-src 'self' https: data: blob:",
       "font-src 'self' data:",
       "media-src 'self' https://*.supabase.co blob:",
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.paystack.co https://api.stripe.com https://connect.squareup.com https://api.flutterwave.com https://*.facebook.com https://*.facebook.net https://us.i.posthog.com https://eu.i.posthog.com https://us-assets.i.posthog.com https://maps.googleapis.com https://*.googleapis.com https://*.sentry.io https://*.ingest.sentry.io",
+      `connect-src 'self' https://*.supabase.co wss://*.supabase.co${process.env.NEXT_PUBLIC_SUPABASE_URL?.match(/^https?:\/\/(localhost|127\.0\.0\.1)/) ? ' http://localhost:* http://127.0.0.1:*' : ''} https://api.paystack.co https://api.stripe.com https://connect.squareup.com https://api.flutterwave.com https://*.facebook.com https://*.facebook.net https://us.i.posthog.com https://eu.i.posthog.com https://us-assets.i.posthog.com https://maps.googleapis.com https://*.googleapis.com https://*.sentry.io https://*.ingest.sentry.io`,
       "frame-src 'self' https://js.stripe.com https://js.squareup.com https://checkout.paystack.com https://checkout.flutterwave.com https://*.facebook.com https://*.facebook.net https://www.paypal.com",
       "object-src 'none'",
       "base-uri 'self'",
@@ -133,19 +134,7 @@ export async function middleware(request: NextRequest) {
   const isWebhook = webhookReceiverPaths.some(p => request.nextUrl.pathname.startsWith(p));
   if (isStateMutating && isApiRoute && !isWebhook) {
     const origin = request.headers.get('origin');
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
-    const appOrigin = new URL(appUrl).origin;
-    const allowedOrigins = [
-      appOrigin,
-      // Include both www and non-www variants
-      appOrigin.includes('www.') ? appOrigin.replace('www.', '') : appOrigin.replace('://', '://www.'),
-      process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
-      'https://admin.waaiio.com',
-      'https://admin-staging.waaiio.com',
-      'http://localhost:3000',
-      'http://localhost:8083',
-    ];
-    if (origin && !allowedOrigins.includes(origin)) {
+    if (origin && !getCsrfAllowedOrigins().includes(origin)) {
       return new NextResponse(JSON.stringify({ error: 'Forbidden' }), {
         status: 403,
         headers: { 'Content-Type': 'application/json' },

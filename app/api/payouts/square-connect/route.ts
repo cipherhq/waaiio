@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import { generateOAuthState, persistOAuthState } from '@/lib/payments/oauth-state';
+import { getAppUrl } from '@/lib/get-app-url';
+import { SQUARE_OAUTH_SCOPE_STRING, getSquareRedirectUri } from '@/lib/payments/square-scopes';
 import { logger } from '@/lib/logger';
-import { randomUUID } from 'crypto';
 
 const squareAppId = process.env.SQUARE_OAUTH_APP_ID || process.env.SQUARE_APPLICATION_ID || '';
 const squareEnvironment = process.env.SQUARE_ENVIRONMENT || 'sandbox';
@@ -37,24 +40,31 @@ export async function POST(request: NextRequest) {
 
   try {
     if (!squareAppId) {
+      if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
+        return NextResponse.json({ error: 'Square not configured' }, { status: 500 });
+      }
       return NextResponse.json({ url: `/dashboard/payouts?connected=true&mock=true` });
     }
 
-    const state = `${business_id}:${randomUUID().slice(0, 8)}`;
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-    const redirectUri = `${appUrl}/api/payouts/square-callback`;
+    const appUrl = getAppUrl();
+    const { token: oauthState, payload } = generateOAuthState(user.id, business_id, 'square', 'pending');
+    const service = createServiceClient();
+    await persistOAuthState(service, payload);
 
+    const redirectUri = getSquareRedirectUri(appUrl);
     const params = new URLSearchParams({
       client_id: squareAppId,
-      scope: 'PAYMENTS_WRITE PAYMENTS_READ ORDERS_WRITE ORDERS_READ MERCHANT_PROFILE_READ',
-      session: 'false',
-      state,
+      scope: SQUARE_OAUTH_SCOPE_STRING,
+      state: oauthState,
       redirect_uri: redirectUri,
     });
+    // session=false forces a fresh login — only supported in production.
+    // Sandbox requires session=true (the default), so we omit it there.
+    if (squareEnvironment === 'production') {
+      params.set('session', 'false');
+    }
 
-    const oauthUrl = `${getSquareOAuthUrl()}?${params.toString()}`;
-
-    return NextResponse.json({ url: oauthUrl });
+    return NextResponse.json({ url: `${getSquareOAuthUrl()}?${params.toString()}` });
   } catch (error) {
     logger.error('Square Connect error:', (error as Error).message);
     return NextResponse.json({ error: 'Failed to start Square onboarding' }, { status: 500 });

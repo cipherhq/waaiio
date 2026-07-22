@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
+import { isFullAdmin } from '@/lib/adminAuth';
 import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
 import { loadCountries, getCountryCurrencyDetailMap } from '@/lib/countries';
@@ -41,6 +42,7 @@ const statusStyles: Record<string, string> = {
 export default function Payouts() {
   const session = useAdminSession();
   const hasAccess = session && ['admin', 'finance'].includes(session.role);
+  const canApprove = isFullAdmin(session);
   const [tab, setTab] = useState<'pending' | 'history'>('pending');
   const [payouts, setPayouts] = useState<PayoutRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,6 +60,12 @@ export default function Payouts() {
   const [transferRef, setTransferRef] = useState('');
   const [approveNotes, setApproveNotes] = useState('');
   const [approving, setApproving] = useState(false);
+
+  // Complete (mark paid) modal state
+  const [completeTarget, setCompleteTarget] = useState<PayoutRecord | null>(null);
+  const [completeRef, setCompleteRef] = useState('');
+  const [completeNotes, setCompleteNotes] = useState('');
+  const [completing, setCompleting] = useState(false);
 
   // Reject modal state
   const [rejectTarget, setRejectTarget] = useState<PayoutRecord | null>(null);
@@ -133,7 +141,7 @@ export default function Payouts() {
   const totalPages = Math.max(1, Math.ceil(displayPayouts.length / perPage));
   const pageItems = displayPayouts.slice((page - 1) * perPage, page * perPage);
 
-  // Load payout account details when approve modal opens
+  // Load payout account details via server API (returns masked account number)
   async function loadApproveAccount(payoutAccountId: string | null, businessId: string) {
     if (!payoutAccountId) {
       setApproveAccountInfo(null);
@@ -141,12 +149,27 @@ export default function Payouts() {
     }
     setLoadingAccount(true);
     try {
-      const { data } = await adminDb
-        .from('payout_accounts')
-        .select('bank_name, account_name, account_number, is_active, verified_at')
-        .eq('id', payoutAccountId)
-        .eq('business_id', businessId)
-        .maybeSingle();
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) {
+        setApproveAccountInfo(null);
+        return;
+      }
+
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(
+        `${apiUrl}/api/admin/payouts/account?payout_account_id=${encodeURIComponent(payoutAccountId)}&business_id=${encodeURIComponent(businessId)}`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      );
+
+      if (!res.ok) {
+        setApproveAccountInfo(null);
+        return;
+      }
+
+      const data = await res.json();
       setApproveAccountInfo(data);
     } catch {
       setApproveAccountInfo(null);
@@ -164,6 +187,7 @@ export default function Payouts() {
   // Approve payout via API route
   async function handleApprove() {
     if (!approveTarget) return;
+    if (!window.confirm(`Approve payout of ${formatMoney(approveTarget.net_amount, approveTarget.country_code)} for ${approveTarget.business_name}? This will initiate a transfer.`)) return;
     setApproving(true);
 
     try {
@@ -208,9 +232,44 @@ export default function Payouts() {
     }
   }
 
+  // Complete (mark paid) via API route
+  async function handleComplete() {
+    if (!completeTarget) return;
+    if (!completeRef.trim()) { alert('Transfer reference is required'); return; }
+    if (!window.confirm(`Mark payout of ${formatMoney(completeTarget.net_amount, completeTarget.country_code)} as PAID?`)) return;
+    setCompleting(true);
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) { alert('Session expired — please re-login'); return; }
+
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${apiUrl}/api/admin/payouts/${completeTarget.id}/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ transfer_reference: completeRef.trim(), notes: completeNotes || null }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) { alert(data.error || 'Failed to mark payout as paid'); return; }
+
+      setCompleteTarget(null);
+      setCompleteRef('');
+      setCompleteNotes('');
+      await loadData();
+    } catch (error) {
+      console.error('Complete error:', error);
+      alert('Failed to complete payout');
+    } finally {
+      setCompleting(false);
+    }
+  }
+
   // Reject payout via API route
   async function handleReject() {
     if (!rejectTarget || !rejectReason) return;
+    if (!window.confirm(`Reject this payout? The business owner will be notified.`)) return;
     setRejecting(true);
 
     try {
@@ -423,7 +482,7 @@ export default function Payouts() {
                 <th className="px-4 py-3 text-right font-medium text-gray-500">Gateway Fees</th>
                 <th className="px-4 py-3 text-right font-medium text-gray-500">Net</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                {tab === 'pending' && <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>}
+                {tab === 'pending' && canApprove && <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -445,15 +504,24 @@ export default function Payouts() {
                       {p.status}
                     </span>
                   </td>
-                  {tab === 'pending' && (
+                  {tab === 'pending' && canApprove && (
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => openApproveModal(p)}
-                          className="rounded-lg bg-green-100 px-3 py-1.5 text-xs font-medium text-green-700 transition hover:bg-green-200"
-                        >
-                          Approve
-                        </button>
+                        {p.status === 'approved' ? (
+                          <button
+                            onClick={() => setCompleteTarget(p)}
+                            className="rounded-lg bg-blue-100 px-3 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-200"
+                          >
+                            Mark Paid
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => openApproveModal(p)}
+                            className="rounded-lg bg-green-100 px-3 py-1.5 text-xs font-medium text-green-700 transition hover:bg-green-200"
+                          >
+                            Approve
+                          </button>
+                        )}
                         <button
                           onClick={() => setRejectTarget(p)}
                           className="rounded-lg bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-200"
@@ -472,8 +540,8 @@ export default function Payouts() {
 
       <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
 
-      {/* Approve Modal */}
-      {approveTarget && (
+      {/* Approve Modal — admin only */}
+      {canApprove && approveTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h3 className="text-lg font-semibold text-gray-900">Approve Payout</h3>
@@ -499,7 +567,7 @@ export default function Payouts() {
                     <p className="text-gray-700">Name: <span className="font-medium">{approveAccountInfo.account_name}</span></p>
                   )}
                   {approveAccountInfo.account_number && (
-                    <p className="text-gray-700">Account: <span className="font-mono font-medium">****{approveAccountInfo.account_number.slice(-4)}</span></p>
+                    <p className="text-gray-700">Account: <span className="font-mono font-medium">{approveAccountInfo.account_number}</span></p>
                   )}
                   {!approveAccountInfo.is_active && (
                     <p className="font-medium text-red-600">Account is inactive</p>
@@ -557,7 +625,7 @@ export default function Payouts() {
                 disabled={approving}
                 className="flex-1 rounded-xl bg-green-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-green-700 disabled:opacity-50"
               >
-                {approving ? 'Processing...' : 'Approve & Mark Paid'}
+                {approving ? 'Processing...' : transferMethod.startsWith('manual') ? 'Approve Payout' : 'Approve & Initiate Transfer'}
               </button>
               <button
                 onClick={() => { setApproveTarget(null); setApproveAccountInfo(null); }}
@@ -570,8 +638,8 @@ export default function Payouts() {
         </div>
       )}
 
-      {/* Reject Modal */}
-      {rejectTarget && (
+      {/* Reject Modal — admin only */}
+      {canApprove && rejectTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h3 className="text-lg font-semibold text-gray-900">Reject Payout</h3>
@@ -600,6 +668,56 @@ export default function Payouts() {
               </button>
               <button
                 onClick={() => setRejectTarget(null)}
+                className="rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Complete (Mark Paid) Modal — admin only */}
+      {canApprove && completeTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold text-gray-900">Mark Payout as Paid</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              {completeTarget.business_name} — {formatMoney(completeTarget.net_amount, completeTarget.country_code)}
+            </p>
+
+            <div className="mt-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Transfer Reference <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  value={completeRef}
+                  onChange={e => setCompleteRef(e.target.value)}
+                  placeholder="Bank transfer reference or receipt number"
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 focus:border-brand focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Notes (optional)</label>
+                <textarea
+                  value={completeNotes}
+                  onChange={e => setCompleteNotes(e.target.value)}
+                  rows={2}
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 focus:border-brand focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={handleComplete}
+                disabled={completing || !completeRef.trim()}
+                className="flex-1 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-50"
+              >
+                {completing ? 'Processing...' : 'Confirm Payment'}
+              </button>
+              <button
+                onClick={() => { setCompleteTarget(null); setCompleteRef(''); setCompleteNotes(''); }}
                 className="rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
               >
                 Cancel

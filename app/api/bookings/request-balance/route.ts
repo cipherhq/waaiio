@@ -66,7 +66,6 @@ export async function POST(request: NextRequest) {
       phone,
       userEmail: booking.guest_email || undefined,
       countryCode: cc,
-      gatewayOverride: biz.payment_gateway,
       businessId: biz.id,
     });
 

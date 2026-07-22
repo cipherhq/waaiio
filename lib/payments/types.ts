@@ -21,6 +21,8 @@ export interface InitPaymentOpts {
   /** Square OAuth merchant ID + access token for split payments */
   squareMerchantId?: string;
   squareAccessToken?: string;
+  /** Square connected merchant location ID */
+  squareLocationId?: string;
   /** Platform fee in base currency units (e.g. naira, dollars — NOT kobo/cents) */
   platformFeeAmount?: number;
   /** BYO: use business's own gateway API key instead of platform key */
@@ -31,7 +33,7 @@ export interface InitPaymentOpts {
   isByo?: boolean;
   /** BYO: the business ID that owns the credentials */
   byoBusinessId?: string;
-  /** Paystack Connect account ID — use platform key with X-Connect-Account header */
+  /** @deprecated Removed — no verified Paystack Connect documentation */
   connectAccountId?: string;
   /** Campaign ID for donation tracking — set on payment record at creation to avoid webhook race */
   campaignId?: string;
@@ -39,11 +41,21 @@ export interface InitPaymentOpts {
   businessId?: string;
   /** Payment channels to show (e.g. ['card', 'bank_transfer', 'ussd']). Null = all. */
   channels?: string[];
+  /** Collection mode for fee tracking: platform, managed_split, byo, connect, flutterwave_mid */
+  collectionMode?: string;
+  /** Fee bearer: platform, merchant, shared */
+  feeBearerMode?: string;
+  /** Payout account ID (connection used for this payment) */
+  payoutAccountId?: string;
+  /** Platform fee amount in base currency units */
+  waaiioFee?: number;
 }
 
 export interface InitPaymentResult {
   url: string;
   reference: string;
+  /** Short deterministic ref for URL shortening (8-char hex from SHA-256 of reference) */
+  shortRef?: string;
 }
 
 export interface VerifyResult {
@@ -52,7 +64,7 @@ export interface VerifyResult {
 
 export interface RefundPaymentOpts {
   gatewayReference: string;
-  /** Amount to refund in base currency units (e.g. naira, dollars — NOT kobo/cents). Omit for full refund. */
+  /** Amount to refund in base currency units (e.g. naira, dollars — NOT kobo/cents). Always send for Square. */
   amount?: number;
   currency: string;
   reason?: string;
@@ -61,10 +73,17 @@ export interface RefundPaymentOpts {
   byoSecretKey?: string;
   /** Paystack Connect account ID */
   connectAccountId?: string;
+  /** Stable provider idempotency key — stored before calling provider, reused on retry */
+  providerIdempotencyKey?: string;
+  /** Amount of app fee to reverse on refund (in base currency units, NOT cents) */
+  appFeeRefundAmount?: number;
 }
+
+export type RefundOutcome = 'succeeded' | 'definitively_failed' | 'ambiguous';
 
 export interface RefundResult {
   success: boolean;
+  outcome: RefundOutcome;
   gatewayRefundReference?: string;
   gatewayResponse?: Record<string, unknown>;
   errorMessage?: string;

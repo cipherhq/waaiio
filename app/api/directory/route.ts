@@ -74,7 +74,8 @@ export async function GET(request: NextRequest) {
     supabase
       .from('services')
       .select('id, name, price, duration_minutes, business_id')
-      .in('business_id', businessIds),
+      .in('business_id', businessIds)
+      .eq('is_active', true),
     supabase
       .from('category_templates')
       .select('key, label, icon')
@@ -175,7 +176,7 @@ export async function GET(request: NextRequest) {
     bot_code: r.botCode || '',
     wa_method: waMethodMap.get(r.businessId) || null,
     slug: r.slug || '',
-    wa_phone: waPhoneMap.get(r.businessId) || null,
+    wa_phone: null, // Removed: F-014 — do not expose phone numbers in public directory
     services: serviceMap.get(r.businessId) || [],
     capabilities: capMap.get(r.businessId) || [],
     events: eventMap.get(r.businessId) || [],

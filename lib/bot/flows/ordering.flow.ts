@@ -2625,7 +2625,6 @@ export const orderingFlow: FlowDefinition = {
             businessName: ctx.business?.name || 'Shop',
             phone: ctx.from,
             countryCode: cc,
-            gatewayOverride: ctx.business?.payment_gateway || null,
             businessId: ctx.business?.id,
           });
 
@@ -3149,9 +3148,7 @@ export const orderingFlow: FlowDefinition = {
               recordPlatformFee(ctx.supabase, {
                 orderId,
                 businessId: ctx.business.id,
-                transactionAmount: totalAmount,
-                tier,
-                isInTrial,
+                paymentAmount: totalAmount,
               }).catch(err => logger.error('[ORDERING] Platform fee error:', err));
             }
 

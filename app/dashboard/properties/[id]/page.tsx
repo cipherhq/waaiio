@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import Image from 'next/image';
 import { useParams, useRouter } from 'next/navigation';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, getLocale, type CountryCode, CATEGORY_LABELS } from '@/lib/constants';
 import EmptyState from '@/components/dashboard/EmptyState';
@@ -169,6 +169,7 @@ function CheckInQRSection({ propertyId, propertyName }: { propertyId: string; pr
 }
 
 export default function PropertyDetailPage() {
+  const allowed = useRequireCapability('reservation');
   const params = useParams();
   const router = useRouter();
   const business = useBusiness();
@@ -252,6 +253,9 @@ export default function PropertyDetailPage() {
         );
         if (shouldRefund) {
           try {
+            // Keep under Square's 45-char idempotency key limit (UUID dashes removed: 32 hex each)
+            const raw = id.replace(/-/g, '') + (reservation.payment_id || '').replace(/-/g, '');
+            const idempotencyKey = raw.slice(0, 45);
             const res = await fetch('/api/payments/refund', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -260,6 +264,7 @@ export default function PropertyDetailPage() {
                 businessId: business.id,
                 amount: depositAmount,
                 reason: 'Reservation cancelled by business',
+                idempotencyKey,
               }),
             });
             const result = await res.json();
@@ -440,6 +445,8 @@ export default function PropertyDetailPage() {
   }
 
   const today = new Date().toISOString().split('T')[0];
+
+  if (!allowed) return null;
 
   return (
     <div>

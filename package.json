@@ -16,11 +16,15 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.2",
+    "@emnapi/core": "^1.11.2",
+    "@emnapi/runtime": "^1.11.2",
+    "@emnapi/wasi-threads": "^1.2.2",
     "@sentry/nextjs": "^10.49.0",
     "@supabase/ssr": "^0.10.0",
     "@supabase/supabase-js": "^2.101.1",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.0",
+    "decimal.js": "10.6.0",
     "framer-motion": "^12.38.0",
     "html5-qrcode": "^2.3.8",
     "next": "14.2.35",
@@ -35,7 +39,7 @@
     "react": "^18",
     "react-dom": "^18",
     "resend": "^6.10.0",
-    "sharp": "^0.34.5"
+    "sharp": "0.34.5"
   },
   "devDependencies": {
     "@antiwork/shortest": "^0.4.9",

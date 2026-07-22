@@ -55,6 +55,10 @@ export class StripeGateway implements PaymentGateway {
           gateway: 'stripe',
           gateway_reference: mockRef,
           status: 'pending',
+          collection_mode: opts.collectionMode || 'platform',
+          fee_bearer: opts.feeBearerMode || 'platform',
+          payout_account_id: opts.payoutAccountId || null,
+          waaiio_fee: opts.waaiioFee ?? 0,
           metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null },
         });
         return { url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/pay?ref=${mockRef}`, reference: mockRef };
@@ -121,6 +125,10 @@ export class StripeGateway implements PaymentGateway {
         gateway: 'stripe',
         gateway_reference: stripeRef,
         status: 'pending',
+        collection_mode: opts.collectionMode || 'platform',
+        fee_bearer: opts.feeBearerMode || 'platform',
+        payout_account_id: opts.payoutAccountId || null,
+        waaiio_fee: opts.waaiioFee ?? 0,
         metadata: {
           stripe_session_id: stripeRef,
           reference_code: opts.referenceCode,
@@ -214,6 +222,7 @@ export class StripeGateway implements PaymentGateway {
       }
       return {
         success: true,
+        outcome: 'succeeded',
         gatewayRefundReference: `mock_refund_stripe_${Date.now()}`,
         gatewayResponse: { mock: true },
       };
@@ -226,7 +235,7 @@ export class StripeGateway implements PaymentGateway {
         const session = await stripeGet(`/checkout/sessions/${encodeURIComponent(opts.gatewayReference)}`);
         paymentIntent = session.payment_intent as string;
         if (!paymentIntent) {
-          return { success: false, errorMessage: 'Could not resolve checkout session to payment intent' };
+          return { success: false, outcome: 'definitively_failed', errorMessage: 'Could not resolve checkout session to payment intent' };
         }
       }
 
@@ -240,25 +249,53 @@ export class StripeGateway implements PaymentGateway {
         refundParams.reason = 'requested_by_customer';
       }
 
-      const data = await stripeRequest('/refunds', refundParams);
+      // For Connect destination charges, reverse the transfer and refund application fee
+      const collectionMode = opts.metadata?.collection_mode as string | undefined;
+      if (collectionMode === 'managed_split' || collectionMode === 'connect') {
+        refundParams.reverse_transfer = 'true';
+        refundParams.refund_application_fee = 'true';
+      }
+
+      // Build request with idempotency key
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${getStripeKey()}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      };
+      if (opts.providerIdempotencyKey) {
+        headers['Idempotency-Key'] = opts.providerIdempotencyKey;
+      }
+
+      const response = await fetch('https://api.stripe.com/v1/refunds', {
+        method: 'POST',
+        headers,
+        body: new URLSearchParams(refundParams).toString(),
+        signal: AbortSignal.timeout(15000),
+      });
+      const data = await response.json() as Record<string, unknown>;
 
       if (data.id) {
         return {
           success: true,
+          outcome: 'succeeded',
           gatewayRefundReference: data.id as string,
           gatewayResponse: data,
         };
       }
 
       const error = data.error as Record<string, unknown> | undefined;
+      const errCode = error?.code as string | undefined;
+      const definitiveErrors = ['charge_already_refunded', 'amount_too_large', 'refund_not_allowed', 'invalid_charge', 'charge_not_found'];
+      const isDefinitive = errCode && definitiveErrors.includes(errCode);
       return {
         success: false,
+        outcome: isDefinitive ? 'definitively_failed' : 'ambiguous',
         errorMessage: (error?.message as string) || 'Stripe refund failed',
         gatewayResponse: data,
       };
     } catch (error) {
       return {
         success: false,
+        outcome: 'ambiguous',
         errorMessage: `Stripe refund error: ${(error as Error).message}`,
       };
     }

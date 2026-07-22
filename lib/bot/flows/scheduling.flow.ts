@@ -2411,7 +2411,6 @@ export const schedulingFlow: FlowDefinition = {
             phone: ctx.from,
             userEmail: (d.email as string) || undefined,
             countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
-            gatewayOverride: ctx.business?.payment_gateway || null,
             businessId: ctx.business?.id,
           });
 
@@ -2933,9 +2932,7 @@ export const schedulingFlow: FlowDefinition = {
               recordPlatformFee(ctx.supabase, {
                 businessId: ctx.business.id,
                 bookingId: d.booking_id as string,
-                transactionAmount: feeAmount,
-                tier: ctx.business.subscription_tier as SubscriptionTier,
-                isInTrial,
+                paymentAmount: feeAmount,
               }).catch(err => console.error('[SCHEDULING] saved card recordPlatformFee error:', err));
             }
           }
@@ -3213,9 +3210,7 @@ export const schedulingFlow: FlowDefinition = {
                 recordPlatformFee(ctx.supabase, {
                   businessId: ctx.business.id,
                   bookingId: d.booking_id as string,
-                  transactionAmount: feeAmount,
-                  tier: ctx.business.subscription_tier as SubscriptionTier,
-                  isInTrial,
+                  paymentAmount: feeAmount,
                 }).catch(err => console.error('[SCHEDULING] recordPlatformFee error:', err));
               }
             }

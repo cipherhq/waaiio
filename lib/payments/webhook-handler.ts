@@ -18,7 +18,7 @@ export async function processPaystackChargeSuccess(
 ): Promise<void> {
   const { data: existingPayment } = await supabase
     .from('payments')
-    .select('id, status, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway')
+    .select('id, status, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway, collection_mode')
     .eq('gateway_reference', reference)
     .single();
 
@@ -100,7 +100,11 @@ export async function processPaystackChargeSuccess(
   }).catch(() => {});
 
   // Confirm booking, record platform fees, process invoice/campaign
-  await processSuccessfulPayment(supabase, { ...existingPayment, gateway_fee: gatewayFee });
+  await processSuccessfulPayment(supabase, {
+    ...existingPayment,
+    gateway_fee: gatewayFee,
+    collection_mode: (existingPayment.collection_mode as string) || undefined,
+  });
 
   // Proactive confirmation: send WhatsApp message to customer after payment
   // This ensures customers get confirmation even if they never tap "I've Paid"

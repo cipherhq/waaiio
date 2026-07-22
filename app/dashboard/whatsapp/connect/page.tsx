@@ -442,7 +442,7 @@ export default function ConnectWhatsAppPage() {
       <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4 text-center">
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Need help connecting your number?</p>
         <a
-          href="https://wa.me/12029226251?text=Hi%2C%20I%20need%20help%20connecting%20my%20WhatsApp%20number%20to%20Waaiio"
+          href={`https://wa.me/${process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US || ''}?text=${encodeURIComponent('Hi, I need help connecting my WhatsApp number to Waaiio')}`}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 rounded-lg bg-whatsapp px-4 py-2 text-sm font-medium text-white hover:bg-whatsapp/85 transition"

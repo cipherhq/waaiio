@@ -106,13 +106,23 @@ export class BotService {
 
     if (STOP_WORDS.includes(normalizedInput)) {
       // Record opt-out
-      await this.supabase.from('messaging_opt_outs').upsert({
+      // Insert opt-out record. If duplicate (already opted out), update the timestamp.
+      const { error: optErr } = await this.supabase.from('messaging_opt_outs').insert({
         phone: from,
         business_id: preResolvedBusinessId || null,
         channel: 'whatsapp',
         opt_out_type: 'all',
         opted_out_at: new Date().toISOString(),
-      }, { onConflict: 'phone,business_id,channel' }).select();
+        resubscribed_at: null,
+      });
+      if (optErr?.code === '23505') {
+        // Already opted out — update timestamp
+        await this.supabase.from('messaging_opt_outs')
+          .update({ opted_out_at: new Date().toISOString(), resubscribed_at: null })
+          .eq('phone', from)
+          .eq('channel', 'whatsapp')
+          .is('resubscribed_at', null);
+      }
 
       await this.sendText(from, 'You have been unsubscribed. You will no longer receive promotional messages. Send START to resubscribe.');
       return;
