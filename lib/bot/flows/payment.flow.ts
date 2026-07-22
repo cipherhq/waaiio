@@ -324,6 +324,7 @@ export const paymentFlow: FlowDefinition = {
             party_size: 1,
             flow_type: 'payment',
             channel: 'whatsapp',
+            payment_source: 'payment_request',
             deposit_amount: amount,
             deposit_status: 'pending',
             status: 'pending',

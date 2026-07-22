@@ -77,6 +77,7 @@ export async function POST(request: NextRequest) {
         total_amount: amount,
         status: 'confirmed',
         flow_type: 'payment',
+        payment_source: 'payment_request',
         notes: description || null,
         date: today,
         time: '00:00',
