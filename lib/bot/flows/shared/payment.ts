@@ -269,8 +269,25 @@ export async function initializePayment(
     }
 
     if (!result) {
-      const reason = gatewayError || 'gateway returned null without error';
-      throw new Error(`[${route?.provider || 'unknown'}/${route?.mode || 'unknown'}] ${reason}`);
+      // Write diagnostic to DB so it can be queried without Vercel log access
+      try {
+        await supabase.from('admin_audit_logs').insert({
+          actor_id: '00000000-0000-0000-0000-000000000000',
+          action: 'payment_debug',
+          entity_type: 'payment',
+          entity_id: opts.bookingId || 'unknown',
+          details: {
+            provider: route?.provider,
+            mode: route?.mode,
+            gatewayError,
+            businessId: opts.businessId,
+            amount: opts.amount,
+            currency: currencyCode,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      } catch { /* ignore write failure */ }
+      return null;
     }
 
     // Shorten the checkout URL for WhatsApp messages
