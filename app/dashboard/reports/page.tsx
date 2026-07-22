@@ -2,7 +2,7 @@
 import { getLocale, getPhonePlaceholder, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 
@@ -33,6 +33,7 @@ function formatBytes(bytes: number): string {
 }
 
 export default function DocumentSharePage() {
+  const allowed = useRequireCapability('reports');
   const business = useBusiness();
   const tier = business.subscription_tier || 'free';
   const quota = STORAGE_QUOTAS[tier] || STORAGE_QUOTAS.free;
@@ -171,6 +172,8 @@ export default function DocumentSharePage() {
   }
 
   const pendingDocs = filtered.filter(r => r.status === 'pending');
+
+  if (!allowed) return null;
 
   return (
     <div>

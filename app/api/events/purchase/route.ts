@@ -28,30 +28,56 @@ export async function POST(request: NextRequest) {
 
   const { eventSlug, ticketTypeId, quantity, guestName, guestEmail, guestPhone, otpToken } = body;
 
-  // Validate required fields
-  if (!eventSlug || !quantity || !guestName || !guestEmail) {
+  // ── Field-level validation ──
+  const vErrors: Record<string, string> = {};
+
+  if (!eventSlug || typeof eventSlug !== 'string' || !eventSlug.trim()) {
+    vErrors.eventSlug = 'Event slug is required';
+  }
+  if (!guestName || typeof guestName !== 'string' || !guestName.trim()) {
+    vErrors.guestName = 'Guest name is required';
+  } else if (guestName.trim().length > 200) {
+    vErrors.guestName = 'Guest name must be 200 characters or less';
+  }
+  if (!guestEmail || typeof guestEmail !== 'string') {
+    vErrors.guestEmail = 'Email is required';
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail)) {
+    vErrors.guestEmail = 'Invalid email address';
+  }
+  if (quantity === undefined || quantity === null) {
+    vErrors.quantity = 'Quantity is required';
+  } else if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
+    vErrors.quantity = 'Quantity must be an integer between 1 and 20';
+  }
+  if (ticketTypeId !== undefined && ticketTypeId !== null) {
+    if (typeof ticketTypeId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ticketTypeId)) {
+      vErrors.ticketTypeId = 'Ticket type ID must be a valid UUID';
+    }
+  }
+  if (guestPhone !== undefined && guestPhone !== null && typeof guestPhone !== 'string') {
+    vErrors.guestPhone = 'Phone must be a string';
+  }
+
+  if (Object.keys(vErrors).length > 0) {
     return NextResponse.json(
-      { error: 'Missing required fields: eventSlug, quantity, guestName, guestEmail' },
+      { error: 'Validation failed', fields: vErrors },
       { status: 400 },
     );
   }
+
+  // After validation, these are guaranteed to be present
+  const validatedEmail = guestEmail as string;
+  const validatedQuantity = quantity as number;
+  const validatedName = guestName as string;
+  const validatedSlug = eventSlug as string;
 
   // Verify server-side OTP token (proves email was verified)
   if (!otpToken) {
     return NextResponse.json({ error: 'Email verification required' }, { status: 403 });
   }
   const verifiedEmail = verifyOtpToken(otpToken);
-  if (!verifiedEmail || verifiedEmail !== guestEmail.toLowerCase().trim()) {
+  if (!verifiedEmail || verifiedEmail !== validatedEmail.toLowerCase().trim()) {
     return NextResponse.json({ error: 'Email verification expired or invalid' }, { status: 403 });
-  }
-
-  if (typeof quantity !== 'number' || quantity < 1 || quantity > 20 || !Number.isInteger(quantity)) {
-    return NextResponse.json({ error: 'Quantity must be an integer between 1 and 20' }, { status: 400 });
-  }
-
-  // Basic email validation
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail)) {
-    return NextResponse.json({ error: 'Invalid email address' }, { status: 400 });
   }
 
   const supabase = createServiceClient();
@@ -65,7 +91,7 @@ export async function POST(request: NextRequest) {
         id, name, slug, country_code, payment_gateway
       )
     `)
-    .eq('slug', eventSlug)
+    .eq('slug', validatedSlug)
     .eq('status', 'published')
     .gte('date', new Date().toISOString().split('T')[0])
     .single();
@@ -84,7 +110,7 @@ export async function POST(request: NextRequest) {
 
   // Check max_per_order
   const maxAllowed = event.max_per_order || 10;
-  if (quantity > maxAllowed) {
+  if (validatedQuantity > maxAllowed) {
     return NextResponse.json(
       { error: `Maximum ${maxAllowed} tickets per order` },
       { status: 400 },
@@ -105,7 +131,7 @@ export async function POST(request: NextRequest) {
     }
 
     const ttAvailable = tt.total_tickets - tt.tickets_sold;
-    if (ttAvailable < quantity) {
+    if (ttAvailable < validatedQuantity) {
       return NextResponse.json({ error: 'Sold out' }, { status: 409 });
     }
 
@@ -113,16 +139,16 @@ export async function POST(request: NextRequest) {
   } else {
     // Check general availability
     const available = event.total_tickets - event.tickets_sold;
-    if (available < quantity) {
+    if (available < validatedQuantity) {
       return NextResponse.json({ error: 'Sold out' }, { status: 409 });
     }
   }
 
-  const totalAmount = unitPrice * quantity;
+  const totalAmount = unitPrice * validatedQuantity;
 
   // 2. Find or create user by email (email is verified via OTP)
   let userId: string;
-  const emailLower = guestEmail.toLowerCase();
+  const emailLower = validatedEmail.toLowerCase();
   const phoneClean = guestPhone ? `+${guestPhone.replace(/[^0-9]/g, '')}` : null;
 
   // Look up by email first (most reliable — verified via OTP)
@@ -146,8 +172,8 @@ export async function POST(request: NextRequest) {
     await supabase.from('profiles').update({ email: emailLower }).eq('id', byPhone.id);
   } else {
     // Create new auth user
-    const nameParts = guestName.trim().split(/\s+/);
-    const firstName = nameParts[0] || guestName;
+    const nameParts = validatedName.trim().split(/\s+/);
+    const firstName = nameParts[0] || validatedName;
     const lastName = nameParts.slice(1).join(' ') || '';
 
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
@@ -179,11 +205,11 @@ export async function POST(request: NextRequest) {
       p_business_id: business.id,
       p_event_id: event.id,
       p_ticket_type_id: ticketTypeId || null,
-      p_quantity: quantity,
+      p_quantity: validatedQuantity,
       p_user_id: userId,
-      p_guest_name: guestName,
+      p_guest_name: validatedName,
       p_guest_phone: guestPhone || '',
-      p_guest_email: guestEmail.toLowerCase(),
+      p_guest_email: validatedEmail.toLowerCase(),
       p_total_amount: totalAmount,
       p_channel: 'web',
     });
@@ -220,7 +246,7 @@ export async function POST(request: NextRequest) {
     referenceCode,
     businessName: business.name,
     phone: guestPhone || '',
-    userEmail: guestEmail.toLowerCase(),
+    userEmail: validatedEmail.toLowerCase(),
     countryCode: business.country_code || 'US',
     gatewayOverride: business.payment_gateway || null,
     businessId: business.id,

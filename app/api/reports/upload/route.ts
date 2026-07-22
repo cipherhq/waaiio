@@ -57,6 +57,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Business not found' }, { status: 404 });
     }
 
+    // ── Capability check: reports ──
+    const { data: reportsCap } = await supabase
+      .from('business_capabilities')
+      .select('id')
+      .eq('business_id', businessId)
+      .eq('capability', 'reports')
+      .eq('is_enabled', true)
+      .maybeSingle();
+    if (!reportsCap) return NextResponse.json({ error: 'Feature not enabled' }, { status: 403 });
+
     // Check storage quota
     const serviceClient = createServiceClient();
     const { data: usageData } = await serviceClient

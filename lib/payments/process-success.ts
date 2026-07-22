@@ -46,6 +46,7 @@ export async function processSuccessfulPayment(
     try {
       await recordPlatformFee(supabase, {
         bookingId: payment.booking_id,
+        paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
       });
@@ -71,6 +72,21 @@ export async function processSuccessfulPayment(
           serviceId: booking.service_id,
           bookingId: payment.booking_id,
         });
+      }
+
+      // Deduct session from package enrollment if customer has an active package for this service
+      if (booking?.service_id && booking?.guest_phone && booking?.business_id) {
+        try {
+          await deductPackageSession(supabase, {
+            businessId: booking.business_id,
+            customerPhone: booking.guest_phone,
+            serviceId: booking.service_id,
+            bookingId: payment.booking_id,
+          });
+        } catch (pkgErr) {
+          logger.error('[PROCESS-SUCCESS] Package session deduction error:', pkgErr);
+          Sentry.captureException(pkgErr, { tags: { component: 'process-success', operation: 'package-session-deduction' } });
+        }
       }
     } catch (err) {
       logger.error('[PROCESS-SUCCESS] Waitlist conversion tracking error:', err);
@@ -117,6 +133,7 @@ export async function processSuccessfulPayment(
 
       await recordPlatformFee(supabase, {
         orderId,
+        paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
       });
@@ -160,6 +177,7 @@ export async function processSuccessfulPayment(
 
       await recordPlatformFee(supabase, {
         reservationId: payment.reservation_id,
+        paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
       });
@@ -202,56 +220,55 @@ export async function recordPlatformFee(
     orderId?: string;
     reservationId?: string;
     businessId?: string;
+    paymentId?: string;
     paymentAmount: number;
     gatewayFee?: number;
   },
 ): Promise<void> {
   let businessId = opts.businessId;
-  let transactionAmount = opts.paymentAmount;
+  // Always use the actual payment amount — never replace with entity totals.
+  // Deposits and partial payments must record only the amount actually collected.
+  const transactionAmount = opts.paymentAmount;
 
-  // Resolve business_id and total_amount from the entity
+  // Resolve business_id from the entity (but do NOT override transactionAmount)
   if (opts.bookingId && !businessId) {
     const { data: booking } = await supabase
       .from('bookings')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.bookingId)
       .single();
     if (!booking?.business_id) return;
     businessId = booking.business_id;
-    transactionAmount = booking.total_amount || opts.paymentAmount;
   }
 
   if (opts.orderId && !businessId) {
     const { data: order } = await supabase
       .from('orders')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.orderId)
       .single();
     if (!order?.business_id) return;
     businessId = order.business_id;
-    transactionAmount = order.total_amount || opts.paymentAmount;
   }
 
   if (opts.invoiceId && !businessId) {
     const { data: invoice } = await supabase
       .from('invoices')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.invoiceId)
       .single();
     if (!invoice?.business_id) return;
     businessId = invoice.business_id;
-    transactionAmount = invoice.total_amount || opts.paymentAmount;
   }
 
   if (opts.reservationId && !businessId) {
     const { data: reservation } = await supabase
       .from('reservations')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.reservationId)
       .single();
     if (!reservation?.business_id) return;
     businessId = reservation.business_id;
-    transactionAmount = reservation.total_amount || opts.paymentAmount;
   }
 
   if (!businessId) return;
@@ -292,9 +309,11 @@ export async function recordPlatformFee(
     }
   }
 
-  // Insert fee — log but don't throw on duplicate (webhook + "I've Paid" race)
+  // Insert fee — log but don't throw on duplicate (webhook + "I've Paid" race).
+  // UNIQUE index on payment_id ensures at most one fee per successful payment.
   const { error: feeErr } = await supabase.from('platform_fees').insert({
     business_id: businessId,
+    payment_id: opts.paymentId || null,
     booking_id: opts.bookingId || null,
     invoice_id: opts.invoiceId || null,
     campaign_id: opts.campaignId || null,
@@ -340,26 +359,26 @@ export async function processInvoicePayment(
 
   if (!invoice) return;
 
-  // Idempotency guard: if invoice is already fully paid, skip.
-  // This prevents double-incrementing amount_paid on webhook retries.
-  if (invoice.status === 'paid') {
-    return;
+  // Skip if already fully paid (saves a roundtrip — RPC also checks internally)
+  if (invoice.status === 'paid') return;
+
+  // Atomic RPC: records fee + increments amount_paid in one transaction.
+  // Two concurrent calls for the same payment_id produce one increment and one fee.
+  // UNIQUE index on payment_id is unconditional — refunds don't make it reusable.
+  const { error: rpcError } = await supabase.rpc('apply_invoice_payment', {
+    p_invoice_id: invoiceId,
+    p_payment_id: paymentId,
+    p_payment_amount: paymentAmount,
+    p_business_id: invoice.business_id,
+    p_gateway_fee: gatewayFee || 0,
+  });
+
+  if (rpcError) {
+    if (rpcError.message?.includes('duplicate') || rpcError.message?.includes('unique') || rpcError.message?.includes('already_applied')) {
+      return; // Idempotent — already applied
+    }
+    logger.error('[INVOICE-PAYMENT] RPC error:', rpcError.message);
   }
-
-  const newAmountPaid = (Number(invoice.amount_paid) || 0) + paymentAmount;
-  const totalAmount = Number(invoice.total_amount) || 0;
-  const isFullyPaid = newAmountPaid >= totalAmount;
-
-  await supabase
-    .from('invoices')
-    .update({
-      status: isFullyPaid ? 'paid' : 'sent',
-      amount_paid: newAmountPaid,
-      paid_at: isFullyPaid ? new Date().toISOString() : null,
-    })
-    .eq('id', invoiceId);
-
-  await recordPlatformFee(supabase, { invoiceId, paymentAmount, gatewayFee });
 }
 
 /**
@@ -372,43 +391,27 @@ export async function processCampaignDonation(
   amount: number,
   gatewayFee?: number,
 ): Promise<void> {
-  // Mark donation as success — try by payment_id first, fallback to campaign_id
-  const { data: updated } = await supabase
-    .from('campaign_donations')
-    .update({ status: 'success' })
-    .eq('payment_id', paymentId)
-    .eq('status', 'pending')
-    .select('id')
-    .maybeSingle();
+  // Atomic RPC: transitions donation + increments campaign in one transaction.
+  // If donation is already processed, returns already_processed (idempotent).
+  // Two concurrent calls produce one increment.
+  const { data: result, error: rpcError } = await supabase.rpc('apply_campaign_donation', {
+    p_payment_id: paymentId,
+    p_campaign_id: campaignId,
+    p_amount: amount,
+    p_business_id: '', // Business ID resolved from campaign inside RPC
+  });
 
-  if (!updated) {
-    await supabase
-      .from('campaign_donations')
-      .update({ status: 'success', payment_id: paymentId })
-      .eq('campaign_id', campaignId)
-      .eq('status', 'pending')
-      .is('payment_id', null);
+  if (rpcError) {
+    // Log but don't throw — payment confirmation should not be blocked
+    logger.error('[CAMPAIGN-DONATION] RPC error:', rpcError.message);
   }
 
-  // Atomic increment of campaign stats (prevents double-counting under race)
-  if (typeof supabase.rpc === 'function') {
-    await supabase.rpc('increment_campaign_donation', {
-      p_campaign_id: campaignId,
-      p_amount: amount,
-      p_donor_count: 1,
-    });
-  } else {
-    // Fallback for test environments without RPC support
-    const { data: camp } = await supabase.from('campaigns').select('raised_amount, donor_count').eq('id', campaignId).single();
-    if (camp) {
-      await supabase.from('campaigns').update({
-        raised_amount: Number(camp.raised_amount || 0) + amount,
-        donor_count: (camp.donor_count || 0) + 1,
-      }).eq('id', campaignId);
-    }
+  if (!result?.success) {
+    // Already processed — skip fee recording
+    return;
   }
 
-  // Record platform fee (unique index prevents duplicates)
+  // Record platform fee (unique index on payment_id prevents duplicates)
   const { data: campaign } = await supabase
     .from('campaigns')
     .select('business_id')
@@ -419,8 +422,46 @@ export async function processCampaignDonation(
     await recordPlatformFee(supabase, {
       campaignId,
       businessId: campaign.business_id,
+      paymentId,
       paymentAmount: amount,
       gatewayFee,
     });
+  }
+}
+
+/**
+ * Deduct a session from the customer's active package enrollment.
+ * Fully atomic RPC handles enrollment lookup + deduction + replay protection
+ * in a single database transaction. Non-blocking — errors are logged and captured.
+ */
+async function deductPackageSession(
+  supabase: SupabaseClient,
+  opts: {
+    businessId: string;
+    customerPhone: string;
+    serviceId: string;
+    bookingId: string;
+  },
+): Promise<void> {
+  try {
+    const { data: deducted, error } = await supabase.rpc('deduct_package_session', {
+      p_business_id: opts.businessId,
+      p_customer_phone: opts.customerPhone,
+      p_service_id: opts.serviceId,
+      p_booking_id: opts.bookingId,
+    });
+
+    if (error) {
+      logger.error('[PACKAGE-DEDUCT] RPC error:', error.message);
+      Sentry.captureException(error, { tags: { area: 'package-deduction' } });
+      return;
+    }
+
+    if (deducted) {
+      logger.info(`[PACKAGE-DEDUCT] Session deducted for booking ${opts.bookingId}`);
+    }
+  } catch (err) {
+    logger.error('[PACKAGE-DEDUCT] Error:', err);
+    Sentry.captureException(err, { tags: { area: 'package-deduction' } });
   }
 }

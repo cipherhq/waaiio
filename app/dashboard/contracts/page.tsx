@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CONTRACT_TEMPLATES, COMMON_QUESTIONS, fillTemplatePlaceholders, generateContractFromAnswers } from '@/lib/contract-templates';
 import { PhoneInput } from '@/components/auth/PhoneInput';
@@ -58,6 +58,7 @@ interface CustomTemplate {
 type DocTab = 'template' | 'write' | 'upload';
 
 export default function ContractsPage() {
+  const allowed = useRequireCapability('whatsapp_sign');
   const business = useBusiness();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
@@ -499,6 +500,8 @@ export default function ContractsPage() {
 
   // Check if Step 1 can proceed to Step 2
   const canProceed = title && (docTab !== 'upload' || uploadedFileUrl);
+
+  if (!allowed) return null;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">

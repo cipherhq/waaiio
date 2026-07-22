@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode, CATEGORY_LABELS } from '@/lib/constants';
 import EmptyState from '@/components/dashboard/EmptyState';
@@ -56,6 +56,7 @@ interface PropertyBookingInfo {
 }
 
 export default function PropertiesPage() {
+  const allowed = useRequireCapability('reservation');
   const business = useBusiness();
   const router = useRouter();
   const country = (business.country_code || 'NG') as CountryCode;
@@ -272,6 +273,8 @@ export default function PropertiesPage() {
         : [...f.amenities, amenity],
     }));
   }
+
+  if (!allowed) return null;
 
   if (loading) {
     return (

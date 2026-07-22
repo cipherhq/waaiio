@@ -10,6 +10,10 @@ interface Flag {
 }
 
 export async function POST(request: NextRequest) {
+  if (process.env.ENABLE_PAYOUTS !== 'true') {
+    return NextResponse.json({ error: 'Payouts are currently disabled' }, { status: 503 });
+  }
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
@@ -24,7 +28,7 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   if (!profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
   }
 
   try {

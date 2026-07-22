@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { CATEGORY_LABELS } from '@/lib/constants';
@@ -31,6 +31,7 @@ type ScanState = 'idle' | 'verifying' | 'checked_in' | 'checked_out' | 'already_
 type Tab = 'scanner' | 'audit';
 
 export default function PropertyCheckInPage() {
+  const allowed = useRequireCapability('reservation');
   const business = useBusiness();
   const labels = CATEGORY_LABELS[business.category as keyof typeof CATEGORY_LABELS];
   const propertyLabel = labels?.propertyName || 'Property';
@@ -235,6 +236,8 @@ export default function PropertyCheckInPage() {
   });
 
   const selectedProperty = properties.find(p => p.id === selectedPropertyId);
+
+  if (!allowed) return null;
 
   if (loading) {
     return (

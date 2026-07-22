@@ -108,7 +108,7 @@ export default function DashboardOverview() {
         || dedicatedResult.data?.phone_number
         || sharedResult.data?.phone_number;
 
-      const num = phone?.replace(/[^0-9]/g, '') || '12029226251';
+      const num = phone?.replace(/[^0-9]/g, '') || '';
       setWhatsappDisplayNumber(num);
 
       // Shared channels need bot code prefix
