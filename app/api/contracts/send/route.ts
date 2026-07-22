@@ -171,6 +171,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Business not found' }, { status: 403 });
     }
 
+    // ── Capability check: whatsapp_sign ──
+    const { data: signCap } = await supabase
+      .from('business_capabilities')
+      .select('id')
+      .eq('business_id', business_id)
+      .eq('capability', 'whatsapp_sign')
+      .eq('is_enabled', true)
+      .maybeSingle();
+    if (!signCap) return NextResponse.json({ error: 'Feature not enabled' }, { status: 403 });
+
     // Check conversation limit before sending WhatsApp messages
     const { checkConversationLimit } = await import('@/lib/bot/conversation-guard');
     const service = createServiceClient();

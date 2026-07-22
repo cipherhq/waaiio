@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { PageHeader } from '@/components/dashboard/PageHeader';
 import { ROLE_PERMISSIONS, ROLE_ORDER, type BusinessRole } from '@/lib/permissions';
 
@@ -17,6 +17,7 @@ interface Member {
 }
 
 export default function TeamPage() {
+  const allowed = useRequireCapability('staff');
   const business = useBusiness();
   const [members, setMembers] = useState<Member[]>([]);
   const [limit, setLimit] = useState(1);
@@ -78,6 +79,8 @@ export default function TeamPage() {
 
   const activeCount = members.filter(m => m.status === 'active' || m.isOwner).length;
   const canInvite = activeCount < limit;
+
+  if (!allowed) return null;
 
   return (
     <div className="space-y-6">

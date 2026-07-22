@@ -17,6 +17,7 @@ export default async function DirectoryPage() {
       .from('businesses')
       .select('name, category, city')
       .eq('status', 'active')
+      .eq('discovery_enabled', true)
       .not('bot_code', 'is', null)
       .order('name')
       .limit(100);

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -56,6 +56,7 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 export default function WaiversPage() {
+  const allowed = useRequireCapability('waiver');
   const business = useBusiness();
   const supabase = createClient();
   const [tab, setTab] = useState<ActiveTab>('templates');
@@ -348,6 +349,8 @@ export default function WaiversPage() {
     if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   });
+
+  if (!allowed) return null;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">

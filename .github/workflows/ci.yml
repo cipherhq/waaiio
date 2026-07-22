@@ -6,24 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# ── Main Application ──
 jobs:
-  # ── Main Application ──
-  main-app:
+  main:
     name: Main App (lint, test, build)
     runs-on: ubuntu-latest
-
-    env:
-      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy
-      NEXT_PUBLIC_APP_URL: https://www.waaiio.com
-      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy
-      NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: pk_test_dummy
-      NEXT_PUBLIC_POSTHOG_KEY: dummy
-      NEXT_PUBLIC_META_APP_ID: dummy
-      NEXT_PUBLIC_SENTRY_DSN: https://dummy@sentry.io/0
-      SENTRY_DSN: https://dummy@sentry.io/0
-      SENTRY_ORG: dummy
-      SENTRY_PROJECT: dummy
 
     steps:
       - name: Checkout code
@@ -32,7 +23,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -41,20 +32,110 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Run tests
+      - name: Unit tests
         run: npm run test
 
       - name: Build
-        run: npx next build
+        run: npm run build
 
-  # ── Admin Application ──
-  admin-app:
-    name: Admin App (install, build)
+  # ── Migration Validation (Supabase CLI) ──
+  migrations:
+    name: Migration validation
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: admin
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.84.2
+
+      - name: Start Supabase and apply migrations
+        run: |
+          set -o pipefail
+          echo "Supabase CLI version:"
+          supabase --version
+          echo ""
+          echo "Starting Supabase (DB only)..."
+          supabase start -x gotrue,realtime,storage-api,imgproxy,mailpit,postgrest,edge-runtime,logflare,vector,supavisor
+
+      - name: Verify migrations applied
+        run: |
+          set -o pipefail
+          # Get DB URL from structured env output
+          eval "$(supabase status -o env 2>/dev/null)" || true
+          PGURL="${DB_URL:-${POSTGRES_URL:-}}"
+          if [ -z "$PGURL" ]; then
+            echo "❌ Could not get database URL"
+            supabase status -o env
+            exit 1
+          fi
+          echo "DB URL obtained successfully"
+
+          # Count SQL migration files versus applied migrations
+          FILE_COUNT=$(ls -1 supabase/migrations/*.sql 2>/dev/null | wc -l | tr -d ' ')
+          APPLIED=$(psql "$PGURL" -t -c "SELECT COUNT(*) FROM supabase_migrations.schema_migrations" | tr -d ' ')
+          echo "Migration files: $FILE_COUNT"
+          echo "Applied migrations: $APPLIED"
+
+          if [ "$APPLIED" -lt "$FILE_COUNT" ]; then
+            echo "⚠️  Not all migrations applied: $APPLIED of $FILE_COUNT"
+            echo "Missing:"
+            psql "$PGURL" -t -c "
+              SELECT '  ' || v.version FROM (
+                SELECT regexp_replace(f, '^0*', '') AS version
+                FROM unnest(ARRAY[$(ls -1 supabase/migrations/*.sql | xargs -I{} basename {} .sql | sed "s/_.*//;s/^/'/" | sed "s/$/'/" | tr '\n' ',' | sed 's/,$//')]) AS f
+              ) v
+              WHERE v.version NOT IN (SELECT version FROM supabase_migrations.schema_migrations)
+              ORDER BY v.version::integer
+              LIMIT 20
+            " 2>/dev/null || echo "  (could not determine missing versions)"
+            exit 1
+          fi
+
+          # Verify latest applied is 249
+          LATEST=$(psql "$PGURL" -t -c "SELECT MAX(version::integer) FROM supabase_migrations.schema_migrations" | tr -d ' ')
+          echo "Latest applied migration: $LATEST"
+          if [ "$LATEST" != "265" ]; then
+            echo "❌ Expected latest migration 265, got $LATEST"
+            exit 1
+          fi
+
+          # Verify critical financial tables exist
+          for table in businesses payments platform_fees business_payouts payout_accounts refunds invoices package_session_log; do
+            EXISTS=$(psql "$PGURL" -t -c "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='$table'" | tr -d ' ')
+            if [ "$EXISTS" != "1" ]; then
+              echo "❌ Missing table: $table"
+              exit 1
+            fi
+          done
+
+          echo "✅ All $APPLIED migrations applied. Key tables verified."
+
+      - name: Verify RLS enabled on financial tables
+        run: |
+          set -o pipefail
+          eval "$(supabase status -o env 2>/dev/null)" || true
+          PGURL="${DB_URL:-${POSTGRES_URL:-}}"
+          for table in payments platform_fees business_payouts payout_accounts refunds invoices; do
+            RLS=$(psql "$PGURL" -t -c "SELECT rowsecurity FROM pg_tables WHERE tablename='$table' AND schemaname='public'" | tr -d ' ')
+            if [ "$RLS" != "t" ]; then
+              echo "❌ RLS not enabled on: $table"
+              exit 1
+            fi
+          done
+          echo "✅ RLS enabled on all financial tables."
+
+      - name: Stop Supabase
+        if: always()
+        run: supabase stop 2>/dev/null || true
+
+  # ── Admin Application ──
+  admin:
+    name: Admin App (install, build)
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -63,176 +144,27 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: admin/package-lock.json
 
-      - name: Install dependencies
+      - name: Install admin dependencies
+        working-directory: admin
         run: npm ci
 
-      - name: Build
+      - name: Typecheck admin
+        working-directory: admin
+        run: npm run typecheck
+
+      - name: Build admin
+        working-directory: admin
         run: npm run build
-
-  # ── Migration Validation (real PostgreSQL) ──
-  migrations:
-    name: Migration validation
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: waaiio_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Supabase prerequisites
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client
-
-      - name: Create Supabase schema prerequisites
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-        run: |
-          # Create the auth schema and functions that Supabase provides
-          psql -q <<'EOSQL'
-          CREATE SCHEMA IF NOT EXISTS auth;
-          CREATE SCHEMA IF NOT EXISTS extensions;
-          CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-          CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
-          -- Minimal auth.uid() stub for RLS policies
-          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
-            SELECT '00000000-0000-0000-0000-000000000000'::UUID;
-          $$ LANGUAGE SQL STABLE;
-
-          -- Minimal auth.role() stub
-          CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
-            SELECT 'authenticated'::TEXT;
-          $$ LANGUAGE SQL STABLE;
-
-          -- Create a minimal auth.users table (referenced by some FKs)
-          CREATE TABLE IF NOT EXISTS auth.users (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            email TEXT,
-            raw_app_meta_data JSONB DEFAULT '{}'
-          );
-          EOSQL
-          echo "✅ Supabase schema stubs created"
-
-      - name: Apply all migrations
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-        run: |
-          FAILED=0
-          APPLIED=0
-          for f in supabase/migrations/*.sql; do
-            echo "Applying $(basename $f)..."
-            if ! psql -q -v ON_ERROR_STOP=1 -f "$f" 2>&1; then
-              echo "❌ FAILED: $(basename $f)"
-              FAILED=1
-              # Continue to catch multiple failures
-            else
-              APPLIED=$((APPLIED + 1))
-            fi
-          done
-          echo ""
-          echo "Applied: $APPLIED migrations"
-          if [ "$FAILED" -eq 1 ]; then
-            echo "❌ Some migrations failed. See errors above."
-            exit 1
-          fi
-          echo "✅ All migrations applied successfully."
-
-      - name: Verify key tables exist
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-        run: |
-          echo "Verifying key tables..."
-          TABLES="businesses bookings payments orders products events event_tickets attendance_log whatsapp_channels processed_webhook_events"
-          MISSING=0
-          for t in $TABLES; do
-            if psql -tAc "SELECT 1 FROM information_schema.tables WHERE table_name='$t'" | grep -q 1; then
-              echo "  ✅ $t"
-            else
-              echo "  ❌ $t MISSING"
-              MISSING=1
-            fi
-          done
-          if [ "$MISSING" -eq 1 ]; then
-            echo "❌ Some expected tables are missing."
-            exit 1
-          fi
-          echo "✅ All key tables verified."
-
-      - name: Verify RLS is enabled
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-        run: |
-          echo "Checking RLS on user-facing tables..."
-          NO_RLS=$(psql -tAc "
-            SELECT tablename FROM pg_tables
-            WHERE schemaname = 'public'
-            AND tablename NOT IN ('schema_migrations', 'spatial_ref_sys')
-            AND tablename NOT IN (
-              SELECT tablename FROM pg_tables t
-              JOIN pg_class c ON c.relname = t.tablename
-              WHERE c.relrowsecurity = true
-            )
-          ")
-          if [ -n "$NO_RLS" ]; then
-            echo "⚠️  Tables without RLS (may be intentional):"
-            echo "$NO_RLS"
-          fi
-          echo "✅ RLS check complete."
 
   # ── Playwright Smoke Tests ──
   playwright:
     name: Playwright smoke tests
     runs-on: ubuntu-latest
-    needs: main-app
-
-    env:
-      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy
-      NEXT_PUBLIC_APP_URL: http://localhost:3000
-      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy
-      NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: pk_test_dummy
-      NEXT_PUBLIC_POSTHOG_KEY: dummy
-      NEXT_PUBLIC_META_APP_ID: dummy
-      NEXT_PUBLIC_SENTRY_DSN: https://dummy@sentry.io/0
-      SENTRY_DSN: https://dummy@sentry.io/0
-      SENTRY_ORG: dummy
-      SENTRY_PROJECT: dummy
-      PLAYWRIGHT_BASE_URL: http://localhost:3000
+    needs: [main, migrations]
 
     steps:
       - name: Checkout code
@@ -241,19 +173,43 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.84.2
+
+      - name: Start Supabase
+        run: supabase start -x imgproxy,edge-runtime,logflare,vector,supavisor
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build application
-        run: npx next build
+      - name: Get Supabase env
+        id: supabase
+        run: |
+          eval "$(supabase status -o env 2>/dev/null)" || true
+          echo "url=${API_URL:-http://localhost:54321}" >> "$GITHUB_OUTPUT"
+          echo "anon_key=${ANON_KEY:-}" >> "$GITHUB_OUTPUT"
+          echo "service_key=${SERVICE_ROLE_KEY:-}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
 
       - name: Install Playwright browsers
         run: npx playwright install chromium --with-deps
 
       - name: Start server and run tests
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
         run: |
           npx next start &
           SERVER_PID=$!
@@ -271,18 +227,60 @@ jobs:
           kill $SERVER_PID 2>/dev/null || true
           exit $TEST_EXIT
 
+      - name: Run JWT/RLS integration tests
+        env:
+          SUPABASE_INTEGRATION: 'true'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
+        run: npx vitest run lib/__tests__/supabase-auth-integration.test.ts --reporter=verbose
+
       - name: Upload test results
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
-          path: playwright-report/
-          retention-days: 7
+          name: playwright-results
+          path: test-results/
+
+      - name: Stop Supabase
+        if: always()
+        run: supabase stop 2>/dev/null || true
+
+  # ── Dependency Audit ──
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit root dependencies
+        run: npm audit --audit-level=critical
+
+      - name: Check for wildcard dependencies
+        run: |
+          echo "Checking for wildcard (*) dependencies..."
+          if grep -E ':\s*"\*"' package.json admin/package.json 2>/dev/null; then
+            echo "❌ Wildcard dependencies found. Pin to specific versions."
+            exit 1
+          fi
+          echo "✅ No wildcard dependencies."
 
   # ── Secret Scanning ──
-  secret-scan:
+  secrets:
     name: Secret scanning
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -293,6 +291,11 @@ jobs:
         run: |
           echo "Scanning for potential secrets..."
           FOUND=0
+          # These patterns detect live credential prefixes.
+          # Exclusions: this workflow (contains the pattern list), pre-commit hook
+          # (mirrors the same list), and agent skill docs (contain example prefixes).
+          # If a real secret is added to an excluded file, it must be caught by
+          # pre-commit or code review — not by excluding the file from scanning.
           PATTERNS=(
             'sk_live_'
             'pk_live_'
@@ -304,7 +307,7 @@ jobs:
             'ghp_'
           )
           for pattern in "${PATTERNS[@]}"; do
-            MATCHES=$(git grep -l "$pattern" -- ':!.env.example' ':!node_modules' ':!.next' ':!*.lock' 2>/dev/null || true)
+            MATCHES=$(git grep -l "$pattern" -- ':!.env.example' ':!node_modules' ':!.next' ':!*.lock' ':!.github/workflows/ci.yml' ':!.husky/pre-commit' ':!.agents/skills/*/references/*' 2>/dev/null || true)
             if [ -n "$MATCHES" ]; then
               echo "⚠️  Found potential secret pattern '$pattern' in:"
               echo "$MATCHES"
@@ -316,33 +319,3 @@ jobs:
             exit 1
           fi
           echo "✅ No secrets detected."
-
-  # ── Dependency Audit ──
-  dependency-audit:
-    name: Dependency audit
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Audit root dependencies
-        run: npm audit --audit-level=critical
-        continue-on-error: true
-
-      - name: Check for wildcard dependencies
-        run: |
-          echo "Checking for wildcard (*) dependencies..."
-          if grep -r '"*"' package.json admin/package.json 2>/dev/null; then
-            echo "❌ Wildcard dependencies found. Pin to specific versions."
-            exit 1
-          fi
-          echo "✅ No wildcard dependencies."

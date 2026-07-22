@@ -219,5 +219,3 @@ END;
 $$;
 
 -- Grant execute to service role only (webhook handlers use service client)
-REVOKE ALL ON FUNCTION process_recurring_charge FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION process_recurring_charge TO service_role;

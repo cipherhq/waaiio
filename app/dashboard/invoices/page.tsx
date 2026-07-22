@@ -2,7 +2,7 @@
 import { type CountryCode } from '@/lib/constants';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import EmptyState from '@/components/dashboard/EmptyState';
@@ -81,6 +81,7 @@ function getStatusBadge(status: string) {
 }
 
 export default function InvoicesPage() {
+  const allowed = useRequireCapability('invoice');
   const business = useBusiness();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -349,6 +350,8 @@ export default function InvoicesPage() {
     { key: 'paid', label: 'Paid' },
     { key: 'overdue', label: 'Overdue' },
   ];
+
+  if (!allowed) return null;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">

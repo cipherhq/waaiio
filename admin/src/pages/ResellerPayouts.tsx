@@ -1,13 +1,19 @@
 import { useEffect, useState } from 'react';
-import { adminDb } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDate, fmtCurrency } from '@/lib/formatters';
-import { logAudit } from '@/lib/auditLog';
 import { Wallet, Plus, Search, AlertCircle, CheckCircle, XCircle, DollarSign, FileText } from 'lucide-react';
+
+const apiUrl = import.meta.env.VITE_API_URL || '';
+
+async function getAccessToken(): Promise<string | null> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  return sessionData?.session?.access_token ?? null;
+}
 
 interface Reseller {
   id: string;
@@ -127,7 +133,7 @@ export default function ResellerPayouts() {
     }
   }
 
-  // Calculate gross commission for the selected reseller and period
+  // Calculate gross commission for the selected reseller and period (read-only query for preview)
   async function calculateCommission() {
     if (!genResellerId || !genPeriodStart || !genPeriodEnd) return;
 
@@ -185,42 +191,33 @@ export default function ResellerPayouts() {
     setGenError('');
 
     try {
-      const holdbackPct = parseFloat(genHoldbackPct) || 0;
-      const deductions = parseFloat(genDeductions) || 0;
-      const holdbackAmount = Math.round(genGrossCommission * holdbackPct / 100);
-      const netAmount = Math.max(0, genGrossCommission - holdbackAmount - deductions);
-
-      const { error } = await adminDb
-        .from('reseller_payouts')
-        .insert({
-          reseller_id: genResellerId,
-          period_start: genPeriodStart,
-          period_end: genPeriodEnd,
-          gross_commission: genGrossCommission,
-          holdback: holdbackAmount,
-          deductions,
-          net_amount: netAmount,
-          notes: genNotes || null,
-          status: 'pending',
-        });
-
-      if (error) {
-        setGenError(error.message);
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        setGenError('Session expired — please re-login');
         return;
       }
 
-      await logAudit({
-        action: 'generate_reseller_payout',
-        entity_type: 'reseller_payout',
-        entity_id: genResellerId,
-        details: {
+      const res = await fetch(`${apiUrl}/api/admin/reseller-payouts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
           reseller_id: genResellerId,
           period_start: genPeriodStart,
           period_end: genPeriodEnd,
-          gross_commission: genGrossCommission,
-          net_amount: netAmount,
-        },
+          holdback_percent: parseFloat(genHoldbackPct) || 0,
+          deductions: parseFloat(genDeductions) || 0,
+          notes: genNotes || null,
+        }),
       });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setGenError(data.error || 'Failed to create payout');
+        return;
+      }
 
       setGenerateOpen(false);
       await loadData();
@@ -231,37 +228,32 @@ export default function ResellerPayouts() {
     }
   }
 
-  async function handleAction(payoutId: string, action: 'approve' | 'reject' | 'pay') {
+  async function handleAction(payoutId: string, action: 'approve' | 'reject' | 'mark_paid') {
+    if (action === 'approve' && !window.confirm('Approve this reseller payout?')) return;
+    if (action === 'reject' && !window.confirm('Reject this reseller payout?')) return;
+    if (action === 'mark_paid' && !window.confirm('Mark this payout as paid? This action cannot be undone.')) return;
     setActionLoading(payoutId);
     try {
-      const updates: Record<string, unknown> = {};
-
-      if (action === 'approve') {
-        updates.status = 'approved';
-        updates.approved_by = adminSession?.id || null;
-      } else if (action === 'reject') {
-        updates.status = 'rejected';
-      } else if (action === 'pay') {
-        updates.status = 'paid';
-        updates.paid_at = new Date().toISOString();
-      }
-
-      const { error } = await adminDb
-        .from('reseller_payouts')
-        .update(updates)
-        .eq('id', payoutId);
-
-      if (error) {
-        alert('Failed to update payout: ' + error.message);
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        alert('Session expired — please re-login');
         return;
       }
 
-      await logAudit({
-        action: `${action}_reseller_payout`,
-        entity_type: 'reseller_payout',
-        entity_id: payoutId,
-        details: { action, status: updates.status },
+      const res = await fetch(`${apiUrl}/api/admin/reseller-payouts/${payoutId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ action }),
       });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || `Failed to ${action} payout`);
+        return;
+      }
 
       // Close detail modal if viewing this payout
       if (selected?.id === payoutId) {
@@ -414,7 +406,7 @@ export default function ResellerPayouts() {
                       )}
                       {p.status === 'approved' && (
                         <button
-                          onClick={() => handleAction(p.id, 'pay')}
+                          onClick={() => handleAction(p.id, 'mark_paid')}
                           disabled={actionLoading === p.id}
                           className="rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-medium text-blue-600 transition hover:bg-blue-50 disabled:opacity-50"
                         >
@@ -474,7 +466,7 @@ export default function ResellerPayouts() {
               )}
               {selected.status === 'approved' && (
                 <button
-                  onClick={() => handleAction(selected.id, 'pay')}
+                  onClick={() => handleAction(selected.id, 'mark_paid')}
                   disabled={!!actionLoading}
                   className="flex items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
                 >

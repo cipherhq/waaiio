@@ -57,6 +57,16 @@ export async function POST(request: NextRequest) {
 
     if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
 
+    // ── Capability check: waiver ──
+    const { data: waiverCap } = await supabase
+      .from('business_capabilities')
+      .select('id')
+      .eq('business_id', business_id)
+      .eq('capability', 'waiver')
+      .eq('is_enabled', true)
+      .maybeSingle();
+    if (!waiverCap) return NextResponse.json({ error: 'Feature not enabled' }, { status: 403 });
+
     const insertData: Record<string, unknown> = {
       business_id,
       title,
