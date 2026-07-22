@@ -15,7 +15,14 @@ interface BookingRow {
   guest_name: string | null;
   total_amount: number;
   deposit_amount: number;
+  deposit_status: string;
   status: string;
+  created_at: string;
+}
+
+interface PaymentRow {
+  amount: number;
+  paid_at: string;
   created_at: string;
 }
 
@@ -62,16 +69,32 @@ const flowTypeStyles: Record<string, string> = {
   event: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
 };
 
+/** Convert a UTC timestamp to a YYYY-MM-DD string in the business timezone */
+function toLocalDate(utcTimestamp: string, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(utcTimestamp));
+  } catch {
+    return utcTimestamp.slice(0, 10);
+  }
+}
+
+/** Convert a UTC timestamp to YYYY-MM in the business timezone */
+function toLocalMonth(utcTimestamp: string, tz: string): string {
+  return toLocalDate(utcTimestamp, tz).slice(0, 7);
+}
+
 export default function FinancialsPage() {
   const business = useBusiness();
   const { labels } = useCategoryConfig(business.category);
   const country = (business.country_code || 'NG') as CountryCode;
+  const tz = business.timezone || 'UTC';
   const isGiving = labels.quantityLabel === 'amount';
 
   const [loading, setLoading] = useState(true);
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [successfulPayments, setSuccessfulPayments] = useState<PaymentRow[]>([]);
   const [platformFees, setPlatformFees] = useState(0);
   const [pendingPayouts, setPendingPayouts] = useState(0);
   const [typeFilter, setTypeFilter] = useState('all');
@@ -90,10 +113,10 @@ export default function FinancialsPage() {
     async function load() {
       const supabase = createClient();
 
-      const [bookingsRes, ordersRes, invoicesRes, feesRes, payoutsRes, payoutAccountRes, refundsRes] = await Promise.all([
+      const [bookingsRes, ordersRes, invoicesRes, feesRes, payoutsRes, payoutAccountRes, refundsRes, paymentsRes] = await Promise.all([
         supabase
           .from('bookings')
-          .select('id, flow_type, reference_code, guest_name, total_amount, deposit_amount, status, created_at')
+          .select('id, flow_type, reference_code, guest_name, total_amount, deposit_amount, deposit_status, status, created_at')
           .eq('business_id', business.id)
           .order('created_at', { ascending: false })
           .limit(500),
@@ -134,11 +157,20 @@ export default function FinancialsPage() {
           .select('amount, status')
           .eq('business_id', business.id)
           .eq('status', 'success'),
+        // Canonical revenue: successful payments only
+        supabase
+          .from('payments')
+          .select('amount, paid_at, created_at')
+          .eq('business_id', business.id)
+          .eq('status', 'success')
+          .order('created_at', { ascending: false })
+          .limit(2000),
       ]);
 
       setBookings(bookingsRes.data || []);
       setOrders((ordersRes.data as OrderRow[] | null) || []);
       setInvoices(invoicesRes.data || []);
+      setSuccessfulPayments((paymentsRes.data as PaymentRow[] | null) || []);
       if (isDirectSplit) {
         setPlatformPct(payoutAccountRes.data?.platform_percentage ?? 2.5);
       } else {
@@ -151,26 +183,11 @@ export default function FinancialsPage() {
     load();
   }, [business.id, isDirectSplit]);
 
-  // Revenue from all sources: bookings + orders + invoices
-  const bookingRevenue = useMemo(() =>
-    bookings
-      .filter(b => b.status !== 'cancelled' && b.status !== 'no_show')
-      .reduce((s, b) => s + Number(b.total_amount || b.deposit_amount || 0), 0),
-  [bookings]);
-
-  const orderRevenue = useMemo(() =>
-    orders
-      .filter(o => ['confirmed', 'processing', 'ready', 'shipped', 'delivered'].includes(o.status))
-      .reduce((s, o) => s + Number(o.total_amount || 0), 0),
-  [orders]);
-
-  const invoiceRevenue = useMemo(() =>
-    invoices
-      .filter(inv => inv.status === 'paid')
-      .reduce((s, inv) => s + Number(inv.amount_paid || inv.total_amount || 0), 0),
-  [invoices]);
-
-  const totalRevenue = bookingRevenue + orderRevenue + invoiceRevenue;
+  // Revenue = sum of successful payments (canonical source of truth)
+  // This matches the copilot and payout balance calculations.
+  const totalRevenue = useMemo(() =>
+    successfulPayments.reduce((s, p) => s + Number(p.amount || 0), 0),
+  [successfulPayments]);
 
   const effectiveFees = isDirectSplit && platformPct !== null
     ? Math.round(totalRevenue * (platformPct / 100))
@@ -241,8 +258,8 @@ export default function FinancialsPage() {
     let result = transactions;
     if (typeFilter !== 'all') result = result.filter(t => t.type === typeFilter);
     if (statusFilter !== 'all') result = result.filter(t => t.status === statusFilter);
-    if (dateFrom) result = result.filter(t => t.date >= dateFrom);
-    if (dateTo) result = result.filter(t => t.date <= dateTo + 'T23:59:59');
+    if (dateFrom) result = result.filter(t => toLocalDate(t.date, tz) >= dateFrom);
+    if (dateTo) result = result.filter(t => toLocalDate(t.date, tz) <= dateTo);
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(t =>
@@ -265,7 +282,7 @@ export default function FinancialsPage() {
     return Array.from(types);
   }, [bookings, orders, invoices]);
 
-  // Monthly revenue for chart (last 6 months) — includes all transaction sources
+  // Monthly revenue for chart (last 6 months) — from successful payments
   const monthlyRevenue = useMemo(() => {
     const months: { label: string; amount: number }[] = [];
     const now = new Date();
@@ -274,22 +291,14 @@ export default function FinancialsPage() {
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       const label = d.toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { month: 'short' });
 
-      const bAmt = bookings
-        .filter(b => b.status !== 'cancelled' && b.status !== 'no_show' && b.created_at.startsWith(key))
-        .reduce((s, b) => s + Number(b.total_amount || b.deposit_amount || 0), 0);
+      const amount = successfulPayments
+        .filter(p => toLocalMonth(p.paid_at || p.created_at, tz) === key)
+        .reduce((s, p) => s + Number(p.amount || 0), 0);
 
-      const oAmt = orders
-        .filter(o => ['confirmed', 'processing', 'ready', 'shipped', 'delivered'].includes(o.status) && o.created_at.startsWith(key))
-        .reduce((s, o) => s + Number(o.total_amount || 0), 0);
-
-      const iAmt = invoices
-        .filter(inv => inv.status === 'paid' && (inv.paid_at || inv.created_at).startsWith(key))
-        .reduce((s, inv) => s + Number(inv.amount_paid || inv.total_amount || 0), 0);
-
-      months.push({ label, amount: bAmt + oAmt + iAmt });
+      months.push({ label, amount });
     }
     return months;
-  }, [bookings, orders, invoices]);
+  }, [successfulPayments]);
 
   const maxMonthly = Math.max(...monthlyRevenue.map(m => m.amount), 1);
 

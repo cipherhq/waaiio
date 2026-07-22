@@ -46,6 +46,7 @@ export async function processSuccessfulPayment(
     try {
       await recordPlatformFee(supabase, {
         bookingId: payment.booking_id,
+        paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
       });
@@ -71,6 +72,21 @@ export async function processSuccessfulPayment(
           serviceId: booking.service_id,
           bookingId: payment.booking_id,
         });
+      }
+
+      // Deduct session from package enrollment if customer has an active package for this service
+      if (booking?.service_id && booking?.guest_phone && booking?.business_id) {
+        try {
+          await deductPackageSession(supabase, {
+            businessId: booking.business_id,
+            customerPhone: booking.guest_phone,
+            serviceId: booking.service_id,
+            bookingId: payment.booking_id,
+          });
+        } catch (pkgErr) {
+          logger.error('[PROCESS-SUCCESS] Package session deduction error:', pkgErr);
+          Sentry.captureException(pkgErr, { tags: { component: 'process-success', operation: 'package-session-deduction' } });
+        }
       }
     } catch (err) {
       logger.error('[PROCESS-SUCCESS] Waitlist conversion tracking error:', err);
@@ -117,6 +133,7 @@ export async function processSuccessfulPayment(
 
       await recordPlatformFee(supabase, {
         orderId,
+        paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
       });
@@ -160,6 +177,7 @@ export async function processSuccessfulPayment(
 
       await recordPlatformFee(supabase, {
         reservationId: payment.reservation_id,
+        paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
       });
@@ -202,56 +220,55 @@ export async function recordPlatformFee(
     orderId?: string;
     reservationId?: string;
     businessId?: string;
+    paymentId?: string;
     paymentAmount: number;
     gatewayFee?: number;
   },
 ): Promise<void> {
   let businessId = opts.businessId;
-  let transactionAmount = opts.paymentAmount;
+  // Always use the actual payment amount — never replace with entity totals.
+  // Deposits and partial payments must record only the amount actually collected.
+  const transactionAmount = opts.paymentAmount;
 
-  // Resolve business_id and total_amount from the entity
+  // Resolve business_id from the entity (but do NOT override transactionAmount)
   if (opts.bookingId && !businessId) {
     const { data: booking } = await supabase
       .from('bookings')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.bookingId)
       .single();
     if (!booking?.business_id) return;
     businessId = booking.business_id;
-    transactionAmount = booking.total_amount || opts.paymentAmount;
   }
 
   if (opts.orderId && !businessId) {
     const { data: order } = await supabase
       .from('orders')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.orderId)
       .single();
     if (!order?.business_id) return;
     businessId = order.business_id;
-    transactionAmount = order.total_amount || opts.paymentAmount;
   }
 
   if (opts.invoiceId && !businessId) {
     const { data: invoice } = await supabase
       .from('invoices')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.invoiceId)
       .single();
     if (!invoice?.business_id) return;
     businessId = invoice.business_id;
-    transactionAmount = invoice.total_amount || opts.paymentAmount;
   }
 
   if (opts.reservationId && !businessId) {
     const { data: reservation } = await supabase
       .from('reservations')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.reservationId)
       .single();
     if (!reservation?.business_id) return;
     businessId = reservation.business_id;
-    transactionAmount = reservation.total_amount || opts.paymentAmount;
   }
 
   if (!businessId) return;
@@ -292,9 +309,11 @@ export async function recordPlatformFee(
     }
   }
 
-  // Insert fee — log but don't throw on duplicate (webhook + "I've Paid" race)
+  // Insert fee — log but don't throw on duplicate (webhook + "I've Paid" race).
+  // UNIQUE index on payment_id ensures at most one fee per successful payment.
   const { error: feeErr } = await supabase.from('platform_fees').insert({
     business_id: businessId,
+    payment_id: opts.paymentId || null,
     booking_id: opts.bookingId || null,
     invoice_id: opts.invoiceId || null,
     campaign_id: opts.campaignId || null,
@@ -359,7 +378,7 @@ export async function processInvoicePayment(
     })
     .eq('id', invoiceId);
 
-  await recordPlatformFee(supabase, { invoiceId, paymentAmount, gatewayFee });
+  await recordPlatformFee(supabase, { invoiceId, paymentId, paymentAmount, gatewayFee });
 }
 
 /**
@@ -419,8 +438,46 @@ export async function processCampaignDonation(
     await recordPlatformFee(supabase, {
       campaignId,
       businessId: campaign.business_id,
+      paymentId,
       paymentAmount: amount,
       gatewayFee,
     });
+  }
+}
+
+/**
+ * Deduct a session from the customer's active package enrollment.
+ * Fully atomic RPC handles enrollment lookup + deduction + replay protection
+ * in a single database transaction. Non-blocking — errors are logged and captured.
+ */
+async function deductPackageSession(
+  supabase: SupabaseClient,
+  opts: {
+    businessId: string;
+    customerPhone: string;
+    serviceId: string;
+    bookingId: string;
+  },
+): Promise<void> {
+  try {
+    const { data: deducted, error } = await supabase.rpc('deduct_package_session', {
+      p_business_id: opts.businessId,
+      p_customer_phone: opts.customerPhone,
+      p_service_id: opts.serviceId,
+      p_booking_id: opts.bookingId,
+    });
+
+    if (error) {
+      logger.error('[PACKAGE-DEDUCT] RPC error:', error.message);
+      Sentry.captureException(error, { tags: { area: 'package-deduction' } });
+      return;
+    }
+
+    if (deducted) {
+      logger.info(`[PACKAGE-DEDUCT] Session deducted for booking ${opts.bookingId}`);
+    }
+  } catch (err) {
+    logger.error('[PACKAGE-DEDUCT] Error:', err);
+    Sentry.captureException(err, { tags: { area: 'package-deduction' } });
   }
 }

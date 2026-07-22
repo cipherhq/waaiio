@@ -174,7 +174,7 @@ export default function SupportPage() {
         </div>
         <div className="flex gap-2">
           <a
-            href={`https://wa.me/${process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US || '12029226251'}?text=${encodeURIComponent('Hi, I need help with my Waaiio account')}`}
+            href={`https://wa.me/${process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US || ''}?text=${encodeURIComponent('Hi, I need help with my Waaiio account')}`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 rounded-lg border border-whatsapp px-4 py-2 text-sm font-medium text-whatsapp transition hover:bg-whatsapp/10"

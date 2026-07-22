@@ -38,10 +38,37 @@ export async function POST(request: NextRequest) {
       otpToken?: string;
     };
 
-    // Basic validation
-    if (!businessSlug || !serviceId || !date || !time || !guestName || !guestEmail) {
+    // ── Field-level validation ──
+    const vErrors: Record<string, string> = {};
+
+    if (!businessSlug || typeof businessSlug !== 'string') vErrors.businessSlug = 'Business slug is required';
+    if (!serviceId || typeof serviceId !== 'string') {
+      vErrors.serviceId = 'Service ID is required';
+    } else if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(serviceId)) {
+      vErrors.serviceId = 'Service ID must be a valid UUID';
+    }
+    if (!date || typeof date !== 'string') vErrors.date = 'Date is required';
+    if (!time || typeof time !== 'string') vErrors.time = 'Time is required';
+    if (!guestName || typeof guestName !== 'string' || !guestName.trim()) {
+      vErrors.guestName = 'Guest name is required';
+    } else if (guestName.trim().length > 200) {
+      vErrors.guestName = 'Guest name must be 200 characters or less';
+    }
+    if (!guestEmail || typeof guestEmail !== 'string') vErrors.guestEmail = 'Email is required';
+    if (guestPhone !== undefined && guestPhone !== null && typeof guestPhone !== 'string') {
+      vErrors.guestPhone = 'Phone must be a string';
+    }
+    if (quantity !== undefined && quantity !== null) {
+      if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity < 1) {
+        vErrors.quantity = 'Quantity must be a positive integer';
+      } else if (quantity > 50) {
+        vErrors.quantity = 'Quantity cannot exceed 50';
+      }
+    }
+
+    if (Object.keys(vErrors).length > 0) {
       return NextResponse.json(
-        { error: 'Missing required fields' },
+        { error: 'Validation failed', fields: vErrors },
         { status: 400 },
       );
     }
@@ -60,15 +87,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid date format' }, { status: 400 });
     }
 
-    // Validate time format
-    if (!/^\d{2}:\d{2}$/.test(time)) {
+    // Validate time format (00:00 - 23:59)
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
       return NextResponse.json({ error: 'Invalid time format' }, { status: 400 });
-    }
-
-    // Date must not be in the past
-    const today = new Date().toISOString().split('T')[0];
-    if (date < today) {
-      return NextResponse.json({ error: 'Cannot book in the past' }, { status: 400 });
     }
 
     // Sanitize email
@@ -84,13 +105,42 @@ export async function POST(request: NextRequest) {
     // Fetch business
     const { data: business, error: bizError } = await supabase
       .from('businesses')
-      .select('id, name, slug, country_code, operating_hours, payment_gateway, subscription_tier, metadata, owner_id')
+      .select('id, name, slug, country_code, operating_hours, payment_gateway, subscription_tier, metadata, owner_id, timezone')
       .eq('slug', businessSlug)
       .eq('is_active', true)
+      .eq('status', 'active')
       .single();
 
     if (bizError || !business) {
       return NextResponse.json({ error: 'Business not found' }, { status: 404 });
+    }
+
+    // Date must not be in the past (timezone-aware)
+    const businessTimezone = (business as Record<string, unknown>).timezone as string || 'UTC';
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: businessTimezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    if (date < today) {
+      return NextResponse.json({ error: 'Cannot book in the past' }, { status: 400 });
+    }
+
+    // Capability check: scheduling or appointment must be enabled
+    const { data: schedCap } = await supabase
+      .from('business_capabilities')
+      .select('id')
+      .eq('business_id', business.id)
+      .eq('capability', 'scheduling')
+      .eq('is_enabled', true)
+      .maybeSingle();
+    if (!schedCap) {
+      const { data: apptCap } = await supabase
+        .from('business_capabilities')
+        .select('id')
+        .eq('business_id', business.id)
+        .eq('capability', 'appointment')
+        .eq('is_enabled', true)
+        .maybeSingle();
+      if (!apptCap) {
+        return NextResponse.json({ error: 'This business does not accept online bookings' }, { status: 403 });
+      }
     }
 
     // Fetch service
@@ -130,10 +180,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Time is outside operating hours' }, { status: 400 });
     }
 
-    // If booking today, ensure time is not in the past
+    // If booking today, ensure time is not in the past (in business timezone)
     if (date === today) {
-      const now = new Date();
-      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const nowParts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: businessTimezone, hour: '2-digit', minute: '2-digit', hour12: false,
+      }).format(new Date());
+      const [nowH, nowM] = nowParts.split(':').map(Number);
+      const nowMinutes = nowH * 60 + nowM;
       if (timeMinutes <= nowMinutes) {
         return NextResponse.json({ error: 'Cannot book a past time slot' }, { status: 400 });
       }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHeader } from '@/components/dashboard/PageHeader';
 import { PAGE_TOOLTIPS } from '@/lib/tooltips';
@@ -45,6 +45,7 @@ interface Contact {
 type View = 'list' | 'create' | 'results' | 'send';
 
 export default function SurveysPage() {
+  const allowed = useRequireCapability('survey');
   const business = useBusiness();
   const [surveys, setSurveys] = useState<Survey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -250,6 +251,8 @@ export default function SurveysPage() {
     copy[qIndex].options = (copy[qIndex].options || []).filter((_, i) => i !== oIndex);
     setQuestions(copy);
   };
+
+  if (!allowed) return null;
 
   // ── Tier Gate ──
   if (isGated) {

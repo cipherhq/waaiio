@@ -19,6 +19,7 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
     return {
       title: `Invoice from ${businessName}`,
       description: `View and pay invoice ${refCode}`.trim() + '.',
+      robots: { index: false, follow: false },
       openGraph: {
         title: `Invoice from ${businessName}`,
         description: `View and pay invoice ${refCode}`.trim() + '.',
@@ -29,6 +30,7 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
   return {
     title: 'Invoice | Waaiio',
     description: 'View and pay an invoice on Waaiio.',
+    robots: { index: false, follow: false },
   };
 }
 

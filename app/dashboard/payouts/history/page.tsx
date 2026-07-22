@@ -108,21 +108,27 @@ export default function PayoutHistoryPage() {
     [paidPayouts],
   );
 
+  const tz = business.timezone || 'UTC';
+  const toLocalMonth = (ts: string) => {
+    try {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit' }).format(new Date(ts));
+    } catch { return ts.slice(0, 7); }
+  };
   const now = new Date();
-  const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const lastMonthKey = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
+  const thisMonthKey = toLocalMonth(now.toISOString());
+  const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 15);
+  const lastMonthKey = toLocalMonth(prevMonthDate.toISOString());
 
   const thisMonthTotal = useMemo(
     () => paidPayouts
-      .filter(p => p.paid_at && p.paid_at.startsWith(thisMonthKey))
+      .filter(p => p.paid_at && toLocalMonth(p.paid_at) === thisMonthKey)
       .reduce((s, p) => s + p.net_amount, 0),
     [paidPayouts, thisMonthKey],
   );
 
   const lastMonthTotal = useMemo(
     () => paidPayouts
-      .filter(p => p.paid_at && p.paid_at.startsWith(lastMonthKey))
+      .filter(p => p.paid_at && toLocalMonth(p.paid_at) === lastMonthKey)
       .reduce((s, p) => s + p.net_amount, 0),
     [paidPayouts, lastMonthKey],
   );
@@ -138,7 +144,7 @@ export default function PayoutHistoryPage() {
     }
     for (const p of paidPayouts) {
       const dateStr = p.paid_at || p.created_at;
-      const pKey = dateStr.slice(0, 7); // "YYYY-MM"
+      const pKey = toLocalMonth(dateStr);
       const bucket = buckets.find(b => b.key === pKey);
       if (bucket) {
         bucket.count++;

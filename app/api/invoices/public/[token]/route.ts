@@ -17,7 +17,7 @@ export async function GET(
     const { data: invoice } = await supabase
       .from('invoices')
       .select(`
-        id, reference_code, customer_name, customer_phone, customer_email, customer_address,
+        id, reference_code, customer_name, customer_email, customer_address,
         status, subtotal, tax_rate, tax_amount, discount_type, discount_value, discount_amount,
         total_amount, amount_paid, currency, issue_date, due_date, notes, terms,
         paid_at, created_at, business_id,
@@ -78,7 +78,7 @@ export async function GET(
     );
 
     return NextResponse.json({
-      id: invoice.id,
+      id: invoice.id, // needed for PDF download link (authenticated by token)
       reference_code: invoice.reference_code,
       customer_name: invoice.customer_name,
       customer_email: invoice.customer_email,

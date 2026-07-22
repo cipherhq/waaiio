@@ -1,6 +1,7 @@
--- Migration 176: Add buffer time enforcement to book_slot_atomic
--- Adds optional p_buffer_minutes parameter. When > 0, checks that no existing
--- booking overlaps within the buffer window. Existing behavior unchanged when 0.
+-- Migration 176: Final production version of book_slot_atomic
+-- Adds buffer time enforcement. Uses advisory lock on business+date+staff
+-- to serialize ALL booking attempts for the same resource, preventing both
+-- identical-slot races and buffer-overlap races.
 
 CREATE OR REPLACE FUNCTION public.book_slot_atomic(
   p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid,
@@ -14,18 +15,26 @@ CREATE OR REPLACE FUNCTION public.book_slot_atomic(
   p_buffer_minutes integer DEFAULT 0,
   p_duration integer DEFAULT 30
 ) RETURNS TABLE(booking_id uuid, reference_code text, slot_available boolean)
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_count int; v_buffer_count int; v_booking_id uuid; v_ref text;
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v_count int;
+  v_buffer_count int;
+  v_booking_id uuid;
+  v_ref text;
+  v_lock_key bigint;
 BEGIN
-  -- Lock rows for this slot to prevent concurrent inserts
-  PERFORM id FROM bookings
-  WHERE business_id = p_business_id AND date = p_date AND time = p_time::time
-    AND status IN ('confirmed', 'pending', 'in_progress')
-    AND (p_staff_id IS NULL OR staff_id = p_staff_id)
-  FOR UPDATE;
+  -- Advisory lock serializes ALL booking attempts for this business+date.
+  -- We intentionally use the broadest safe scope (business+date) because:
+  -- 1. Null-staff requests query ALL bookings for the date, conflicting with
+  --    assigned-staff bookings. Different lock keys would not serialize them.
+  -- 2. Buffer overlap checks span multiple time slots for the same staff.
+  -- A narrower lock (adding staff_id) would miss cross-staff conflicts from
+  -- null-staff requests. Business+date is safe for launch volumes.
+  v_lock_key := hashtext(p_business_id::text || p_date::text);
+  PERFORM pg_advisory_xact_lock(v_lock_key);
 
-  -- Capacity check (unchanged)
-  SELECT COUNT(*) INTO v_count FROM bookings
+  -- Capacity check for this exact time slot
+  SELECT COUNT(*) INTO v_count FROM public.bookings
   WHERE business_id = p_business_id AND date = p_date AND time = p_time::time
     AND status IN ('confirmed', 'pending', 'in_progress')
     AND (p_staff_id IS NULL OR staff_id = p_staff_id);
@@ -38,14 +47,13 @@ BEGIN
   -- Buffer overlap check (only if buffer_minutes > 0)
   IF p_buffer_minutes > 0 THEN
     SELECT COUNT(*) INTO v_buffer_count
-    FROM bookings
+    FROM public.bookings
     WHERE business_id = p_business_id
       AND date = p_date
       AND status IN ('pending', 'confirmed', 'in_progress')
       AND (p_staff_id IS NULL OR staff_id = p_staff_id)
-      AND time != p_time::time  -- exclude same-slot (already checked by capacity)
+      AND time != p_time::time
       AND (
-        -- New booking overlaps with existing booking+buffer
         p_time::time < (time + make_interval(mins => COALESCE(p_duration, 30) + p_buffer_minutes))
         AND (p_time::time + make_interval(mins => COALESCE(p_duration, 30))) > (time - make_interval(mins => p_buffer_minutes))
       );
@@ -57,7 +65,7 @@ BEGIN
   END IF;
 
   -- Insert the booking
-  INSERT INTO bookings (
+  INSERT INTO public.bookings (
     business_id, user_id, service_id, appointment_id, staff_id, staff_name,
     date, time, party_size, flow_type, channel,
     deposit_amount, deposit_status, status,
@@ -71,21 +79,18 @@ BEGIN
     p_appointment_id,
     p_staff_id, p_staff_name,
     p_date, p_time::time, p_party_size,
-    p_flow_type::flow_type,
-    'whatsapp'::booking_channel,
+    p_flow_type::public.flow_type,
+    'whatsapp'::public.booking_channel,
     p_deposit_amount,
-    p_deposit_status::deposit_status,
-    p_status::reservation_status,
+    p_deposit_status::public.deposit_status,
+    p_status::public.reservation_status,
     p_guest_name, p_guest_phone, p_guest_email,
     p_special_requests, p_venue_address, p_end_date,
     p_addons_snapshot, p_promo_code_id, p_total_amount, p_party_size,
     p_location_id
   )
-  RETURNING id, bookings.reference_code INTO v_booking_id, v_ref;
+  RETURNING id, public.bookings.reference_code INTO v_booking_id, v_ref;
 
   RETURN QUERY SELECT v_booking_id, v_ref, true;
 END;
 $$;
-
-REVOKE ALL ON FUNCTION public.book_slot_atomic FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.book_slot_atomic TO service_role;

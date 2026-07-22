@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { type CountryCode } from '@/lib/constants';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -35,6 +35,7 @@ const DEFAULT_HOURS: WeekSchedule = Object.fromEntries(
 type ViewMode = 'list' | 'add' | 'edit';
 
 export default function LocationsPage() {
+  const allowed = useRequireCapability('multi_location');
   const business = useBusiness();
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
@@ -143,6 +144,8 @@ export default function LocationsPage() {
     if (view !== 'list') setView('list');
     await fetchLocations();
   }
+
+  if (!allowed) return null;
 
   if (loading) {
     return (

@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { checkTierLimit } from '@/lib/tier-limits';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
   try {
@@ -59,12 +61,96 @@ export async function POST(request: NextRequest) {
       is_recurring, recurring_frequency, recurring_next_date, recurring_end_date,
     } = body;
 
-    if (!business_id || !customer_name || !items?.length) {
-      return NextResponse.json({ error: 'business_id, customer_name, and items are required' }, { status: 400 });
+    // ── Field-level validation ──
+    const vErrors: Record<string, string> = {};
+
+    if (!business_id || typeof business_id !== 'string') {
+      vErrors.business_id = 'Business ID is required';
+    } else if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(business_id)) {
+      vErrors.business_id = 'Business ID must be a valid UUID';
+    }
+    if (!customer_name || typeof customer_name !== 'string' || !customer_name.trim()) {
+      vErrors.customer_name = 'Customer name is required';
+    } else if (customer_name.trim().length > 200) {
+      vErrors.customer_name = 'Customer name must be 200 characters or less';
+    }
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      vErrors.items = 'At least one line item is required';
+    } else if (items.length > 200) {
+      vErrors.items = 'Maximum 200 line items per invoice';
+    } else {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (!item || typeof item !== 'object') {
+          vErrors[`items[${i}]`] = 'Item must be an object';
+          continue;
+        }
+        if (!item.description || typeof item.description !== 'string' || !item.description.trim()) {
+          vErrors[`items[${i}].description`] = 'Description is required';
+        } else if (item.description.trim().length > 2000) {
+          vErrors[`items[${i}].description`] = 'Description must be 2000 characters or less';
+        }
+        if (item.quantity !== undefined && item.quantity !== null) {
+          const qty = Number(item.quantity);
+          if (isNaN(qty) || qty <= 0) {
+            vErrors[`items[${i}].quantity`] = 'Quantity must be a positive number';
+          }
+        }
+        if (item.unit_price !== undefined && item.unit_price !== null) {
+          const up = Number(item.unit_price);
+          if (isNaN(up) || up < 0) {
+            vErrors[`items[${i}].unit_price`] = 'Unit price must be a non-negative number';
+          }
+        }
+      }
+    }
+    if (due_date !== undefined && due_date !== null) {
+      if (typeof due_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(due_date) || isNaN(new Date(due_date).getTime())) {
+        vErrors.due_date = 'Due date must be a valid date (YYYY-MM-DD)';
+      }
+    }
+    if (tax_rate !== undefined && tax_rate !== null) {
+      const tr = Number(tax_rate);
+      if (isNaN(tr) || tr < 0 || tr > 100) {
+        vErrors.tax_rate = 'Tax rate must be between 0 and 100';
+      }
+    }
+    if (discount_value !== undefined && discount_value !== null) {
+      const dv = Number(discount_value);
+      if (isNaN(dv) || dv < 0) {
+        vErrors.discount_value = 'Discount value must be non-negative';
+      }
+      if (discount_type === 'percent' && dv > 100) {
+        vErrors.discount_value = 'Percent discount cannot exceed 100%';
+      }
+    }
+
+    if (is_recurring) {
+      const validFreq = ['weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'];
+      if (recurring_frequency && !validFreq.includes(recurring_frequency)) {
+        vErrors.recurring_frequency = `Must be one of: ${validFreq.join(', ')}`;
+      }
+    }
+
+    if (Object.keys(vErrors).length > 0) {
+      return NextResponse.json(
+        { error: 'Validation failed', fields: vErrors },
+        { status: 400 },
+      );
     }
 
     const { data: ownedBusiness } = await supabase.from('businesses').select('id, subscription_tier').eq('id', business_id).eq('owner_id', user.id).maybeSingle();
     if (!ownedBusiness) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+    // ── Capability check: invoice ──
+    const { data: invoiceCap } = await supabase
+      .from('business_capabilities')
+      .select('id')
+      .eq('business_id', business_id)
+      .eq('capability', 'invoice')
+      .eq('is_enabled', true)
+      .maybeSingle();
+    if (!invoiceCap) return NextResponse.json({ error: 'Feature not enabled' }, { status: 403 });
 
     // ── Tier limit check for invoices ──
     const tierResult = await checkTierLimit(
@@ -96,6 +182,10 @@ export async function POST(request: NextRequest) {
 
     const totalAmount = Math.round((subtotal + taxAmount - discountAmount) * 100) / 100;
 
+    if (totalAmount < 0) {
+      return NextResponse.json({ error: 'Discount cannot exceed subtotal plus tax' }, { status: 400 });
+    }
+
     // Resolve default currency from business country if not provided
     let resolvedCurrency = currency;
     if (!resolvedCurrency) {
@@ -107,51 +197,51 @@ export async function POST(request: NextRequest) {
       resolvedCurrency = getCurrencyCode((biz?.country_code || 'NG') as CountryCode);
     }
 
-    const { data: invoice, error } = await supabase
-      .from('invoices')
-      .insert({
-        business_id,
-        customer_profile_id: customer_profile_id || null,
-        customer_name,
-        customer_phone: customer_phone || null,
-        customer_email: customer_email || null,
-        customer_address: customer_address || null,
-        subtotal,
-        tax_rate: taxRate,
-        tax_amount: taxAmount,
-        discount_type: discount_type || null,
-        discount_value: discount_value || 0,
-        discount_amount: discountAmount,
-        total_amount: totalAmount,
-        currency: resolvedCurrency,
-        issue_date: issue_date || new Date().toISOString().split('T')[0],
-        due_date: due_date || null,
-        notes: notes || null,
-        terms: terms || null,
-        status: 'draft',
-        is_recurring: is_recurring || false,
-        recurring_frequency: is_recurring ? (recurring_frequency || 'monthly') : null,
-        recurring_next_date: is_recurring ? (recurring_next_date || due_date || null) : null,
-        recurring_end_date: is_recurring && recurring_end_date ? recurring_end_date : null,
-      })
-      .select('id, reference_code')
-      .single();
+    // Create invoice + items atomically via RPC (single transaction).
+    // If item insertion fails, the invoice is also rolled back — no orphaned records.
+    const invoiceData = {
+      business_id,
+      customer_name,
+      customer_phone: customer_phone || null,
+      customer_email: customer_email || null,
+      customer_address: customer_address || null,
+      subtotal,
+      tax_rate: taxRate,
+      tax_amount: taxAmount,
+      discount_type: discount_type || null,
+      discount_value: discount_value || 0,
+      discount_amount: discountAmount,
+      total_amount: totalAmount,
+      currency: resolvedCurrency,
+      issue_date: issue_date || new Date().toISOString().split('T')[0],
+      due_date: due_date || null,
+      notes: notes || null,
+      terms: terms || null,
+      status: 'draft',
+      is_recurring: is_recurring || false,
+      recurring_frequency: is_recurring ? (recurring_frequency || 'monthly') : null,
+      recurring_next_date: is_recurring ? (recurring_next_date || due_date || null) : null,
+      recurring_end_date: is_recurring && recurring_end_date ? recurring_end_date : null,
+    };
 
-    if (error || !invoice) {
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-    }
-
-    // Insert line items
-    const itemRows = items.map((item: { description: string; quantity: number; unit_price: number }, i: number) => ({
-      invoice_id: invoice.id,
+    const itemRows = items.map((item: { description: string; quantity: number; unit_price: number }) => ({
       description: item.description,
       quantity: item.quantity || 1,
       unit_price: item.unit_price || 0,
       amount: Math.round((item.quantity || 1) * (item.unit_price || 0) * 100) / 100,
-      sort_order: i,
     }));
 
-    await supabase.from('invoice_items').insert(itemRows);
+    // RPC is service-role-only (migration 264 revokes from authenticated)
+    const serviceDb = createServiceClient();
+    const { data: invoice, error } = await serviceDb.rpc('create_invoice_with_items', {
+      p_invoice: invoiceData,
+      p_items: itemRows,
+    });
+
+    if (error || !invoice) {
+      logger.error('[INVOICES] Atomic creation failed:', error?.message);
+      return NextResponse.json({ error: 'Failed to create invoice' }, { status: 500 });
+    }
 
     return NextResponse.json(invoice, { status: 201 });
   } catch {

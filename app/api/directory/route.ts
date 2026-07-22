@@ -74,7 +74,8 @@ export async function GET(request: NextRequest) {
     supabase
       .from('services')
       .select('id, name, price, duration_minutes, business_id')
-      .in('business_id', businessIds),
+      .in('business_id', businessIds)
+      .eq('is_active', true),
     supabase
       .from('category_templates')
       .select('key, label, icon')

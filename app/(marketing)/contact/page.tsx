@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { ContactForm } from './ContactForm';
+import { getSupportWhatsAppLink, getSupportWhatsAppNumber } from '@/lib/support-contact';
 
 export const revalidate = 3600;
 
@@ -59,12 +60,12 @@ export default function ContactPage() {
             <h3 className="mt-3 font-semibold text-gray-900">WhatsApp</h3>
             <p className="mt-1 text-sm text-gray-500">Quick support via chat</p>
             <a
-              href="https://wa.me/12029226251"
+              href={getSupportWhatsAppLink() || '#'}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-2 inline-block text-sm font-medium text-whatsapp hover:underline"
+              className={`mt-2 inline-block text-sm font-medium text-whatsapp hover:underline ${!getSupportWhatsAppNumber() ? 'hidden' : ''}`}
             >
-              +1 (202) 922-6251
+              Chat on WhatsApp
             </a>
           </div>
 
