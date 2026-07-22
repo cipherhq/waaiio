@@ -259,7 +259,9 @@ jobs:
     needs: main-app
 
     env:
-      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      # Dummy Supabase URL matching CSP connect-src pattern (*.supabase.co).
+      # Uses a non-routable subdomain so DNS fails fast on most resolvers.
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
       NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy

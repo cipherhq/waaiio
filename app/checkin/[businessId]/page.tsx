@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import Image from 'next/image';
 
-type PageState = 'loading' | 'not_found' | 'form' | 'submitting' | 'success' | 'already_checked_in';
+type PageState = 'loading' | 'not_found' | 'unavailable' | 'form' | 'submitting' | 'success' | 'already_checked_in';
 
 interface BusinessInfo {
   name: string;
@@ -22,29 +22,51 @@ export default function CheckInPage({ params }: { params: { businessId: string }
   const [waLink, setWaLink] = useState('');
   const [checkedInAt, setCheckedInAt] = useState('');
 
-  // Load business info
+  // Load business info with AbortController timeout.
+  // 3 seconds is appropriate because:
+  //   - Supabase queries typically complete in <500ms
+  //   - Mobile users on slow networks get up to 3s before a clear error
+  //   - Faster than the previous infinite hang on DNS/CSP failures
+  //   - Leaves room for the UI to render before Playwright's 5s assertion timeout
   useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+
     async function load() {
       try {
         const supabase = createClient();
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('businesses')
           .select('name, logo_url')
           .eq('id', businessId)
           .eq('is_active', true)
+          .abortSignal(controller.signal)
           .maybeSingle();
 
+        if (cancelled) return;
+
+        if (error) {
+          // Query reached Supabase but failed — service issue, not "not found"
+          setState('unavailable');
+          return;
+        }
         if (!data) {
+          // Query succeeded, business genuinely does not exist
           setState('not_found');
           return;
         }
         setBusiness(data);
         setState('form');
       } catch {
-        setState('not_found');
+        // Network failure, DNS failure, timeout, CSP block — service unavailable
+        if (!cancelled) setState('unavailable');
+      } finally {
+        clearTimeout(timer);
       }
     }
     load();
+    return () => { cancelled = true; controller.abort(); };
   }, [businessId]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -102,6 +124,24 @@ export default function CheckInPage({ params }: { params: { businessId: string }
           <p className="text-4xl">🔍</p>
           <h1 className="mt-4 text-xl font-bold text-gray-900">Business not found</h1>
           <p className="mt-2 text-sm text-gray-500">This check-in link may be invalid or expired.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === 'unavailable') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+        <div className="text-center">
+          <p className="text-4xl">⚠️</p>
+          <h1 className="mt-4 text-xl font-bold text-gray-900">Temporarily unavailable</h1>
+          <p className="mt-2 text-sm text-gray-500">We couldn&apos;t load this page right now. Please try again in a moment.</p>
+          <button
+            onClick={() => { setState('loading'); window.location.reload(); }}
+            className="mt-4 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600"
+          >
+            Try again
+          </button>
         </div>
       </div>
     );
