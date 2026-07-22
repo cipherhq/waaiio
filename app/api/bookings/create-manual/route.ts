@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     const serviceClient = createServiceClient();
     const { data: service } = await serviceClient
       .from('services')
-      .select('name, price, duration_minutes, max_capacity, buffer_time')
+      .select('name, price, duration_minutes, max_capacity, buffer_minutes')
       .eq('id', serviceId)
       .eq('business_id', businessId)
       .single();
@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
       p_staff_name: null,
       p_location_id: null,
       p_appointment_id: null,
-      p_buffer_minutes: service.buffer_time || 0,
+      p_buffer_minutes: service.buffer_minutes || 0,
       p_duration: service.duration_minutes || 30,
     });
 
