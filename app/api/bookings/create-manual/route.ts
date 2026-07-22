@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
       p_max_capacity: service.max_capacity || 1,
       p_flow_type: 'scheduling',
       p_deposit_amount: 0,
-      p_deposit_status: 'not_required',
+      p_deposit_status: 'none',
       p_status: 'confirmed',
       p_guest_name: customerName,
       p_guest_phone: customerPhone,
