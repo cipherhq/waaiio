@@ -17,7 +17,9 @@ interface PaymentRequestRow {
   status: string;
   notes: string | null;
   created_at: string;
-  payments: { status: string }[] | null;
+  channel: string | null;
+  payment_source: string | null;
+  payments: { status: string; gateway: string | null }[] | null;
 }
 
 interface CustomerSuggestion {
@@ -88,11 +90,14 @@ export default function PaymentRequestPage() {
 
   const loadRequests = useCallback(async () => {
     const supabase = createClient();
+    // Show only intentional one-time payment requests.
+    // Excludes subscriptions, bookings, events, and unclassified records.
     const { data } = await supabase
       .from('bookings')
-      .select('id, reference_code, guest_name, guest_phone, total_amount, status, notes, created_at, payments(status)')
+      .select('id, reference_code, guest_name, guest_phone, total_amount, status, notes, created_at, channel, payment_source, payments(status, gateway)')
       .eq('business_id', business.id)
       .eq('flow_type', 'payment')
+      .eq('payment_source', 'payment_request')
       .order('created_at', { ascending: false })
       .limit(50);
     setRequests((data || []) as PaymentRequestRow[]);
@@ -240,6 +245,19 @@ export default function PaymentRequestPage() {
     setSending(false);
   }
 
+  function getSource(row: PaymentRequestRow): { label: string; color: string } {
+    if (row.channel === 'dashboard' || (row.payment_source === 'payment_request' && row.channel !== 'whatsapp')) {
+      return { label: 'Dashboard', color: 'bg-blue-50 text-blue-700' };
+    }
+    if (row.channel === 'whatsapp') return { label: 'WhatsApp', color: 'bg-green-50 text-green-700' };
+    if (row.channel === 'api') return { label: 'API', color: 'bg-gray-100 text-gray-700' };
+    return { label: 'Dashboard', color: 'bg-blue-50 text-blue-700' };
+  }
+
+  function getProvider(row: PaymentRequestRow): string | null {
+    return row.payments?.[0]?.gateway || null;
+  }
+
   function getPaymentStatus(row: PaymentRequestRow): { label: string; color: string } {
     const paymentStatuses = row.payments?.map(p => p.status) || [];
     if (paymentStatuses.includes('completed') || paymentStatuses.includes('successful')) {
@@ -273,7 +291,7 @@ export default function PaymentRequestPage() {
     <div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Request Payment</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Payment Requests</h1>
           <p className="mt-1 text-sm text-gray-500">Send payment links to customers via WhatsApp or email</p>
         </div>
       </div>
@@ -544,36 +562,43 @@ export default function PaymentRequestPage() {
         />
       ) : (
         <div className="mt-8">
-          <h3 className="text-sm font-semibold text-gray-900">Recent Requests</h3>
+          <h3 className="text-sm font-semibold text-gray-900">Payment Requests</h3>
           <div className="mt-3 overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-xs font-medium uppercase tracking-wider text-gray-400">
                   <th scope="col" className="pb-3 pr-4">Customer</th>
-                  <th scope="col" className="pb-3 pr-4">Contact</th>
                   <th scope="col" className="pb-3 pr-4">Amount</th>
-                  <th scope="col" className="pb-3 pr-4">Note</th>
+                  <th scope="col" className="pb-3 pr-4 hidden sm:table-cell">Sent</th>
                   <th scope="col" className="pb-3 pr-4">Status</th>
-                  <th scope="col" className="pb-3">Date</th>
+                  <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Source</th>
+                  <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Provider</th>
                 </tr>
               </thead>
               <tbody>
                 {requests.map(row => {
                   const payStatus = getPaymentStatus(row);
+                  const source = getSource(row);
+                  const provider = getProvider(row);
                   return (
-                    <tr key={row.id} className="border-b border-gray-50">
-                      <td className="py-3 pr-4 font-medium text-gray-900">{row.guest_name || '-'}</td>
-                      <td className="py-3 pr-4 text-gray-600 font-mono text-xs">{row.guest_phone}</td>
+                    <tr key={row.id} className="border-b border-gray-50 hover:bg-gray-50/50">
+                      <td className="py-3 pr-4">
+                        <p className="font-medium text-gray-900">{row.guest_name || 'Customer'}</p>
+                        <p className="text-xs text-gray-400 font-mono">{row.guest_phone}</p>
+                      </td>
                       <td className="py-3 pr-4 font-semibold text-gray-900">{formatCurrency(row.total_amount, country)}</td>
-                      <td className="py-3 pr-4 text-gray-500 text-xs max-w-[200px] truncate">{row.notes || '-'}</td>
+                      <td className="py-3 pr-4 text-gray-500 text-xs hidden sm:table-cell">
+                        {new Date(row.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </td>
                       <td className="py-3 pr-4">
                         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${payStatus.color}`}>
                           {payStatus.label}
                         </span>
                       </td>
-                      <td className="py-3 text-gray-400 text-xs">
-                        {new Date(row.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      <td className="py-3 pr-4 hidden md:table-cell">
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${source.color}`}>{source.label}</span>
                       </td>
+                      <td className="py-3 pr-4 text-xs text-gray-500 capitalize hidden md:table-cell">{provider || '-'}</td>
                     </tr>
                   );
                 })}
