@@ -323,7 +323,10 @@ export class SquareGateway implements PaymentGateway {
 
       return { url: paymentLink.url as string, reference: paymentId, shortRef: insertShortRef };
     } catch (error) {
-      logger.error('[SQUARE] init error:', (error as Error).message);
+      const msg = error instanceof Error
+        ? `${error.message} | ${error.stack?.split('\n').slice(1, 3).map(l => l.trim()).join(' > ')}`
+        : `non-Error thrown: ${typeof error === 'object' ? JSON.stringify(error) : String(error)}`;
+      logger.error('[SQUARE] init error:', msg);
       return null;
     }
   }
