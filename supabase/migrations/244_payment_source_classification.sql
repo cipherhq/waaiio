@@ -297,8 +297,13 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION process_recurring_charge FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION process_recurring_charge TO service_role;
+DO $$ BEGIN
+  REVOKE ALL ON FUNCTION process_recurring_charge FROM PUBLIC;
+  EXECUTE 'GRANT EXECUTE ON FUNCTION process_recurring_charge TO service_role';
+EXCEPTION WHEN undefined_object THEN
+  -- service_role does not exist in bare psql CI environments; safe to skip
+  NULL;
+END $$;
 
 -- Remaining: Any flow_type='payment' rows not matched by rules 1-3 are left
 -- with payment_source IS NULL. These are ambiguous records that could not be
