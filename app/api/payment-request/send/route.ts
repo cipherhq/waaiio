@@ -94,22 +94,16 @@ export async function POST(request: NextRequest) {
     const refCode = booking.reference_code;
 
     // Initialize payment
-    let result: { url: string; reference: string } | null = null;
-    let paymentError: string | null = null;
-    try {
-      result = await initializePayment(serviceClient, {
-        bookingId: booking.id,
-        userId: user.id,
-        amount,
-        referenceCode: refCode,
-        businessName: biz.name,
-        phone,
-        countryCode: cc,
-        businessId: biz.id,
-      });
-    } catch (initErr) {
-      paymentError = initErr instanceof Error ? initErr.message : String(initErr);
-    }
+    const result = await initializePayment(serviceClient, {
+      bookingId: booking.id,
+      userId: user.id,
+      amount,
+      referenceCode: refCode,
+      businessName: biz.name,
+      phone,
+      countryCode: cc,
+      businessId: biz.id,
+    });
 
     if (!result) {
       logger.error('[PAYMENT-REQUEST] initializePayment returned null', {
@@ -118,11 +112,8 @@ export async function POST(request: NextRequest) {
         gateway: biz.payment_gateway || 'default',
         bookingId: booking.id,
         amount,
-        paymentError,
       });
-      // Temporarily include diagnostic in response for debugging
-      const debugInfo = paymentError ? ` Debug: ${paymentError}` : '';
-      return NextResponse.json({ error: `Failed to create payment link.${debugInfo}` }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to create payment link. Check that your payment gateway is configured correctly.' }, { status: 500 });
     }
 
     // Get direct gateway URL
