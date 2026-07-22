@@ -227,7 +227,10 @@ export async function initializePayment(
       hasSquareLocation: !!squareLocationId,
       connectionId: route?.connectionId ? `...${route.connectionId.slice(-6)}` : 'none',
     });
-    const result = await gateway.initializePayment({
+    let result: { url: string; reference: string; shortRef?: string } | null = null;
+    let gatewayError: string | null = null;
+    try {
+      result = await gateway.initializePayment({
       supabase,
       bookingId: opts.bookingId,
       orderId: opts.orderId,
@@ -260,8 +263,32 @@ export async function initializePayment(
       payoutAccountId: route?.connectionId || undefined,
       waaiioFee: route?.platformFeeAmount ?? 0,
     });
+    } catch (gwErr) {
+      gatewayError = gwErr instanceof Error ? gwErr.message : String(gwErr);
+      logger.error('[PAYMENT] gateway threw:', gatewayError);
+    }
 
-    if (!result) return null;
+    if (!result) {
+      // Write diagnostic to DB so it can be queried without Vercel log access
+      try {
+        await supabase.from('admin_audit_logs').insert({
+          actor_id: '00000000-0000-0000-0000-000000000000',
+          action: 'payment_debug',
+          entity_type: 'payment',
+          entity_id: opts.bookingId || 'unknown',
+          details: {
+            provider: route?.provider,
+            mode: route?.mode,
+            gatewayError,
+            businessId: opts.businessId,
+            amount: opts.amount,
+            currency: currencyCode,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      } catch { /* ignore write failure */ }
+      return null;
+    }
 
     // Shorten the checkout URL for WhatsApp messages
     let shortUrl = result.url;
