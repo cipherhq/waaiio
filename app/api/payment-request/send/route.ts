@@ -106,6 +106,13 @@ export async function POST(request: NextRequest) {
     });
 
     if (!result) {
+      logger.error('[PAYMENT-REQUEST] initializePayment returned null', {
+        businessId: biz.id,
+        country: cc,
+        gateway: biz.payment_gateway || 'default',
+        bookingId: booking.id,
+        amount,
+      });
       return NextResponse.json({ error: 'Failed to create payment link. Check that your payment gateway is configured correctly.' }, { status: 500 });
     }
 

@@ -263,7 +263,10 @@ export async function initializePayment(
 
     return { url: shortUrl, reference: result.reference };
   } catch (error) {
-    logger.error('[PAYMENT] initializePayment error:', (error as Error).message);
+    logger.error('[PAYMENT] initializePayment error:', {
+      message: (error as Error).message,
+      stack: (error as Error).stack?.split('\n').slice(0, 3).join(' | '),
+    });
     return null;
   }
 }
