@@ -87,5 +87,18 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.book_slot_atomic FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.book_slot_atomic TO service_role;
+-- Use fully qualified 26-argument signature to avoid ambiguity with earlier
+-- overloads created by migrations 137 (22-arg), 155 (23-arg), 166 (24-arg).
+-- Migration 245 drops these obsolete overloads.
+REVOKE ALL ON FUNCTION public.book_slot_atomic(
+  uuid, uuid, uuid, uuid, date, text, int, int,
+  text, int, text, text, text, text, text,
+  text, text, date, jsonb, uuid, int, text,
+  uuid, uuid, integer, integer
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.book_slot_atomic(
+  uuid, uuid, uuid, uuid, date, text, int, int,
+  text, int, text, text, text, text, text,
+  text, text, date, jsonb, uuid, int, text,
+  uuid, uuid, integer, integer
+) TO service_role;
