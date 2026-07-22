@@ -34,14 +34,8 @@ CREATE TRIGGER trg_prevent_tier_tampering
   EXECUTE FUNCTION prevent_tier_tampering();
 
 -- ── 1d. Restrict stock restoration RPCs to service_role only ──
-REVOKE ALL ON FUNCTION restore_stock(uuid, integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION restore_stock(uuid, integer) TO service_role;
 
-REVOKE ALL ON FUNCTION restore_variant_stock(uuid, integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION restore_variant_stock(uuid, integer) TO service_role;
 
-REVOKE ALL ON FUNCTION restore_tickets_sold(uuid, integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION restore_tickets_sold(uuid, integer) TO service_role;
 
 -- ── 1e. Remove owner UPDATE policy on refund_requests (prevent marking own refunds as success) ──
 DROP POLICY IF EXISTS "Business owners update own refunds" ON refund_requests;

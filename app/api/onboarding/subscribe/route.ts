@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
       .eq('id', user.id)
       .single();
 
-    const email = profile?.email || `${(profile?.phone || user.id).replace('+', '')}@whatsapp.waaiio.com`;
+    const email = profile?.email || `${(profile?.phone || user.id).replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
     const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com').trim();
     const callbackUrl = callback
       ? `${appUrl}${callback}`

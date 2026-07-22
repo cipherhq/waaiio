@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import EmptyState from '@/components/dashboard/EmptyState';
@@ -38,6 +38,7 @@ interface ServiceOption {
 type View = 'list' | 'add' | 'edit' | 'enrollments' | 'enroll';
 
 export default function PackagesPage() {
+  const allowed = useRequireCapability('packages');
   const business = useBusiness();
   const cc = (business.country_code || 'NG') as CountryCode;
 
@@ -201,6 +202,8 @@ export default function PackagesPage() {
       prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
     );
   };
+
+  if (!allowed) return null;
 
   if (loading) {
     return (

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { getPhonePlaceholder, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -62,6 +62,7 @@ function generateFieldId(): string {
 }
 
 export default function FormsPage() {
+  const allowed = useRequireCapability('survey');
   const business = useBusiness();
   const appUrl = typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com');
   const [forms, setForms] = useState<Form[]>([]);
@@ -243,6 +244,8 @@ export default function FormsPage() {
     setResponses(prev => prev.map(r => r.id === responseId ? { ...r, business_notes: notes || null } : r));
     setSavingNotes(null);
   }
+
+  if (!allowed) return null;
 
   if (loading) {
     return (

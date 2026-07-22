@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
@@ -18,6 +19,8 @@ async function getAdminAuth() {
   return { user, role: profile.role as string };
 }
 
+const VALID_ACTIONS = ['approve', 'reject', 'mark_paid'] as const;
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -30,8 +33,8 @@ export async function PATCH(
     const body = await request.json();
     const { action, notes } = body;
 
-    if (!action || !['approve', 'reject', 'mark_paid'].includes(action)) {
-      return NextResponse.json({ error: 'Invalid action. Must be approve, reject, or mark_paid' }, { status: 400 });
+    if (!action || !VALID_ACTIONS.includes(action)) {
+      return NextResponse.json({ error: `Invalid action. Must be one of: ${VALID_ACTIONS.join(', ')}` }, { status: 400 });
     }
 
     // approve and reject require admin role; mark_paid allows admin or finance
@@ -52,37 +55,33 @@ export async function PATCH(
       return NextResponse.json({ error: 'Payout not found' }, { status: 404 });
     }
 
-    let updateData: Record<string, any> = {};
+    // State transition validation + compare-and-set
+    const allowedFrom: Record<string, string[]> = {
+      approve: ['pending'],
+      reject: ['pending', 'approved'],
+      mark_paid: ['approved'],
+    };
+
+    if (!allowedFrom[action].includes(payout.status)) {
+      return NextResponse.json({
+        error: `Cannot ${action} a payout in '${payout.status}' status`,
+      }, { status: 400 });
+    }
+
+    let updateData: Record<string, unknown> = {};
 
     if (action === 'approve') {
-      if (payout.status !== 'pending') {
-        return NextResponse.json({ error: 'Only pending payouts can be approved' }, { status: 400 });
-      }
-      updateData = {
-        status: 'approved',
-        approved_by: auth.user.id,
-        notes: notes || payout.notes,
-      };
+      updateData = { status: 'approved', approved_by: auth.user.id, notes: notes || payout.notes };
     } else if (action === 'reject') {
-      if (payout.status !== 'pending' && payout.status !== 'approved') {
-        return NextResponse.json({ error: 'Only pending or approved payouts can be rejected' }, { status: 400 });
-      }
-      updateData = {
-        status: 'rejected',
-        notes: notes || payout.notes,
-      };
+      updateData = { status: 'rejected', notes: notes || payout.notes };
     } else if (action === 'mark_paid') {
-      if (payout.status !== 'approved') {
-        return NextResponse.json({ error: 'Only approved payouts can be marked as paid' }, { status: 400 });
-      }
-
-      // Re-verify balance before paying: sum earned - sum already paid
+      // Re-verify balance
       const { data: allFees } = await service
         .from('platform_fees')
         .select('reseller_commission')
         .eq('reseller_id', payout.reseller_id);
 
-      const totalEarned = (allFees || []).reduce((sum: number, f: any) => sum + (f.reseller_commission || 0), 0);
+      const totalEarned = (allFees || []).reduce((sum: number, f: { reseller_commission: number | null }) => sum + (f.reseller_commission || 0), 0);
 
       const { data: paidPayouts } = await service
         .from('reseller_payouts')
@@ -90,42 +89,57 @@ export async function PATCH(
         .eq('reseller_id', payout.reseller_id)
         .eq('status', 'paid');
 
-      const totalPaidOut = (paidPayouts || []).reduce((sum: number, p: any) => sum + (p.net_amount || 0), 0);
+      const totalPaidOut = (paidPayouts || []).reduce((sum: number, p: { net_amount: number }) => sum + (p.net_amount || 0), 0);
 
-      const availableBalance = totalEarned - totalPaidOut;
-
-      if (payout.net_amount > availableBalance) {
-        return NextResponse.json({
-          error: 'Insufficient balance',
-          details: {
-            total_earned: totalEarned,
-            total_paid_out: totalPaidOut,
-            available: availableBalance,
-            payout_amount: payout.net_amount,
-          },
-        }, { status: 400 });
+      if (payout.net_amount > totalEarned - totalPaidOut) {
+        return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
       }
 
-      updateData = {
-        status: 'paid',
-        paid_at: new Date().toISOString(),
-        notes: notes || payout.notes,
-      };
+      updateData = { status: 'paid', paid_at: new Date().toISOString(), notes: notes || payout.notes };
     }
 
+    // Compare-and-set: only update if status hasn't changed
     const { data: updated, error: updateErr } = await service
       .from('reseller_payouts')
       .update(updateData)
       .eq('id', id)
+      .in('status', allowedFrom[action])
       .select()
-      .single();
+      .maybeSingle();
 
-    if (updateErr) {
-      logger.error(`[ADMIN_RESELLER_PAYOUTS] Update error for ${id}:`, updateErr.message);
-      return NextResponse.json({ error: 'Failed to update payout' }, { status: 500 });
+    if (updateErr || !updated) {
+      return NextResponse.json({ error: 'Payout was already processed by another administrator' }, { status: 409 });
     }
 
-    logger.info(`[ADMIN_RESELLER_PAYOUTS] Payout ${id} ${action}: status=${updated.status}`);
+    // Mandatory audit — failure reverts the update
+    const { error: auditErr } = await service.from('admin_audit_logs').insert({
+      actor_id: auth.user.id,
+      action: `reseller_payout_${action}`,
+      entity_type: 'reseller_payout',
+      entity_id: id,
+      details: {
+        reseller_id: payout.reseller_id,
+        amount: payout.net_amount,
+        previous_status: payout.status,
+        new_status: updated.status,
+        ...(action === 'reject' ? { reason: notes } : {}),
+      },
+    });
+
+    if (auditErr) {
+      // Revert the update — check if revert succeeds
+      const { error: revertErr } = await service.from('reseller_payouts')
+        .update({ status: payout.status, approved_by: payout.approved_by, paid_at: payout.paid_at, notes: payout.notes })
+        .eq('id', id);
+      if (revertErr) {
+        logger.error(`[RESELLER-PAYOUT] CRITICAL: Audit AND revert failed for ${id}:`, { auditErr: auditErr.message, revertErr: revertErr.message });
+        Sentry.captureException(new Error(`Audit and revert both failed for reseller payout ${id}`));
+      }
+      logger.error(`[RESELLER-PAYOUT] Audit failed, reverted ${id}:`, auditErr.message);
+      return NextResponse.json({ error: 'Audit logging failed — action reverted' }, { status: 500 });
+    }
+
+    logger.info(`[RESELLER-PAYOUT] ${id} ${action}: ${payout.status} → ${updated.status}`);
     return NextResponse.json({ payout: updated });
   } catch {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

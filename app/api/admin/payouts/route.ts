@@ -11,7 +11,7 @@ async function requireAdmin(supabase: any) {
     .eq('id', user.id)
     .maybeSingle();
 
-  if (!profile || profile.role !== 'admin') return null;
+  if (!profile || !['admin', 'finance'].includes(profile.role)) return null;
   return user;
 }
 

@@ -77,6 +77,16 @@ export async function POST(request: NextRequest) {
     .single();
   if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
 
+  // ── Capability check: survey ──
+  const { data: surveyCap } = await supabase
+    .from('business_capabilities')
+    .select('id')
+    .eq('business_id', business_id)
+    .eq('capability', 'survey')
+    .eq('is_enabled', true)
+    .maybeSingle();
+  if (!surveyCap) return NextResponse.json({ error: 'Feature not enabled' }, { status: 403 });
+
   const { data: survey, error } = await supabase
     .from('surveys')
     .insert({

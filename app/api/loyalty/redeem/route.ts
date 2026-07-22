@@ -10,7 +10,11 @@ export async function POST(request: NextRequest) {
     if (rateLimit) return rateLimit;
 
     const body = await request.json();
-    const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
+    const auth = await authenticateRequest(request, {
+      requireBusinessOwnership: true,
+      requireCapability: 'loyalty',
+      body,
+    });
     if (auth instanceof NextResponse) return auth;
 
     const { businessId, customerPhone, points, reason } = body;
