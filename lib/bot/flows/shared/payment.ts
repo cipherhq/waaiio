@@ -219,6 +219,14 @@ export async function initializePayment(
       }
     }
 
+    logger.info('[PAYMENT] Calling gateway.initializePayment', {
+      provider: route?.provider || 'default',
+      mode: route?.mode || 'platform',
+      hasSquareToken: !!squareAccessToken,
+      hasSquareMerchant: !!squareMerchantId,
+      hasSquareLocation: !!squareLocationId,
+      connectionId: route?.connectionId ? `...${route.connectionId.slice(-6)}` : 'none',
+    });
     const result = await gateway.initializePayment({
       supabase,
       bookingId: opts.bookingId,
