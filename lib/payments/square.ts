@@ -138,6 +138,8 @@ export class SquareGateway implements PaymentGateway {
         return null;
       }
 
+      logger.info('[SQUARE] Attempt lookup complete', { hasExisting: !!existingAttempt, attemptKey: attemptKey.slice(0, 20) + '...' });
+
       if (existingAttempt) {
         paymentId = existingAttempt.id;
         const existingMeta = existingAttempt.metadata as Record<string, unknown> | null;
@@ -201,6 +203,8 @@ export class SquareGateway implements PaymentGateway {
             checkout_short_ref: insertShortRef,
           },
         }).select('id').single();
+
+        logger.info('[SQUARE] Payment row INSERT result', { success: !!newPayment, hasError: !!insertErr, errorCode: insertErr?.code, errorMsg: insertErr?.message?.slice(0, 80) });
 
         if (insertErr || !newPayment) {
           // Unique violation on attempt_key means another concurrent call created it
@@ -276,6 +280,7 @@ export class SquareGateway implements PaymentGateway {
           }
         : squareRequest;
 
+      logger.info('[SQUARE] Calling Square Payment Links API', { paymentId, location: useLocation?.slice(0, 8) + '...' });
       const result = await requestFn('/v2/online-checkout/payment-links', paymentLinkBody);
 
       const paymentLink = result.payment_link as Record<string, unknown> | undefined;
