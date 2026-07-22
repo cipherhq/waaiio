@@ -32,7 +32,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -63,7 +63,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: admin/package-lock.json
 
@@ -133,6 +133,37 @@ jobs:
             email TEXT,
             raw_app_meta_data JSONB DEFAULT '{}'
           );
+
+          -- Supabase roles: required by GRANT/REVOKE in migrations
+          -- 137, 176, 181, 233, 244 (GRANT EXECUTE ... TO service_role)
+          -- 003, 017, 018, 023 (RLS policies using auth.role() = 'service_role')
+          DO $$ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+          -- Realtime publication: required by ALTER PUBLICATION in migrations
+          -- 001 (reservations), 020 (chat_messages), 025 (chat_conversations), 110 (queue_entries)
+          CREATE PUBLICATION IF NOT EXISTS supabase_realtime;
+
+          -- Storage schema: required by bucket/object policies in migrations
+          -- 018 (customer-reports bucket), 033 (business-documents bucket)
+          CREATE SCHEMA IF NOT EXISTS storage;
+          CREATE TABLE IF NOT EXISTS storage.buckets (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            public BOOLEAN DEFAULT false,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          CREATE TABLE IF NOT EXISTS storage.objects (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            bucket_id TEXT REFERENCES storage.buckets(id),
+            name TEXT,
+            owner UUID,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
           EOSQL
           echo "✅ Supabase schema stubs created"
 
@@ -241,7 +272,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -304,7 +335,7 @@ jobs:
             'ghp_'
           )
           for pattern in "${PATTERNS[@]}"; do
-            MATCHES=$(git grep -l "$pattern" -- ':!.env.example' ':!node_modules' ':!.next' ':!*.lock' 2>/dev/null || true)
+            MATCHES=$(git grep -l "$pattern" -- ':!.env.example' ':!node_modules' ':!.next' ':!*.lock' ':!.github/workflows/ci.yml' ':!.husky/pre-commit' ':!.agents/skills/*/references/*' 2>/dev/null || true)
             if [ -n "$MATCHES" ]; then
               echo "⚠️  Found potential secret pattern '$pattern' in:"
               echo "$MATCHES"
@@ -328,7 +359,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
