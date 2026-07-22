@@ -165,6 +165,12 @@ jobs:
             updated_at TIMESTAMPTZ DEFAULT NOW()
           );
           ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+
+          -- Supabase storage helper function used in bucket policies (migration 133)
+          CREATE OR REPLACE FUNCTION storage.foldername(name TEXT)
+          RETURNS TEXT[] AS $$
+            SELECT string_to_array(name, '/');
+          $$ LANGUAGE SQL IMMUTABLE;
           EOSQL
           echo "✅ Supabase schema stubs created"
 
@@ -373,7 +379,7 @@ jobs:
       - name: Check for wildcard dependencies
         run: |
           echo "Checking for wildcard (*) dependencies..."
-          if grep -r '"*"' package.json admin/package.json 2>/dev/null; then
+          if grep -E ':\s*"\*"' package.json admin/package.json 2>/dev/null; then
             echo "❌ Wildcard dependencies found. Pin to specific versions."
             exit 1
           fi
