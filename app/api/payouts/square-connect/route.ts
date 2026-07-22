@@ -55,10 +55,14 @@ export async function POST(request: NextRequest) {
     const params = new URLSearchParams({
       client_id: squareAppId,
       scope: SQUARE_OAUTH_SCOPE_STRING,
-      session: 'false',
       state: oauthState,
       redirect_uri: redirectUri,
     });
+    // session=false forces a fresh login — only supported in production.
+    // Sandbox requires session=true (the default), so we omit it there.
+    if (squareEnvironment === 'production') {
+      params.set('session', 'false');
+    }
 
     return NextResponse.json({ url: `${getSquareOAuthUrl()}?${params.toString()}` });
   } catch (error) {

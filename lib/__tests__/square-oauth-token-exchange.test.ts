@@ -110,3 +110,40 @@ describe('getSquareRedirectUri', () => {
     expect(uri).toContain('/api/payouts/square-callback');
   });
 });
+
+describe('Square OAuth session parameter (sandbox vs production)', () => {
+  const connectRoute = readFileSync('app/api/payouts/square-connect/route.ts', 'utf-8');
+
+  it('does not hardcode session=false in the base params', () => {
+    // The URLSearchParams constructor call should NOT contain session: 'false'
+    const paramsBlock = connectRoute.match(/new URLSearchParams\(\{[\s\S]*?\}\)/);
+    expect(paramsBlock).not.toBeNull();
+    expect(paramsBlock![0]).not.toContain("session");
+  });
+
+  it('only sets session=false for production environment', () => {
+    expect(connectRoute).toContain("squareEnvironment === 'production'");
+    expect(connectRoute).toContain("params.set('session', 'false')");
+  });
+
+  it('sandbox URLs omit session parameter (defaults to true)', () => {
+    // When squareEnvironment !== 'production', session is never added
+    // Verify the conditional guard
+    const sessionBlock = connectRoute.substring(
+      connectRoute.indexOf("params.set('session'"),
+      connectRoute.indexOf("params.set('session'") + 200,
+    );
+    // The set call must be inside a production-only block
+    expect(connectRoute).toMatch(/if\s*\(squareEnvironment === 'production'\)\s*\{[\s\S]*?params\.set\('session'/);
+  });
+
+  it('authorize URL still contains required params: client_id, scope, state, redirect_uri', () => {
+    const paramsBlock = connectRoute.match(/new URLSearchParams\(\{[\s\S]*?\}\)/);
+    expect(paramsBlock).not.toBeNull();
+    const params = paramsBlock![0];
+    expect(params).toContain('client_id');
+    expect(params).toContain('scope');
+    expect(params).toContain('state');
+    expect(params).toContain('redirect_uri');
+  });
+});
