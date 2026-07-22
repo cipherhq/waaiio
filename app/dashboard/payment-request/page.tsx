@@ -103,7 +103,7 @@ export default function PaymentRequestPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from('bookings')
-      .select('id, reference_code, guest_name, guest_phone, total_amount, status, notes, created_at, channel, payments(status, gateway, gateway_reference, amount, currency, created_at, metadata)')
+      .select('id, reference_code, guest_name, guest_phone, total_amount, status, notes, created_at, channel, payments!payments_reservation_id_fkey(status, gateway, gateway_reference, amount, currency, created_at, metadata)')
       .eq('business_id', business.id)
       .eq('flow_type', 'payment')
       .order('created_at', { ascending: false })

@@ -65,8 +65,15 @@ describe('Payment request data access', () => {
   });
 
   it('selects payment details including gateway and metadata', () => {
-    expect(pageCode).toContain('payments(status, gateway, gateway_reference');
+    expect(pageCode).toContain('payments!payments_reservation_id_fkey(status, gateway, gateway_reference');
     expect(pageCode).toContain('metadata');
+  });
+
+  it('disambiguates the payments join to avoid PGRST201', () => {
+    // bookings has two FKs to payments (booking_id and payment_id)
+    // Must use !fk_name to disambiguate
+    expect(pageCode).toContain('payments!payments_reservation_id_fkey');
+    expect(pageCode).not.toMatch(/\.select\([^)]*payments\(status/);
   });
 
   it('sorts newest first', () => {
@@ -132,6 +139,27 @@ describe('Empty state', () => {
 
   it('shows guidance text', () => {
     expect(pageCode).toContain('Requests you send will appear here');
+  });
+});
+
+describe('List refresh after send', () => {
+  it('calls loadRequests after successful single send', () => {
+    // After res.ok, the code calls loadRequests()
+    const sendSection = pageCode.substring(
+      pageCode.indexOf("'Payment request sent!'"),
+      pageCode.indexOf("'Payment request sent!'") + 200,
+    );
+    expect(sendSection).toContain('loadRequests()');
+  });
+
+  it('calls loadRequests after successful bulk send', () => {
+    // After bulk send with sent > 0, loadRequests is called
+    expect(pageCode).toContain('if (sent > 0)');
+    const bulkSection = pageCode.substring(
+      pageCode.indexOf('if (sent > 0)'),
+      pageCode.indexOf('if (sent > 0)') + 200,
+    );
+    expect(bulkSection).toContain('loadRequests()');
   });
 });
 
