@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getPaymentGatewayByName } from './factory';
 import type { PaymentGatewayName } from '@/lib/constants';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 interface ProcessRefundOpts {
   supabase: SupabaseClient;
@@ -245,8 +247,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     }
   } catch (adjError) {
     // Non-blocking — log but don't fail the refund
-    // eslint-disable-next-line no-console
-    console.error('[REFUND] Failed to create payout adjustment:', adjError);
+    logger.withContext({ op: 'refund.payout-adjustment', ...safeLogErrorContext(adjError) }).error('[REFUND] Failed to create payout adjustment');
   }
 
   return {

@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } fro
 import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
@@ -2030,7 +2031,7 @@ export const schedulingFlow: FlowDefinition = {
             .single();
 
           if (origError || !originalBooking) {
-            console.error('[SCHEDULING] Failed to fetch original booking for reschedule:', origError?.message);
+            logger.withContext({ op: 'scheduling.reschedule-fetch', ...safeLogErrorContext(origError) }).error('[SCHEDULING] Failed to fetch original booking for reschedule');
             return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
           }
 
@@ -2047,7 +2048,7 @@ export const schedulingFlow: FlowDefinition = {
             .eq('id', rescheduleId);
 
           if (rescheduleError) {
-            console.error('Failed to reschedule booking', rescheduleError);
+            logger.withContext({ op: 'scheduling.reschedule-update', ...safeLogErrorContext(rescheduleError) }).error('[SCHEDULING] Failed to reschedule booking');
             return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
           }
 
@@ -2105,7 +2106,7 @@ export const schedulingFlow: FlowDefinition = {
             .eq('id', ctx.business.id)
             .single();
           if (bizDepositErr) {
-            console.error('[SCHEDULING] Failed to fetch deposit_per_guest:', bizDepositErr.message);
+            logger.withContext({ op: 'scheduling.deposit-per-guest', ...safeLogErrorContext(bizDepositErr) }).error('[SCHEDULING] Failed to fetch deposit_per_guest');
           }
           depositPerGuest = biz?.deposit_per_guest || 0;
         }
@@ -2170,7 +2171,7 @@ export const schedulingFlow: FlowDefinition = {
               channel: 'in_app',
               subject: 'Booking limit approaching',
               body: `You've used ${tierResult.current}/${tierResult.limit} bookings this month. Upgrade for more.`,
-            }).catch(err => logger.error('[SCHEDULING] Failed to create tier limit notification:', err));
+            }).catch(err => logger.withContext({ op: 'scheduling.tier-limit-notify', ...safeLogErrorContext(err) }).error('[SCHEDULING] Failed to create tier limit notification'));
           }
         }
 
@@ -2244,7 +2245,7 @@ export const schedulingFlow: FlowDefinition = {
             .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 
           if (slotError || !slotResult) {
-            console.error('Failed to create booking', slotError);
+            logger.withContext({ op: 'scheduling.create-booking', ...safeLogErrorContext(slotError) }).error('[SCHEDULING] Failed to create booking');
             return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
           }
 
@@ -2333,9 +2334,9 @@ export const schedulingFlow: FlowDefinition = {
               await ctx.sender.sendText({ to, text: txt });
             };
             evaluateRules(ctx.supabase, ctx.business.id, 'booking_created', ruleCtx, sendMsg)
-              .catch(err => console.error('[SCHEDULING] booking_created rule error:', err));
+              .catch(err => logger.withContext({ op: 'scheduling.booking-rule', ...safeLogErrorContext(err) }).error('[SCHEDULING] booking_created rule error'));
             triggerSequences(ctx.supabase, ctx.business.id, 'after_booking', ctx.from, ruleCtx)
-              .catch(err => console.error('[SCHEDULING] after_booking sequence error:', err));
+              .catch(err => logger.withContext({ op: 'scheduling.after-booking-sequence', ...safeLogErrorContext(err) }).error('[SCHEDULING] after_booking sequence error'));
           }
 
           // Reserve booking slot (overbooking prevention)
@@ -2349,7 +2350,7 @@ export const schedulingFlow: FlowDefinition = {
                 p_staff_id: (d.staff_id as string) || null,
               });
             } catch (err) {
-              console.error('[SCHEDULING] reserve_booking_slot error (non-fatal):', err);
+              logger.withContext({ op: 'scheduling.reserve-slot', ...safeLogErrorContext(err) }).error('[SCHEDULING] reserve_booking_slot error (non-fatal)');
             }
           }
 
@@ -2650,7 +2651,7 @@ export const schedulingFlow: FlowDefinition = {
             quantity: partySize,
             quantityLabel: labels.quantityLabel,
             amount: totalDeposit > 0 ? totalDeposit : undefined,
-          }).catch(err => console.error('[SCHEDULING] Owner notification error:', err));
+          }).catch(err => logger.withContext({ op: 'scheduling.owner-notify', ...safeLogErrorContext(err) }).error('[SCHEDULING] Owner notification error'));
 
           // Notify assigned staff member
           if (d.staff_id) {
@@ -2668,8 +2669,8 @@ export const schedulingFlow: FlowDefinition = {
                 referenceCode: booking.reference_code,
                 countryCode: (ctx.business!.country_code || 'NG') as CountryCode,
                 amount: totalDeposit > 0 ? totalDeposit : undefined,
-              }).catch(err => console.error('[SCHEDULING] Staff notify error:', err));
-            }).catch(err => console.error('[SCHEDULING] Staff notify import error:', err));
+              }).catch(err => logger.withContext({ op: 'scheduling.staff-notify', ...safeLogErrorContext(err) }).error('[SCHEDULING] Staff notify error'));
+            }).catch(err => logger.withContext({ op: 'scheduling.staff-notify-import', ...safeLogErrorContext(err) }).error('[SCHEDULING] Staff notify import error'));
           }
 
           // Post-completion: loyalty, feedback, referral, auto-receipt
@@ -2684,7 +2685,7 @@ export const schedulingFlow: FlowDefinition = {
             amountPaid: totalDeposit,
             serviceName: d.service_name as string,
             referenceCode: booking.reference_code,
-          }).catch(err => console.error('[SCHEDULING] Post-completion error:', err));
+          }).catch(err => logger.withContext({ op: 'scheduling.post-completion', ...safeLogErrorContext(err) }).error('[SCHEDULING] Post-completion error'));
         }
 
         // Add helpful tips about what customer can do next
@@ -2700,7 +2701,7 @@ export const schedulingFlow: FlowDefinition = {
             if (caps.includes('loyalty')) tips.push('Type *my points* to check your loyalty balance');
             if (caps.includes('referral')) tips.push('Type *refer* to invite friends and earn rewards');
             if (caps.includes('ordering')) tips.push('Type *order* to place an order');
-          } catch (err) { logger.warn('[SCHEDULING] Failed to load capabilities for tips:', err); }
+          } catch (err) { logger.withContext({ op: 'scheduling.capabilities-tips', ...safeLogErrorContext(err) }).warn('[SCHEDULING] Failed to load capabilities for tips'); }
         }
         const helpText = `\n\n💡 *What you can do:*\n${tips.map(t => `• ${t}`).join('\n')}`;
 
@@ -2716,8 +2717,8 @@ export const schedulingFlow: FlowDefinition = {
               booking_time: (d.time as string) || '',
               duration_minutes: d.service_duration as number | undefined,
               reference_code: booking.reference_code,
-            }).catch(err => console.error('[SCHEDULING] Calendar sync error:', err));
-          }).catch(err => logger.error('[SCHEDULING] Failed to import google-calendar module:', err));
+            }).catch(err => logger.withContext({ op: 'scheduling.calendar-sync', ...safeLogErrorContext(err) }).error('[SCHEDULING] Calendar sync error'));
+          }).catch(err => logger.withContext({ op: 'scheduling.google-calendar-import', ...safeLogErrorContext(err) }).error('[SCHEDULING] Failed to import google-calendar module'));
         }
 
         // Add calendar links for date+time bookings (not drop-off services)
@@ -2936,7 +2937,7 @@ export const schedulingFlow: FlowDefinition = {
                 transactionAmount: feeAmount,
                 tier: ctx.business.subscription_tier as SubscriptionTier,
                 isInTrial,
-              }).catch(err => console.error('[SCHEDULING] saved card recordPlatformFee error:', err));
+              }).catch(err => logger.withContext({ op: 'scheduling.saved-card-platform-fee', ...safeLogErrorContext(err) }).error('[SCHEDULING] saved card recordPlatformFee error'));
             }
           }
 
@@ -2965,7 +2966,7 @@ export const schedulingFlow: FlowDefinition = {
               quantity: (d.party_size as number) || 1,
               quantityLabel: labels.quantityLabel,
               amount: paidAmount || undefined,
-            }).catch(err => console.error('[SCHEDULING] saved card owner notification error:', err));
+            }).catch(err => logger.withContext({ op: 'scheduling.saved-card-owner-notify', ...safeLogErrorContext(err) }).error('[SCHEDULING] saved card owner notification error'));
 
             handlePostCompletion({
               supabase: ctx.supabase,
@@ -2978,7 +2979,7 @@ export const schedulingFlow: FlowDefinition = {
               amountPaid: paidAmount,
               serviceName: d.service_name as string,
               referenceCode: d.reference_code as string,
-            }).catch(err => console.error('[SCHEDULING] saved card post-completion error:', err));
+            }).catch(err => logger.withContext({ op: 'scheduling.saved-card-post-completion', ...safeLogErrorContext(err) }).error('[SCHEDULING] saved card post-completion error'));
           }
 
           return null; // Payment complete, end flow
@@ -3090,7 +3091,7 @@ export const schedulingFlow: FlowDefinition = {
               customerName: custName,
               amount: expectedAmount,
               categoryName: `${d.service_name as string} (Bank Transfer)`,
-            }).catch(err => console.error('[SCHEDULING] Transfer notify error:', err));
+            }).catch(err => logger.withContext({ op: 'scheduling.transfer-notify', ...safeLogErrorContext(err) }).error('[SCHEDULING] Transfer notify error'));
 
             createNotification(ctx.supabase, {
               businessId: ctx.business.id,
@@ -3098,7 +3099,7 @@ export const schedulingFlow: FlowDefinition = {
               type: 'transfer_proof_received',
               channel: 'whatsapp',
               body: `Transfer proof received from ${custName} for ${formatCurrency(expectedAmount, btCC)}. Ref: ${transferRef}. ${ocrStatus}\n\nConfirm in Dashboard → Pending Transfers.`,
-            }).catch(err => console.error('[SCHEDULING] Transfer notification error:', err));
+            }).catch(err => logger.withContext({ op: 'scheduling.transfer-notification', ...safeLogErrorContext(err) }).error('[SCHEDULING] Transfer notification error'));
           }
 
           const ocrHint = ocrMatches
@@ -3216,7 +3217,7 @@ export const schedulingFlow: FlowDefinition = {
                   transactionAmount: feeAmount,
                   tier: ctx.business.subscription_tier as SubscriptionTier,
                   isInTrial,
-                }).catch(err => console.error('[SCHEDULING] recordPlatformFee error:', err));
+                }).catch(err => logger.withContext({ op: 'scheduling.platform-fee', ...safeLogErrorContext(err) }).error('[SCHEDULING] recordPlatformFee error'));
               }
             }
 
@@ -3275,7 +3276,7 @@ export const schedulingFlow: FlowDefinition = {
                 quantity: d.party_size as number,
                 quantityLabel: labels.quantityLabel,
                 amount: paidAmount || undefined,
-              }).catch(err => console.error('[SCHEDULING] Owner notification error:', err));
+              }).catch(err => logger.withContext({ op: 'scheduling.payment-owner-notify', ...safeLogErrorContext(err) }).error('[SCHEDULING] Owner notification error'));
 
               // Notify assigned staff member
               if (d.staff_id) {
@@ -3293,8 +3294,8 @@ export const schedulingFlow: FlowDefinition = {
                     referenceCode: d.reference_code as string,
                     countryCode: (ctx.business!.country_code || 'NG') as CountryCode,
                     amount: paidAmount || undefined,
-                  }).catch(err => console.error('[SCHEDULING] Staff notify error:', err));
-                }).catch(err => console.error('[SCHEDULING] Staff notify import error:', err));
+                  }).catch(err => logger.withContext({ op: 'scheduling.payment-staff-notify', ...safeLogErrorContext(err) }).error('[SCHEDULING] Staff notify error'));
+                }).catch(err => logger.withContext({ op: 'scheduling.payment-staff-notify-import', ...safeLogErrorContext(err) }).error('[SCHEDULING] Staff notify import error'));
               }
 
               // Post-completion: loyalty, feedback, referral, auto-receipt
@@ -3309,7 +3310,7 @@ export const schedulingFlow: FlowDefinition = {
                 amountPaid: paidAmount,
                 serviceName: d.service_name as string,
                 referenceCode: d.reference_code as string,
-              }).catch(err => console.error('[SCHEDULING] Post-completion error:', err));
+              }).catch(err => logger.withContext({ op: 'scheduling.payment-post-completion', ...safeLogErrorContext(err) }).error('[SCHEDULING] Post-completion error'));
 
               // Fire payment_received rule (non-blocking)
               const pmtSendMsg = async (to: string, txt: string) => {
@@ -3323,7 +3324,7 @@ export const schedulingFlow: FlowDefinition = {
                 reference_id: d.booking_id as string,
                 total_amount: d.deposit_amount as number || 0,
                 service_type: 'booking',
-              }, pmtSendMsg).catch(err => console.error('[SCHEDULING] payment_received rule error:', err));
+              }, pmtSendMsg).catch(err => logger.withContext({ op: 'scheduling.payment-received-rule', ...safeLogErrorContext(err) }).error('[SCHEDULING] payment_received rule error'));
             }
 
             return { valid: true, data: { _action: 'payment_confirmed' } };

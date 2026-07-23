@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { generateReceiptPdf } from '@/lib/pdf/receipt-generator';
@@ -61,7 +62,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
     capabilities = caps;
     biz = (bizResult.data ?? null) as typeof biz;
   } catch (err) {
-    logger.warn('[POST-COMPLETION] Failed to load capabilities/business data:', err);
+    logger.withContext({ op: 'post-completion.capabilities-load', ...safeLogErrorContext(err) }).warn('[POST-COMPLETION] Failed to load capabilities/business data');
     return;
   }
 
@@ -181,10 +182,10 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           });
         }
       } catch (pdfErr) {
-        console.error('[POST-COMPLETION] PDF receipt error (non-fatal):', pdfErr);
+        logger.withContext({ op: 'post-completion.pdf-receipt', ...safeLogErrorContext(pdfErr) }).error('[POST-COMPLETION] PDF receipt error (non-fatal)');
       }
     } catch (err) {
-      console.error('[POST-COMPLETION] Auto-receipt error:', err);
+      logger.withContext({ op: 'post-completion.auto-receipt', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Auto-receipt error');
     }
   }
 
@@ -258,9 +259,9 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       } else {
         loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`;
       }
-      if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(err => logger.error('[POST-COMPLETION] Failed to send loyalty message:', err));
+      if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
     } catch (err) {
-      logger.error('[POST-COMPLETION] Loyalty error:', err);
+      logger.withContext({ op: 'post-completion.loyalty', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Loyalty error');
     }
   }
 
@@ -302,7 +303,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
     };
     await evaluateRules(supabase, businessId, ruleEvent, automationContext, sendMsg);
   } catch (err) {
-    console.error('[POST-COMPLETION] Automation error (non-fatal):', err);
+    logger.withContext({ op: 'post-completion.automation', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Automation error (non-fatal)');
   }
 
   // 3. Referral — generate code silently (customer can access via "refer" keyword)
@@ -334,7 +335,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         // Code generated silently — customer can type "refer" to see it
       }
     } catch (err) {
-      console.error('[POST-COMPLETION] Referral error:', err);
+      logger.withContext({ op: 'post-completion.referral', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Referral error');
     }
   }
 }

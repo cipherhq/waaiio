@@ -11,6 +11,8 @@ import { NotificationBell } from '@/components/dashboard/NotificationBell';
 import { IdleTimeout } from '@/components/dashboard/IdleTimeout';
 import { CATEGORY_DEFAULT_CAPABILITIES } from '@/lib/capabilities/types';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -161,7 +163,7 @@ export default async function DashboardLayout({
   }
 
   if (!business) {
-    console.error('Dashboard: no business found for user', user.id, bizError?.message);
+    logger.withContext({ op: 'dashboard.layout', userId: user.id, ...safeLogErrorContext(bizError) }).error('Dashboard: no business found for user');
     redirect('/get-started');
   }
 

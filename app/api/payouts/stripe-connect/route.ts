@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 
@@ -53,7 +54,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (account.error) {
-      console.error('[STRIPE-CONNECT] Account creation error:', account.error.message);
+      logger.withContext({ op: 'stripe-connect.create-account', ...safeLogErrorContext(account.error) }).error('[STRIPE-CONNECT] Account creation error');
       return NextResponse.json({ error: 'Failed to create payout account. Please try again.' }, { status: 400 });
     }
 
@@ -68,7 +69,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (link.error) {
-      console.error('[STRIPE-CONNECT] Onboarding link error:', link.error.message);
+      logger.withContext({ op: 'stripe-connect.onboarding-link', ...safeLogErrorContext(link.error) }).error('[STRIPE-CONNECT] Onboarding link error');
       return NextResponse.json({ error: 'Failed to generate onboarding link. Please try again.' }, { status: 400 });
     }
 

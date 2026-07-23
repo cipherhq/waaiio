@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, Valida
 import { getCapabilityLabel } from './capability-selection.flow';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
 
 const feedbackRatingStep: FlowStepConfig = {
@@ -132,7 +133,7 @@ const feedbackThanksStep: FlowStepConfig = {
           subject: `New ${stars} review from ${displayName}`,
           emailHtml: `<p>${displayName} left a ${rating}-star review.${comment ? ` "${comment}"` : ''}</p><p>View feedback in your dashboard.</p>${getPoweredByHtml(ctx.business.subscription_tier)}`,
           whatsappText: `${stars} *New Review*\n\n${displayName} left a ${rating}-star review.${comment ? `\n"${comment}"` : ''}\n\nView feedback in your dashboard.${getPoweredByFooter(ctx.business.subscription_tier)}`,
-        }).catch(err => logger.error('[FEEDBACK] Failed to notify owner of new review:', err));
+        }).catch(err => logger.withContext({ op: 'feedback.owner-notify', ...safeLogErrorContext(err) }).error('[FEEDBACK] Failed to notify owner of new review'));
       }
     }
 
@@ -193,7 +194,7 @@ const feedbackThanksStep: FlowStepConfig = {
           return messages;
         }
       } catch (err) {
-        console.error('[FEEDBACK] Capabilities fetch error:', err);
+        logger.withContext({ op: 'feedback.capabilities-fetch', ...safeLogErrorContext(err) }).error('[FEEDBACK] Capabilities fetch error');
       }
     }
 

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 /**
  * POST /api/whatsapp/templates/provision
@@ -278,7 +279,7 @@ export async function POST(request: NextRequest) {
         logger.info(`[PROVISION] Created template "${templateDef.name}" on WABA ${channel.waba_id} for business ${business_id}:`, result);
         results.push({ name: templateDef.name, status: result.status, action: 'created' });
       } catch (err) {
-        console.error(`[PROVISION] Failed to create "${templateDef.name}":`, err instanceof Error ? err.message : err);
+        logger.withContext({ op: 'provision.create-template', ...safeLogErrorContext(err) }).error(`[PROVISION] Failed to create "${templateDef.name}"`);
         results.push({ name: templateDef.name, status: 'error', action: 'creation_failed' });
       }
     }
@@ -291,7 +292,7 @@ export async function POST(request: NextRequest) {
       results,
     });
   } catch (error) {
-    logger.error('[PROVISION] Error:', error);
+    logger.withContext({ op: 'provision', ...safeLogErrorContext(error) }).error('[PROVISION] Error');
     return NextResponse.json(
       { message: 'Internal server error' },
       { status: 500 },

@@ -11,6 +11,10 @@
  * Flutterwave API docs: https://developer.flutterwave.com/reference
  */
 
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
+import { safeProviderError } from '@/lib/redact';
+
 const flutterwaveSecretKey = process.env.FLUTTERWAVE_SECRET_KEY || '';
 const BASE_URL = 'https://api.flutterwave.com';
 
@@ -65,14 +69,14 @@ export async function createPlan(
     });
 
     if (data.status !== 'success') {
-      console.error('Flutterwave create plan failed:', data.message);
+      logger.withContext({ op: 'flutterwave.create-plan', gateway: 'flutterwave', providerInfo: safeProviderError(data) }).error('Flutterwave create plan failed');
       return null;
     }
 
     const planData = data.data as Record<string, unknown>;
     return { planId: String(planData.id) };
   } catch (error) {
-    console.error('Flutterwave create plan error:', (error as Error).message);
+    logger.withContext({ op: 'flutterwave.create-plan', ...safeLogErrorContext(error) }).error('Flutterwave create plan error');
     return null;
   }
 }
@@ -101,7 +105,7 @@ export async function createSubscription(
     // Fetch the plan to get the amount
     const planRes = await flutterwaveRequest(`/v3/payment-plans/${encodeURIComponent(planId)}`, 'GET');
     if (planRes.status !== 'success') {
-      console.error('Flutterwave get plan failed:', planRes.message);
+      logger.withContext({ op: 'flutterwave.get-plan', gateway: 'flutterwave', providerInfo: safeProviderError(planRes) }).error('Flutterwave get plan failed');
       return null;
     }
 
@@ -120,7 +124,7 @@ export async function createSubscription(
     });
 
     if (chargeData.status !== 'success') {
-      console.error('Flutterwave subscription charge failed:', chargeData.message);
+      logger.withContext({ op: 'flutterwave.subscription-charge', gateway: 'flutterwave', providerInfo: safeProviderError(chargeData) }).error('Flutterwave subscription charge failed');
       return null;
     }
 
@@ -129,7 +133,7 @@ export async function createSubscription(
     // We use the tx_ref as our subscription identifier; Flutterwave will auto-charge on schedule.
     return { subscriptionId: (chargeResult.id ? String(chargeResult.id) : txRef) };
   } catch (error) {
-    console.error('Flutterwave create subscription error:', (error as Error).message);
+    logger.withContext({ op: 'flutterwave.create-subscription', ...safeLogErrorContext(error) }).error('Flutterwave create subscription error');
     return null;
   }
 }
@@ -154,7 +158,7 @@ export async function cancelSubscription(subscriptionId: string): Promise<boolea
     );
     return data.status === 'success';
   } catch (error) {
-    console.error('Flutterwave cancel subscription error:', (error as Error).message);
+    logger.withContext({ op: 'flutterwave.cancel-subscription', ...safeLogErrorContext(error) }).error('Flutterwave cancel subscription error');
     return false;
   }
 }
@@ -198,7 +202,7 @@ export async function getSubscription(subscriptionId: string): Promise<{
       planId: String((subData.plan as number) || ''),
     };
   } catch (error) {
-    console.error('Flutterwave get subscription error:', (error as Error).message);
+    logger.withContext({ op: 'flutterwave.get-subscription', ...safeLogErrorContext(error) }).error('Flutterwave get subscription error');
     return null;
   }
 }
@@ -252,7 +256,7 @@ export async function chargeToken(
       reference: (chargeData?.tx_ref as string) || reference,
     };
   } catch (error) {
-    console.error('Flutterwave charge token error:', (error as Error).message);
+    logger.withContext({ op: 'flutterwave.charge-token', ...safeLogErrorContext(error) }).error('Flutterwave charge token error');
     return { success: false };
   }
 }
@@ -301,7 +305,7 @@ export async function getCardToken(reference: string): Promise<{
       email: (txData.customer as Record<string, string>)?.email || '',
     };
   } catch (error) {
-    console.error('Flutterwave get card token error:', (error as Error).message);
+    logger.withContext({ op: 'flutterwave.get-card-token', ...safeLogErrorContext(error) }).error('Flutterwave get card token error');
     return null;
   }
 }

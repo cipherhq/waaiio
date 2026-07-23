@@ -3,6 +3,9 @@
  * Used in US/GB/CA markets where Stripe is the primary gateway.
  */
 
+import { logger } from '@/lib/logger';
+import { safeProviderError } from '@/lib/redact';
+
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 
 async function stripeRequest(
@@ -85,7 +88,7 @@ export async function createRecurringCheckout(opts: {
   const data = await stripeRequest('/checkout/sessions', 'POST', params);
 
   if (!data.id || !data.url) {
-    console.error('Stripe recurring checkout failed:', data);
+    logger.withContext({ op: 'stripe.recurring-checkout', gateway: 'stripe', providerInfo: safeProviderError(data) }).error('Stripe recurring checkout failed');
     return null;
   }
 

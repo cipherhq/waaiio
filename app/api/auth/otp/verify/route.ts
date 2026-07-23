@@ -6,6 +6,8 @@ import { verifyPhoneOtp, generatePhonePassword } from '@/lib/otp-phone-token';
 import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force';
 import { bindSession } from '@/lib/security/session-bind';
 import { createSecurityEvent } from '@/lib/security/create-security-event';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 export async function POST(request: NextRequest) {
   try {
@@ -121,7 +123,7 @@ export async function POST(request: NextRequest) {
         });
 
         if (retryError) {
-          console.error('[OTP Verify] Sign-in failed after retry:', retryError.message);
+          logger.withContext({ op: 'otp-verify.sign-in-retry', ...safeLogErrorContext(retryError) }).error('[OTP Verify] Sign-in failed after retry');
           return NextResponse.json(
             { message: 'Authentication failed. Please try again.' },
             { status: 500 },
@@ -143,7 +145,7 @@ export async function POST(request: NextRequest) {
       });
 
       if (createError || !newUser?.user) {
-        console.error('[OTP Verify] Failed to create user:', createError?.message);
+        logger.withContext({ op: 'otp-verify.create-user', ...safeLogErrorContext(createError) }).error('[OTP Verify] Failed to create user');
         return NextResponse.json(
           { message: 'Failed to create account. Please try again.' },
           { status: 500 },
@@ -160,7 +162,7 @@ export async function POST(request: NextRequest) {
       });
 
       if (signInError) {
-        console.error('[OTP Verify] Sign-in after create failed:', signInError.message);
+        logger.withContext({ op: 'otp-verify.sign-in-after-create', ...safeLogErrorContext(signInError) }).error('[OTP Verify] Sign-in after create failed');
         return NextResponse.json(
           { message: 'Account created but sign-in failed. Please try again.' },
           { status: 500 },
@@ -194,7 +196,7 @@ export async function POST(request: NextRequest) {
       is_new_user: needsOnboarding,
     });
   } catch (err) {
-    console.error('[OTP Verify] Error:', err);
+    logger.withContext({ op: 'otp-verify.error', ...safeLogErrorContext(err) }).error('[OTP Verify] Error');
     return NextResponse.json(
       { message: 'Internal server error' },
       { status: 500 },

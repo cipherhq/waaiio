@@ -14,6 +14,8 @@ import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
 import { getCardToken, createPlan as createFlutterwavePlan, createSubscription as createFlutterwaveSubscription } from '@/lib/payments/flutterwave-recurring';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import { calculateLtvTier } from '@/lib/bot/customer-intelligence';
@@ -631,7 +633,7 @@ export const paymentFlow: FlowDefinition = {
               customerName: custName,
               amount: expectedAmount,
               categoryName: `${d.service_name as string} (Bank Transfer)`,
-            }).catch(err => console.error('[PAYMENT] Transfer notify error:', err));
+            }).catch(err => logger.withContext({ op: 'payment.transfer-notify', ...safeLogErrorContext(err) }).error('[PAYMENT] Transfer notify error'));
 
             createNotification(ctx.supabase, {
               businessId: ctx.business.id,
@@ -639,7 +641,7 @@ export const paymentFlow: FlowDefinition = {
               type: 'transfer_proof_received',
               channel: 'whatsapp',
               body: `Transfer proof received from ${custName} for ${formatCurrency(expectedAmount, cc)}. Ref: ${transferRef}. ${ocrStatus}\n\nConfirm in Dashboard → Pending Transfers.`,
-            }).catch(err => console.error('[PAYMENT] Transfer notification error:', err));
+            }).catch(err => logger.withContext({ op: 'payment.transfer-notification', ...safeLogErrorContext(err) }).error('[PAYMENT] Transfer notification error'));
           }
 
           const ocrHint = ocrMatches
@@ -780,7 +782,7 @@ export const paymentFlow: FlowDefinition = {
                 transactionAmount: d.amount as number,
                 tier: ctx.business.subscription_tier as SubscriptionTier,
                 isInTrial,
-              }).catch(err => console.error('[PAYMENT] recordPlatformFee error:', err));
+              }).catch(err => logger.withContext({ op: 'payment.platform-fee', ...safeLogErrorContext(err) }).error('[PAYMENT] recordPlatformFee error'));
             }
 
             const labels = getCategoryLabels(ctx.business?.category || 'church');
@@ -818,7 +820,7 @@ export const paymentFlow: FlowDefinition = {
                 serviceName: d.service_name as string,
                 referenceCode: d.reference_code as string,
                 skipLoyalty: isGiving,
-              }).catch(err => console.error('[PAYMENT] Post-completion error:', err));
+              }).catch(err => logger.withContext({ op: 'payment.post-completion', ...safeLogErrorContext(err) }).error('[PAYMENT] Post-completion error'));
 
               // Notify owner: email + WhatsApp
               notifyOwnerNewPayment({
@@ -831,7 +833,7 @@ export const paymentFlow: FlowDefinition = {
                 customerName: custName || 'Customer',
                 amount: d.amount as number,
                 categoryName: d.service_name as string,
-              }).catch(err => console.error('[PAYMENT] Notify error:', err));
+              }).catch(err => logger.withContext({ op: 'payment.owner-notify', ...safeLogErrorContext(err) }).error('[PAYMENT] Notify error'));
 
               // In-app notification
               createNotification(ctx.supabase, {
@@ -840,7 +842,7 @@ export const paymentFlow: FlowDefinition = {
                 type: 'payment_received',
                 channel: 'whatsapp',
                 body: `New payment of ${formatCurrency(d.amount as number, cc)} for ${d.service_name} from ${custName || 'Customer'}. Ref: ${d.reference_code}`,
-              }).catch(err => console.error('[PAYMENT] Notification error:', err));
+              }).catch(err => logger.withContext({ op: 'payment.notification', ...safeLogErrorContext(err) }).error('[PAYMENT] Notification error'));
             }
 
             return { valid: true, data: { _action: 'payment_confirmed' } };

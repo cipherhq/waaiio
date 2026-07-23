@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { validateFileSignature } from '@/lib/security/validate-file';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 export async function POST(request: NextRequest) {
   const limit = await rateLimitResponseAsync(getRateLimitKey(request, 'upload-audio'), 20, 60_000);
@@ -70,7 +72,7 @@ export async function POST(request: NextRequest) {
     });
 
   if (uploadError) {
-    console.error('[AUDIO-UPLOAD] Storage error:', uploadError.message);
+    logger.withContext({ op: 'audio-upload.storage', ...safeLogErrorContext(uploadError) }).error('[AUDIO-UPLOAD] Storage error');
     return NextResponse.json({ error: 'Upload failed. Please try again.' }, { status: 500 });
   }
 

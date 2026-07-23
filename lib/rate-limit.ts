@@ -8,6 +8,8 @@
 
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 // ── Redis-backed rate limiter (production) ──
 
@@ -113,7 +115,7 @@ export async function checkRateLimitAsync(
       return { allowed: success, remaining, resetAt: reset };
     } catch (err) {
       // Redis failure — fall back to in-memory so bot messages keep flowing
-      console.error('[RATE-LIMIT] Redis error, falling back to in-memory:', err);
+      logger.withContext({ op: 'rate-limit.redis', ...safeLogErrorContext(err) }).error('[RATE-LIMIT] Redis error, falling back to in-memory');
       return checkInMemory(key, maxRequests, windowMs);
     }
   }
@@ -149,7 +151,7 @@ export async function rateLimitResponseAsync(
       return null;
     } catch (err) {
       // Redis failure — fall back to in-memory so requests keep flowing
-      console.error('[RATE-LIMIT] Redis error, falling back to in-memory:', err);
+      logger.withContext({ op: 'rate-limit.redis', ...safeLogErrorContext(err) }).error('[RATE-LIMIT] Redis error, falling back to in-memory');
       return rateLimitResponse(key, maxRequests, windowMs);
     }
   }

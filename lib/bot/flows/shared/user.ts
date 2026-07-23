@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 export async function createWhatsAppUser(
@@ -83,7 +84,7 @@ export async function createWhatsAppUser(
 
     return userId;
   } catch (error) {
-    console.error('createWhatsAppUser error:', (error as Error).message);
+    logger.withContext({ op: 'user.create-whatsapp-user', ...safeLogErrorContext(error) }).error('[USER] createWhatsAppUser error');
 
     try {
       const { data: fallback } = await supabase
@@ -93,7 +94,7 @@ export async function createWhatsAppUser(
         .limit(1)
         .maybeSingle();
       if (fallback?.id) return fallback.id;
-    } catch (err) { logger.warn('[USER] Fallback lookup failed:', err); }
+    } catch (err) { logger.withContext({ op: 'user.fallback-lookup', ...safeLogErrorContext(err) }).warn('[USER] Fallback lookup failed'); }
 
     return null;
   }

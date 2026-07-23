@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { validateFileSignature } from '@/lib/security/validate-file';
 import { sanitizeImage } from '@/lib/security/sanitize-image';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 export async function POST(request: NextRequest) {
   const limit = await rateLimitResponseAsync(getRateLimitKey(request, 'upload-services'), 15, 60_000);
@@ -78,7 +80,7 @@ export async function POST(request: NextRequest) {
     });
 
   if (uploadError) {
-    console.error('[SERVICE-UPLOAD] Upload error:', uploadError.message);
+    logger.withContext({ op: 'service-upload.storage', ...safeLogErrorContext(uploadError) }).error('[SERVICE-UPLOAD] Upload error');
     return NextResponse.json({ error: 'Upload failed. Please try again.' }, { status: 500 });
   }
 

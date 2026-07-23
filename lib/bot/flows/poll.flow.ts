@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, Valida
 import { getCapabilityLabel } from './capability-selection.flow';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { truncTitle } from '../utils/truncate';
 import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
 
@@ -194,7 +195,7 @@ const pollQuestionStep: FlowStepConfig = {
           subject: `New poll response: ${pollTitle}`,
           emailHtml: `<p>${displayName} voted in "${pollTitle}". View results in your dashboard.</p>${getPoweredByHtml(ctx.business.subscription_tier)}`,
           whatsappText: `📊 *Poll Vote*\n\n${displayName} voted in "${pollTitle}".\n\nView results in your dashboard.${getPoweredByFooter(ctx.business.subscription_tier)}`,
-        }).catch(err => logger.error('[POLL] Failed to notify owner of poll vote:', err));
+        }).catch(err => logger.withContext({ op: 'poll.owner-notify', ...safeLogErrorContext(err) }).error('[POLL] Failed to notify owner of poll vote'));
       }
     }
 
@@ -287,7 +288,7 @@ const pollResultsStep: FlowStepConfig = {
           return messages;
         }
       } catch (err) {
-        console.error('[POLL] Capabilities fetch error:', err);
+        logger.withContext({ op: 'poll.capabilities-fetch', ...safeLogErrorContext(err) }).error('[POLL] Capabilities fetch error');
       }
     }
 

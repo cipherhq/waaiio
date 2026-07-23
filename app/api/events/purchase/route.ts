@@ -3,6 +3,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { verifyOtpToken } from '@/lib/otp-token';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 export async function POST(request: NextRequest) {
   // Rate limit: 10/min per IP
@@ -162,7 +164,7 @@ export async function POST(request: NextRequest) {
       if (retry) {
         userId = retry.id;
       } else {
-        console.error('[EVENT-PURCHASE] Failed to create user:', authError?.message);
+        logger.withContext({ op: 'event-purchase.create-user', ...safeLogErrorContext(authError) }).error('[EVENT-PURCHASE] Failed to create user');
         return NextResponse.json({ error: 'Failed to create account. Please try again.' }, { status: 500 });
       }
     } else {
@@ -189,7 +191,7 @@ export async function POST(request: NextRequest) {
     });
 
   if (rpcError) {
-    console.error('[EVENT-PURCHASE] RPC error:', rpcError.message);
+    logger.withContext({ op: 'event-purchase.rpc', ...safeLogErrorContext(rpcError) }).error('[EVENT-PURCHASE] RPC error');
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 });
   }
 
@@ -227,7 +229,7 @@ export async function POST(request: NextRequest) {
   });
 
   if (!paymentResult) {
-    console.error('[EVENT-PURCHASE] Payment initialization failed for booking:', bookingId);
+    logger.withContext({ op: 'event-purchase.payment-init', bookingId }).error('[EVENT-PURCHASE] Payment initialization failed');
     return NextResponse.json({ error: 'Payment initialization failed' }, { status: 500 });
   }
 

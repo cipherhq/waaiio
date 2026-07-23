@@ -4,6 +4,7 @@ import { getPlatformFees } from '@/lib/getPlatformFees';
 import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/factory';
 import { observe } from '@/lib/observability';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 export async function initializePayment(
   supabase: SupabaseClient,
@@ -76,7 +77,7 @@ export async function initializePayment(
           .single();
 
         if (bizError) {
-          console.error('[PAYMENT] Failed to fetch business for subaccount split:', bizError.message);
+          logger.withContext({ op: 'payment.subaccount-split-fetch', ...safeLogErrorContext(bizError) }).error('[PAYMENT] Failed to fetch business for subaccount split');
         }
 
         if (business) {
@@ -101,7 +102,7 @@ export async function initializePayment(
           .single();
 
         if (bizError2) {
-          console.error('[PAYMENT] Failed to fetch business for connect split:', bizError2.message);
+          logger.withContext({ op: 'payment.connect-split-fetch', ...safeLogErrorContext(bizError2) }).error('[PAYMENT] Failed to fetch business for connect split');
         }
 
         if (business) {
@@ -129,7 +130,7 @@ export async function initializePayment(
           .single();
 
         if (bizError3) {
-          console.error('[PAYMENT] Failed to fetch business for BYO split:', bizError3.message);
+          logger.withContext({ op: 'payment.byo-split-fetch', ...safeLogErrorContext(bizError3) }).error('[PAYMENT] Failed to fetch business for BYO split');
         }
 
         if (business) {
@@ -151,7 +152,7 @@ export async function initializePayment(
           .single();
 
         if (bizError4) {
-          console.error('[PAYMENT] Failed to fetch business payout mode:', bizError4.message);
+          logger.withContext({ op: 'payment.payout-mode-fetch', ...safeLogErrorContext(bizError4) }).error('[PAYMENT] Failed to fetch business payout mode');
         }
 
         const { data: payout } = await supabase
@@ -273,8 +274,7 @@ export async function initializePayment(
     return result;
   } catch (error) {
     const err = error as Error;
-    console.error('[PAYMENT] initializePayment THREW:', err.message);
-    console.error('[PAYMENT] Stack:', err.stack?.split('\n').slice(0, 6).join(' | '));
+    logger.withContext({ op: 'payment.init-threw', ...safeLogErrorContext(err) }).error('[PAYMENT] initializePayment THREW');
     (globalThis as Record<string, unknown>).__lastPaymentError = { message: err.message, stack: err.stack?.split('\n').slice(0, 6) };
     return null;
   }
