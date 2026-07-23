@@ -188,8 +188,10 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // Attach request ID for tracing (reuse incoming or generate new)
+  // Attach request ID for tracing (reuse incoming or generate new).
+  // Forward via request headers so route handlers can access it with getRequestId().
   const requestId = request.headers.get('x-request-id') || crypto.randomUUID().slice(0, 8);
+  request.headers.set('x-request-id', requestId);
 
   let supabaseResponse = NextResponse.next({ request });
 
