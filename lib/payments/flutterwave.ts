@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
 import { logger } from '@/lib/logger';
 import { observeProvider } from '@/lib/observability';
+import { normalizeError } from '@/lib/errors';
 
 const flutterwaveSecretKey = process.env.FLUTTERWAVE_SECRET_KEY || '';
 
@@ -142,7 +143,7 @@ export class FlutterwaveGateway implements PaymentGateway {
 
       return { url: data.data.link, reference: txRef };
     } catch (error) {
-      logger.error('Flutterwave init error:', (error as Error).message);
+      logger.error('Flutterwave init error:', normalizeError(error).message);
       return null;
     }
   }
@@ -219,7 +220,7 @@ export class FlutterwaveGateway implements PaymentGateway {
       }
       return false;
     } catch (error) {
-      logger.error('Flutterwave verify error:', (error as Error).message);
+      logger.error('Flutterwave verify error:', normalizeError(error).message);
       return false;
     }
   }
@@ -293,7 +294,7 @@ export class FlutterwaveGateway implements PaymentGateway {
     } catch (error) {
       return {
         success: false,
-        errorMessage: `Flutterwave refund error: ${(error as Error).message}`,
+        errorMessage: `Flutterwave refund error: ${normalizeError(error).message}`,
       };
     }
   }

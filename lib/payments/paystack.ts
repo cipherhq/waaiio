@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
 import { logger } from '@/lib/logger';
 import { observeProvider } from '@/lib/observability';
+import { normalizeError } from '@/lib/errors';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
@@ -140,7 +141,7 @@ export class PaystackGateway implements PaymentGateway {
 
       return { url: data.data.authorization_url, reference: data.data.reference };
     } catch (error) {
-      logger.error('Paystack init error:', (error as Error).message);
+      logger.error('Paystack init error:', normalizeError(error).message);
       return null;
     }
   }
@@ -218,7 +219,7 @@ export class PaystackGateway implements PaymentGateway {
       }
       return false;
     } catch (error) {
-      logger.error('Paystack verify error:', (error as Error).message);
+      logger.error('Paystack verify error:', normalizeError(error).message);
       return false;
     }
   }
@@ -279,7 +280,7 @@ export class PaystackGateway implements PaymentGateway {
     } catch (error) {
       return {
         success: false,
-        errorMessage: `Paystack refund error: ${(error as Error).message}`,
+        errorMessage: `Paystack refund error: ${normalizeError(error).message}`,
       };
     }
   }
