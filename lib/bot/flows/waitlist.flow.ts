@@ -1,4 +1,6 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 const waitlistJoinStep: FlowStepConfig = {
   id: 'waitlist_join',
@@ -107,7 +109,7 @@ const waitlistConfirmStep: FlowStepConfig = {
       });
 
     if (error) {
-      console.error('[WAITLIST] Insert error:', error);
+      logger.withContext({ op: 'waitlist.insert', ...safeLogErrorContext(error) }).error('[WAITLIST] Insert error');
       return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
     }
 

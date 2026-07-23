@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { sendEmail } from '@/lib/email/client';
 import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
@@ -95,7 +96,7 @@ export async function POST(request: NextRequest) {
           // For NGN/GHS amounts are in kobo/pesewas (100x), for USD/GBP/CAD in cents (100x)
           const expectedCents = Math.round(payment.amount * 100);
           if (stripeAmountCents > 0 && Math.abs(stripeAmountCents - expectedCents) > 1) {
-            console.error(`[STRIPE-WEBHOOK] Amount mismatch: Stripe=${stripeAmountCents} (${stripeCurrency}), expected=${expectedCents} for payment ${payment.id}`);
+            logger.withContext({ op: 'stripe-webhook.amount-mismatch', paymentId: payment.id, expectedCents, actualCents: stripeAmountCents, currency: stripeCurrency }).error('[STRIPE-WEBHOOK] Amount mismatch');
             await supabase.from('payments').update({ status: 'failed', gateway_status: 'amount_mismatch' }).eq('id', payment.id);
             return NextResponse.json({ received: true, error: 'amount_mismatch' });
           }
@@ -131,7 +132,7 @@ export async function POST(request: NextRequest) {
               }
             }
           } catch (err) {
-            logger.warn('[STRIPE WEBHOOK] Failed to fetch gateway fee:', err);
+            logger.withContext({ op: 'stripe-webhook.gateway-fee', ...safeLogErrorContext(err) }).warn('[STRIPE WEBHOOK] Failed to fetch gateway fee');
           }
 
           const paymentForShared = {
@@ -740,7 +741,7 @@ export async function POST(request: NextRequest) {
               }
             }
           } catch (err) {
-            logger.warn('[STRIPE RECURRING] Failed to fetch gateway fee:', err);
+            logger.withContext({ op: 'stripe-recurring.gateway-fee', ...safeLogErrorContext(err) }).warn('[STRIPE RECURRING] Failed to fetch gateway fee');
           }
 
           // Log subscription charge

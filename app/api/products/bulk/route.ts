@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 interface BulkProduct {
   name: string;
@@ -92,7 +94,7 @@ export async function POST(request: NextRequest) {
     if (!error) {
       inserted += batch.length;
     } else {
-      console.error('[PRODUCTS-BULK] Batch insert error:', error.message);
+      logger.withContext({ op: 'products-bulk.insert', ...safeLogErrorContext(error) }).error('[PRODUCTS-BULK] Batch insert error');
       errors.push({ row: i + 1, reason: 'Batch insert failed. Check product data and try again.' });
     }
   }

@@ -4,6 +4,8 @@ import { generatePhoneOtp } from '@/lib/otp-phone-token';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { createServiceClient } from '@/lib/supabase/service';
 import { checkBruteForce } from '@/lib/brute-force';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 // Support all Waaiio countries: NG (+234), US (+1), GB (+44), CA (+1), GH (+233)
 const PHONE_REGEX = /^\+[1-9][0-9]{6,14}$/;
@@ -63,7 +65,7 @@ export async function POST(request: NextRequest) {
         sent = true;
       }
     } catch (err) {
-      console.error('[OTP Send] WhatsApp channel send failed, trying env fallback:', err);
+      logger.withContext({ op: 'otp-send.whatsapp-channel', ...safeLogErrorContext(err) }).error('[OTP Send] WhatsApp channel send failed, trying env fallback');
     }
 
     // Fallback: use env-level Meta Cloud credentials (shared number 12029226251)
@@ -90,7 +92,7 @@ export async function POST(request: NextRequest) {
       pin_id: token,
     });
   } catch (err) {
-    console.error('[OTP Send] Error:', err);
+    logger.withContext({ op: 'otp-send.error', ...safeLogErrorContext(err) }).error('[OTP Send] Error');
     return NextResponse.json(
       { message: 'Failed to send OTP. Please try again.' },
       { status: 500 },

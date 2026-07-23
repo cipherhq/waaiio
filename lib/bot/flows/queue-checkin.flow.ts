@@ -1,4 +1,6 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage } from './types';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { notifyOwnerNewQueueCheckin } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
 import { getPoweredByFooter } from '@/lib/whitelabel';
@@ -134,7 +136,7 @@ const queueStartStep: FlowStepConfig = {
               status: 'waiting',
             })
             .then(({ error }) => {
-              if (error) console.error('[QUEUE] Waitlist notify insert error:', error);
+              if (error) logger.withContext({ op: 'queue.waitlist-notify-insert', ...safeLogErrorContext(error) }).error('[QUEUE] Waitlist notify insert error');
             });
         }
         await ctx.sender.sendText({
@@ -310,7 +312,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
       });
 
     if (error) {
-      console.error('[QUEUE] Insert error:', error);
+      logger.withContext({ op: 'queue.insert', ...safeLogErrorContext(error) }).error('[QUEUE] Insert error');
       return { valid: false, errorMessage: 'Something went wrong on our end. Send *Hi* to start over.' };
     }
 
@@ -322,7 +324,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
       businessName: ctx.business.name,
       customerName,
       queueNumber,
-    }).catch(err => console.error('[QUEUE] Notify error:', err));
+    }).catch(err => logger.withContext({ op: 'queue.owner-notify', ...safeLogErrorContext(err) }).error('[QUEUE] Notify error'));
 
     // In-app notification
     createNotification(ctx.supabase, {
@@ -330,7 +332,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
       type: 'queue_checkin',
       channel: 'whatsapp',
       body: `${customerName} joined the queue (#${queueNumber}).`,
-    }).catch(err => console.error('[QUEUE] Notification error:', err));
+    }).catch(err => logger.withContext({ op: 'queue.notification', ...safeLogErrorContext(err) }).error('[QUEUE] Notification error'));
 
     const waitText = estimatedWait > 0
       ? `Estimated wait: ~${estimatedWait} minutes.`

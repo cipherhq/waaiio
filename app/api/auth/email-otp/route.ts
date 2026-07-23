@@ -3,6 +3,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { sendEmail } from '@/lib/email/client';
 import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 export async function POST(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -68,7 +70,7 @@ async function handleSend(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error('[EMAIL-OTP] Send error:', err);
+    logger.withContext({ op: 'email-otp.send', ...safeLogErrorContext(err) }).error('[EMAIL-OTP] Send error');
     return NextResponse.json({ error: 'Failed to send code' }, { status: 500 });
   }
 }

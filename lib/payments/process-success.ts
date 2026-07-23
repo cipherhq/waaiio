@@ -3,6 +3,8 @@ import * as Sentry from '@sentry/nextjs';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import type { SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
+import { isSafeIdentifier } from '@/lib/redact';
 import { markWaitlistConverted } from '@/lib/waitlist/auto-notify';
 
 interface PaymentRecord {
@@ -51,7 +53,7 @@ export async function processSuccessfulPayment(
       });
     } catch (feeErr) {
       Sentry.captureException(feeErr, { tags: { type: 'platform_fee_failure', entity: 'booking' } });
-      logger.error('[PLATFORM-FEE] Failed to record fee for booking:', feeErr);
+      logger.withContext({ op: 'platform-fee.booking', ...safeLogErrorContext(feeErr) }).error('[PLATFORM-FEE] Failed to record fee for booking');
       // Don't block the booking confirmation — but ops is alerted via Sentry
     }
 
@@ -73,7 +75,7 @@ export async function processSuccessfulPayment(
         });
       }
     } catch (err) {
-      logger.error('[PROCESS-SUCCESS] Waitlist conversion tracking error:', err);
+      logger.withContext({ op: 'process-success.waitlist-conversion', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Waitlist conversion tracking error');
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'waitlist-conversion' } });
     }
   }
@@ -140,7 +142,7 @@ export async function processSuccessfulPayment(
         }
       }
     } catch (err) {
-      logger.error('[PROCESS-SUCCESS] Order confirmation error:', err);
+      logger.withContext({ op: 'process-success.order-confirmation', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Order confirmation error');
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'order-confirmation' } });
     }
   }
@@ -164,7 +166,7 @@ export async function processSuccessfulPayment(
         gatewayFee: payment.gateway_fee,
       });
     } catch (err) {
-      logger.error('[PROCESS-SUCCESS] Reservation confirmation error:', err);
+      logger.withContext({ op: 'process-success.reservation-confirmation', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Reservation confirmation error');
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'reservation-confirmation' } });
     }
   }
@@ -310,7 +312,7 @@ export async function recordPlatformFee(
     reseller_commission: resellerCommission,
   });
   if (feeErr) {
-    console.error('[PLATFORM-FEE] Insert error (possible duplicate):', feeErr.message);
+    logger.withContext({ op: 'platform-fee.insert', ...(typeof feeErr?.code === 'string' && isSafeIdentifier(feeErr.code) ? { errorCode: feeErr.code } : {}) }).error('[PLATFORM-FEE] Insert error (possible duplicate)');
     // Only report to Sentry if it's not a duplicate key violation
     if (!feeErr.message?.includes('duplicate') && !feeErr.message?.includes('unique')) {
       Sentry.captureException(new Error(`Platform fee insert error: ${feeErr.message}`), {

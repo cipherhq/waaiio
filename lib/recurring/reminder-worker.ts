@@ -7,6 +7,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 interface ReminderResult {
   processed: number;
@@ -37,7 +39,7 @@ export async function processRecurringReminders(
     .lte('next_charge_at', new Date().toISOString());
 
   if (error || !dueSubs) {
-    console.error('Failed to query due subscriptions:', error);
+    logger.withContext({ op: 'recurring-reminder.query', ...safeLogErrorContext(error) }).error('Failed to query due subscriptions');
     return result;
   }
 
@@ -98,7 +100,7 @@ export async function processRecurringReminders(
         .update({ next_charge_at: nextCharge.toISOString() })
         .eq('id', sub.id);
     } catch (err) {
-      console.error(`Reminder error for sub ${sub.id}:`, err);
+      logger.withContext({ op: 'recurring-reminder.process', subscriptionId: sub.id, ...safeLogErrorContext(err) }).error('Reminder error');
       result.errors++;
     }
   }

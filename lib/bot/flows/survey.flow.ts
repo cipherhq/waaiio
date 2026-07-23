@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, Valida
 import { getCapabilityLabel } from './capability-selection.flow';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { truncTitle } from '../utils/truncate';
 import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
 
@@ -292,7 +293,7 @@ const surveyCompleteStep: FlowStepConfig = {
           subject: `Survey completed: ${surveyTitle}`,
           emailHtml: `<p>${displayName} completed your survey "${surveyTitle}". View responses in your dashboard.</p>${getPoweredByHtml(ctx.business.subscription_tier)}`,
           whatsappText: `📋 *Survey Response*\n\n${displayName} completed your survey "${surveyTitle}".\n\nView responses in your dashboard.${getPoweredByFooter(ctx.business.subscription_tier)}`,
-        }).catch(err => logger.error('[SURVEY] Failed to notify owner of survey completion:', err));
+        }).catch(err => logger.withContext({ op: 'survey.owner-notify', ...safeLogErrorContext(err) }).error('[SURVEY] Failed to notify owner of survey completion'));
       }
     }
 
@@ -331,7 +332,7 @@ const surveyCompleteStep: FlowStepConfig = {
           return messages;
         }
       } catch (err) {
-        console.error('[SURVEY] Capabilities fetch error:', err);
+        logger.withContext({ op: 'survey.capabilities-fetch', ...safeLogErrorContext(err) }).error('[SURVEY] Capabilities fetch error');
       }
     }
 

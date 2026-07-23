@@ -3,6 +3,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { verifyOtpToken } from '@/lib/otp-token';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 /**
  * POST /api/bookings/public/create
@@ -214,7 +216,7 @@ export async function POST(request: NextRequest) {
       };
 
     if (slotError || !slotResult) {
-      console.error('[PUBLIC_BOOKING] Failed to create booking:', slotError);
+      logger.withContext({ op: 'public-booking.create', ...safeLogErrorContext(slotError) }).error('[PUBLIC_BOOKING] Failed to create booking');
       return NextResponse.json({ error: 'Failed to create booking' }, { status: 500 });
     }
 

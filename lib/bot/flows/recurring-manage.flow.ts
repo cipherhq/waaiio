@@ -1,4 +1,6 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { cancelSubscription as cancelPaystackSub, enableSubscription as enablePaystackSub } from '@/lib/payments/paystack-recurring';
 import { cancelSubscription as cancelStripeSub, pauseSubscription as pauseStripeSub, resumeSubscription as resumeStripeSub } from '@/lib/payments/stripe-recurring';
@@ -216,7 +218,7 @@ export const recurringManageFlow: FlowDefinition = {
             cancelled = true; // No gateway subscription to cancel
           }
         } catch (err) {
-          console.error('[RECURRING] Gateway cancel error (continuing with DB cancel):', err);
+          logger.withContext({ op: 'recurring.gateway-cancel', ...safeLogErrorContext(err) }).error('[RECURRING] Gateway cancel error (continuing with DB cancel)');
           cancelled = false;
         }
 
@@ -297,7 +299,7 @@ export const recurringManageFlow: FlowDefinition = {
             paused = true;
           }
         } catch (err) {
-          console.error('[RECURRING] Gateway pause error:', err);
+          logger.withContext({ op: 'recurring.gateway-pause', ...safeLogErrorContext(err) }).error('[RECURRING] Gateway pause error');
           paused = false;
         }
 
@@ -364,7 +366,7 @@ export const recurringManageFlow: FlowDefinition = {
             resumed = true;
           }
         } catch (err) {
-          console.error('[RECURRING] Gateway resume error:', err);
+          logger.withContext({ op: 'recurring.gateway-resume', ...safeLogErrorContext(err) }).error('[RECURRING] Gateway resume error');
           resumed = false;
         }
 

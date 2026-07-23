@@ -3,6 +3,9 @@
  * Used in NG/GH markets where Paystack is the primary gateway.
  */
 
+import { logger } from '@/lib/logger';
+import { safeProviderError } from '@/lib/redact';
+
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
 async function paystackRequest(
@@ -46,7 +49,7 @@ export async function createPlan(opts: {
   });
 
   if (!data.status) {
-    console.error('Paystack create plan failed:', data.message);
+    logger.withContext({ op: 'paystack.create-plan', gateway: 'paystack', providerInfo: safeProviderError(data) }).error('Paystack create plan failed');
     return null;
   }
 
@@ -84,7 +87,7 @@ export async function createSubscription(opts: {
   const data = await paystackRequest('/subscription', 'POST', body);
 
   if (!data.status) {
-    console.error('Paystack create subscription failed:', data.message);
+    logger.withContext({ op: 'paystack.create-subscription', gateway: 'paystack', providerInfo: safeProviderError(data) }).error('Paystack create subscription failed');
     return null;
   }
 

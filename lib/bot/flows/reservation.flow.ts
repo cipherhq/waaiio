@@ -9,6 +9,8 @@ import { createNotification } from './shared/notifications';
 import { notifyOwnerNewBooking } from './shared/notify-owner';
 import { getReservationConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
+import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { getPoweredByFooter } from '@/lib/whitelabel';
 import { getTermsPrompt } from './shared/terms';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
@@ -797,7 +799,7 @@ export const reservationFlow: FlowDefinition = {
           .single();
 
         if (insertError || !reservation) {
-          console.error('Failed to create reservation', insertError);
+          logger.withContext({ op: 'reservation.create', ...safeLogErrorContext(insertError) }).error('[RESERVATION] Failed to create reservation');
           return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
         }
 
@@ -1046,7 +1048,7 @@ export const reservationFlow: FlowDefinition = {
             quantity: (d.guests as number) || 1,
             quantityLabel: 'guest(s)',
             amount: payableAmount > 0 ? payableAmount : undefined,
-          }).catch(err => console.error('[RESERVATION] Notify error:', err));
+          }).catch(err => logger.withContext({ op: 'reservation.free-notify', ...safeLogErrorContext(err) }).error('[RESERVATION] Notify error'));
 
           handlePostCompletion({
             supabase: ctx.supabase,
@@ -1056,7 +1058,7 @@ export const reservationFlow: FlowDefinition = {
             serviceType: 'booking',
             referenceId: reservation.id,
             sender: ctx.sender,
-          }).catch(err => console.error('[RESERVATION] Post-completion error:', err));
+          }).catch(err => logger.withContext({ op: 'reservation.free-post-completion', ...safeLogErrorContext(err) }).error('[RESERVATION] Post-completion error'));
         }
 
         const resCalLinks = getCalendarLinksText({
@@ -1197,7 +1199,7 @@ export const reservationFlow: FlowDefinition = {
               quantity: (d.guests as number) || 1,
               quantityLabel: 'guest(s)',
               amount: expectedAmount,
-            }).catch(err => console.error('[RESERVATION] Transfer notify error:', err));
+            }).catch(err => logger.withContext({ op: 'reservation.transfer-notify', ...safeLogErrorContext(err) }).error('[RESERVATION] Transfer notify error'));
 
             createNotification(ctx.supabase, {
               businessId: ctx.business.id,
@@ -1205,7 +1207,7 @@ export const reservationFlow: FlowDefinition = {
               type: 'transfer_proof_received',
               channel: 'whatsapp',
               body: `Transfer proof received from ${custName} for ${formatCurrency(expectedAmount, rcc)} reservation. Ref: ${transferRef}. Confirm in Dashboard → Pending Transfers.`,
-            }).catch(err => console.error('[RESERVATION] Transfer notification error:', err));
+            }).catch(err => logger.withContext({ op: 'reservation.transfer-notification', ...safeLogErrorContext(err) }).error('[RESERVATION] Transfer notification error'));
           }
 
           const ocrHint = ocrMatches ? `\n\n🤖 _Our AI verified your receipt — amount and reference match._` : '';
@@ -1358,7 +1360,7 @@ export const reservationFlow: FlowDefinition = {
                 serviceType: 'booking',
                 referenceId: d.reservation_id as string,
                 sender: ctx.sender,
-              }).catch(err => console.error('[RESERVATION] Post-completion error:', err));
+              }).catch(err => logger.withContext({ op: 'reservation.paid-post-completion', ...safeLogErrorContext(err) }).error('[RESERVATION] Post-completion error'));
 
               // Notify owner: email + WhatsApp + in-app notification
               notifyOwnerNewBooking({
@@ -1374,7 +1376,7 @@ export const reservationFlow: FlowDefinition = {
                 quantity: (d.guests as number) || 1,
                 quantityLabel: 'guest(s)',
                 amount: d.payable_amount as number,
-              }).catch(err => console.error('[RESERVATION] Notify error:', err));
+              }).catch(err => logger.withContext({ op: 'reservation.paid-notify', ...safeLogErrorContext(err) }).error('[RESERVATION] Notify error'));
 
               createNotification(ctx.supabase, {
                 businessId: ctx.business.id,
@@ -1382,7 +1384,7 @@ export const reservationFlow: FlowDefinition = {
                 type: 'booking_confirmation',
                 channel: 'whatsapp',
                 body: `Reservation confirmed (paid): ${d.service_name} from ${checkInLabel} to ${checkOutLabel} (${d.nights} nights). Ref: ${d.reference_code}`,
-              }).catch(err => console.error('[RESERVATION] Notification error:', err));
+              }).catch(err => logger.withContext({ op: 'reservation.paid-notification', ...safeLogErrorContext(err) }).error('[RESERVATION] Notification error'));
             }
 
             return { valid: true, data: { _action: 'payment_confirmed' } };

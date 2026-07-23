@@ -3,6 +3,7 @@ import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constan
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { notifyOwnerNewDonation } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
 import { checkTierLimit } from '@/lib/tier-limits';
@@ -349,7 +350,7 @@ const donationPaymentStep: FlowStepConfig = {
           channel: 'in_app',
           subject: 'Donation limit approaching',
           body: `You've received ${tierResult.current}/${tierResult.limit} donations this month. Upgrade for more.`,
-        }).catch(err => logger.error('[CROWDFUNDING] Failed to create tier limit notification:', err));
+        }).catch(err => logger.withContext({ op: 'crowdfunding.tier-limit-notify', ...safeLogErrorContext(err) }).error('[CROWDFUNDING] Failed to create tier limit notification'));
       }
     }
 
@@ -605,14 +606,14 @@ const awaitDonationPaymentStep: FlowStepConfig = {
           donorName,
           amount: expectedAmount,
           campaignTitle: `${sd.campaign_title as string} (Bank Transfer)`,
-        }).catch(err => console.error('[CROWDFUNDING] Transfer notify error:', err));
+        }).catch(err => logger.withContext({ op: 'crowdfunding.transfer-notify', ...safeLogErrorContext(err) }).error('[CROWDFUNDING] Transfer notify error'));
 
         createNotification(ctx.supabase, {
           businessId: ctx.business.id,
           type: 'transfer_proof_received',
           channel: 'whatsapp',
           body: `Transfer proof received from ${donorName} for ${formatCurrency(expectedAmount, cc)} donation. Ref: ${transferRef}. Confirm in Dashboard → Pending Transfers.`,
-        }).catch(err => console.error('[CROWDFUNDING] Transfer notification error:', err));
+        }).catch(err => logger.withContext({ op: 'crowdfunding.transfer-notification', ...safeLogErrorContext(err) }).error('[CROWDFUNDING] Transfer notification error'));
       }
 
       const ocrHint = ocrMatches ? `\n\n🤖 _Our AI verified your receipt — amount and reference match._` : '';
@@ -721,7 +722,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
           _recordFee(ctx.supabase, {
             campaignId,
             paymentAmount: amount,
-          }).catch(err => console.error('[CROWDFUNDING] Platform fee error:', err));
+          }).catch(err => logger.withContext({ op: 'crowdfunding.platform-fee', ...safeLogErrorContext(err) }).error('[CROWDFUNDING] Platform fee error'));
         }
 
         // Notify owner: email + WhatsApp
@@ -736,7 +737,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
             donorName: (sd.donor_display_name as string) || null,
             amount,
             campaignTitle: sd.campaign_title as string,
-          }).catch(err => console.error('[CROWDFUNDING] Notify error:', err));
+          }).catch(err => logger.withContext({ op: 'crowdfunding.owner-notify', ...safeLogErrorContext(err) }).error('[CROWDFUNDING] Notify error'));
 
           // In-app notification
           createNotification(ctx.supabase, {
@@ -744,7 +745,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
             type: 'donation',
             channel: 'whatsapp',
             body: `New donation of ${formatCurrency(amount, cc)} for ${sd.campaign_title}${(sd.donor_display_name as string) ? ` from ${sd.donor_display_name}` : ' (Anonymous)'}. Ref: ${refCode}`,
-          }).catch(err => console.error('[CROWDFUNDING] Notification error:', err));
+          }).catch(err => logger.withContext({ op: 'crowdfunding.notification', ...safeLogErrorContext(err) }).error('[CROWDFUNDING] Notification error'));
 
           // Auto-create/update customer profile
           handlePostCompletion({
@@ -754,7 +755,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
             customerPhone: ctx.from,
             customerName: (sd.donor_display_name as string) || null,
             amountPaid: amount,
-          }).catch(err => console.error('[CROWDFUNDING] Post-completion error:', err));
+          }).catch(err => logger.withContext({ op: 'crowdfunding.post-completion', ...safeLogErrorContext(err) }).error('[CROWDFUNDING] Post-completion error'));
         }
 
         return { valid: true, data: { _action: 'payment_confirmed' } };

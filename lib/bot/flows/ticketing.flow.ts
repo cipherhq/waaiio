@@ -3,6 +3,7 @@ import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { getTicketConfirmationMessage } from './shared/templates';
 import { getTermsPrompt } from './shared/terms';
 import { sendTicketsAfterPurchase } from './shared/send-tickets';
@@ -505,7 +506,7 @@ export const ticketingFlow: FlowDefinition = {
               channel: 'in_app',
               subject: 'Ticket limit approaching',
               body: `You've sold ${tierResult.current}/${tierResult.limit} tickets for this event. Upgrade for more.`,
-            }).catch(err => logger.error('[TICKETING] Failed to create tier limit notification:', err));
+            }).catch(err => logger.withContext({ op: 'ticketing.tier-limit-notification', ...safeLogErrorContext(err) }).error('[TICKETING] Failed to create tier limit notification'));
           }
         }
 
@@ -688,7 +689,7 @@ export const ticketingFlow: FlowDefinition = {
           }
 
           // Payment initialization failed — do NOT fall through to free ticket path
-          console.error(`[TICKETING] Payment init failed for booking ${booking.id}, event ${d.event_id}`);
+          logger.withContext({ op: 'ticketing.payment-init', bookingId: booking.id, eventId: d.event_id as string }).error('[TICKETING] Payment init failed');
           return [
             {
               type: 'text',
@@ -747,7 +748,7 @@ export const ticketingFlow: FlowDefinition = {
           quantity: qty,
         });
         } catch (err) {
-          console.error('[TICKETING] Ticket PDF send error:', err);
+          logger.withContext({ op: 'ticketing.ticket-pdf-send', ...safeLogErrorContext(err) }).error('[TICKETING] Ticket PDF send error');
         }
 
         // Notify owner: email + WhatsApp
@@ -763,7 +764,7 @@ export const ticketingFlow: FlowDefinition = {
           quantity: qty,
           ticketTypeName: d.ticket_type_name as string | undefined,
           totalAmount: total,
-        }).catch(err => console.error('[TICKETING] Notify error:', err));
+        }).catch(err => logger.withContext({ op: 'ticketing.free-notify', ...safeLogErrorContext(err) }).error('[TICKETING] Notify error'));
 
         // In-app notification
         createNotification(ctx.supabase, {
@@ -772,7 +773,7 @@ export const ticketingFlow: FlowDefinition = {
           type: 'ticket_sale',
           channel: 'whatsapp',
           body: `New ticket sale: ${qty} ticket${qty > 1 ? 's' : ''} for ${d.event_name}. Ref: ${booking.reference_code}`,
-        }).catch(err => console.error('[TICKETING] Notification error:', err));
+        }).catch(err => logger.withContext({ op: 'ticketing.free-notification', ...safeLogErrorContext(err) }).error('[TICKETING] Notification error'));
 
         return [{
           type: 'text',
@@ -891,7 +892,7 @@ export const ticketingFlow: FlowDefinition = {
               totalAmount: expectedAmount,
               eventName: `${d.event_name as string} (Bank Transfer)`,
               quantity: d.ticket_quantity as number,
-            }).catch(err => console.error('[TICKETING] Transfer notify error:', err));
+            }).catch(err => logger.withContext({ op: 'ticketing.transfer-notify', ...safeLogErrorContext(err) }).error('[TICKETING] Transfer notify error'));
 
             createNotification(ctx.supabase, {
               businessId: ctx.business.id,
@@ -899,7 +900,7 @@ export const ticketingFlow: FlowDefinition = {
               type: 'transfer_proof_received',
               channel: 'whatsapp',
               body: `Transfer proof received from ${custName} for ${formatCurrency(expectedAmount, cc)} tickets. Ref: ${transferRef}. Confirm in Dashboard → Pending Transfers.`,
-            }).catch(err => console.error('[TICKETING] Transfer notification error:', err));
+            }).catch(err => logger.withContext({ op: 'ticketing.transfer-notification', ...safeLogErrorContext(err) }).error('[TICKETING] Transfer notification error'));
           }
 
           const ocrHint = ocrMatches ? `\n\n🤖 _Our AI verified your receipt — amount and reference match._` : '';
@@ -956,7 +957,7 @@ export const ticketingFlow: FlowDefinition = {
               .single();
 
             if (bookingCheckErr || !currentBooking) {
-              console.error('[TICKETING] Failed to check booking status:', bookingCheckErr?.message);
+              logger.withContext({ op: 'ticketing.booking-status-check', ...safeLogErrorContext(bookingCheckErr) }).error('[TICKETING] Failed to check booking status');
               return { valid: false, errorMessage: 'Something went wrong on our end. Try again.' };
             }
 
@@ -998,7 +999,7 @@ export const ticketingFlow: FlowDefinition = {
                   quantity: dedupQty,
                 });
               } catch (ticketErr) {
-                console.error('[TICKETING] Dedup sendTicketsAfterPurchase FAILED:', ticketErr);
+                logger.withContext({ op: 'ticketing.dedup-send-tickets', ...safeLogErrorContext(ticketErr) }).error('[TICKETING] Dedup sendTicketsAfterPurchase FAILED');
                 // Text fallback with reference code
                 await ctx.sender.sendText({
                   to: ctx.from,
@@ -1076,7 +1077,7 @@ export const ticketingFlow: FlowDefinition = {
                 quantity: d.ticket_quantity as number,
               });
             } catch (ticketErr) {
-              console.error('[TICKETING] sendTicketsAfterPurchase FAILED:', ticketErr);
+              logger.withContext({ op: 'ticketing.send-tickets', ...safeLogErrorContext(ticketErr) }).error('[TICKETING] sendTicketsAfterPurchase FAILED');
               // Fallback: send a text-only ticket with the code
               const ticketCodes = await ctx.supabase
                 .from('event_tickets')
@@ -1104,7 +1105,7 @@ export const ticketingFlow: FlowDefinition = {
               quantity: d.ticket_quantity as number,
               ticketTypeName: d.ticket_type_name as string | undefined,
               totalAmount: d.total_amount as number,
-            }).catch(err => console.error('[TICKETING] Notify error:', err));
+            }).catch(err => logger.withContext({ op: 'ticketing.paid-notify', ...safeLogErrorContext(err) }).error('[TICKETING] Notify error'));
 
             // In-app notification
             createNotification(ctx.supabase, {
@@ -1113,7 +1114,7 @@ export const ticketingFlow: FlowDefinition = {
               type: 'ticket_sale',
               channel: 'whatsapp',
               body: `New ticket sale: ${d.ticket_quantity} ticket${(d.ticket_quantity as number) > 1 ? 's' : ''} for ${d.event_name}. Amount: ${formatCurrency(d.total_amount as number, (ctx.business?.country_code || 'NG') as CountryCode)}. Ref: ${d.reference_code}`,
-            }).catch(err => console.error('[TICKETING] Notification error:', err));
+            }).catch(err => logger.withContext({ op: 'ticketing.paid-notification', ...safeLogErrorContext(err) }).error('[TICKETING] Notification error'));
 
             // Record platform fee only after payment is verified
             if (ctx.business) {
@@ -1124,7 +1125,7 @@ export const ticketingFlow: FlowDefinition = {
                 transactionAmount: d.total_amount as number,
                 tier: ctx.business.subscription_tier as SubscriptionTier,
                 isInTrial,
-              }).catch(err => console.error('[TICKETING] recordPlatformFee error:', err));
+              }).catch(err => logger.withContext({ op: 'ticketing.platform-fee', ...safeLogErrorContext(err) }).error('[TICKETING] recordPlatformFee error'));
 
               // Post-completion: loyalty points, feedback request, referral tracking
               handlePostCompletion({
@@ -1138,7 +1139,7 @@ export const ticketingFlow: FlowDefinition = {
                 amountPaid: d.total_amount as number,
                 serviceName: d.event_name as string,
                 referenceCode: d.reference_code as string,
-              }).catch(err => console.error('[TICKETING] Post-completion error:', err));
+              }).catch(err => logger.withContext({ op: 'ticketing.post-completion', ...safeLogErrorContext(err) }).error('[TICKETING] Post-completion error'));
             }
 
             return { valid: true, data: { _action: 'payment_confirmed' } };
