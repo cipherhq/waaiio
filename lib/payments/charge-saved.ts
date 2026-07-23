@@ -3,6 +3,7 @@ import { logger } from '@/lib/logger';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import type { SubscriptionTier } from '@/lib/constants';
 import { observeProvider, logSplitResolved, logSplitMissing } from '@/lib/observability';
+import { normalizeError } from '@/lib/errors';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
@@ -281,7 +282,7 @@ async function chargePaystackAuthorization(
       message: data.data?.gateway_response || data.message || 'Card charge failed',
     };
   } catch (error) {
-    logger.error('[SAVED-CARD] Charge error:', (error as Error).message);
+    logger.error('[SAVED-CARD] Charge error:', normalizeError(error).message);
     return { success: false, reference: opts.reference, message: 'Payment processing error' };
   }
 }

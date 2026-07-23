@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
 import { logger } from '@/lib/logger';
 import { observeProvider } from '@/lib/observability';
+import { normalizeError } from '@/lib/errors';
 
 function getStripeKey(): string {
   return process.env.STRIPE_SECRET_KEY || '';
@@ -208,7 +209,7 @@ export class StripeGateway implements PaymentGateway {
       }
       return false;
     } catch (error) {
-      logger.error('Stripe verify error:', (error as Error).message);
+      logger.error('Stripe verify error:', normalizeError(error).message);
       return false;
     }
   }
@@ -266,7 +267,7 @@ export class StripeGateway implements PaymentGateway {
     } catch (error) {
       return {
         success: false,
-        errorMessage: `Stripe refund error: ${(error as Error).message}`,
+        errorMessage: `Stripe refund error: ${normalizeError(error).message}`,
       };
     }
   }

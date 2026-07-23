@@ -16,6 +16,7 @@
 
 import { type NextRequest } from 'next/server';
 import { logger, generateRequestId, type LogContext, type Logger } from './logger';
+import { normalizeError } from './errors';
 
 // ── Types ──
 
@@ -93,7 +94,8 @@ export async function observe<T>(
     return result;
   } catch (error) {
     const durationMs = Math.round(performance.now() - start);
-    log.error(`${op} failed`, { durationMs } as unknown as string, error as Error);
+    const norm = normalizeError(error);
+    log.error(`${op} failed`, { durationMs, errorMessage: norm.message, ...(norm.code ? { errorCode: norm.code } : {}), ...(norm.retryable !== undefined ? { retryable: norm.retryable } : {}) } as unknown as string);
     throw error;
   }
 }
@@ -127,7 +129,8 @@ export async function observeProvider<T>(
     return result;
   } catch (error) {
     const durationMs = Math.round(performance.now() - start);
-    log.error('provider.request failed', { durationMs } as unknown as string, error as Error);
+    const norm = normalizeError(error);
+    log.error('provider.request failed', { durationMs, errorMessage: norm.message, ...(norm.code ? { errorCode: norm.code } : {}), ...(norm.retryable !== undefined ? { retryable: norm.retryable } : {}) } as unknown as string);
     throw error;
   }
 }
@@ -179,7 +182,8 @@ export async function observeWithTiming<T>(
     return { result, durationMs };
   } catch (error) {
     const durationMs = Math.round(performance.now() - start);
-    log.error(`${op} failed`, { durationMs } as unknown as string, error as Error);
+    const norm = normalizeError(error);
+    log.error(`${op} failed`, { durationMs, errorMessage: norm.message, ...(norm.code ? { errorCode: norm.code } : {}), ...(norm.retryable !== undefined ? { retryable: norm.retryable } : {}) } as unknown as string);
     throw error;
   }
 }
