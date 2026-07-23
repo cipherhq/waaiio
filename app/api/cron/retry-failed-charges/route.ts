@@ -7,6 +7,7 @@ import { chargeToken as chargeFlutterwaveToken } from '@/lib/payments/flutterwav
 import { resolvePaystackSplit, resolveGatewaySplit } from '@/lib/payments/charge-saved';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { logger } from '@/lib/logger';
+import { createCronLogger } from '@/lib/observability/cron';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -23,12 +24,15 @@ export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);
   if (authError) return authError;
 
-  const supabase = createServiceClient();
+  const cron = createCronLogger('retry-failed-charges');
+  cron.started();
+
   let retried = 0;
   let cancelled = 0;
   let skipped = 0;
 
   try {
+    const supabase = createServiceClient();
     // Find past_due subscriptions with fewer than 3 failures
     const { data: pastDue } = await supabase
       .from('customer_subscriptions')
@@ -54,10 +58,7 @@ export async function GET(request: NextRequest) {
         if (splitResult.mode === 'split') {
           splitParams = { subaccount: splitResult.subaccount, transaction_charge: splitResult.transactionChargeKobo };
         } else if (splitResult.mode === 'split_required_but_missing') {
-          logger.error(`[RETRY-CHARGES] Direct split config missing for ${sub.id}, skipping charge`, {
-            businessId: sub.business_id,
-            reason: splitResult.reason,
-          });
+          cron.itemSkipped({ gateway: 'paystack', subscriptionId: sub.id, businessId: sub.business_id, reason: splitResult.reason, splitRequired: true, splitResolved: false });
           skipped++;
           continue;
         }
@@ -84,27 +85,25 @@ export async function GET(request: NextRequest) {
               })
               .eq('id', sub.id);
 
-            logger.info(`[RETRY-CHARGES] Successfully retried ${sub.id}, ref: ${result.reference}`);
+            cron.itemCompleted({ gateway: 'paystack', subscriptionId: sub.id, providerReference: result.reference });
             retried++;
           } else {
-            // Failed again — increment failure count
             const newFailureCount = (sub.failure_count || 0) + 1;
             await supabase
               .from('customer_subscriptions')
               .update({ failure_count: newFailureCount })
               .eq('id', sub.id);
 
-            logger.warn(`[RETRY-CHARGES] Retry failed for ${sub.id}, failure #${newFailureCount}`);
+            cron.itemFailed('Charge returned unsuccessful', { gateway: 'paystack', subscriptionId: sub.id, attempt: newFailureCount });
           }
         } catch (err) {
-          // Charge threw — increment failure
           const newFailureCount = (sub.failure_count || 0) + 1;
           await supabase
             .from('customer_subscriptions')
             .update({ failure_count: newFailureCount })
             .eq('id', sub.id);
 
-          logger.error(`[RETRY-CHARGES] Charge error for ${sub.id}:`, err);
+          cron.itemFailed(err, { gateway: 'paystack', subscriptionId: sub.id, attempt: newFailureCount });
         }
       }
 
@@ -122,7 +121,7 @@ export async function GET(request: NextRequest) {
           // funds from routing to the platform when the business expects splitting.
           // Enable by setting FLUTTERWAVE_RECURRING_SPLIT_VERIFIED=true.
           if (process.env.FLUTTERWAVE_RECURRING_SPLIT_VERIFIED !== 'true') {
-            logger.warn(`[RETRY-CHARGES] Flutterwave recurring split not yet verified — skipping direct-split charge for ${sub.id}. Set FLUTTERWAVE_RECURRING_SPLIT_VERIFIED=true after sandbox verification.`);
+            cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, reason: 'Flutterwave recurring split not yet verified' });
             skipped++;
             continue;
           }
@@ -135,10 +134,7 @@ export async function GET(request: NextRequest) {
             }],
           };
         } else if (flwSplitResult.mode === 'split_required_but_missing') {
-          logger.error(`[RETRY-CHARGES] Direct split config missing for Flutterwave ${sub.id}, skipping charge`, {
-            businessId: sub.business_id,
-            reason: flwSplitResult.reason,
-          });
+          cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, businessId: sub.business_id, reason: flwSplitResult.reason, splitRequired: true, splitResolved: false });
           skipped++;
           continue;
         }
@@ -163,7 +159,7 @@ export async function GET(request: NextRequest) {
               })
               .eq('id', sub.id);
 
-            logger.info(`[RETRY-CHARGES] Successfully retried Flutterwave ${sub.id}, ref: ${result.reference}`);
+            cron.itemCompleted({ gateway: 'flutterwave', subscriptionId: sub.id, providerReference: result.reference });
             retried++;
           } else {
             const newFailureCount = (sub.failure_count || 0) + 1;
@@ -172,7 +168,7 @@ export async function GET(request: NextRequest) {
               .update({ failure_count: newFailureCount })
               .eq('id', sub.id);
 
-            logger.warn(`[RETRY-CHARGES] Flutterwave retry failed for ${sub.id}, failure #${newFailureCount}`);
+            cron.itemFailed('Charge returned unsuccessful', { gateway: 'flutterwave', subscriptionId: sub.id, attempt: newFailureCount });
           }
         } catch (err) {
           const newFailureCount = (sub.failure_count || 0) + 1;
@@ -181,7 +177,7 @@ export async function GET(request: NextRequest) {
             .update({ failure_count: newFailureCount })
             .eq('id', sub.id);
 
-          logger.error(`[RETRY-CHARGES] Flutterwave charge error for ${sub.id}:`, err);
+          cron.itemFailed(err, { gateway: 'flutterwave', subscriptionId: sub.id });
         }
       }
 
@@ -233,9 +229,10 @@ export async function GET(request: NextRequest) {
       logger.info(`[RETRY-CHARGES] Cancelled ${sub.id} after 3 failures`);
     }
 
+    cron.completed({ successCount: retried, failureCount: cancelled, skippedCount: skipped });
     return NextResponse.json({ success: true, retried, cancelled, skipped });
   } catch (error) {
-    logger.error('[RETRY-CHARGES] Cron error:', error);
+    cron.failed(error, { successCount: retried, failureCount: cancelled, skippedCount: skipped });
     Sentry.captureException(error, { tags: { cron: 'retry-failed-charges' } });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { verifyCronAuth } from '@/lib/cron-auth';
+import { createCronLogger } from '@/lib/observability/cron';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { sendEmail } from '@/lib/email/client';
 import { payoutFailedEmail } from '@/lib/email/templates';
@@ -36,13 +37,16 @@ export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);
   if (authError) return authError;
 
-  const supabase = createServiceClient();
+  const cron = createCronLogger('auto-payout');
+  cron.started();
+
   let generated = 0;
   let autoApproved = 0;
   let held = 0;
   let transferred = 0;
 
   try {
+    const supabase = createServiceClient();
     const settings = await loadPlatformSettings({ useServiceClient: true });
     const COOLING_PERIOD_DAYS = settings.payout_cooling_period_days;
     const VELOCITY_THRESHOLD = settings.fraud_velocity_threshold;
@@ -66,6 +70,7 @@ export async function GET(request: NextRequest) {
       .eq('status', 'active');
 
     if (!businesses?.length) {
+      cron.completed({ processedCount: 0 });
       return NextResponse.json({ message: 'No platform-managed businesses', generated: 0 });
     }
 
@@ -336,7 +341,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    logger.debug(`[AUTO-PAYOUT] Generated: ${generated}, Auto-approved: ${autoApproved}, Transferred: ${transferred}, Held: ${held}, Released: ${released}`);
+    cron.completed({ processedCount: businesses.length, successCount: generated, skippedCount: businesses.length - generated });
 
     return NextResponse.json({
       message: 'Auto-payout complete',
@@ -348,7 +353,7 @@ export async function GET(request: NextRequest) {
       released,
     });
   } catch (error) {
-    logger.error('[AUTO-PAYOUT] Error:', error);
+    cron.failed(error, { successCount: generated });
     Sentry.captureException(error, { tags: { cron: 'auto-payout' } });
     return NextResponse.json({ error: 'Auto-payout failed' }, { status: 500 });
   }
