@@ -14,6 +14,12 @@
 const flutterwaveSecretKey = process.env.FLUTTERWAVE_SECRET_KEY || '';
 const BASE_URL = 'https://api.flutterwave.com';
 
+// Flutterwave recurring split payments are gated behind FLUTTERWAVE_RECURRING_SPLIT_VERIFIED.
+// Direct-split Flutterwave businesses will have recurring charges SKIPPED (not charged unsplit)
+// until sandbox verification is completed and this env var is set to 'true'.
+// The warning is logged on first skip in the retry cron, not at module load, to avoid
+// noisy repeated logs in serverless environments.
+
 async function flutterwaveRequest(
   path: string,
   method: 'GET' | 'POST' | 'PUT' = 'POST',
@@ -201,6 +207,12 @@ export async function getSubscription(subscriptionId: string): Promise<{
  * Charge a saved card token (for manual recurring charges or retries).
  *
  * POST /v3/tokenized-charges
+ *
+ * Split params (subaccounts) are accepted but GATED behind FLUTTERWAVE_RECURRING_SPLIT_VERIFIED.
+ * Set this env var to 'true' only after confirming via Flutterwave sandbox that
+ * POST /v3/tokenized-charges actually applies the subaccounts split to settlement.
+ * Without verification, split params are silently omitted and the charge falls back
+ * to platform collection (fail-open for unverified provider behavior).
  */
 export async function chargeToken(
   token: string,
@@ -208,6 +220,7 @@ export async function chargeToken(
   email: string,
   reference: string,
   currency?: string,
+  splitParams?: { subaccounts: Array<{ id: string; transaction_charge_type: string; transaction_charge: number }> },
 ): Promise<{ success: boolean; reference?: string }> {
   if (!flutterwaveSecretKey) {
     if (process.env.NODE_ENV === 'production') {
@@ -217,12 +230,20 @@ export async function chargeToken(
   }
 
   try {
+    // Only include split params if sandbox verification has been completed.
+    // Without this gate, an unverified provider assumption could silently
+    // route funds incorrectly — worse than not splitting at all.
+    const verifiedSplit = process.env.FLUTTERWAVE_RECURRING_SPLIT_VERIFIED === 'true'
+      ? splitParams
+      : undefined;
+
     const data = await flutterwaveRequest('/v3/tokenized-charges', 'POST', {
       token,
       email,
       currency: currency || 'NGN',
       amount,
       tx_ref: reference,
+      ...(verifiedSplit || {}),
     });
 
     const chargeData = data.data as Record<string, unknown> | undefined;

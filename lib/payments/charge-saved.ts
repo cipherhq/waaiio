@@ -11,23 +11,22 @@ export type SplitResult =
   | { mode: 'split_required_but_missing'; reason: string; businessId: string };
 
 /**
- * Resolve Paystack split configuration for a business.
+ * Resolve split configuration for a business and a specific payment gateway.
  *
  * Fail-closed for direct_split:
  *   If payout_mode === 'direct_split' but the subaccount or payout account
- *   is missing/invalid, returns split_required_but_missing — the caller MUST
- *   NOT charge. This prevents money from going to the platform when the business
- *   expects gateway-level splitting.
+ *   is missing/invalid for the specified gateway, returns split_required_but_missing
+ *   — the caller MUST NOT charge.
  *
  * For platform_managed or businesses without payout_mode set:
  *   Returns no_split — the charge proceeds without split params.
  */
-export async function resolvePaystackSplit(
+export async function resolveGatewaySplit(
   supabase: SupabaseClient,
   businessId: string,
   amount: number,
+  gateway: 'paystack' | 'flutterwave',
 ): Promise<SplitResult> {
-  // 1. Check payout mode
   const { data: biz, error: bizErr } = await supabase
     .from('businesses')
     .select('payout_mode, subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
@@ -46,12 +45,11 @@ export async function resolvePaystackSplit(
     return { mode: 'no_split' };
   }
 
-  // 2. direct_split: MUST have an active Paystack payout account with subaccount code
   const { data: payout, error: payoutErr } = await supabase
     .from('payout_accounts')
     .select('subaccount_code')
     .eq('business_id', businessId)
-    .eq('gateway', 'paystack')
+    .eq('gateway', gateway)
     .eq('is_active', true)
     .not('subaccount_code', 'is', null)
     .maybeSingle();
@@ -61,10 +59,9 @@ export async function resolvePaystackSplit(
   }
 
   if (!payout?.subaccount_code) {
-    return { mode: 'split_required_but_missing', reason: 'No active Paystack payout account with subaccount code', businessId };
+    return { mode: 'split_required_but_missing', reason: `No active ${gateway} payout account with subaccount code`, businessId };
   }
 
-  // 3. Calculate platform fee using the same logic as one-time payments
   const tier = (biz.subscription_tier || 'free') as SubscriptionTier;
   const isInTrial = tier === 'free' && biz.trial_ends_at && new Date(biz.trial_ends_at) > new Date();
   const feeResult = await getPlatformFees(amount, tier, !!isInTrial, {
@@ -72,14 +69,32 @@ export async function resolvePaystackSplit(
     feeFlat: biz.custom_fee_flat ?? undefined,
   });
 
-  // transaction_charge = platform fee in kobo (same convention as paystack.ts:58-59)
-  const transactionChargeKobo = Math.round(feeResult.feeTotal * 100);
+  const feeTotal = feeResult.feeTotal;
+
+  // Validate fee bounds — reject invalid, negative, NaN, or excessive fees
+  if (!Number.isFinite(feeTotal) || feeTotal < 0) {
+    return { mode: 'split_required_but_missing', reason: `Invalid platform fee calculation: ${feeTotal}`, businessId };
+  }
+  if (feeTotal >= amount) {
+    return { mode: 'split_required_but_missing', reason: `Platform fee (${feeTotal}) exceeds transaction amount (${amount})`, businessId };
+  }
+
+  const transactionChargeKobo = Math.round(feeTotal * 100);
 
   return {
     mode: 'split',
     subaccount: payout.subaccount_code,
     transactionChargeKobo,
   };
+}
+
+/** Paystack-specific split resolution (delegates to resolveGatewaySplit). */
+export async function resolvePaystackSplit(
+  supabase: SupabaseClient,
+  businessId: string,
+  amount: number,
+): Promise<SplitResult> {
+  return resolveGatewaySplit(supabase, businessId, amount, 'paystack');
 }
 
 interface SavedMethod {
