@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
 import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
 import { logger } from '@/lib/logger';
+import { observeProvider } from '@/lib/observability';
 
 function getStripeKey(): string {
   return process.env.STRIPE_SECRET_KEY || '';
@@ -91,7 +92,11 @@ export class StripeGateway implements PaymentGateway {
         sessionParams['payment_intent_data[transfer_data][destination]'] = opts.stripeAccountId;
       }
 
-      const sessionData = await stripeRequest('/checkout/sessions', sessionParams);
+      const sessionData = await observeProvider({
+        gateway: 'stripe',
+        amount: opts.amount, currency: opts.currency,
+        businessId: opts.businessId,
+      }, () => stripeRequest('/checkout/sessions', sessionParams));
 
       if (!sessionData.id || !sessionData.url) {
         // Store detailed error for debug endpoint
@@ -170,7 +175,9 @@ export class StripeGateway implements PaymentGateway {
     }
 
     try {
-      const session = await stripeGet(`/checkout/sessions/${encodeURIComponent(reference)}`);
+      const session = await observeProvider({
+        gateway: 'stripe', providerRef: reference,
+      }, () => stripeGet(`/checkout/sessions/${encodeURIComponent(reference)}`));
 
       if (session.payment_status === 'paid') {
         const { data: payment } = await supabase
