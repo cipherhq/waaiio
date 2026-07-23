@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
+import { safeProviderError } from '@/lib/redact';
 
 const squareAppId = process.env.SQUARE_OAUTH_APP_ID || process.env.SQUARE_APPLICATION_ID || '';
 const squareAppSecret = process.env.SQUARE_OAUTH_APP_SECRET || process.env.SQUARE_APPLICATION_SECRET || '';
@@ -50,7 +52,7 @@ export async function GET(request: NextRequest) {
     const tokenData = await tokenRes.json();
 
     if (tokenData.error || !tokenData.access_token) {
-      logger.error('[SQUARE-CALLBACK] Token exchange failed:', tokenData.error || tokenData);
+      logger.error('[SQUARE-CALLBACK] Token exchange failed:', safeProviderError(tokenData));
       return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=token_exchange_failed`);
     }
 
@@ -65,7 +67,11 @@ export async function GET(request: NextRequest) {
     const merchant = merchantData.merchant;
 
     if (!merchant) {
-      logger.error('[SQUARE-CALLBACK] Merchant verification failed:', merchantData);
+      logger.withContext({
+        op: 'square-callback.merchant-verify',
+        businessId,
+        ...( safeProviderError(merchantData) !== 'Provider error' ? { providerInfo: safeProviderError(merchantData) } : {}),
+      }).error('[SQUARE-CALLBACK] Merchant verification failed');
       return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=not_verified`);
     }
 
@@ -96,7 +102,11 @@ export async function GET(request: NextRequest) {
     logger.debug('[SQUARE-CALLBACK] Connected merchant:', merchantId, 'for business:', businessId);
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?connected=true`);
   } catch (err) {
-    logger.error('[SQUARE-CALLBACK] Error:', (err as Error).message);
+    logger.withContext({
+      op: 'square-callback',
+      businessId,
+      ...safeLogErrorContext(err),
+    }).error('[SQUARE-CALLBACK] Callback failed');
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=callback_failed`);
   }
 }

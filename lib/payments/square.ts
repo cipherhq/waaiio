@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
 import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
+import { safeProviderError } from '@/lib/redact';
 
 const squareAccessToken = process.env.SQUARE_ACCESS_TOKEN || '';
 const squareLocationId = process.env.SQUARE_LOCATION_ID || '';
@@ -129,7 +131,7 @@ export class SquareGateway implements PaymentGateway {
 
       const paymentLink = result.payment_link as Record<string, unknown> | undefined;
       if (!paymentLink?.id || !paymentLink?.url) {
-        logger.error('[SQUARE] Payment link creation failed:', JSON.stringify(result).slice(0, 500));
+        logger.error('[SQUARE] Payment link creation failed:', safeProviderError(result));
         return null;
       }
 
@@ -165,7 +167,7 @@ export class SquareGateway implements PaymentGateway {
 
       return { url: paymentLink.url as string, reference: squareRef };
     } catch (error) {
-      logger.error('[SQUARE] init error:', (error as Error).message);
+      logger.withContext({ op: 'square.init', ...safeLogErrorContext(error) }).error('[SQUARE] init error');
       return null;
     }
   }
@@ -242,7 +244,7 @@ export class SquareGateway implements PaymentGateway {
       }
       return false;
     } catch (error) {
-      logger.error('Square verify error:', (error as Error).message);
+      logger.withContext({ op: 'square.verify', ...safeLogErrorContext(error) }).error('Square verify error');
       return false;
     }
   }
@@ -308,10 +310,10 @@ export class SquareGateway implements PaymentGateway {
       // Check for errors in the response
       const errors = result.errors as Array<{ detail?: string }> | undefined;
       const errorMsg = errors?.[0]?.detail || 'Square refund failed';
-      logger.error('[SQUARE] Refund failed:', JSON.stringify(result).slice(0, 500));
+      logger.error('[SQUARE] Refund failed:', safeProviderError(result));
       return { success: false, errorMessage: errorMsg, gatewayResponse: result };
     } catch (error) {
-      logger.error('[SQUARE] Refund error:', (error as Error).message);
+      logger.withContext({ op: 'square.refund', ...safeLogErrorContext(error) }).error('[SQUARE] Refund error');
       return { success: false, errorMessage: (error as Error).message };
     }
   }

@@ -3,7 +3,8 @@ import { randomUUID } from 'crypto';
 import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
 import { logger } from '@/lib/logger';
 import { observeProvider } from '@/lib/observability';
-import { normalizeError } from '@/lib/errors';
+import { normalizeError, safeLogErrorContext } from '@/lib/errors';
+import { safeProviderError } from '@/lib/redact';
 
 function getStripeKey(): string {
   return process.env.STRIPE_SECRET_KEY || '';
@@ -102,14 +103,11 @@ export class StripeGateway implements PaymentGateway {
       if (!sessionData.id || !sessionData.url) {
         // Store detailed error for debug endpoint
         (globalThis as Record<string, unknown>).__stripeDebug = {
-          sessionData: JSON.stringify(sessionData).slice(0, 500),
           keyPresent: !!stripeSecretKey,
-          keyPrefix: stripeSecretKey.slice(0, 15),
-          keyLength: stripeSecretKey.length,
           currency: sessionParams['line_items[0][price_data][currency]'],
           amount: sessionParams['line_items[0][price_data][unit_amount]'],
         };
-        logger.error('Stripe session creation failed:', JSON.stringify(sessionData).slice(0, 500));
+        logger.error('Stripe session creation failed:', safeProviderError(sessionData));
         return null;
       }
 
@@ -144,8 +142,7 @@ export class StripeGateway implements PaymentGateway {
 
       return { url: sessionData.url as string, reference: stripeRef };
     } catch (error) {
-      const e = error as Error;
-      logger.error('Stripe init error:', e.message, e.stack?.split('\n').slice(0, 3).join(' '));
+      logger.withContext({ op: 'stripe.init', ...safeLogErrorContext(error) }).error('Stripe init error');
       return null;
     }
   }
@@ -209,7 +206,7 @@ export class StripeGateway implements PaymentGateway {
       }
       return false;
     } catch (error) {
-      logger.error('Stripe verify error:', normalizeError(error).message);
+      logger.withContext({ op: 'stripe.verify', ...safeLogErrorContext(error) }).error('Stripe verify error');
       return false;
     }
   }

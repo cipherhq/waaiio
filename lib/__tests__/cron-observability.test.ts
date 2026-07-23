@@ -35,7 +35,7 @@ describe('createCronLogger helper', () => {
 
   it('emits cron.failed with normalized error', () => {
     expect(cronHelperCode).toContain("op: 'cron.failed'");
-    expect(cronHelperCode).toContain('normalizeError(error)');
+    expect(cronHelperCode).toContain('safeLogErrorContext(error)');
   });
 
   it('emits cron.skipped', () => {
@@ -48,7 +48,7 @@ describe('createCronLogger helper', () => {
 
   it('emits cron.item.failed with normalized error', () => {
     expect(cronHelperCode).toContain("op: 'cron.item.failed'");
-    expect(cronHelperCode).toContain('normalizeError(error)');
+    expect(cronHelperCode).toContain('safeLogErrorContext(error)');
   });
 
   it('emits cron.item.skipped', () => {
@@ -395,7 +395,6 @@ describe('Behavioral: createCronLogger lifecycle', () => {
     const failEntry = JSON.parse(captured[1]);
     expect(failEntry.runId).toBe(cron.runId);
     expect(failEntry.msg).toBe('cron.failed');
-    expect(failEntry.errorMessage).toBe('db connection lost');
 
     if (prevFormat === undefined) delete process.env.LOG_FORMAT;
     else process.env.LOG_FORMAT = prevFormat;

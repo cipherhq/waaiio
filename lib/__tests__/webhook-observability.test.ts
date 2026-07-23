@@ -42,9 +42,9 @@ describe('createWebhookLogger helper', () => {
     expect(observabilityCode).toContain("op: 'webhook.processed'");
   });
 
-  it('emits webhook.failed event with normalizeError', () => {
+  it('emits webhook.failed event with safeLogErrorContext', () => {
     expect(observabilityCode).toContain("op: 'webhook.failed'");
-    expect(observabilityCode).toContain('normalizeError(error)');
+    expect(observabilityCode).toContain('safeLogErrorContext(error)');
   });
 
   it('accepts gateway and requestId in constructor', () => {

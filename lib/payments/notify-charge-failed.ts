@@ -101,5 +101,5 @@ export async function notifyCustomerChargeFailed(
     smsFallback: true,
   });
 
-  logger.info(`[NOTIFY_CHARGE_FAILED] Sent failure notification to ${phone} for subscription ${subscriptionId} (${gateway})`);
+  logger.info(`[NOTIFY_CHARGE_FAILED] Sent failure notification for subscription ${subscriptionId} (${gateway})`);
 }

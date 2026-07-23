@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
 import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
+import { safeProviderError } from '@/lib/redact';
 
 const paypalClientId = process.env.PAYPAL_CLIENT_ID || '';
 const paypalClientSecret = process.env.PAYPAL_CLIENT_SECRET || '';
@@ -140,12 +142,9 @@ export class PayPalGateway implements PaymentGateway {
       try {
         orderData = await paypalRequest('/v2/checkout/orders', orderBody);
       } catch (fetchErr) {
-        logger.error('[PAYPAL] Order API fetch failed:', (fetchErr as Error).message);
-        // Store debug info for troubleshooting
+        logger.withContext({ op: 'paypal.order-fetch', ...safeLogErrorContext(fetchErr) }).error('[PAYPAL] Order API fetch failed');
         (globalThis as Record<string, unknown>).__paypalDebug = {
-          error: (fetchErr as Error).message,
           clientIdPresent: !!paypalClientId,
-          clientIdPrefix: paypalClientId?.slice(0, 10),
           environment: paypalEnvironment,
           currency: opts.currency,
           amount: opts.amount,
@@ -154,9 +153,9 @@ export class PayPalGateway implements PaymentGateway {
       }
 
       if (!orderData.id || orderData.status === 'error') {
-        logger.error('[PAYPAL] Order creation failed:', JSON.stringify(orderData).slice(0, 500));
+        logger.error('[PAYPAL] Order creation failed:', safeProviderError(orderData));
         (globalThis as Record<string, unknown>).__paypalDebug = {
-          response: JSON.stringify(orderData).slice(0, 500),
+          response: safeProviderError(orderData),
           currency: opts.currency,
           amount: opts.amount,
         };
@@ -171,7 +170,7 @@ export class PayPalGateway implements PaymentGateway {
         || links.find(l => l.rel === 'approve')?.href;
 
       if (!approveLink) {
-        logger.error('[PAYPAL] No approve link in order response:', JSON.stringify(links).slice(0, 300));
+        logger.error('[PAYPAL] No approve link in order response');
         return null;
       }
 
@@ -203,11 +202,8 @@ export class PayPalGateway implements PaymentGateway {
 
       return { url: approveLink, reference: paypalOrderId };
     } catch (error) {
-      const err = error as Error;
-      logger.error('[PAYPAL] init error:', err.message, err.stack?.split('\n').slice(0, 3).join(' '));
+      logger.withContext({ op: 'paypal.init', ...safeLogErrorContext(error) }).error('[PAYPAL] init error');
       (globalThis as Record<string, unknown>).__paypalDebug = {
-        error: err.message,
-        stack: err.stack?.split('\n').slice(0, 5),
         clientIdPresent: !!paypalClientId,
         secretPresent: !!paypalClientSecret,
         environment: paypalEnvironment,
@@ -306,7 +302,7 @@ export class PayPalGateway implements PaymentGateway {
 
       return false;
     } catch (error) {
-      logger.error('[PAYPAL] verify error:', (error as Error).message);
+      logger.withContext({ op: 'paypal.verify', ...safeLogErrorContext(error) }).error('[PAYPAL] verify error');
       return false;
     }
   }

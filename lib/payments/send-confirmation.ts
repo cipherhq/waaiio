@@ -2,10 +2,17 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { stripPlus } from '@/lib/utils/phone';
 import { getCustomerName } from '@/lib/bot/flows/shared/user';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+
+/** Log a non-fatal error with safe structured metadata. */
+function logSafeError(prefix: string, label: string, error: unknown): void {
+  logger.withContext({ op: `send-confirmation.${label}`, ...safeLogErrorContext(error) })
+    .error(`${prefix} ${label.replace(/-/g, ' ')} error`);
+}
 
 interface PaymentForConfirmation {
   id: string;
@@ -207,10 +214,10 @@ export async function sendProactiveConfirmation(
       return;
     }
     // We have email but no phone — send email-only below
-    logger.info(`${logPrefix} No phone found, will attempt email-only confirmation to ${guestEmail}`);
+    logger.info(`${logPrefix} No phone found, will attempt email-only confirmation`);
   }
 
-  logger.info(`${logPrefix} Sending proactive confirmation to ${customerPhone} for ${businessName}`);
+  logger.info(`${logPrefix} Sending proactive confirmation for ${businessName}`);
 
   // ── 4. Build confirmation message ──
   const lines = [
@@ -366,7 +373,7 @@ export async function sendProactiveConfirmation(
           serviceName, referenceCode,
         });
       } catch (pcErr) {
-        logger.error(`${logPrefix} Post-completion error:`, pcErr);
+        logSafeError(logPrefix, 'post-completion', pcErr);
         Sentry.captureException(pcErr, { tags: { component: 'send-confirmation', operation: 'post-completion' } });
       }
     }
@@ -404,7 +411,7 @@ export async function sendProactiveConfirmation(
             customerName: invoice.customer_name || 'Customer',
             amount: payment.amount,
             invoiceNumber: invoice.reference_code || referenceCode,
-          }).catch(err => logger.error(`${logPrefix} Invoice owner notify error:`, err));
+          }).catch(err => logSafeError(logPrefix, 'invoice-owner-notify', err));
         }
       }
 
@@ -426,7 +433,7 @@ export async function sendProactiveConfirmation(
           donorName: donation?.donor_name || null,
           amount: payment.amount,
           campaignTitle,
-        }).catch(err => logger.error(`${logPrefix} Donation owner notify error:`, err));
+        }).catch(err => logSafeError(logPrefix, 'donation-owner-notify', err));
       }
 
       // ── 7d. Order owner notification ──
@@ -449,7 +456,7 @@ export async function sendProactiveConfirmation(
             items,
             totalAmount: payment.amount,
             deliveryAddress: order.delivery_address || undefined,
-          }).catch(err => logger.error(`${logPrefix} Order owner notify error:`, err));
+          }).catch(err => logSafeError(logPrefix, 'order-owner-notify', err));
         }
       }
 
@@ -466,10 +473,10 @@ export async function sendProactiveConfirmation(
           }
         }
       } catch (emailErr) {
-        logger.error(`${logPrefix} Owner email error:`, emailErr);
+        logSafeError(logPrefix, 'owner-email', emailErr);
       }
     } catch (notifyErr) {
-      logger.error(`${logPrefix} Owner notification error:`, notifyErr);
+      logSafeError(logPrefix, 'owner-notification', notifyErr);
     }
 
     // ── 8. Send tickets for ticketing bookings ──
@@ -513,7 +520,7 @@ export async function sendProactiveConfirmation(
         }
       }
     } catch (ticketErr) {
-      logger.error(`${logPrefix} Ticket send error:`, ticketErr);
+      logSafeError(logPrefix, 'ticket-send', ticketErr);
       Sentry.captureException(ticketErr, { tags: { component: 'send-confirmation', operation: 'ticket-send' } });
     }
 
@@ -561,10 +568,10 @@ export async function sendProactiveConfirmation(
             whitelabel: isWl,
           });
           await sendEmail({ to: guestEmail, ...emailContent });
-          logger.info(`${logPrefix} Email confirmation sent to ${guestEmail}`);
+          logger.info(`${logPrefix} Email confirmation sent`);
         }
       } catch (emailErr) {
-        logger.error(`${logPrefix} Email confirmation error:`, emailErr);
+        logSafeError(logPrefix, 'email-confirmation', emailErr);
       }
     }
 
@@ -605,11 +612,11 @@ export async function sendProactiveConfirmation(
               whitelabel: isWl,
             });
             await sendEmail({ to: donorEmail, ...emailContent });
-            logger.info(`${logPrefix} Donation receipt email sent to ${donorEmail}`);
+            logger.info(`${logPrefix} Donation receipt email sent`);
           }
         }
       } catch (donationEmailErr) {
-        logger.error(`${logPrefix} Donation receipt email error:`, donationEmailErr);
+        logSafeError(logPrefix, 'donation-receipt-email', donationEmailErr);
       }
     }
 
@@ -624,7 +631,7 @@ export async function sendProactiveConfirmation(
         .in('current_step', ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking']);
     }
   } catch (err) {
-    logger.error(`${logPrefix} Send confirmation error:`, err);
+    logSafeError(logPrefix, 'send-confirmation', err);
     Sentry.captureException(err, { tags: { component: 'send-confirmation', operation: 'send-confirmation' } });
   }
 }
