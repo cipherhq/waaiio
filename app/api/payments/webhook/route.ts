@@ -9,11 +9,15 @@ import { createAlert } from '@/lib/alerts/create-alert';
 import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
 import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
+import { getRequestId } from '@/lib/observability';
+import { createWebhookLogger } from '@/lib/observability/webhooks';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
+  const wh = createWebhookLogger('paystack', getRequestId(request));
+  const startTime = performance.now();
   let eventId: string | null = null;
   try {
     const rawBody = await request.text();
@@ -22,24 +26,32 @@ export async function POST(request: NextRequest) {
 
     // Fail-closed: reject if secret key is not configured
     if (!paystackKey) {
+      wh.rejected('Webhook secret not configured');
       return NextResponse.json({ message: 'Webhook not configured' }, { status: 500 });
     }
 
     const hash = createHmac('sha512', paystackKey).update(rawBody).digest('hex');
     try {
       if (!timingSafeEqual(Buffer.from(hash), Buffer.from(signature))) {
+        wh.rejected('Invalid signature');
         return NextResponse.json({ message: 'Invalid signature' }, { status: 400 });
       }
     } catch {
+      wh.rejected('Signature comparison failed');
       return NextResponse.json({ message: 'Invalid signature' }, { status: 400 });
     }
+
+    wh.verified();
 
     const body = JSON.parse(rawBody);
     const event = body.event as string;
     const data = body.data as Record<string, unknown>;
     const reference = data.reference as string;
 
+    wh.received({ gateway: 'paystack', eventType: event, providerRef: reference });
+
     if (!reference) {
+      wh.ignored('Missing reference');
       return NextResponse.json({ received: true });
     }
 
@@ -66,12 +78,13 @@ export async function POST(request: NextRequest) {
 
     // Unique constraint violation = another instance is processing
     if (claimError) {
-      logger.warn('[PAYSTACK] Event already being processed:', eventId);
+      wh.duplicate({ webhookEventId: eventId || undefined });
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
     // Already successfully processed — skip
     if (claimed.status === 'completed') {
+      wh.duplicate({ webhookEventId: eventId || undefined });
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
@@ -454,9 +467,11 @@ export async function POST(request: NextRequest) {
       .update({ status: 'completed', completed_at: new Date().toISOString() })
       .eq('event_id', eventId);
 
+    wh.processed({ webhookEventId: eventId || undefined, durationMs: Math.round(performance.now() - startTime) });
     return NextResponse.json({ received: true });
   } catch (error) {
     Sentry.captureException(error);
+    wh.failed(error, { webhookEventId: eventId || undefined, durationMs: Math.round(performance.now() - startTime) });
 
     // Mark event as failed so Paystack can retry
     if (eventId) {
