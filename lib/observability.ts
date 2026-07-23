@@ -16,7 +16,7 @@
 
 import { type NextRequest } from 'next/server';
 import { logger, generateRequestId, type LogContext, type Logger } from './logger';
-import { normalizeError } from './errors';
+import { safeLogErrorContext } from './errors';
 
 // ── Types ──
 
@@ -90,12 +90,11 @@ export async function observe<T>(
   try {
     const result = await fn();
     const durationMs = Math.round(performance.now() - start);
-    log.info(`${op} completed`, { durationMs } as unknown as string);
+    log.withContext({ durationMs } as LogContext).info(`${op} completed`);
     return result;
   } catch (error) {
     const durationMs = Math.round(performance.now() - start);
-    const norm = normalizeError(error);
-    log.error(`${op} failed`, { durationMs, errorMessage: norm.message, ...(norm.code ? { errorCode: norm.code } : {}), ...(norm.retryable !== undefined ? { retryable: norm.retryable } : {}) } as unknown as string);
+    log.withContext({ durationMs, ...safeLogErrorContext(error) } as LogContext).error(`${op} failed`);
     throw error;
   }
 }
@@ -129,8 +128,7 @@ export async function observeProvider<T>(
     return result;
   } catch (error) {
     const durationMs = Math.round(performance.now() - start);
-    const norm = normalizeError(error);
-    log.error('provider.request failed', { durationMs, errorMessage: norm.message, ...(norm.code ? { errorCode: norm.code } : {}), ...(norm.retryable !== undefined ? { retryable: norm.retryable } : {}) } as unknown as string);
+    log.withContext({ durationMs, ...safeLogErrorContext(error) } as LogContext).error('provider.request failed');
     throw error;
   }
 }
@@ -178,12 +176,11 @@ export async function observeWithTiming<T>(
   try {
     const result = await fn();
     const durationMs = Math.round(performance.now() - start);
-    log.info(`${op} completed`, { durationMs } as unknown as string);
+    log.withContext({ durationMs } as LogContext).info(`${op} completed`);
     return { result, durationMs };
   } catch (error) {
     const durationMs = Math.round(performance.now() - start);
-    const norm = normalizeError(error);
-    log.error(`${op} failed`, { durationMs, errorMessage: norm.message, ...(norm.code ? { errorCode: norm.code } : {}), ...(norm.retryable !== undefined ? { retryable: norm.retryable } : {}) } as unknown as string);
+    log.withContext({ durationMs, ...safeLogErrorContext(error) } as LogContext).error(`${op} failed`);
     throw error;
   }
 }

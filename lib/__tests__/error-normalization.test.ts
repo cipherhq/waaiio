@@ -5,7 +5,7 @@
  * and never exposes sensitive data.
  */
 import { describe, it, expect } from 'vitest';
-import { normalizeError, safeErrorContext, isSensitiveKey } from '@/lib/errors';
+import { normalizeError, safeLogErrorContext, isSensitiveKey } from '@/lib/errors';
 import { readFileSync } from 'fs';
 
 // ── normalizeError unit tests ──
@@ -105,24 +105,43 @@ describe('normalizeError', () => {
   });
 });
 
-// ── safeErrorContext ──
+// ── safeLogErrorContext ──
 
-describe('safeErrorContext', () => {
-  it('returns safe fields for logging', () => {
-    const ctx = safeErrorContext(new Error('db timeout'));
+describe('safeLogErrorContext', () => {
+  it('returns validated errorName', () => {
+    const ctx = safeLogErrorContext(new Error('db timeout'));
     expect(ctx.errorName).toBe('Error');
-    expect(ctx.errorMessage).toBe('db timeout');
   });
 
-  it('includes code when present', () => {
+  it('never includes errorMessage, message, or stack', () => {
+    const ctx = safeLogErrorContext(new Error('secret-host.internal connection failed for admin@db.com'));
+    expect(ctx).not.toHaveProperty('errorMessage');
+    expect(ctx).not.toHaveProperty('message');
+    expect(ctx).not.toHaveProperty('stack');
+  });
+
+  it('includes code when safe', () => {
     const err = Object.assign(new Error('fail'), { code: 'RATE_LIMIT' });
-    const ctx = safeErrorContext(err);
+    const ctx = safeLogErrorContext(err);
     expect(ctx.errorCode).toBe('RATE_LIMIT');
   });
 
+  it('omits code when unsafe', () => {
+    const err = Object.assign(new Error('fail'), { code: 'secret_key_expired' });
+    const ctx = safeLogErrorContext(err);
+    expect(ctx).not.toHaveProperty('errorCode');
+  });
+
   it('includes retryable when known', () => {
-    const ctx = safeErrorContext(new Error('connect ECONNRESET'));
+    const ctx = safeLogErrorContext(new Error('connect ECONNRESET'));
     expect(ctx.retryable).toBe(true);
+  });
+
+  it('omits unsafe errorName', () => {
+    const err = new Error('fail');
+    err.name = 'access_token_Error';
+    const ctx = safeLogErrorContext(err);
+    expect(ctx).not.toHaveProperty('errorName');
   });
 });
 
@@ -185,17 +204,16 @@ describe('Payment files use normalizeError', () => {
 
 // ── Integration: observability uses normalizeError ──
 
-describe('Observability uses normalizeError', () => {
+describe('Observability uses safeLogErrorContext', () => {
   const obsCode = readFileSync('lib/observability.ts', 'utf-8');
 
-  it('observe() uses normalizeError for error events', () => {
-    expect(obsCode).toContain("normalizeError(error)");
-    expect(obsCode).toContain('errorMessage: norm.message');
+  it('observe() uses safeLogErrorContext for error events', () => {
+    expect(obsCode).toContain("safeLogErrorContext(error)");
   });
 
-  it('observeProvider() uses normalizeError for error events', () => {
-    // Both observe and observeProvider use normalizeError
-    const normCount = (obsCode.match(/normalizeError\(error\)/g) || []).length;
+  it('observeProvider() uses safeLogErrorContext for error events', () => {
+    // Both observe and observeProvider use safeLogErrorContext
+    const normCount = (obsCode.match(/safeLogErrorContext\(error\)/g) || []).length;
     expect(normCount).toBeGreaterThanOrEqual(2);
   });
 

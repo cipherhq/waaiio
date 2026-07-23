@@ -5,7 +5,7 @@
  */
 
 import { logger, type LogContext } from '@/lib/logger';
-import { normalizeError } from '@/lib/errors';
+import { safeLogErrorContext } from '@/lib/errors';
 
 interface WebhookContext {
   gateway: string;
@@ -61,12 +61,9 @@ export function createWebhookLogger(gateway: string, requestId: string) {
         .info('webhook.processed');
     },
     failed(error: unknown, ctx?: Partial<WebhookContext> & { durationMs?: number }) {
-      const norm = normalizeError(error);
       base.withContext({
         op: 'webhook.failed',
-        errorMessage: norm.message,
-        ...(norm.code ? { errorCode: norm.code } : {}),
-        ...(norm.retryable !== undefined ? { retryable: norm.retryable } : {}),
+        ...safeLogErrorContext(error),
         ...ctx,
       } as LogContext).error('webhook.failed');
     },

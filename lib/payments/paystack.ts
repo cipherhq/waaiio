@@ -3,7 +3,8 @@ import { randomUUID } from 'crypto';
 import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
 import { logger } from '@/lib/logger';
 import { observeProvider } from '@/lib/observability';
-import { normalizeError } from '@/lib/errors';
+import { normalizeError, safeLogErrorContext } from '@/lib/errors';
+import { safeProviderError } from '@/lib/redact';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
@@ -106,7 +107,7 @@ export class PaystackGateway implements PaymentGateway {
         return response.json();
       });
       if (!data.status) {
-        logger.error('[PAYSTACK] Initialize failed:', data.message || JSON.stringify(data));
+        logger.error('[PAYSTACK] Initialize failed:', safeProviderError(data));
         throw new Error(data.message || 'Payment gateway rejected the request');
       }
 
@@ -141,7 +142,7 @@ export class PaystackGateway implements PaymentGateway {
 
       return { url: data.data.authorization_url, reference: data.data.reference };
     } catch (error) {
-      logger.error('Paystack init error:', normalizeError(error).message);
+      logger.withContext({ op: 'paystack.init', ...safeLogErrorContext(error) }).error('Paystack init error');
       return null;
     }
   }
@@ -219,7 +220,7 @@ export class PaystackGateway implements PaymentGateway {
       }
       return false;
     } catch (error) {
-      logger.error('Paystack verify error:', normalizeError(error).message);
+      logger.withContext({ op: 'paystack.verify', ...safeLogErrorContext(error) }).error('Paystack verify error');
       return false;
     }
   }

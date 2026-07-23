@@ -7,7 +7,7 @@
 
 import { logger, type LogContext } from '@/lib/logger';
 import { generateRunId } from '@/lib/observability';
-import { normalizeError } from '@/lib/errors';
+import { safeLogErrorContext } from '@/lib/errors';
 
 interface CronTotals {
   processedCount?: number;
@@ -64,13 +64,10 @@ export function createCronLogger(job: string) {
 
     failed(error: unknown, totals?: CronTotals) {
       const durationMs = Math.round(performance.now() - startTime);
-      const norm = normalizeError(error);
       base.withContext({
         op: 'cron.failed',
         durationMs,
-        errorMessage: norm.message,
-        ...(norm.code ? { errorCode: norm.code } : {}),
-        ...(norm.retryable !== undefined ? { retryable: norm.retryable } : {}),
+        ...safeLogErrorContext(error),
         ...totals,
       } as LogContext).error('cron.failed');
     },
@@ -86,12 +83,9 @@ export function createCronLogger(job: string) {
     },
 
     itemFailed(error: unknown, ctx?: CronItemContext) {
-      const norm = normalizeError(error);
       base.withContext({
         op: 'cron.item.failed',
-        errorMessage: norm.message,
-        ...(norm.code ? { errorCode: norm.code } : {}),
-        ...(norm.retryable !== undefined ? { retryable: norm.retryable } : {}),
+        ...safeLogErrorContext(error),
         ...ctx,
       } as LogContext).error('cron.item.failed');
     },

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { processRefund } from '@/lib/payments/refund-handler';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 export async function POST(request: NextRequest) {
   try {
@@ -68,7 +69,10 @@ export async function POST(request: NextRequest) {
       isDirectSplit: result.isDirectSplit,
     });
   } catch (error) {
-    logger.error('Refund API error:', error);
+    logger.withContext({
+      op: 'refund',
+      ...safeLogErrorContext(error),
+    }).error('Refund API error');
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

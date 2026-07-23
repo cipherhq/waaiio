@@ -245,11 +245,9 @@ describe('observe() behavior', () => {
       const entry = JSON.parse(completionRaw!);
       expect(entry.msg).toContain('test.timed');
       expect(entry.msg).toContain('completed');
-      // durationMs is serialized into the msg field as a JSON object fragment
-      const durationMatch = entry.msg.match(/"durationMs"\s*:\s*(\d+)/);
-      expect(durationMatch).not.toBeNull();
-      const durationMs = parseInt(durationMatch![1], 10);
-      expect(durationMs).toBeGreaterThanOrEqual(0);
+      // durationMs is a top-level structured context field (via log.withContext)
+      expect(typeof entry.durationMs).toBe('number');
+      expect(entry.durationMs).toBeGreaterThanOrEqual(0);
     } finally {
       if (prevFormat === undefined) delete process.env.LOG_FORMAT;
       else process.env.LOG_FORMAT = prevFormat;
@@ -275,10 +273,9 @@ describe('observe() behavior', () => {
       const entry = JSON.parse(failRaw!);
       expect(entry.msg).toContain('test.errored');
       expect(entry.msg).toContain('failed');
-      const durationMatch = entry.msg.match(/"durationMs"\s*:\s*(\d+)/);
-      expect(durationMatch).not.toBeNull();
-      const durationMs = parseInt(durationMatch![1], 10);
-      expect(durationMs).toBeGreaterThanOrEqual(0);
+      // durationMs is a top-level structured context field (via log.withContext)
+      expect(typeof entry.durationMs).toBe('number');
+      expect(entry.durationMs).toBeGreaterThanOrEqual(0);
     } finally {
       if (prevFormat === undefined) delete process.env.LOG_FORMAT;
       else process.env.LOG_FORMAT = prevFormat;

@@ -1,4 +1,6 @@
 import { logger } from '@/lib/logger';
+import { normalizeError } from '@/lib/errors';
+import { isSafeIdentifier } from '@/lib/redact';
 
 /**
  * BulkSMS Nigeria — SMS fallback for NG/GH event invites.
@@ -60,16 +62,20 @@ export async function sendSms(opts: SendSmsOpts): Promise<SendSmsResult> {
     });
 
     if (!response.ok) {
-      const errText = await response.text().catch(() => 'Unknown error');
-      logger.error(`[BULKSMS] API error ${response.status}: ${errText}`);
+      logger.withContext({ op: 'sms.send', provider: 'bulksms', httpStatus: response.status }).error('[BULKSMS] API error');
       return { sent: false, error: `SMS API error: ${response.status}` };
     }
 
-    const result = await response.json().catch(() => null);
-    logger.info(`[BULKSMS] SMS sent to ${phone}: ${JSON.stringify(result)}`);
+    await response.json().catch(() => null);
+    logger.info('[BULKSMS] SMS sent');
     return { sent: true };
   } catch (err) {
-    logger.error('[BULKSMS] Send error:', err);
+    const norm = normalizeError(err);
+    logger.withContext({
+      op: 'sms.send', provider: 'bulksms',
+      ...(isSafeIdentifier(norm.name) ? { errorName: norm.name } : {}),
+      ...(norm.retryable !== undefined ? { retryable: norm.retryable } : {}),
+    }).error('[BULKSMS] Send failed');
     return { sent: false, error: err instanceof Error ? err.message : 'SMS send failed' };
   }
 }

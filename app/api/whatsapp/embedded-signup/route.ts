@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
+import { safeProviderError, isSafeIdentifier } from '@/lib/redact';
 
 /**
  * POST /api/whatsapp/embedded-signup
@@ -57,7 +59,9 @@ export async function POST(request: NextRequest) {
     );
     const tokenData = await tokenRes.json();
     if (!tokenData.access_token) {
-      logger.error('[EMBEDDED-SIGNUP] Token exchange failed:', JSON.stringify(tokenData));
+      logger.error('[EMBEDDED-SIGNUP] Token exchange failed:', safeProviderError(tokenData));
+      // NOTE: The response details field may expose provider error info including email/type.
+      // This is a pre-existing API contract — changing it is deferred to a separate response-safety PR.
       return NextResponse.json({
         error: 'Failed to exchange auth code',
         details: tokenData.error?.message || tokenData.error?.type || JSON.stringify(tokenData).slice(0, 200),
@@ -73,7 +77,11 @@ export async function POST(request: NextRequest) {
         logger.debug('[EMBEDDED-SIGNUP] Exchanged for long-lived token');
       }
     } catch (exchangeErr) {
-      logger.error('[EMBEDDED-SIGNUP] Long-lived token exchange failed, proceeding with short-lived token:', exchangeErr);
+      logger.withContext({
+        op: 'embedded-signup.long-lived-token',
+        businessId: business_id,
+        ...safeLogErrorContext(exchangeErr),
+      }).error('[EMBEDDED-SIGNUP] Long-lived token exchange failed, proceeding with short-lived token');
     }
 
     // 2. Get shared WABA IDs from the debug token
@@ -162,7 +170,12 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (channelError) {
-      logger.error('[EMBEDDED-SIGNUP] Channel insert error:', channelError);
+      logger.withContext({
+        op: 'embedded-signup.channel-insert',
+        businessId: business_id,
+        wabaId,
+        ...(typeof channelError.code === 'string' && isSafeIdentifier(channelError.code) ? { errorCode: channelError.code } : {}),
+      }).error('[EMBEDDED-SIGNUP] Channel insert failed');
       return NextResponse.json({ error: 'Failed to save channel' }, { status: 500 });
     }
 
@@ -181,10 +194,15 @@ export async function POST(request: NextRequest) {
       await provisionTemplates(wabaId, accessToken);
       logger.debug('[EMBEDDED-SIGNUP] Templates provisioned');
     } catch (err) {
-      logger.error('[EMBEDDED-SIGNUP] Template provisioning warning:', err);
+      logger.withContext({
+        op: 'embedded-signup.template-provisioning',
+        businessId: business_id,
+        wabaId,
+        ...safeLogErrorContext(err),
+      }).error('[EMBEDDED-SIGNUP] Template provisioning warning');
     }
 
-    logger.debug('[EMBEDDED-SIGNUP] Success:', { businessId: business_id, wabaId, phoneNumberId, displayNumber });
+    logger.debug('[EMBEDDED-SIGNUP] Success:', { businessId: business_id, wabaId, phoneNumberId, channelId: channel.id });
 
     return NextResponse.json({
       success: true,
@@ -193,7 +211,11 @@ export async function POST(request: NextRequest) {
       waba_id: wabaId,
     });
   } catch (error) {
-    logger.error('[EMBEDDED-SIGNUP] Error:', (error as Error).message);
+    logger.withContext({
+      op: 'embedded-signup',
+      businessId: business_id,
+      ...safeLogErrorContext(error),
+    }).error('[EMBEDDED-SIGNUP] Signup failed');
     return NextResponse.json({ error: 'Signup failed. Please try again.' }, { status: 500 });
   }
 }
