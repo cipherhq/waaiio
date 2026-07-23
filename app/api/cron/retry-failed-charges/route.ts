@@ -3,7 +3,8 @@ import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { chargeAuthorization } from '@/lib/payments/paystack-recurring';
-import { resolvePaystackSplit } from '@/lib/payments/charge-saved';
+import { chargeToken as chargeFlutterwaveToken } from '@/lib/payments/flutterwave-recurring';
+import { resolvePaystackSplit, resolveGatewaySplit } from '@/lib/payments/charge-saved';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { logger } from '@/lib/logger';
 
@@ -107,6 +108,83 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      // ── Flutterwave recurring retry ──
+      if (sub.gateway === 'flutterwave' && sub.authorization_code) {
+        const reference = `retry-flw-${sub.id}-${Date.now().toString(36)}`;
+
+        // Resolve split configuration (fail-closed for direct_split)
+        const flwSplitResult = await resolveGatewaySplit(supabase, sub.business_id, sub.amount || 0, 'flutterwave');
+        let flwSplitParams: { subaccounts: Array<{ id: string; transaction_charge_type: string; transaction_charge: number }> } | undefined;
+
+        if (flwSplitResult.mode === 'split') {
+          // Gate: only send split params after sandbox verification.
+          // Direct-split charges are skipped (not charged unsplit) to prevent
+          // funds from routing to the platform when the business expects splitting.
+          // Enable by setting FLUTTERWAVE_RECURRING_SPLIT_VERIFIED=true.
+          if (process.env.FLUTTERWAVE_RECURRING_SPLIT_VERIFIED !== 'true') {
+            logger.warn(`[RETRY-CHARGES] Flutterwave recurring split not yet verified — skipping direct-split charge for ${sub.id}. Set FLUTTERWAVE_RECURRING_SPLIT_VERIFIED=true after sandbox verification.`);
+            skipped++;
+            continue;
+          }
+          // Flutterwave uses the subaccounts array format with flat charge = platform fee in main currency
+          flwSplitParams = {
+            subaccounts: [{
+              id: flwSplitResult.subaccount,
+              transaction_charge_type: 'flat',
+              transaction_charge: flwSplitResult.transactionChargeKobo / 100, // Flutterwave uses main currency units, not kobo
+            }],
+          };
+        } else if (flwSplitResult.mode === 'split_required_but_missing') {
+          logger.error(`[RETRY-CHARGES] Direct split config missing for Flutterwave ${sub.id}, skipping charge`, {
+            businessId: sub.business_id,
+            reason: flwSplitResult.reason,
+          });
+          skipped++;
+          continue;
+        }
+
+        try {
+          const result = await chargeFlutterwaveToken(
+            sub.authorization_code,
+            sub.amount || 0,
+            sub.customer_email || '',
+            reference,
+            sub.currency || 'NGN',
+            flwSplitParams,
+          );
+
+          if (result.success) {
+            await supabase
+              .from('customer_subscriptions')
+              .update({
+                status: 'active',
+                failure_count: 0,
+                last_charged_at: new Date().toISOString(),
+              })
+              .eq('id', sub.id);
+
+            logger.info(`[RETRY-CHARGES] Successfully retried Flutterwave ${sub.id}, ref: ${result.reference}`);
+            retried++;
+          } else {
+            const newFailureCount = (sub.failure_count || 0) + 1;
+            await supabase
+              .from('customer_subscriptions')
+              .update({ failure_count: newFailureCount })
+              .eq('id', sub.id);
+
+            logger.warn(`[RETRY-CHARGES] Flutterwave retry failed for ${sub.id}, failure #${newFailureCount}`);
+          }
+        } catch (err) {
+          const newFailureCount = (sub.failure_count || 0) + 1;
+          await supabase
+            .from('customer_subscriptions')
+            .update({ failure_count: newFailureCount })
+            .eq('id', sub.id);
+
+          logger.error(`[RETRY-CHARGES] Flutterwave charge error for ${sub.id}:`, err);
+        }
+      }
+
       // Stripe auto-retries — we don't need to charge manually
       // But if failure_count >= 3, cancel the subscription
     }
@@ -126,6 +204,9 @@ export async function GET(request: NextRequest) {
           await cancelSubscription(sub.gateway_subscription_code, '');
         } else if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
           const { cancelSubscription } = await import('@/lib/payments/stripe-recurring');
+          await cancelSubscription(sub.gateway_subscription_code);
+        } else if (sub.gateway === 'flutterwave' && sub.gateway_subscription_code) {
+          const { cancelSubscription } = await import('@/lib/payments/flutterwave-recurring');
           await cancelSubscription(sub.gateway_subscription_code);
         }
       } catch (cancelErr) {

@@ -20,7 +20,7 @@ describe('charge-saved.ts split support', () => {
 
   it('resolves split from payout_accounts server-side', () => {
     expect(chargeSavedCode).toContain("from('payout_accounts')");
-    expect(chargeSavedCode).toContain("eq('gateway', 'paystack')");
+    expect(chargeSavedCode).toContain("eq('gateway', gateway)");
     expect(chargeSavedCode).toContain("eq('is_active', true)");
     expect(chargeSavedCode).toContain("'subaccount_code'");
   });
@@ -42,11 +42,11 @@ describe('charge-saved.ts split support', () => {
 
   it('returns split_required_but_missing when payout account is missing', () => {
     expect(chargeSavedCode).toContain("mode: 'split_required_but_missing'");
-    expect(chargeSavedCode).toContain('No active Paystack payout account');
+    expect(chargeSavedCode).toContain('payout account with subaccount code');
   });
 
   it('converts fee to kobo for transaction_charge', () => {
-    expect(chargeSavedCode).toContain('feeResult.feeTotal * 100');
+    expect(chargeSavedCode).toContain('feeTotal * 100');
   });
 
   it('passes split params to charge_authorization call', () => {
@@ -103,7 +103,7 @@ describe('paystack-recurring.ts split support', () => {
 
 describe('retry-failed-charges cron split support', () => {
   it('imports resolvePaystackSplit', () => {
-    expect(cronCode).toContain("import { resolvePaystackSplit }");
+    expect(cronCode).toContain("resolvePaystackSplit");
   });
 
   it('resolves split before calling chargeAuthorization', () => {
@@ -242,7 +242,7 @@ describe('resolvePaystackSplit behavior', () => {
     const result = await resolvePaystackSplit(mockSupabase as never, 'biz-3', 5000);
     expect(result.mode).toBe('split_required_but_missing');
     if (result.mode === 'split_required_but_missing') {
-      expect(result.reason).toContain('No active Paystack payout account');
+      expect(result.reason).toContain('payout account with subaccount code');
       expect(result.businessId).toBe('biz-3');
     }
   });
