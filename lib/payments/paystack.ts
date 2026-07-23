@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
 import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
 import { logger } from '@/lib/logger';
+import { observeProvider } from '@/lib/observability';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
@@ -69,35 +70,40 @@ export class PaystackGateway implements PaymentGateway {
         headers['X-Connect-Account'] = opts.connectAccountId;
       }
 
-      const response = await fetch('https://api.paystack.co/transaction/initialize', {
-        method: 'POST',
-        headers,
-        signal: AbortSignal.timeout(15000),
-        body: JSON.stringify({
-          email,
-          amount: amountInKobo,
-          currency: opts.currency,
-          callback_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/payment-success?ref=${opts.referenceCode}`,
-          ...(opts.channels?.length ? { channels: opts.channels } : {}),
-          ...splitParams,
-          metadata: {
-            booking_id: opts.bookingId || null,
-            order_id: opts.orderId || null,
-            user_id: opts.userId,
-            reference_code: opts.referenceCode,
-            channel: 'whatsapp',
-            byo: !!opts.isByo,
-            connect: !!opts.connectAccountId,
-            byo_business_id: opts.byoBusinessId || null,
-            custom_fields: [
-              { display_name: 'Business', variable_name: 'business', value: opts.businessName },
-              { display_name: 'Ref', variable_name: 'ref', value: opts.referenceCode },
-            ],
-          },
-        }),
+      const data = await observeProvider({
+        gateway: 'paystack',
+        amount: opts.amount, currency: opts.currency,
+        businessId: opts.businessId,
+      }, async () => {
+        const response = await fetch('https://api.paystack.co/transaction/initialize', {
+          method: 'POST',
+          headers,
+          signal: AbortSignal.timeout(15000),
+          body: JSON.stringify({
+            email,
+            amount: amountInKobo,
+            currency: opts.currency,
+            callback_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/payment-success?ref=${opts.referenceCode}`,
+            ...(opts.channels?.length ? { channels: opts.channels } : {}),
+            ...splitParams,
+            metadata: {
+              booking_id: opts.bookingId || null,
+              order_id: opts.orderId || null,
+              user_id: opts.userId,
+              reference_code: opts.referenceCode,
+              channel: 'whatsapp',
+              byo: !!opts.isByo,
+              connect: !!opts.connectAccountId,
+              byo_business_id: opts.byoBusinessId || null,
+              custom_fields: [
+                { display_name: 'Business', variable_name: 'business', value: opts.businessName },
+                { display_name: 'Ref', variable_name: 'ref', value: opts.referenceCode },
+              ],
+            },
+          }),
+        });
+        return response.json();
       });
-
-      const data = await response.json();
       if (!data.status) {
         logger.error('[PAYSTACK] Initialize failed:', data.message || JSON.stringify(data));
         throw new Error(data.message || 'Payment gateway rejected the request');
@@ -166,11 +172,15 @@ export class PaystackGateway implements PaymentGateway {
     }
 
     try {
-      const response = await fetch(
-        `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
-        { headers: { Authorization: `Bearer ${secretKey}` }, signal: AbortSignal.timeout(15000) },
-      );
-      const data = await response.json();
+      const data = await observeProvider({
+        gateway: 'paystack', providerRef: reference,
+      }, async () => {
+        const response = await fetch(
+          `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
+          { headers: { Authorization: `Bearer ${secretKey}` }, signal: AbortSignal.timeout(15000) },
+        );
+        return response.json();
+      });
 
       if (data?.data?.status === 'success') {
         const { data: payment } = await supabase

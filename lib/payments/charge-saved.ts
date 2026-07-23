@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import type { SubscriptionTier } from '@/lib/constants';
+import { observeProvider, logSplitResolved, logSplitMissing } from '@/lib/observability';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
@@ -59,6 +60,7 @@ export async function resolveGatewaySplit(
   }
 
   if (!payout?.subaccount_code) {
+    logSplitMissing({ gateway, businessId, reason: `No active ${gateway} payout account with subaccount code` });
     return { mode: 'split_required_but_missing', reason: `No active ${gateway} payout account with subaccount code`, businessId };
   }
 
@@ -80,6 +82,8 @@ export async function resolveGatewaySplit(
   }
 
   const transactionChargeKobo = Math.round(feeTotal * 100);
+
+  logSplitResolved({ gateway, businessId, amount, splitFee: feeTotal });
 
   return {
     mode: 'split',
@@ -230,30 +234,35 @@ async function chargePaystackAuthorization(
     });
 
     // ── Step 3: Charge the authorization ──
-    const res = await fetch('https://api.paystack.co/transaction/charge_authorization', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${secretKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        authorization_code: opts.savedMethod.authorization_code,
-        email: opts.email,
-        amount: amountInKobo,
-        currency: opts.currency,
-        reference: opts.reference,
-        ...splitParams,
-        metadata: {
-          business_id: opts.businessId,
-          booking_id: opts.bookingId || null,
-          invoice_id: opts.invoiceId || null,
-          saved_method: true,
+    const data = await observeProvider({
+      gateway: 'paystack',
+      businessId: opts.businessId, amount: opts.amount, currency: opts.currency,
+      providerRef: opts.reference,
+    }, async () => {
+      const res = await fetch('https://api.paystack.co/transaction/charge_authorization', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${secretKey}`,
+          'Content-Type': 'application/json',
         },
-      }),
-      signal: AbortSignal.timeout(15000),
+        body: JSON.stringify({
+          authorization_code: opts.savedMethod.authorization_code,
+          email: opts.email,
+          amount: amountInKobo,
+          currency: opts.currency,
+          reference: opts.reference,
+          ...splitParams,
+          metadata: {
+            business_id: opts.businessId,
+            booking_id: opts.bookingId || null,
+            invoice_id: opts.invoiceId || null,
+            saved_method: true,
+          },
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      return res.json();
     });
-
-    const data = await res.json();
 
     if (data.status && data.data?.status === 'success') {
       // Update last used

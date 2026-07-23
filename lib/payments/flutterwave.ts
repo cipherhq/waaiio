@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
 import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
 import { logger } from '@/lib/logger';
+import { observeProvider } from '@/lib/observability';
 
 const flutterwaveSecretKey = process.env.FLUTTERWAVE_SECRET_KEY || '';
 
@@ -65,42 +66,47 @@ export class FlutterwaveGateway implements PaymentGateway {
         };
       }
 
-      const response = await fetch('https://api.flutterwave.com/v3/payments', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${secretKey}`,
-          'Content-Type': 'application/json',
-        },
-        signal: AbortSignal.timeout(15000),
-        body: JSON.stringify({
-          tx_ref: txRef,
-          amount: opts.amount,
-          currency: opts.currency,
-          redirect_url: `${callbackUrl}/payment-success?ref=${opts.referenceCode}`,
-          ...splitParams,
-          ...(opts.channels?.length ? { payment_options: opts.channels.join(',') } : {}),
-          customer: {
-            email,
-            phonenumber: opts.phone,
-            name: opts.businessName,
+      const data = await observeProvider({
+        gateway: 'flutterwave',
+        amount: opts.amount, currency: opts.currency,
+        businessId: opts.businessId,
+      }, async () => {
+        const response = await fetch('https://api.flutterwave.com/v3/payments', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${secretKey}`,
+            'Content-Type': 'application/json',
           },
-          meta: {
-            booking_id: opts.bookingId || null,
-            order_id: opts.orderId || null,
-            user_id: opts.userId,
-            reference_code: opts.referenceCode,
-            channel: 'whatsapp',
-            byo: !!opts.isByo,
-            byo_business_id: opts.byoBusinessId || null,
-          },
-          customizations: {
-            title: opts.businessName,
-            description: `Payment - ${opts.referenceCode}`,
-          },
-        }),
+          signal: AbortSignal.timeout(15000),
+          body: JSON.stringify({
+            tx_ref: txRef,
+            amount: opts.amount,
+            currency: opts.currency,
+            redirect_url: `${callbackUrl}/payment-success?ref=${opts.referenceCode}`,
+            ...splitParams,
+            ...(opts.channels?.length ? { payment_options: opts.channels.join(',') } : {}),
+            customer: {
+              email,
+              phonenumber: opts.phone,
+              name: opts.businessName,
+            },
+            meta: {
+              booking_id: opts.bookingId || null,
+              order_id: opts.orderId || null,
+              user_id: opts.userId,
+              reference_code: opts.referenceCode,
+              channel: 'whatsapp',
+              byo: !!opts.isByo,
+              byo_business_id: opts.byoBusinessId || null,
+            },
+            customizations: {
+              title: opts.businessName,
+              description: `Payment - ${opts.referenceCode}`,
+            },
+          }),
+        });
+        return response.json();
       });
-
-      const data = await response.json();
 
       if (data.status !== 'success' || !data.data?.link) {
         logger.error('Flutterwave init failed:', data);
@@ -169,12 +175,15 @@ export class FlutterwaveGateway implements PaymentGateway {
     }
 
     try {
-      // Find the transaction ID by tx_ref
-      const searchRes = await fetch(
-        `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
-        { headers: { Authorization: `Bearer ${secretKey}` }, signal: AbortSignal.timeout(15000) },
-      );
-      const searchData = await searchRes.json();
+      const searchData = await observeProvider({
+        gateway: 'flutterwave', providerRef: reference,
+      }, async () => {
+        const searchRes = await fetch(
+          `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
+          { headers: { Authorization: `Bearer ${secretKey}` }, signal: AbortSignal.timeout(15000) },
+        );
+        return searchRes.json();
+      });
 
       if (searchData.status === 'success' && searchData.data?.status === 'successful') {
         const { data: payment } = await supabase

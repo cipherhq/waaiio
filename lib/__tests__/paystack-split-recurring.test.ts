@@ -359,7 +359,7 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
     vi.doMock('@/lib/getPlatformFees', () => ({
       getPlatformFees: vi.fn(),
     }));
-    vi.doMock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), debug: vi.fn() } }));
+    vi.doMock('@/lib/logger', () => { const l: Record<string, unknown> = { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), info: vi.fn() }; l.withContext = () => l; return { logger: l }; });
 
     const { chargeSavedCard } = await import('@/lib/payments/charge-saved');
 
@@ -411,7 +411,7 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
     vi.doMock('@/lib/getPlatformFees', () => ({
       getPlatformFees: vi.fn(),
     }));
-    vi.doMock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), debug: vi.fn() } }));
+    vi.doMock('@/lib/logger', () => { const l: Record<string, unknown> = { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), info: vi.fn() }; l.withContext = () => l; return { logger: l }; });
 
     const { chargeSavedCard } = await import('@/lib/payments/charge-saved');
 
@@ -453,7 +453,7 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
     vi.doMock('@/lib/getPlatformFees', () => ({
       getPlatformFees: vi.fn().mockResolvedValue({ feePercentage: 2.5, feeFlat: 0, feeTotal: 125 }),
     }));
-    vi.doMock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), debug: vi.fn() } }));
+    vi.doMock('@/lib/logger', () => { const l: Record<string, unknown> = { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), info: vi.fn() }; l.withContext = () => l; return { logger: l }; });
 
     const { chargeSavedCard } = await import('@/lib/payments/charge-saved');
 
@@ -517,7 +517,7 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
     vi.doMock('@/lib/getPlatformFees', () => ({
       getPlatformFees: vi.fn(),
     }));
-    vi.doMock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), debug: vi.fn() } }));
+    vi.doMock('@/lib/logger', () => { const l: Record<string, unknown> = { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), info: vi.fn() }; l.withContext = () => l; return { logger: l }; });
 
     const { chargeSavedCard } = await import('@/lib/payments/charge-saved');
 

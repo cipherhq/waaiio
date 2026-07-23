@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { type SubscriptionTier, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/factory';
+import { observe } from '@/lib/observability';
+import { logger } from '@/lib/logger';
 
 export async function initializePayment(
   supabase: SupabaseClient,
@@ -192,7 +194,14 @@ export async function initializePayment(
       }
     }
 
-    const result = await gateway.initializePayment({
+    const result = await observe('payment.init', {
+      gateway: gateway.name,
+      businessId: opts.businessId,
+      amount: opts.amount,
+      currency: currencyCode,
+      splitRequired: !!subaccountCode || !!stripeAccountId || !!connectAccountId,
+      splitResolved: !!(subaccountCode || stripeAccountId || connectAccountId),
+    }, () => gateway.initializePayment({
       supabase,
       bookingId: opts.bookingId,
       orderId: opts.orderId,
@@ -217,7 +226,7 @@ export async function initializePayment(
       connectAccountId,
       campaignId: opts.campaignId,
       channels,
-    });
+    }));
 
     // Create donation record if this is a campaign payment
     if (result?.reference && opts.campaignId) {

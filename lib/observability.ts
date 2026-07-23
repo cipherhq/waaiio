@@ -99,6 +99,65 @@ export async function observe<T>(
 }
 
 /**
+ * Observe a payment provider API call with request/response lifecycle events.
+ *
+ * Emits:
+ *   provider.request  — at start (debug level)
+ *   provider.response — on success (info level, includes durationMs)
+ *   provider.request failed — on error (error level, includes durationMs)
+ *
+ * Re-throws errors unchanged.
+ */
+export async function observeProvider<T>(
+  context: Omit<ObservabilityContext, 'op'>,
+  fn: () => Promise<T>,
+  parentLogger?: Logger,
+): Promise<T> {
+  const log = (parentLogger || logger).withContext({ op: 'provider.request', ...context } as LogContext);
+  const start = performance.now();
+
+  log.debug('provider.request started');
+
+  try {
+    const result = await fn();
+    const durationMs = Math.round(performance.now() - start);
+    (parentLogger || logger)
+      .withContext({ op: 'provider.response', ...context, durationMs } as LogContext)
+      .info('provider.response');
+    return result;
+  } catch (error) {
+    const durationMs = Math.round(performance.now() - start);
+    log.error('provider.request failed', { durationMs } as unknown as string, error as Error);
+    throw error;
+  }
+}
+
+/**
+ * Log a split resolution event using the observability pipeline.
+ */
+export function logSplitResolved(context: {
+  gateway: string;
+  businessId: string;
+  amount: number;
+  splitFee: number;
+}): void {
+  logger.withContext({ op: 'split.resolved', ...context } as LogContext)
+    .info('split.resolved');
+}
+
+/**
+ * Log a split-missing event using the observability pipeline.
+ */
+export function logSplitMissing(context: {
+  gateway: string;
+  businessId: string;
+  reason: string;
+}): void {
+  logger.withContext({ op: 'split.missing', gateway: context.gateway, businessId: context.businessId } as LogContext)
+    .warn('split.missing', context.reason);
+}
+
+/**
  * Observe variant that also returns timing metadata.
  * Useful when the caller needs the duration for metrics or response headers.
  */
