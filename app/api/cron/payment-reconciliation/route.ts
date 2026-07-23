@@ -5,6 +5,7 @@ import { verifyCronAuth } from '@/lib/cron-auth';
 import { processSuccessfulPayment } from '@/lib/payments/process-success';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { logger } from '@/lib/logger';
+import { createCronLogger } from '@/lib/observability/cron';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,10 @@ export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);
   if (authError) return authError;
 
+  const cron = createCronLogger('payment-reconciliation');
+  cron.started();
+
+  try {
   const supabase = createServiceClient();
 
   const twoHoursAgo = new Date();
@@ -38,11 +43,12 @@ export async function GET(request: NextRequest) {
     .limit(50); // Process in batches to stay within maxDuration
 
   if (queryError) {
-    logger.error('[PAYMENT-RECONCILIATION] Query error:', queryError);
+    cron.failed(queryError);
     return NextResponse.json({ ok: false, error: 'Query failed' }, { status: 500 });
   }
 
   if (!stalePayments || stalePayments.length === 0) {
+    cron.completed({ processedCount: 0 });
     return NextResponse.json({ ok: true, processed: 0 });
   }
 
@@ -115,6 +121,13 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  cron.completed({
+    processedCount: stalePayments.length,
+    successCount: reconciled,
+    failureCount: markedFailed + errors,
+    skippedCount: stalePayments.length - reconciled - markedFailed - errors,
+  });
+
   return NextResponse.json({
     ok: true,
     total: stalePayments.length,
@@ -122,6 +135,10 @@ export async function GET(request: NextRequest) {
     markedFailed,
     errors,
   });
+  } catch (error) {
+    cron.failed(error);
+    throw error; // Preserve existing propagation behavior
+  }
 }
 
 type GatewayVerifyResult = 'paid' | 'pending' | 'failed' | 'expired';

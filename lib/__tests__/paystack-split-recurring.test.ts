@@ -124,7 +124,7 @@ describe('retry-failed-charges cron split support', () => {
 
   it('skips charge when direct_split config is missing (fail-closed)', () => {
     expect(cronCode).toContain("splitResult.mode === 'split_required_but_missing'");
-    expect(cronCode).toContain('skipping charge');
+    expect(cronCode).toContain('itemSkipped');
     expect(cronCode).toContain('skipped++');
     expect(cronCode).toContain('continue');
   });
