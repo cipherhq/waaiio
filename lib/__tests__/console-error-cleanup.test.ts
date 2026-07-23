@@ -321,9 +321,9 @@ describe('Executable: OTP send route channel-failure continuation', () => {
       getRateLimitKey: vi.fn().mockReturnValue('otp-send:127.0.0.1'),
     }));
 
-    // Mock OTP generation deterministically
+    // Mock OTP generation deterministically (async, returns challengeId)
     vi.doMock('@/lib/otp-phone-token', () => ({
-      generatePhoneOtp: vi.fn().mockReturnValue({ code: '123456', token: 'deterministic-token-abc' }),
+      generatePhoneOtp: vi.fn().mockResolvedValue({ code: '123456', challengeId: 'a'.repeat(64) }),
     }));
 
     // Mock service-client WhatsApp-channel lookup to throw sensitive error
@@ -367,7 +367,7 @@ describe('Executable: OTP send route channel-failure continuation', () => {
     expect(res.status).toBe(200);
     expect(body).toEqual({
       message: 'OTP sent via WhatsApp',
-      pin_id: 'deterministic-token-abc',
+      pin_id: 'a'.repeat(64),
     });
 
     // One structured channel-failure log emitted
