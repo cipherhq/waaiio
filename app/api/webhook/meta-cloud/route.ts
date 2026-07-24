@@ -301,7 +301,12 @@ export async function POST(request: NextRequest) {
               };
             };
           }>;
-          statuses?: Array<{ id: string; status: string; timestamp: string }>;
+          statuses?: Array<{
+            id: string;
+            status: string;
+            timestamp: string;
+            errors?: Array<{ code: number; title: string; error_data?: { details: string } }>;
+          }>;
         };
         field: string;
       }>;
@@ -359,6 +364,45 @@ export async function POST(request: NextRequest) {
               );
             }
             if (updates.length > 0) await Promise.all(updates);
+
+            // OTP delivery status tracking (append-only, idempotent)
+            const { data: otpAttempt } = await supabase
+              .from('otp_delivery_attempts')
+              .select('id')
+              .eq('wa_message_id', wamid)
+              .maybeSingle();
+
+            if (otpAttempt) {
+              const eventTimestamp = new Date(Number(status.timestamp) * 1000).toISOString();
+              const insertData: Record<string, unknown> = {
+                attempt_id: otpAttempt.id,
+                status: newStatus,
+                event_timestamp: eventTimestamp,
+              };
+
+              // For failed statuses, record sanitized error info (no PII)
+              if (isFailed && status.errors?.[0]) {
+                const err = status.errors[0];
+                insertData.error_code = String(err.code);
+                insertData.error_title = err.title;
+                // Map common Meta error codes to categories
+                const code = err.code;
+                if (code === 131026 || code === 131047) insertData.error_category = 'message_undeliverable';
+                else if (code === 131053) insertData.error_category = 'media_error';
+                else if (code === 131031 || code === 131056) insertData.error_category = 'business_account_locked';
+                else if (code === 131009) insertData.error_category = 'parameter_invalid';
+                else insertData.error_category = 'other';
+              }
+
+              // Idempotent insert — unique constraint on (attempt_id, status) rejects duplicates
+              const { error: statusErr } = await supabase
+                .from('otp_delivery_status_events')
+                .insert(insertData);
+              // Duplicate key error (23505) is expected for repeated callbacks — silently ignore
+              if (statusErr && statusErr.code !== '23505') {
+                log.withContext({ op: 'delivery-status.insert' }).warn('[META-WEBHOOK] Delivery status insert failed');
+              }
+            }
           }
         }
 

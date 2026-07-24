@@ -5,6 +5,19 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-24
+
+### Observability: Persist WhatsApp OTP delivery status
+- `supabase/migrations/248_otp_delivery_tracking.sql` — Two new append-only tables: `otp_delivery_attempts` (links challenge_id to Meta message ID + delivery path) and `otp_delivery_status_events` (records sent/delivered/read/failed with sanitized error info). RLS enabled, service_role SELECT+INSERT only, no anon/authenticated access. Does NOT modify Migration 246 (`phone_otp_challenges`).
+- `app/api/auth/otp/send/route.ts` — Captures Meta message ID from `sendAuthenticationTemplate()` return and records delivery attempt with path (`database_channel` or `env_fallback`). Observability insert failure is non-blocking — does not cause resend of an already-accepted message.
+- `app/api/webhook/meta-cloud/route.ts` — Extended status handler to match OTP delivery attempts by Meta message ID and insert status events. Duplicate callbacks handled via unique constraint (23505 silently ignored). Sanitized error info for failed statuses. Existing contract/signer status handling unchanged.
+- `lib/otp-delivery-diagnostics.ts` — Internal read-only helper + documented SQL query for diagnosing delivery status without exposing sensitive identifiers.
+- `lib/__tests__/otp-delivery-observability.test.ts` — 20 tests covering: attempt recording for both paths, message ID not returned to client, no PII stored or logged, observability failure tolerance, webhook status persistence (sent/delivered/read/failed), duplicate/out-of-order callback handling, unknown message ID safety, contract handler preservation, Migration 246 security, and table privilege verification.
+- **Why:** The controlled production acceptance test returned HTTP 200 but the OTP was not received. The Meta message ID was discarded and no delivery status was tracked, making the failure undiagnosable (classified: DELIVERY STATUS UNKNOWN — INSUFFICIENT EVIDENCE).
+- **Affects:** OTP send route (observability only — no verification or security changes), Meta webhook status handler (additive).
+
+---
+
 ## 2026-07-23
 
 ### Security: Deliver phone OTP via WhatsApp authentication template
