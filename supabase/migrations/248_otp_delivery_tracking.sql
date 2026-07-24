@@ -27,8 +27,9 @@ ALTER TABLE public.otp_delivery_attempts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "service_role_full_access" ON public.otp_delivery_attempts
   FOR ALL USING (auth.role() = 'service_role');
 
--- Append-only: service_role needs SELECT (webhook matching) and INSERT (recording attempts)
+-- Explicit least-privilege: revoke everything first, then grant minimum needed
 REVOKE ALL ON TABLE public.otp_delivery_attempts FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.otp_delivery_attempts FROM service_role;
 GRANT SELECT, INSERT ON TABLE public.otp_delivery_attempts TO service_role;
 
 
@@ -59,6 +60,7 @@ ALTER TABLE public.otp_delivery_status_events ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "service_role_full_access" ON public.otp_delivery_status_events
   FOR ALL USING (auth.role() = 'service_role');
 
--- Append-only: service_role needs SELECT (diagnostic reads) and INSERT (status recording)
+-- Explicit least-privilege: revoke everything first, then grant minimum needed
 REVOKE ALL ON TABLE public.otp_delivery_status_events FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.otp_delivery_status_events FROM service_role;
 GRANT SELECT, INSERT ON TABLE public.otp_delivery_status_events TO service_role;

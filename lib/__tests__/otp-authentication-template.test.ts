@@ -302,6 +302,12 @@ describe('Static safety', () => {
 
   it('route does not log the OTP code', () => {
     const code = readFileSync('app/api/auth/otp/send/route.ts', 'utf-8');
-    expect(code).not.toMatch(/logger\.\w+\([^)]*\bcode\b/);
+    // Any 'code' in logger calls must be 'errorCode' (safe operational context), not bare OTP code
+    const loggerLines = code.split('\n').filter(l => /logger\.\w+/.test(l));
+    for (const line of loggerLines) {
+      if (/\bcode\b/.test(line)) {
+        expect(line.includes('errorCode') || line.includes('safeLogErrorContext')).toBe(true);
+      }
+    }
   });
 });

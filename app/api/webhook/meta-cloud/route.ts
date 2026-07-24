@@ -366,14 +366,25 @@ export async function POST(request: NextRequest) {
             if (updates.length > 0) await Promise.all(updates);
 
             // OTP delivery status tracking (append-only, idempotent)
-            const { data: otpAttempt } = await supabase
+            const { data: otpAttempt, error: attemptLookupErr } = await supabase
               .from('otp_delivery_attempts')
               .select('id')
               .eq('wa_message_id', wamid)
               .maybeSingle();
 
-            if (otpAttempt) {
-              const eventTimestamp = new Date(Number(status.timestamp) * 1000).toISOString();
+            if (attemptLookupErr) {
+              log.withContext({ op: 'delivery-status.lookup', errorCode: attemptLookupErr.code }).warn('[META-WEBHOOK] Delivery attempt lookup failed');
+            } else if (otpAttempt) {
+              // Parse timestamp safely — Meta sends Unix seconds as string
+              const tsNum = Number(status.timestamp);
+              let eventTimestamp: string;
+              if (!Number.isFinite(tsNum) || tsNum <= 0) {
+                eventTimestamp = new Date().toISOString();
+                log.withContext({ op: 'delivery-status.timestamp' }).warn('[META-WEBHOOK] Invalid status timestamp, using received time');
+              } else {
+                eventTimestamp = new Date(tsNum * 1000).toISOString();
+              }
+
               const insertData: Record<string, unknown> = {
                 attempt_id: otpAttempt.id,
                 status: newStatus,
@@ -400,7 +411,7 @@ export async function POST(request: NextRequest) {
                 .insert(insertData);
               // Duplicate key error (23505) is expected for repeated callbacks — silently ignore
               if (statusErr && statusErr.code !== '23505') {
-                log.withContext({ op: 'delivery-status.insert' }).warn('[META-WEBHOOK] Delivery status insert failed');
+                log.withContext({ op: 'delivery-status.insert', errorCode: statusErr.code }).warn('[META-WEBHOOK] Delivery status insert failed');
               }
             }
           }

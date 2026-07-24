@@ -106,13 +106,16 @@ export async function POST(request: NextRequest) {
     if (waMessageId && deliveryPath) {
       try {
         const supabase = createServiceClient();
-        await supabase.from('otp_delivery_attempts').insert({
+        const { error: obsError } = await supabase.from('otp_delivery_attempts').insert({
           challenge_id: challengeId,
           wa_message_id: waMessageId,
           delivery_path: deliveryPath,
         });
-      } catch (obsErr) {
-        // Observability failure must not cause a resend — Meta already accepted the message
+        if (obsError) {
+          logger.withContext({ op: 'otp-send.observability', errorCode: obsError.code }).warn('[OTP Send] Failed to record delivery attempt');
+        }
+      } catch {
+        // Thrown exception (network, etc.) — still non-blocking
         logger.withContext({ op: 'otp-send.observability' }).warn('[OTP Send] Failed to record delivery attempt');
       }
     }

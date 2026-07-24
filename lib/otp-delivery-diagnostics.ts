@@ -27,26 +27,42 @@ export interface OtpDeliveryDiagnostic {
   }>;
 }
 
+export class OtpDiagnosticError extends Error {
+  constructor(public readonly op: string, public readonly dbErrorCode: string) {
+    super(`OTP diagnostic query failed: ${op}`);
+    this.name = 'OtpDiagnosticError';
+  }
+}
+
 /**
  * Look up delivery status for a challenge without revealing sensitive data.
- * Returns null if no delivery attempt was recorded.
+ * Returns null only when the query succeeds and no attempt exists.
+ * Throws OtpDiagnosticError on database failure.
  */
 export async function getOtpDeliveryStatus(challengeId: string): Promise<OtpDeliveryDiagnostic | null> {
   const supabase = createServiceClient();
 
-  const { data: attempt } = await supabase
+  const { data: attempt, error: attemptError } = await supabase
     .from('otp_delivery_attempts')
     .select('id, challenge_id, delivery_path, accepted_at')
     .eq('challenge_id', challengeId)
     .maybeSingle();
 
+  if (attemptError) {
+    throw new OtpDiagnosticError('attempt-lookup', attemptError.code);
+  }
+
   if (!attempt) return null;
 
-  const { data: events } = await supabase
+  const { data: events, error: eventsError } = await supabase
     .from('otp_delivery_status_events')
     .select('status, event_timestamp, error_code, error_title, error_category')
     .eq('attempt_id', attempt.id)
     .order('event_timestamp', { ascending: true });
+
+  if (eventsError) {
+    throw new OtpDiagnosticError('status-history-lookup', eventsError.code);
+  }
 
   const statusHistory = (events || []).map((e) => ({
     status: e.status,
