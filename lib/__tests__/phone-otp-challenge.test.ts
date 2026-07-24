@@ -420,7 +420,7 @@ describe('Send route response contract', () => {
       getRateLimitKey: vi.fn().mockReturnValue('test-key'),
     }));
     vi.doMock('@/lib/channels/meta-cloud', () => ({
-      MetaCloudService: class { async sendText() {} },
+      MetaCloudService: class { async sendAuthenticationTemplate() { return { messageId: 'wamid.test' }; } },
     }));
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn().mockImplementation(() => buildServiceMock()),

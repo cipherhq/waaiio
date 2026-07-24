@@ -142,6 +142,59 @@ export class MetaCloudService {
     return { messageId: response.messages[0].id };
   }
 
+  // ── Send Authentication Template (OTP) ──
+
+  /**
+   * Send a WhatsApp AUTHENTICATION template with a COPY_CODE OTP button.
+   *
+   * Uses the approved waaiio_login_otp template. Does NOT use sendText —
+   * authentication templates can be delivered without a 24-hour customer
+   * service window.
+   *
+   * The code is provided to both the BODY {{1}} parameter and the
+   * COPY_CODE button URL suffix parameter.
+   */
+  async sendAuthenticationTemplate(opts: {
+    to: string;
+    templateName: string;
+    languageCode: string;
+    code: string;
+  }): Promise<{ messageId: string }> {
+    if (!opts.to) throw new Error('Recipient is required');
+    if (!opts.templateName) throw new Error('Template name is required');
+    if (!opts.languageCode) throw new Error('Language code is required');
+    if (!/^\d{6}$/.test(opts.code)) throw new Error('OTP code must be exactly 6 digits');
+
+    const response = await this.callApi(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: opts.to,
+      type: 'template',
+      template: {
+        name: opts.templateName,
+        language: { code: opts.languageCode },
+        components: [
+          {
+            type: 'body',
+            parameters: [{ type: 'text', text: opts.code }],
+          },
+          {
+            type: 'button',
+            sub_type: 'url',
+            index: '0',
+            parameters: [{ type: 'text', text: opts.code }],
+          },
+        ],
+      },
+    });
+
+    if (!response.messages?.[0]?.id) {
+      throw new Error('Meta API did not return a message ID');
+    }
+
+    return { messageId: response.messages[0].id };
+  }
+
   // ── Send Interactive List ──
 
   async sendList(message: CloudInteractiveListMessage): Promise<{ messageId: string }> {
