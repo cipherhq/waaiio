@@ -82,7 +82,7 @@ export function StepAuth({
             <div className="relative flex justify-center text-xs"><span className="bg-white px-3 text-gray-400">or</span></div>
           </div>
           <a
-            href={`https://wa.me/${process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US || '12029226251'}?text=I%20want%20to%20register%20my%20business`}
+            href={`https://wa.me/${process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US || ''}?text=I%20want%20to%20register%20my%20business`}
             target="_blank"
             rel="noopener noreferrer"
             className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-whatsapp py-3.5 text-sm font-bold text-white transition hover:bg-whatsapp/90"

@@ -50,6 +50,16 @@ export async function POST(request: NextRequest) {
 
   if (!biz) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
+  // ── Capability check: packages ──
+  const { data: packagesCap } = await supabase
+    .from('business_capabilities')
+    .select('id')
+    .eq('business_id', business_id)
+    .eq('capability_id', 'packages')
+    .eq('is_enabled', true)
+    .maybeSingle();
+  if (!packagesCap) return NextResponse.json({ error: 'Feature not enabled' }, { status: 403 });
+
   const { data, error } = await supabase
     .from('service_packages')
     .insert({

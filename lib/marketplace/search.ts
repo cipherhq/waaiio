@@ -81,7 +81,7 @@ export async function searchMarketplace(
   supabase: SupabaseClient,
   criteria: MarketplaceSearchCriteria,
 ): Promise<MarketplaceResult[]> {
-  const limit = Math.min(criteria.limit || 5, 10);
+  const limit = Math.min(criteria.limit || 20, 50);
 
   try {
     let query = supabase
@@ -98,7 +98,10 @@ export async function searchMarketplace(
 
     // Category filter
     if (criteria.category) {
-      query = query.ilike('category', `%${criteria.category}%`);
+      const safeCat = criteria.category.replace(/[%_'"\\]/g, '');
+      if (safeCat.length > 0) {
+        query = query.ilike('category', `%${safeCat}%`);
+      }
     }
 
     // Country filter

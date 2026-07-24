@@ -59,12 +59,82 @@ export async function POST(request: NextRequest) {
       is_recurring, recurring_frequency, recurring_next_date, recurring_end_date,
     } = body;
 
-    if (!business_id || !customer_name || !items?.length) {
-      return NextResponse.json({ error: 'business_id, customer_name, and items are required' }, { status: 400 });
+    // ── Field-level validation ──
+    const vErrors: Record<string, string> = {};
+
+    if (!business_id || typeof business_id !== 'string') {
+      vErrors.business_id = 'Business ID is required';
+    } else if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(business_id)) {
+      vErrors.business_id = 'Business ID must be a valid UUID';
+    }
+    if (!customer_name || typeof customer_name !== 'string' || !customer_name.trim()) {
+      vErrors.customer_name = 'Customer name is required';
+    } else if (customer_name.trim().length > 200) {
+      vErrors.customer_name = 'Customer name must be 200 characters or less';
+    }
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      vErrors.items = 'At least one line item is required';
+    } else {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (!item || typeof item !== 'object') {
+          vErrors[`items[${i}]`] = 'Item must be an object';
+          continue;
+        }
+        if (!item.description || typeof item.description !== 'string' || !item.description.trim()) {
+          vErrors[`items[${i}].description`] = 'Description is required';
+        }
+        if (item.quantity !== undefined && item.quantity !== null) {
+          const qty = Number(item.quantity);
+          if (isNaN(qty) || qty <= 0) {
+            vErrors[`items[${i}].quantity`] = 'Quantity must be a positive number';
+          }
+        }
+        if (item.unit_price !== undefined && item.unit_price !== null) {
+          const up = Number(item.unit_price);
+          if (isNaN(up) || up < 0) {
+            vErrors[`items[${i}].unit_price`] = 'Unit price must be a non-negative number';
+          }
+        }
+      }
+    }
+    if (due_date !== undefined && due_date !== null) {
+      if (typeof due_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(due_date) || isNaN(new Date(due_date).getTime())) {
+        vErrors.due_date = 'Due date must be a valid date (YYYY-MM-DD)';
+      }
+    }
+    if (tax_rate !== undefined && tax_rate !== null) {
+      const tr = Number(tax_rate);
+      if (isNaN(tr) || tr < 0 || tr > 100) {
+        vErrors.tax_rate = 'Tax rate must be between 0 and 100';
+      }
+    }
+    if (discount_value !== undefined && discount_value !== null) {
+      const dv = Number(discount_value);
+      if (isNaN(dv) || dv < 0) {
+        vErrors.discount_value = 'Discount value must be non-negative';
+      }
+    }
+
+    if (Object.keys(vErrors).length > 0) {
+      return NextResponse.json(
+        { error: 'Validation failed', fields: vErrors },
+        { status: 400 },
+      );
     }
 
     const { data: ownedBusiness } = await supabase.from('businesses').select('id, subscription_tier').eq('id', business_id).eq('owner_id', user.id).maybeSingle();
     if (!ownedBusiness) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+    // ── Capability check: invoice ──
+    const { data: invoiceCap } = await supabase
+      .from('business_capabilities')
+      .select('id')
+      .eq('business_id', business_id)
+      .eq('capability_id', 'invoice')
+      .eq('is_enabled', true)
+      .maybeSingle();
+    if (!invoiceCap) return NextResponse.json({ error: 'Feature not enabled' }, { status: 403 });
 
     // ── Tier limit check for invoices ──
     const tierResult = await checkTierLimit(

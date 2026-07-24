@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Image from 'next/image';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { PhoneInput } from '@/components/auth/PhoneInput';
@@ -132,6 +132,7 @@ function timeAgo(dateStr: string) {
 }
 
 export default function StaffPage() {
+  const allowed = useRequireCapability('staff');
   const business = useBusiness();
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [businessServices, setBusinessServices] = useState<Service[]>([]);
@@ -745,6 +746,8 @@ export default function StaffPage() {
       </div>
     );
   }
+
+  if (!allowed) return null;
 
   // ═══════════ LIST VIEW ═══════════
   return (

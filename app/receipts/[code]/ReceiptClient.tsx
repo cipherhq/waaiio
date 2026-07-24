@@ -1,7 +1,5 @@
 'use client';
 
-import { isWhiteLabel } from '@/lib/whitelabel';
-
 interface ReceiptData {
   referenceCode: string;
   businessName: string;
@@ -16,7 +14,7 @@ interface ReceiptData {
   isPaid: boolean;
   status: string;
   countryCode: string;
-  subscriptionTier?: string;
+  whitelabel?: boolean;
 }
 
 function formatDate(iso: string): string {
@@ -162,7 +160,7 @@ export function ReceiptClient({ data }: { data: ReceiptData }) {
         </div>
 
         {/* Footer */}
-        {!isWhiteLabel(data.subscriptionTier) && (
+        {!data.whitelabel && (
           <p className="mt-6 text-center text-xs text-gray-400 print:mt-8">
             Powered by Waaiio
           </p>

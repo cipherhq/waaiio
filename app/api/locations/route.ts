@@ -66,6 +66,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    // ── Capability check: multi_location ──
+    const { data: multiLocCap } = await supabase
+      .from('business_capabilities')
+      .select('id')
+      .eq('business_id', businessId)
+      .eq('capability_id', 'multi_location')
+      .eq('is_enabled', true)
+      .maybeSingle();
+    if (!multiLocCap) return NextResponse.json({ error: 'Feature not enabled' }, { status: 403 });
+
     const serviceClient = createServiceClient();
 
     // If setting as primary, unset existing primary
