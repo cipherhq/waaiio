@@ -332,14 +332,22 @@ describe('No sensitive data in logs', () => {
 });
 
 // ═══════════════════════════════════════════════════════════
-// 3. Webhook status event handling
+// 3. Executable webhook handler tests
 // ═══════════════════════════════════════════════════════════
 
-describe('OTP webhook status event handling', () => {
-  let upsertedEvents: Array<Record<string, unknown>>;
-  let contractUpdated: boolean;
+describe('OTP webhook handler — executable tests', () => {
+  // Shared state captured by mocks
+  let insertedEvents: Array<Record<string, unknown>>;
+  let warnings: Array<{ ctx: Record<string, unknown>; msg: string }>;
+  let contractUpdateCalls: Array<Record<string, unknown>>;
+  let insertBehavior: (row: Record<string, unknown>) => { error: unknown };
+  let attemptLookupResult: { data: unknown; error: unknown };
 
-  function buildWebhookBody(wamid: string, status: string, errors?: Array<{ code: number; title: string }>) {
+  // Shared helpers
+  function buildWebhookBody(
+    wamid: string, status: string, timestamp = '1753383000',
+    errors?: Array<{ code: number; title: string }>,
+  ) {
     return {
       object: 'whatsapp_business_account',
       entry: [{
@@ -349,9 +357,7 @@ describe('OTP webhook status event handling', () => {
             messaging_product: 'whatsapp',
             metadata: { phone_number_id: 'test-pnid', display_phone_number: '12029226251' },
             statuses: [{
-              id: wamid,
-              status,
-              timestamp: '1753383000',
+              id: wamid, status, timestamp,
               ...(errors ? { errors } : {}),
             }],
           },
@@ -361,72 +367,81 @@ describe('OTP webhook status event handling', () => {
     };
   }
 
-  const cryptoMock = async () => {
-    const actual = await vi.importActual<typeof import('crypto')>('crypto');
-    return {
-      ...actual,
-      createHmac: () => ({ update: () => ({ digest: () => 'test' }) }),
-      timingSafeEqual: () => true,
-    };
-  };
+  function makeWebhookRequest(body: unknown) {
+    return new NextRequest('https://www.waaiio.com/api/webhook/meta-cloud', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-hub-signature-256': 'sha256=test' },
+      body: JSON.stringify(body),
+    });
+  }
 
-  function setupWebhookMocks() {
-    upsertedEvents = [];
-    contractUpdated = false;
-
-    vi.doMock('crypto', cryptoMock);
-    vi.doMock('@/lib/logger', () => ({
-      logger: {
-        withContext: () => ({
+  function makeChainableLogObj(): Record<string, unknown> {
+    const obj: Record<string, unknown> = {
+      error: () => {},
+      warn: (msg: string) => { warnings.push({ ctx: {}, msg }); },
+      info: () => {},
+      debug: () => {},
+      withContext: (ctx: Record<string, unknown>) => {
+        const child: Record<string, unknown> = {
           error: () => {},
-          warn: () => {},
+          warn: (msg: string) => { warnings.push({ ctx, msg }); },
           info: () => {},
           debug: () => {},
-        }),
-        error: () => {},
-        warn: () => {},
-        info: () => {},
-        debug: () => {},
+          withContext: (ctx2: Record<string, unknown>) => {
+            const grandchild: Record<string, unknown> = {
+              error: () => {},
+              warn: (msg: string) => { warnings.push({ ctx: { ...ctx, ...ctx2 }, msg }); },
+              info: () => {},
+              debug: () => {},
+              withContext: () => grandchild,
+            };
+            return grandchild;
+          },
+        };
+        return child;
       },
+    };
+    return obj;
+  }
+
+  function setupMocks(opts?: {
+    contractMatch?: { id: string; wa_delivery_status: string | null };
+  }) {
+    const contractData = opts?.contractMatch ?? null;
+
+    vi.doMock('crypto', async () => {
+      const actual = await vi.importActual<typeof import('crypto')>('crypto');
+      return { ...actual, createHmac: () => ({ update: () => ({ digest: () => 'test' }) }), timingSafeEqual: () => true };
+    });
+
+    vi.doMock('@/lib/logger', () => ({
+      logger: makeChainableLogObj(),
       generateRequestId: () => 'test-req-id',
     }));
+
     vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: vi.fn().mockReturnValue({
-        from: vi.fn().mockImplementation((table: string) => {
-          if (table === 'contracts' || table === 'contract_signers') {
+      createServiceClient: () => ({
+        from: (table: string) => {
+          if (table === 'contracts') {
             return {
-              select: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  maybeSingle: vi.fn().mockResolvedValue({ data: null }),
-                }),
-              }),
-              update: vi.fn().mockImplementation(() => {
-                contractUpdated = true;
-                return { eq: vi.fn().mockReturnValue({ in: vi.fn().mockResolvedValue({ error: null }) }) };
-              }),
+              select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: contractData }) }) }),
+              update: (data: Record<string, unknown>) => {
+                contractUpdateCalls.push(data);
+                return { eq: () => ({ in: () => Promise.resolve({ error: null }) }) };
+              },
             };
+          }
+          if (table === 'contract_signers') {
+            return { select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: null }) }) }) };
           }
           if (table === 'otp_delivery_attempts') {
-            return {
-              select: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  maybeSingle: vi.fn().mockResolvedValue({
-                    data: { id: 'attempt-uuid-1' },
-                  }),
-                }),
-              }),
-            };
+            return { select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve(attemptLookupResult) }) }) };
           }
           if (table === 'otp_delivery_status_events') {
-            return {
-              insert: vi.fn().mockImplementation((row: Record<string, unknown>) => {
-                upsertedEvents.push(row);
-                return { error: null };
-              }),
-            };
+            return { insert: (row: Record<string, unknown>) => insertBehavior(row) };
           }
           return {};
-        }),
+        },
       }),
     }));
   }
@@ -434,259 +449,195 @@ describe('OTP webhook status event handling', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.resetModules();
+    insertedEvents = [];
+    warnings = [];
+    contractUpdateCalls = [];
+    insertBehavior = (row) => { insertedEvents.push(row); return { error: null }; };
+    attemptLookupResult = { data: { id: 'attempt-uuid-1' }, error: null };
     process.env.META_CLOUD_WABA_ID = 'test-waba';
     process.env.META_APP_SECRET = 'test-secret';
-    setupWebhookMocks();
+    setupMocks();
   });
 
   afterEach(() => {
     delete process.env.META_CLOUD_WABA_ID;
     delete process.env.META_APP_SECRET;
-    vi.unstubAllGlobals();
   });
 
-  // Stub webhook signature verification
-  function makeWebhookRequest(body: unknown) {
-    return new NextRequest('https://www.waaiio.com/api/webhook/meta-cloud', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-hub-signature-256': 'sha256=test',
-      },
-      body: JSON.stringify(body),
-    });
-  }
+  // A. Duplicate 23505 test
+  it('duplicate 23505: first insert succeeds, second is silently ignored', async () => {
+    let callCount = 0;
+    insertBehavior = (row) => {
+      callCount++;
+      if (callCount === 1) { insertedEvents.push(row); return { error: null }; }
+      return { error: { code: '23505', message: 'duplicate key value' } };
+    };
 
+    const { POST } = await import('@/app/api/webhook/meta-cloud/route');
+    const res1 = await POST(makeWebhookRequest(buildWebhookBody('wamid.dup', 'delivered')));
+    const res2 = await POST(makeWebhookRequest(buildWebhookBody('wamid.dup', 'delivered')));
+
+    expect(res1.status).toBe(200);
+    expect(res2.status).toBe(200);
+    expect(insertedEvents).toHaveLength(1);
+    expect(insertedEvents[0].status).toBe('delivered');
+    // No warning for 23505
+    const statusWarnings = warnings.filter(w => w.msg?.includes('Delivery status insert failed'));
+    expect(statusWarnings).toHaveLength(0);
+    // No identifiers in any warning
+    const allWarnText = JSON.stringify(warnings);
+    expect(allWarnText).not.toContain('wamid');
+    expect(allWarnText).not.toContain('phone');
+  });
+
+  // B. Non-23505 insert error test
+  it('non-23505 error: webhook succeeds, emits one sanitized warning', async () => {
+    insertBehavior = () => ({ error: { code: '42P01', message: 'relation "otp_delivery_status_events" does not exist' } });
+
+    const { POST } = await import('@/app/api/webhook/meta-cloud/route');
+    const res = await POST(makeWebhookRequest(buildWebhookBody('wamid.err', 'sent')));
+
+    expect(res.status).toBe(200);
+    const statusWarnings = warnings.filter(w => w.msg?.includes('Delivery status insert failed'));
+    expect(statusWarnings).toHaveLength(1);
+    // Context contains only safe operational data
+    expect(statusWarnings[0].ctx.op).toBe('delivery-status.insert');
+    expect(statusWarnings[0].ctx.errorCode).toBe('42P01');
+    // No identifiers in context or message
+    const warnStr = JSON.stringify(statusWarnings[0]);
+    expect(warnStr).not.toContain('wamid');
+    expect(warnStr).not.toContain('phone');
+    expect(warnStr).not.toContain('otp');
+    expect(warnStr).not.toContain('challenge');
+    expect(warnStr).not.toContain('relation');
+  });
+
+  // C. Invalid timestamp tests
+  it('non-numeric timestamp: handler succeeds, uses received time', async () => {
+    vi.useFakeTimers({ now: new Date('2026-07-24T20:00:00Z') });
+
+    const { POST } = await import('@/app/api/webhook/meta-cloud/route');
+    const res = await POST(makeWebhookRequest(buildWebhookBody('wamid.ts1', 'sent', 'not-a-number')));
+
+    expect(res.status).toBe(200);
+    expect(insertedEvents).toHaveLength(1);
+    expect(insertedEvents[0].event_timestamp).toBe('2026-07-24T20:00:00.000Z');
+    const tsWarnings = warnings.filter(w => w.msg?.includes('Invalid status timestamp'));
+    expect(tsWarnings).toHaveLength(1);
+    expect(tsWarnings[0].ctx.op).toBe('delivery-status.timestamp');
+    expect(JSON.stringify(tsWarnings[0])).not.toContain('wamid');
+
+    vi.useRealTimers();
+  });
+
+  it('out-of-range timestamp: handler succeeds, uses received time', async () => {
+    vi.useFakeTimers({ now: new Date('2026-07-24T20:00:00Z') });
+
+    const { POST } = await import('@/app/api/webhook/meta-cloud/route');
+    const res = await POST(makeWebhookRequest(buildWebhookBody('wamid.ts2', 'delivered', '999999999999999999999')));
+
+    expect(res.status).toBe(200);
+    expect(insertedEvents).toHaveLength(1);
+    expect(insertedEvents[0].event_timestamp).toBe('2026-07-24T20:00:00.000Z');
+    const tsWarnings = warnings.filter(w => w.msg?.includes('Invalid status timestamp'));
+    expect(tsWarnings).toHaveLength(1);
+
+    vi.useRealTimers();
+  });
+
+  // D. Attempt lookup error test
+  it('attempt lookup error: webhook succeeds, no status insert, one sanitized warning', async () => {
+    attemptLookupResult = { data: null, error: { code: '42P01', message: 'relation does not exist' } };
+
+    const { POST } = await import('@/app/api/webhook/meta-cloud/route');
+    const res = await POST(makeWebhookRequest(buildWebhookBody('wamid.lookup-err', 'sent')));
+
+    expect(res.status).toBe(200);
+    expect(insertedEvents).toHaveLength(0);
+    const lookupWarnings = warnings.filter(w => w.msg?.includes('Delivery attempt lookup failed'));
+    expect(lookupWarnings).toHaveLength(1);
+    expect(lookupWarnings[0].ctx.op).toBe('delivery-status.lookup');
+    expect(lookupWarnings[0].ctx.errorCode).toBe('42P01');
+    const warnStr = JSON.stringify(lookupWarnings[0]);
+    expect(warnStr).not.toContain('wamid');
+    expect(warnStr).not.toContain('relation does not exist');
+  });
+
+  // E. Unknown message ID test
+  it('unknown message ID: webhook succeeds, no OTP insert, no warning', async () => {
+    attemptLookupResult = { data: null, error: null };
+
+    const { POST } = await import('@/app/api/webhook/meta-cloud/route');
+    const res = await POST(makeWebhookRequest(buildWebhookBody('wamid.unknown', 'delivered')));
+
+    expect(res.status).toBe(200);
+    expect(insertedEvents).toHaveLength(0);
+    const otpWarnings = warnings.filter(w =>
+      w.msg?.includes('Delivery status insert') || w.msg?.includes('Delivery attempt lookup'),
+    );
+    expect(otpWarnings).toHaveLength(0);
+  });
+
+  // F. Out-of-order test
+  it('out-of-order: delivered then sent both recorded independently', async () => {
+    const { POST } = await import('@/app/api/webhook/meta-cloud/route');
+    await POST(makeWebhookRequest(buildWebhookBody('wamid.ooo', 'delivered')));
+    await POST(makeWebhookRequest(buildWebhookBody('wamid.ooo', 'sent')));
+
+    expect(insertedEvents).toHaveLength(2);
+    const statuses = insertedEvents.map(e => e.status);
+    expect(statuses).toContain('delivered');
+    expect(statuses).toContain('sent');
+  });
+
+  // G. Contract regression test
+  it('contract match: contract update executes, OTP tracking also runs', async () => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+    insertedEvents = [];
+    warnings = [];
+    contractUpdateCalls = [];
+    insertBehavior = (row) => { insertedEvents.push(row); return { error: null }; };
+    attemptLookupResult = { data: { id: 'attempt-uuid-contract' }, error: null };
+    setupMocks({ contractMatch: { id: 'contract-1', wa_delivery_status: null } });
+
+    const { POST } = await import('@/app/api/webhook/meta-cloud/route');
+    const res = await POST(makeWebhookRequest(buildWebhookBody('wamid.both', 'delivered')));
+
+    expect(res.status).toBe(200);
+    // Contract was updated
+    expect(contractUpdateCalls).toHaveLength(1);
+    expect(contractUpdateCalls[0].wa_delivery_status).toBe('delivered');
+    // OTP status also recorded
+    expect(insertedEvents).toHaveLength(1);
+    expect(insertedEvents[0].status).toBe('delivered');
+  });
+
+  // Original status persistence tests (kept executable)
   for (const statusValue of ['sent', 'delivered', 'read'] as const) {
     it(`persists "${statusValue}" webhook status`, async () => {
       const { POST } = await import('@/app/api/webhook/meta-cloud/route');
-      const body = buildWebhookBody('wamid.otp123', statusValue);
-      const req = makeWebhookRequest(body);
-      await POST(req);
+      await POST(makeWebhookRequest(buildWebhookBody('wamid.otp123', statusValue)));
 
-      expect(upsertedEvents).toHaveLength(1);
-      expect(upsertedEvents[0].attempt_id).toBe('attempt-uuid-1');
-      expect(upsertedEvents[0].status).toBe(statusValue);
-      expect(upsertedEvents[0].error_code).toBeUndefined();
+      expect(insertedEvents).toHaveLength(1);
+      expect(insertedEvents[0].attempt_id).toBe('attempt-uuid-1');
+      expect(insertedEvents[0].status).toBe(statusValue);
+      expect(insertedEvents[0].error_code).toBeUndefined();
     });
   }
 
   it('persists "failed" status with sanitized error info', async () => {
-    vi.doMock('crypto', async () => {
-      const actual = await vi.importActual<typeof import('crypto')>('crypto');
-      return {
-        ...actual,
-        createHmac: () => ({
-          update: () => ({ digest: () => 'test' }),
-        }),
-        timingSafeEqual: () => true,
-      };
-    });
-
     const { POST } = await import('@/app/api/webhook/meta-cloud/route');
-    const body = buildWebhookBody('wamid.otp456', 'failed', [{ code: 131026, title: 'Message Undeliverable' }]);
-    const req = makeWebhookRequest(body);
-    await POST(req);
+    const body = buildWebhookBody('wamid.otp456', 'failed', '1753383000', [{ code: 131026, title: 'Message Undeliverable' }]);
+    await POST(makeWebhookRequest(body));
 
-    expect(upsertedEvents).toHaveLength(1);
-    expect(upsertedEvents[0].status).toBe('failed');
-    expect(upsertedEvents[0].error_code).toBe('131026');
-    expect(upsertedEvents[0].error_title).toBe('Message Undeliverable');
-    expect(upsertedEvents[0].error_category).toBe('message_undeliverable');
-    // Must not contain phone or OTP
-    const serialized = JSON.stringify(upsertedEvents);
+    expect(insertedEvents).toHaveLength(1);
+    expect(insertedEvents[0].status).toBe('failed');
+    expect(insertedEvents[0].error_code).toBe('131026');
+    expect(insertedEvents[0].error_title).toBe('Message Undeliverable');
+    expect(insertedEvents[0].error_category).toBe('message_undeliverable');
+    const serialized = JSON.stringify(insertedEvents);
     expect(serialized).not.toMatch(/\+?\d{10,}/);
-  });
-
-  it('duplicate callbacks: 23505 is silently ignored, no warning emitted', () => {
-    // Verify structurally: the code checks for 23505 and silently ignores it
-    const code = readFileSync('app/api/webhook/meta-cloud/route.ts', 'utf-8');
-    const otpBlock = code.slice(code.indexOf('// OTP delivery status tracking'));
-
-    // The insert uses .insert() not .upsert()
-    expect(otpBlock).toContain('.insert(insertData)');
-    // 23505 duplicate key errors are explicitly handled
-    expect(otpBlock).toContain("statusErr.code !== '23505'");
-    // Warning is only emitted for non-23505 errors
-    expect(otpBlock).toContain('Delivery status insert failed');
-    // The 23505 check comes before the warning
-    const checkIdx = otpBlock.indexOf("'23505'");
-    const warnIdx = otpBlock.indexOf('Delivery status insert failed');
-    expect(warnIdx).toBeGreaterThan(checkIdx);
-  });
-
-});
-
-describe('OTP webhook non-23505 error handling', () => {
-  function buildWebhookBody(wamid: string, status: string) {
-    return {
-      object: 'whatsapp_business_account',
-      entry: [{
-        id: 'waba-id',
-        changes: [{
-          value: {
-            messaging_product: 'whatsapp',
-            metadata: { phone_number_id: 'test-pnid', display_phone_number: '12029226251' },
-            statuses: [{ id: wamid, status, timestamp: '1753383000' }],
-          },
-          field: 'messages',
-        }],
-      }],
-    };
-  }
-
-  function makeWebhookRequest(body: unknown) {
-    return new NextRequest('https://www.waaiio.com/api/webhook/meta-cloud', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-hub-signature-256': 'sha256=test' },
-      body: JSON.stringify(body),
-    });
-  }
-
-  beforeEach(() => {
-    vi.restoreAllMocks();
-    vi.resetModules();
-    process.env.META_CLOUD_WABA_ID = 'test-waba';
-    process.env.META_APP_SECRET = 'test-secret';
-  });
-
-  afterEach(() => {
-    delete process.env.META_CLOUD_WABA_ID;
-    delete process.env.META_APP_SECRET;
-  });
-
-  it('non-23505 insertion error emits sanitized warning (structural)', () => {
-    // Verify the code path: non-23505 errors trigger a warning with errorCode
-    const code = readFileSync('app/api/webhook/meta-cloud/route.ts', 'utf-8');
-    const otpBlock = code.slice(code.indexOf('// OTP delivery status tracking'));
-    // Check that non-23505 errors emit a warning
-    expect(otpBlock).toContain("statusErr.code !== '23505'");
-    expect(otpBlock).toContain('Delivery status insert failed');
-    // Warning includes errorCode for diagnosis
-    expect(otpBlock).toContain('errorCode: statusErr.code');
-    // Warning does not include raw error message (could contain row data)
-    expect(otpBlock).not.toContain('statusErr.message');
-  });
-});
-
-describe('OTP webhook callback ordering', () => {
-  let upsertedEvents: Array<Record<string, unknown>>;
-
-  function buildWebhookBody(wamid: string, status: string) {
-    return {
-      object: 'whatsapp_business_account',
-      entry: [{
-        id: 'waba-id',
-        changes: [{
-          value: {
-            messaging_product: 'whatsapp',
-            metadata: { phone_number_id: 'test-pnid', display_phone_number: '12029226251' },
-            statuses: [{ id: wamid, status, timestamp: '1753383000' }],
-          },
-          field: 'messages',
-        }],
-      }],
-    };
-  }
-
-  function makeWebhookRequest(body: unknown) {
-    return new NextRequest('https://www.waaiio.com/api/webhook/meta-cloud', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-hub-signature-256': 'sha256=test' },
-      body: JSON.stringify(body),
-    });
-  }
-
-  const cryptoMock = async () => {
-    const actual = await vi.importActual<typeof import('crypto')>('crypto');
-    return {
-      ...actual,
-      createHmac: () => ({ update: () => ({ digest: () => 'test' }) }),
-      timingSafeEqual: () => true,
-    };
-  };
-
-  beforeEach(() => {
-    vi.restoreAllMocks();
-    vi.resetModules();
-    upsertedEvents = [];
-    process.env.META_CLOUD_WABA_ID = 'test-waba';
-    process.env.META_APP_SECRET = 'test-secret';
-
-    vi.doMock('crypto', cryptoMock);
-    vi.doMock('@/lib/logger', () => ({
-      logger: { withContext: () => ({ error: () => {}, warn: () => {}, info: () => {}, debug: () => {}, withContext: function() { return this; } }) },
-      generateRequestId: () => 'test-req-id',
-    }));
-    vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: vi.fn().mockReturnValue({
-        from: vi.fn().mockImplementation((table: string) => {
-          if (table === 'contracts' || table === 'contract_signers') {
-            return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null }) }) }) };
-          }
-          if (table === 'otp_delivery_attempts') {
-            return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'att-1' }, error: null }) }) }) };
-          }
-          if (table === 'otp_delivery_status_events') {
-            return { insert: vi.fn().mockImplementation((row: Record<string, unknown>) => { upsertedEvents.push(row); return { error: null }; }) };
-          }
-          return {};
-        }),
-      }),
-    }));
-  });
-
-  afterEach(() => {
-    delete process.env.META_CLOUD_WABA_ID;
-    delete process.env.META_APP_SECRET;
-  });
-
-  it('out-of-order callbacks are handled safely — append-only design', () => {
-    // Verify structurally: each status gets its own insert, unique constraint
-    // prevents duplicates but does not enforce ordering
-    const code = readFileSync('app/api/webhook/meta-cloud/route.ts', 'utf-8');
-    const otpBlock = code.slice(code.indexOf('// OTP delivery status tracking'));
-
-    // Each status callback inserts independently (append-only)
-    expect(otpBlock).toContain('.insert(insertData)');
-    // Unique constraint is per (attempt_id, status), not ordered
-    const migration = readFileSync('supabase/migrations/248_otp_delivery_tracking.sql', 'utf-8');
-    expect(migration).toContain('CREATE UNIQUE INDEX idx_otp_delivery_status_unique ON public.otp_delivery_status_events (attempt_id, status)');
-    // No status ordering enforcement in the insert path
-    expect(otpBlock).not.toContain('statusOrder');
-  });
-});
-
-describe('OTP webhook static checks', () => {
-  it('unknown message IDs do not create OTP records', async () => {
-    // Verify structurally: the code only upserts inside `if (otpAttempt)` guard
-    const code = readFileSync('app/api/webhook/meta-cloud/route.ts', 'utf-8');
-    const otpStart = code.indexOf('// OTP delivery status tracking');
-    const otpEnd = code.indexOf('}\n          }\n        }\n\n        if (messages.length');
-    const otpBlock = code.slice(otpStart, otpEnd);
-
-    // The insert is guarded by `if (otpAttempt)`
-    expect(otpBlock).toContain('if (otpAttempt)');
-    // maybeSingle() returns null for unknown IDs — the insert is inside the if block
-    expect(otpBlock).toContain('.maybeSingle()');
-    // The insert call is inside the if block, not outside
-    const ifIdx = otpBlock.indexOf('if (otpAttempt)');
-    const insertIdx = otpBlock.indexOf('.insert(insertData)');
-    expect(insertIdx).toBeGreaterThan(ifIdx);
-  });
-
-  it('existing contract webhook handling remains unchanged', async () => {
-    // Verify structurally that the contract handling code is preserved
-    const code = readFileSync('app/api/webhook/meta-cloud/route.ts', 'utf-8');
-    // Contract status updates still exist
-    expect(code).toContain("supabase.from('contracts').select('id, wa_delivery_status').eq('wa_message_id', wamid)");
-    expect(code).toContain("supabase.from('contract_signers').select('id, wa_delivery_status').eq('wa_message_id', wamid)");
-    // Contract update logic is still present
-    expect(code).toContain('.update({ wa_delivery_status: newStatus');
-    // OTP tracking comes AFTER contract handling
-    const contractIdx = code.indexOf("from('contracts')");
-    const otpIdx = code.indexOf('OTP delivery status tracking');
-    expect(otpIdx).toBeGreaterThan(contractIdx);
   });
 });
 

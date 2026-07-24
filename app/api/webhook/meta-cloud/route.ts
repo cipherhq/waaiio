@@ -377,12 +377,13 @@ export async function POST(request: NextRequest) {
             } else if (otpAttempt) {
               // Parse timestamp safely — Meta sends Unix seconds as string
               const tsNum = Number(status.timestamp);
+              const parsedTimestamp = new Date(tsNum * 1000);
               let eventTimestamp: string;
-              if (!Number.isFinite(tsNum) || tsNum <= 0) {
+              if (!Number.isFinite(tsNum) || tsNum <= 0 || Number.isNaN(parsedTimestamp.getTime())) {
                 eventTimestamp = new Date().toISOString();
                 log.withContext({ op: 'delivery-status.timestamp' }).warn('[META-WEBHOOK] Invalid status timestamp, using received time');
               } else {
-                eventTimestamp = new Date(tsNum * 1000).toISOString();
+                eventTimestamp = parsedTimestamp.toISOString();
               }
 
               const insertData: Record<string, unknown> = {
