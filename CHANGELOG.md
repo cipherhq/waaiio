@@ -5,6 +5,18 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-23
+
+### Security: Deliver phone OTP via WhatsApp authentication template
+- `lib/channels/meta-cloud.ts` — Added `sendAuthenticationTemplate()` method. Sends approved `waaiio_login_otp` AUTHENTICATION template with BODY and COPY_CODE button components. Validates 6-digit OTP format. Fails closed when Meta returns no message ID.
+- `app/api/auth/otp/send/route.ts` — Replaced both `sendText()` calls (DB channel + env fallback) with `sendAuthenticationTemplate()`. Added `OTP_TEMPLATE_NAME` and `OTP_TEMPLATE_LANGUAGE` constants.
+- `lib/__tests__/otp-authentication-template.test.ts` — 14 tests covering payload structure, code identity across BODY/button, message ID return, fail-closed behavior, OTP format validation, route channel selection, fallback, response safety, and static sendText regression.
+- `lib/__tests__/console-error-cleanup.test.ts`, `lib/__tests__/phone-otp-challenge.test.ts` — Updated mocks from `sendText()` to `sendAuthenticationTemplate()`.
+- **What was broken:** Free-form `sendText()` cannot deliver OTPs to cold numbers without a 24-hour WhatsApp customer service window. Authentication templates bypass this restriction.
+- **Affects:** Phone OTP login flow. No other WhatsApp flows changed.
+
+---
+
 ## 2026-07-14
 
 ### UX: Value-first onboarding redesign
