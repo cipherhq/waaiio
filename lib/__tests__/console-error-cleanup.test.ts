@@ -349,7 +349,7 @@ describe('Executable: OTP send route channel-failure continuation', () => {
     vi.doMock('@/lib/channels/meta-cloud', () => {
       return {
         MetaCloudService: class {
-          async sendText() { return undefined; }
+          async sendAuthenticationTemplate() { return { messageId: 'wamid.test' }; }
         },
       };
     });

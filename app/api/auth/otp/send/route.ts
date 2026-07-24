@@ -10,6 +10,10 @@ import { safeLogErrorContext } from '@/lib/errors';
 // Support all Waaiio countries: NG (+234), US (+1), GB (+44), CA (+1), GH (+233)
 const PHONE_REGEX = /^\+[1-9][0-9]{6,14}$/;
 
+// Approved Meta AUTHENTICATION template — delivers OTP without a 24-hour window
+const OTP_TEMPLATE_NAME = 'waaiio_login_otp';
+const OTP_TEMPLATE_LANGUAGE = 'en_US';
+
 export async function POST(request: NextRequest) {
   try {
     const { phone } = await request.json();
@@ -40,7 +44,7 @@ export async function POST(request: NextRequest) {
     // Generate OTP and server-side challenge
     const { code, challengeId } = await generatePhoneOtp(phone);
 
-    // Send OTP via WhatsApp using a shared Meta Cloud channel
+    // Send OTP via WhatsApp AUTHENTICATION template
     let sent = false;
     try {
       const supabase = createServiceClient();
@@ -58,9 +62,11 @@ export async function POST(request: NextRequest) {
           phoneNumberId: channel.phone_number_id,
           accessToken: channel.meta_access_token,
         });
-        await cloud.sendText({
+        await cloud.sendAuthenticationTemplate({
           to: phone,
-          text: `Your Waaiio login code is: *${code}*\n\nThis code expires in 5 minutes. Do not share it with anyone.`,
+          templateName: OTP_TEMPLATE_NAME,
+          languageCode: OTP_TEMPLATE_LANGUAGE,
+          code,
         });
         sent = true;
       }
@@ -68,7 +74,7 @@ export async function POST(request: NextRequest) {
       logger.withContext({ op: 'otp-send.whatsapp-channel', ...safeLogErrorContext(err) }).error('[OTP Send] WhatsApp channel send failed, trying env fallback');
     }
 
-    // Fallback: use env-level Meta Cloud credentials (shared number 12029226251)
+    // Fallback: use env-level Meta Cloud credentials
     if (!sent) {
       const phoneNumberId = process.env.META_CLOUD_PHONE_NUMBER_ID;
       const accessToken = process.env.META_CLOUD_ACCESS_TOKEN;
@@ -81,9 +87,11 @@ export async function POST(request: NextRequest) {
       }
 
       const cloud = new MetaCloudService({ phoneNumberId, accessToken });
-      await cloud.sendText({
+      await cloud.sendAuthenticationTemplate({
         to: phone,
-        text: `Your Waaiio login code is: *${code}*\n\nThis code expires in 5 minutes. Do not share it with anyone.`,
+        templateName: OTP_TEMPLATE_NAME,
+        languageCode: OTP_TEMPLATE_LANGUAGE,
+        code,
       });
     }
 
