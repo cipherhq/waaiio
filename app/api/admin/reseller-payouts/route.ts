@@ -1,29 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
 
-async function requireAdminOrFinance(supabase: ReturnType<typeof createServiceClient>) {
-  // Use the SSR client for auth, then check role
-  const supa = await createClient();
-  const { data: { user } } = await supa.auth.getUser();
-  if (!user) return null;
-
-  const { data: profile } = await supa
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (!profile || !['admin', 'finance'].includes(profile.role)) return null;
-  return { user, role: profile.role as string };
-}
+export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
     const service = createServiceClient();
-    const auth = await requireAdminOrFinance(service);
-    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const auth = await requirePlatformAdmin(request, { requiredRole: ['admin', 'finance'] });
+    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
     const params = request.nextUrl.searchParams;
     const status = params.get('status');
@@ -75,8 +61,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const service = createServiceClient();
-    const auth = await requireAdminOrFinance(service);
-    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const auth = await requirePlatformAdmin(request, { requiredRole: ['admin', 'finance'] });
+    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
     const body = await request.json();
     const { reseller_id, period_start, period_end, holdback_percent, deductions, notes } = body;
@@ -156,7 +142,7 @@ export async function POST(request: NextRequest) {
         metadata: {
           holdback_percent: effectiveHoldbackPercent,
           fee_count: (fees || []).length,
-          generated_by: auth.user.id,
+          generated_by: auth.id,
         },
       })
       .select()

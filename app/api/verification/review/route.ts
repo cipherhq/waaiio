@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/email/client';
 import { kycApprovedEmail, kycRejectedEmail } from '@/lib/email/templates';
 import { getPayoutLimit, formatPayoutLimit, type CountryCode, type VerificationLevel } from '@/lib/constants';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 
 const LEVEL_LABELS: Record<string, string> = {
   unverified: 'Unverified',
@@ -12,22 +13,12 @@ const LEVEL_LABELS: Record<string, string> = {
 };
 
 export async function POST(request: NextRequest) {
+  const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+  if (!admin) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // Verify admin
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (!profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
 
   const body = await request.json();
   const { business_id, action, level, notes, reason, document_ids } = body;
@@ -63,7 +54,7 @@ export async function POST(request: NextRequest) {
         verification_status: 'verified',
         verification_notes: notes || null,
         verified_at: new Date().toISOString(),
-        verified_by: user.id,
+        verified_by: admin.userId,
         payout_limit_monthly: limit,
       })
       .eq('id', business_id);
@@ -74,7 +65,7 @@ export async function POST(request: NextRequest) {
         .from('business_documents')
         .update({
           status: 'approved',
-          reviewed_by: user.id,
+          reviewed_by: admin.userId,
           reviewed_at: new Date().toISOString(),
         })
         .in('id', document_ids);
@@ -102,7 +93,7 @@ export async function POST(request: NextRequest) {
 
     // Audit log
     await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
+      actor_id: admin.userId,
       action: 'approve_verification',
       entity_type: 'business',
       entity_id: business_id,
@@ -131,7 +122,7 @@ export async function POST(request: NextRequest) {
         .from('business_documents')
         .update({
           status: 'rejected',
-          reviewed_by: user.id,
+          reviewed_by: admin.userId,
           reviewed_at: new Date().toISOString(),
           rejection_reason: reason,
         })
@@ -159,7 +150,7 @@ export async function POST(request: NextRequest) {
 
     // Audit log
     await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
+      actor_id: admin.userId,
       action: 'reject_verification',
       entity_type: 'business',
       entity_id: business_id,
