@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 
@@ -10,22 +11,12 @@ interface Flag {
 }
 
 export async function POST(request: NextRequest) {
+  const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+  if (!admin) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+  }
+
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // Verify admin
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (!profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
 
   try {
     const settings = await loadPlatformSettings({ useServiceClient: true });
@@ -232,7 +223,7 @@ export async function POST(request: NextRequest) {
 
     // Audit log
     await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
+      actor_id: admin.id,
       action: 'generate_payouts',
       entity_type: 'business_payout',
       entity_id: null,

@@ -1,22 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
 
-async function getAdminAuth() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (!profile || !['admin', 'finance'].includes(profile.role)) return null;
-  return { user, role: profile.role as string };
-}
+export const dynamic = 'force-dynamic';
 
 export async function PATCH(
   request: NextRequest,
@@ -24,8 +11,8 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const auth = await getAdminAuth();
-    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const auth = await requirePlatformAdmin(request, { requiredRole: ['admin', 'finance'] });
+    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
     const body = await request.json();
     const { action, notes } = body;
@@ -60,7 +47,7 @@ export async function PATCH(
       }
       updateData = {
         status: 'approved',
-        approved_by: auth.user.id,
+        approved_by: auth.id,
         notes: notes || payout.notes,
       };
     } else if (action === 'reject') {

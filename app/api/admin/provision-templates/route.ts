@@ -2,7 +2,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { timingSafeEqual } from 'crypto';
 import { provisionTemplates } from '@/lib/channels/provision-templates';
 import { verifyCronAuth } from '@/lib/cron-auth';
-import { createClient } from '@/lib/supabase/server';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
+
+export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/admin/provision-templates
@@ -21,12 +23,8 @@ export async function GET(request: NextRequest) {
     const cronAuth = verifyCronAuth(request);
     if (cronAuth) {
       // Cron auth failed — try admin session as fallback
-      const supabase = await createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return cronAuth;
-      const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      const PLATFORM_OWNERS = ['19d95ac8-0f39-4c59-b0ca-18bf9dfba501', '51b56d99-8998-46a9-aebc-2afd47f698bd'];
-      if (!profile || (profile.role !== 'admin' && !PLATFORM_OWNERS.includes(user.id))) return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+      const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+      if (!admin) return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
     }
   }
 

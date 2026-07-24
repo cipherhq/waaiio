@@ -3,37 +3,16 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { wrap, btn, h, p } from '@/lib/email/templates';
 import { logger } from '@/lib/logger';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createServiceClient();
-
-    // Auth: require admin role
-    const authHeader = request.headers.get('authorization');
-    const token = authHeader?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Check admin role
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single();
-
-    if (profileError) {
-      logger.error('[RESELLER_INVITE] Profile lookup error:', profileError.message);
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-    }
-    if (!profile || profile.role !== 'admin') {
+    const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+    if (!admin) {
       return NextResponse.json({ error: 'Forbidden — admin role required' }, { status: 403 });
     }
+
+    const supabase = createServiceClient();
 
     const body = await request.json();
     const { reseller_id } = body as { reseller_id: string };

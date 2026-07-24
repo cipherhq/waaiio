@@ -3,28 +3,20 @@ import { createClient } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/email/client';
 import { payoutRejectedEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+
+  const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+  if (!admin) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+  }
+
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // Verify admin
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (!profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
 
   const body = await request.json();
   const { reason } = body;
@@ -63,7 +55,7 @@ export async function POST(
 
   // Audit log
   await supabase.from('admin_audit_logs').insert({
-    actor_id: user.id,
+    actor_id: admin.id,
     action: 'reject_payout',
     entity_type: 'business_payout',
     entity_id: id,
