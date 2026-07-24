@@ -60,7 +60,7 @@ const CAPABILITY_LABELS: Record<string, string> = {
   reminders: 'Reminders', reports: 'Reports', staff: 'Staff',
 };
 
-const SHARED_WHATSAPP_NUMBER = '12029226251';
+const SHARED_WHATSAPP_NUMBER = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US || '';
 
 export default function DirectoryClient() {
   const [businesses, setBusinesses] = useState<Business[]>([]);

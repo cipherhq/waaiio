@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -39,6 +39,7 @@ interface Donation {
 type ViewMode = 'list' | 'add' | 'edit';
 
 export default function CampaignsPage() {
+  const allowed = useRequireCapability('crowdfunding');
   const business = useBusiness();
   const country = (business.country_code || 'NG') as CountryCode;
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -185,6 +186,8 @@ export default function CampaignsPage() {
     setView('list');
     loadCampaigns();
   }
+
+  if (!allowed) return null;
 
   if (loading) {
     return (

@@ -40,10 +40,37 @@ export async function POST(request: NextRequest) {
       otpToken?: string;
     };
 
-    // Basic validation
-    if (!businessSlug || !serviceId || !date || !time || !guestName || !guestEmail) {
+    // ── Field-level validation ──
+    const vErrors: Record<string, string> = {};
+
+    if (!businessSlug || typeof businessSlug !== 'string') vErrors.businessSlug = 'Business slug is required';
+    if (!serviceId || typeof serviceId !== 'string') {
+      vErrors.serviceId = 'Service ID is required';
+    } else if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(serviceId)) {
+      vErrors.serviceId = 'Service ID must be a valid UUID';
+    }
+    if (!date || typeof date !== 'string') vErrors.date = 'Date is required';
+    if (!time || typeof time !== 'string') vErrors.time = 'Time is required';
+    if (!guestName || typeof guestName !== 'string' || !guestName.trim()) {
+      vErrors.guestName = 'Guest name is required';
+    } else if (guestName.trim().length > 200) {
+      vErrors.guestName = 'Guest name must be 200 characters or less';
+    }
+    if (!guestEmail || typeof guestEmail !== 'string') vErrors.guestEmail = 'Email is required';
+    if (guestPhone !== undefined && guestPhone !== null && typeof guestPhone !== 'string') {
+      vErrors.guestPhone = 'Phone must be a string';
+    }
+    if (quantity !== undefined && quantity !== null) {
+      if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity < 1) {
+        vErrors.quantity = 'Quantity must be a positive integer';
+      } else if (quantity > 50) {
+        vErrors.quantity = 'Quantity cannot exceed 50';
+      }
+    }
+
+    if (Object.keys(vErrors).length > 0) {
       return NextResponse.json(
-        { error: 'Missing required fields' },
+        { error: 'Validation failed', fields: vErrors },
         { status: 400 },
       );
     }

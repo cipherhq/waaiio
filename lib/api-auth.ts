@@ -21,6 +21,8 @@ export async function authenticateRequest(
     businessIdKey?: string;
     /** Pre-parsed request body (since body can only be read once) */
     body?: Record<string, unknown>;
+    /** If provided, verifies the business has this capability enabled. Requires requireBusinessOwnership. */
+    requireCapability?: string;
   } = {},
 ): Promise<
   | NextResponse
@@ -83,6 +85,24 @@ export async function authenticateRequest(
 
     if (!business) {
       return NextResponse.json({ error: 'Forbidden: you do not own this business' }, { status: 403 });
+    }
+
+    // Check capability if required
+    if (options.requireCapability) {
+      const { data: cap } = await service
+        .from('business_capabilities')
+        .select('id')
+        .eq('business_id', businessId)
+        .eq('capability_id', options.requireCapability)
+        .eq('is_enabled', true)
+        .maybeSingle();
+
+      if (!cap) {
+        return NextResponse.json(
+          { error: `This feature requires the "${options.requireCapability}" capability` },
+          { status: 403 },
+        );
+      }
     }
 
     return { user: { id: user.id, email: user.email }, businessId, service };

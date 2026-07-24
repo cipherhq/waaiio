@@ -5,6 +5,70 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-16
+
+### Auto-Deduct Package Sessions on Booking Confirmation
+- `supabase/migrations/246_deduct_package_session_rpc.sql` — New SECURITY DEFINER RPC `deduct_package_session(p_enrollment_id)`. Atomically increments `sessions_used` only if `sessions_used < sessions_total`, `is_active = true`, and `expires_at > NOW()`. Returns boolean.
+- `lib/payments/process-success.ts` — Added `deductPackageSession()` function. After booking confirmation, looks up the customer's active package enrollment (by business_id, guest_phone, service_id match in `service_packages.service_ids`). Uses soonest-expiring-first strategy. Calls RPC for atomic deduction. Non-blocking (errors caught and logged, never fails payment confirmation).
+- **Affects:** All booking confirmations via payment webhooks. Package enrollments now auto-decrement when a covered service is booked and paid for. No manual session tracking needed.
+
+### JSON-LD Structured Data for Event and Property Public Pages
+- `app/e/[slug]/page.tsx` — Enhanced existing JSON-LD with: combined date+time for startDate/endDate (ISO 8601), eventStatus, eventAttendanceMode, organizer URL, location address, per-ticket-type offers array with availability and URL. Uses `getCurrencyCode()` instead of inline currencyMap.
+- `app/property/[id]/page.tsx` — Added new JSON-LD `LodgingBusiness` schema with: name, description, image, address (PostalAddress), numberOfRooms, offer with price/currency/unitCode, brand organization link.
+- **Affects:** SEO and AI discoverability for public event and property pages. No visual or functional changes.
+
+### Auto-Upgrade Membership Tier on Spend Threshold
+- `supabase/migrations/245_auto_upgrade_membership_tier.sql` — New BEFORE UPDATE trigger on `customer_profiles.total_spent`. When total_spent increases, finds the highest qualifying `membership_tiers` row (by min_spend) and upgrades the customer. Never downgrades. Handles NULL tier (new customers), businesses with no tiers (no-op), and same-tier (no-op). SECURITY DEFINER. Sets `tier_earned_at` on upgrade.
+- **Affects:** Any code path that updates `customer_profiles.total_spent` (migration 165 `increment_customer_visit` RPC, any direct UPDATE). Membership tier changes are now automatic — no application-level code needed.
+
+### Field-Level Server-Side Validation on Critical API Routes
+- `app/api/bookings/public/create/route.ts` — Added UUID validation on serviceId, guestName max 200 chars, quantity positive integer with bounds (1-50), structured field-level error responses.
+- `app/api/invoices/route.ts` — Added UUID validation on business_id, customer_name max 200 chars, per-item validation (description required, quantity positive, unit_price non-negative), due_date format, tax_rate 0-100 range, discount_value non-negative.
+- `app/api/products/bulk/route.ts` — Added UUID validation on business_id, array type and emptiness checks with structured errors.
+- `app/api/events/purchase/route.ts` — Added UUID validation on ticketTypeId, guestName max 200 chars, consolidated email/quantity validation with field-specific error messages.
+- All routes now return `{ error: 'Validation failed', fields: { fieldName: 'message' } }` on 400 for client-friendly error handling.
+- **Affects:** All public booking/purchase flows, invoice creation, bulk product import. No breaking changes — existing valid requests pass through unchanged.
+
+### Pre-Launch Hardening: Ace AI Copilot (Critical Fix)
+- `app/api/copilot/query/route.ts` — **Complete rewrite.** Fixed 10 bugs: bookings used `created_at` instead of `date` column; revenue had no currency; week/month used rolling days not calendar; no business timezone; unpaid included cancelled; top products had wrong column filter and showed no names; used nonexistent `payment_status` column.
+- `lib/copilot/classify-intent.ts` — New file. Extracted intent classifier (20 report types, was 6). Supports: bookings (today/upcoming/week/month), orders (today/pending), revenue (today/week/month/compare), unpaid (bookings/invoices), top products, top services, new/returning customers, cancellation rate, check-ins, low stock, attention items.
+- `components/dashboard/Copilot.tsx` — Honest UI ("Quick answers about..." not "Ask anything"), capability-aware quick questions, follow-up context, auto-scroll, mobile responsive, whitespace-pre-line.
+- Role-based permissions: staff/support blocked from financial reports via `business_members` table.
+- **Tests:** 49 new intent classification tests in `lib/copilot/__tests__/classify-intent.test.ts`.
+- **Affects:** All dashboard copilot users. Team members can now access copilot with role-appropriate restrictions.
+
+### Pre-Launch Hardening: Remove Hardcoded WhatsApp Fallbacks (Critical)
+- `lib/support-contact.ts` — New centralized helper. `getSupportWhatsAppNumber()` and `getSupportWhatsAppLink()` read from `NEXT_PUBLIC_WHATSAPP_NUMBER_{country}` env vars. Returns empty string if not configured (safe).
+- Removed hardcoded `12029226251` from 11 files: Footer, layout, HomeClient, contact, directory, OnboardingWizard, StepAuth, dashboard page, support page, whatsapp connect, ReturnToWhatsApp.
+- `app/api/onboarding/subscribe/route.ts` — Uses `FALLBACK_EMAIL_DOMAIN` env var.
+- **Production requirement:** Set `NEXT_PUBLIC_WHATSAPP_NUMBER_US` in Vercel.
+- **Affects:** All marketing pages, onboarding, dashboard. WhatsApp buttons hidden if env var not set.
+
+### Pre-Launch Hardening: Dashboard Capability Gating (Security)
+- Added `useRequireCapability()` to 14 dashboard pages that were missing it. Users could bypass sidebar hiding by navigating directly to URLs like `/dashboard/invoices`.
+- Pages gated: invoices, properties (3 pages), forms, surveys, packages, locations, waivers, staff, team, contracts, reports, campaigns.
+- Redirects to `/dashboard/capabilities?upgrade={cap}` if capability missing.
+- **Affects:** All growth/business-tier feature pages. Free-tier pages unchanged.
+
+### Pre-Launch Hardening: API Capability Checks (Security)
+- `lib/api-auth.ts` — Extended `authenticateRequest` with `requireCapability` option.
+- Added capability verification to 12 POST API routes: invoices, broadcasts, surveys, packages, locations, waivers, contracts, staff, reports, campaigns, loyalty, referrals.
+- Returns 403 with clear error if capability not enabled.
+- **Affects:** All tier-gated API mutations. Prevents feature bleed via direct API calls.
+
+### Pre-Launch Hardening: Dashboard Finance Timezone Fix
+- `app/dashboard/financials/page.tsx` — Monthly revenue chart and date filters now use business timezone via `Intl.DateTimeFormat`. Was using UTC, causing late-night transactions to appear in wrong month.
+- `app/dashboard/payouts/history/page.tsx` — Monthly totals and chart buckets now use business timezone.
+- **Affects:** Financials and payout history for businesses in non-UTC timezones.
+
+### Pre-Launch Hardening: Auto-Approve Limits Admin-Configurable
+- `lib/platformSettings.ts` — Added `auto_approve_limits` to PlatformSettings interface and loader.
+- `app/api/cron/auto-payout/route.ts` — Replaced hardcoded `AUTO_APPROVE_LIMIT_NGN`/`AUTO_APPROVE_LIMIT_USD` with `settings.auto_approve_limits[countryCode]`.
+- `supabase/migrations/244_auto_approve_limits_setting.sql` — Seeds per-country limits in `platform_settings`.
+- **Affects:** Auto-payout cron. Admin can now adjust limits via PlatformSettings page.
+
+---
+
 ## 2026-07-14
 
 ### UX: Value-first onboarding redesign

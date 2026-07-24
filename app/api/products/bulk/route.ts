@@ -23,12 +23,27 @@ export async function POST(request: NextRequest) {
     products: BulkProduct[];
   };
 
-  if (!business_id || !products || !Array.isArray(products)) {
-    return NextResponse.json({ error: 'Missing business_id or products array' }, { status: 400 });
+  // ── Field-level validation ──
+  const vErrors: Record<string, string> = {};
+
+  if (!business_id || typeof business_id !== 'string') {
+    vErrors.business_id = 'Business ID is required';
+  } else if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(business_id)) {
+    vErrors.business_id = 'Business ID must be a valid UUID';
+  }
+  if (!products || !Array.isArray(products)) {
+    vErrors.products = 'Products must be an array';
+  } else if (products.length === 0) {
+    vErrors.products = 'At least one product is required';
+  } else if (products.length > 500) {
+    vErrors.products = 'Maximum 500 products per request';
   }
 
-  if (products.length > 500) {
-    return NextResponse.json({ error: 'Maximum 500 products per request' }, { status: 400 });
+  if (Object.keys(vErrors).length > 0) {
+    return NextResponse.json(
+      { error: 'Validation failed', fields: vErrors },
+      { status: 400 },
+    );
   }
 
   // Verify ownership

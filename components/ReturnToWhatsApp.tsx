@@ -7,11 +7,11 @@
  */
 export function ReturnToWhatsApp({ phone }: { phone?: string }) {
   // Use business phone if provided, otherwise fall back to platform number
-  // Priority: business channel number → US shared number (primary platform) → NG
+  // Priority: business channel number → env-configured support number
   const waNumber = phone?.replace(/[^0-9]/g, '')
     || process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US
     || process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG
-    || '12029226251'; // Hardcoded US shared number as last resort
+    || '';
 
   const waLink = waNumber ? `https://wa.me/${waNumber}` : '#';
 

@@ -120,11 +120,59 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Table not allowed' }, { status: 403, headers: cors });
     }
 
-    // Non-admin roles: restrict select to prevent relationship traversal (e.g., '*, profiles(*)')
+    // ── Column security for non-admin roles ──
+    // Allowlist approach: only approved columns can be selected.
+    // New/unknown columns are rejected by default (safe against schema changes).
+    // Tables without an explicit allowlist get select=* (bookings, orders, etc.
+    // do not contain credentials — only the tables below have secrets).
+    const APPROVED_COLUMNS: Record<string, string[]> = {
+      payout_accounts: [
+        'id', 'business_id', 'gateway', 'bank_name', 'account_name',
+        'platform_percentage', 'is_active', 'verified_at', 'created_at', 'updated_at',
+        'country_code',
+        // EXCLUDED: account_number, square_access_token, stripe_account_id,
+        //           routing_number, subaccount_code, iban, swift_code, square_merchant_id
+      ],
+      subscriptions: [
+        'id', 'business_id', 'plan', 'status', 'amount', 'currency',
+        'current_period_start', 'current_period_end', 'cancelled_at',
+        'created_at', 'updated_at', 'gateway', 'billing_interval', 'cancellation_reason',
+        // EXCLUDED: paystack_subscription_code, paystack_customer_code,
+        //           stripe_subscription_id, stripe_customer_id
+      ],
+      payments: [
+        'id', 'booking_id', 'user_id', 'amount', 'currency', 'gateway',
+        'payment_method', 'card_last_four', 'card_brand', 'status',
+        'paid_at', 'created_at', 'business_id', 'refund_amount',
+        'reservation_id', 'invoice_id', 'campaign_id', 'order_id', 'gateway_fee',
+        // EXCLUDED: gateway_reference, gateway_status, metadata, payer_ip,
+        //           payer_country, payer_device_fingerprint, fraud_score, fraud_flags
+      ],
+    };
+
+    // Non-admin roles: enforce column allowlist
     let safeSelect = select;
     if (profile.role !== 'admin') {
-      // Strip any relationship traversal patterns like "table(*)" or "table!inner(*)"
+      // Strip relationship traversal patterns
       safeSelect = select.replace(/\w+[!]?\w*\([^)]*\)/g, '').replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim() || '*';
+
+      const approvedCols = APPROVED_COLUMNS[table];
+      if (approvedCols) {
+        if (safeSelect === '*' || safeSelect === '') {
+          // Replace * with approved columns only
+          safeSelect = approvedCols.join(', ');
+        } else {
+          // Validate each requested column against the allowlist
+          const requestedCols = safeSelect.split(',').map((c: string) => c.trim()).filter(Boolean);
+          const forbidden = requestedCols.filter((c: string) => !approvedCols.includes(c));
+          if (forbidden.length > 0) {
+            return NextResponse.json(
+              { error: `Columns not permitted: ${forbidden.join(', ')}` },
+              { status: 403, headers: cors },
+            );
+          }
+        }
+      }
     }
 
     let query: any = count === 'exact'
@@ -171,6 +219,23 @@ export async function POST(request: NextRequest) {
     if (error) {
       logger.error('[ADMIN QUERY] db error:', error);
       return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: cors });
+    }
+
+    // Defense in depth: for tables with an approved column list, strip any
+    // column from the response that isn't in the allowlist. This catches
+    // edge cases where the DB returns extra columns (e.g., schema changes).
+    if (profile.role !== 'admin' && Array.isArray(data)) {
+      const approvedCols = APPROVED_COLUMNS[table];
+      if (approvedCols) {
+        const approvedSet = new Set(approvedCols);
+        for (const row of data as Record<string, unknown>[]) {
+          for (const key of Object.keys(row)) {
+            if (!approvedSet.has(key)) {
+              delete row[key];
+            }
+          }
+        }
+      }
     }
 
     return NextResponse.json({ data, count: rowCount }, { headers: cors });

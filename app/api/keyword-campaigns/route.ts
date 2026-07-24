@@ -90,6 +90,16 @@ export async function POST(request: NextRequest) {
     .single();
   if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
 
+  // ── Capability check: crowdfunding ──
+  const { data: campaignCap } = await supabase
+    .from('business_capabilities')
+    .select('id')
+    .eq('business_id', business_id)
+    .eq('capability_id', 'crowdfunding')
+    .eq('is_enabled', true)
+    .maybeSingle();
+  if (!campaignCap) return NextResponse.json({ error: 'Feature not enabled' }, { status: 403 });
+
   // Validate keyword not blacklisted
   if (isCampaignKeywordBlacklisted(keyword)) {
     return NextResponse.json(

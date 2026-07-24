@@ -64,6 +64,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Business not found' }, { status: 404 });
     }
 
+    // ── Capability check: broadcast ──
+    const { data: broadcastCap } = await service
+      .from('business_capabilities')
+      .select('id')
+      .eq('business_id', business_id)
+      .eq('capability_id', 'broadcast')
+      .eq('is_enabled', true)
+      .maybeSingle();
+    if (!broadcastCap) {
+      return NextResponse.json({ message: 'Broadcast feature not enabled' }, { status: 403 });
+    }
+
     const tier = (business.subscription_tier || 'free') as SubscriptionTier;
     const settings = await loadPlatformSettings({ useServiceClient: true });
     const limits = settings.broadcast_limits[tier];
