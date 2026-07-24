@@ -46,6 +46,9 @@ export async function POST(request: NextRequest) {
 
     // Send OTP via WhatsApp AUTHENTICATION template
     let sent = false;
+    let deliveryPath: 'database_channel' | 'env_fallback' | null = null;
+    let waMessageId: string | null = null;
+
     try {
       const supabase = createServiceClient();
       const { data: channel } = await supabase
@@ -62,12 +65,14 @@ export async function POST(request: NextRequest) {
           phoneNumberId: channel.phone_number_id,
           accessToken: channel.meta_access_token,
         });
-        await cloud.sendAuthenticationTemplate({
+        const result = await cloud.sendAuthenticationTemplate({
           to: phone,
           templateName: OTP_TEMPLATE_NAME,
           languageCode: OTP_TEMPLATE_LANGUAGE,
           code,
         });
+        waMessageId = result.messageId;
+        deliveryPath = 'database_channel';
         sent = true;
       }
     } catch (err) {
@@ -87,12 +92,32 @@ export async function POST(request: NextRequest) {
       }
 
       const cloud = new MetaCloudService({ phoneNumberId, accessToken });
-      await cloud.sendAuthenticationTemplate({
+      const result = await cloud.sendAuthenticationTemplate({
         to: phone,
         templateName: OTP_TEMPLATE_NAME,
         languageCode: OTP_TEMPLATE_LANGUAGE,
         code,
       });
+      waMessageId = result.messageId;
+      deliveryPath = 'env_fallback';
+    }
+
+    // Record delivery attempt for observability (non-blocking)
+    if (waMessageId && deliveryPath) {
+      try {
+        const supabase = createServiceClient();
+        const { error: obsError } = await supabase.from('otp_delivery_attempts').insert({
+          challenge_id: challengeId,
+          wa_message_id: waMessageId,
+          delivery_path: deliveryPath,
+        });
+        if (obsError) {
+          logger.withContext({ op: 'otp-send.observability', errorCode: obsError.code }).warn('[OTP Send] Failed to record delivery attempt');
+        }
+      } catch {
+        // Thrown exception (network, etc.) — still non-blocking
+        logger.withContext({ op: 'otp-send.observability' }).warn('[OTP Send] Failed to record delivery attempt');
+      }
     }
 
     return NextResponse.json({
