@@ -46,9 +46,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify OTP against HMAC-signed token
-    const isValid = verifyPhoneOtp(phone, otp, pin_id);
-    if (!isValid) {
+    // Verify OTP against server-side challenge
+    const result = await verifyPhoneOtp(phone, otp, pin_id);
+    if (!result.valid) {
       // Record brute force failure for both phone and IP
       const phoneLock = recordFailure(`otp-phone:${phone}`);
       const ipLock = recordFailure(`ip:${ip}`);

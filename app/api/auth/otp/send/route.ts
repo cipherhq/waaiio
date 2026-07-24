@@ -37,8 +37,8 @@ export async function POST(request: NextRequest) {
     const ipLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'otp-send'), 10, 600_000);
     if (ipLimit) return ipLimit;
 
-    // Generate OTP and HMAC-signed token (stateless)
-    const { code, token } = generatePhoneOtp(phone);
+    // Generate OTP and server-side challenge
+    const { code, challengeId } = await generatePhoneOtp(phone);
 
     // Send OTP via WhatsApp using a shared Meta Cloud channel
     let sent = false;
@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       message: 'OTP sent via WhatsApp',
-      pin_id: token,
+      pin_id: challengeId,
     });
   } catch (err) {
     logger.withContext({ op: 'otp-send.error', ...safeLogErrorContext(err) }).error('[OTP Send] Error');
