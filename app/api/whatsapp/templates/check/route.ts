@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { verifyCronAuth } from '@/lib/cron-auth';
-import { createClient } from '@/lib/supabase/server';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
 
 /**
@@ -28,17 +28,17 @@ export async function GET(request: NextRequest) {
   );
 
   if (!hasInternalAuth) {
-    const cronAuth = verifyCronAuth(request);
-    if (cronAuth) {
-      const supabase = await createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return cronAuth;
-      const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      const PLATFORM_OWNERS = ['19d95ac8-0f39-4c59-b0ca-18bf9dfba501', '51b56d99-8998-46a9-aebc-2afd47f698bd'];
-      if (!profile || (profile.role !== 'admin' && !PLATFORM_OWNERS.includes(user.id))) {
-        return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+    // verifyCronAuth returns null on success, NextResponse on failure
+    const cronFailure = verifyCronAuth(request);
+
+    if (cronFailure) {
+      // Cron auth failed — try platform admin as fallback
+      const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+      if (!admin) {
+        return cronFailure;
       }
     }
+    // cronFailure is null → cron auth succeeded, proceed without admin check
   }
 
   const wabaId = process.env.META_CLOUD_WABA_ID;

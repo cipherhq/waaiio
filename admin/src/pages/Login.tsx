@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router';
-import { supabase, adminDb } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 
 type Step = 'credentials' | 'otp-method' | 'otp-verify';
 
@@ -47,22 +47,27 @@ export default function Login() {
         return;
       }
 
-      // Verify admin role and check for phone
-      const { data: profile } = await adminDb
-        .from('profiles')
-        .select('role, phone')
-        .eq('id', data.user.id)
-        .maybeSingle();
+      // Verify admin role from the freshly authenticated user's app_metadata.
+      // app_metadata is set server-side by Supabase Auth admin operations and
+      // is returned as part of the sign-in response — no auth.admin call needed.
+      const appRole = data.user.app_metadata?.role;
 
-      if (!profile || !['admin', 'support', 'finance', 'operations'].includes(profile.role)) {
+      if (!appRole || !['admin', 'support', 'finance', 'operations'].includes(appRole)) {
         await supabase.auth.signOut();
         setError('This account does not have admin access.');
         setLoading(false);
         return;
       }
 
+      // Fetch phone from profiles for OTP method selection
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('phone')
+        .eq('id', data.user.id)
+        .maybeSingle();
+
       setUserId(data.user.id);
-      setHasPhone(!!profile.phone);
+      setHasPhone(!!profile?.phone);
       setStep('otp-method');
       setLoading(false);
     } catch {

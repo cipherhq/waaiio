@@ -1,25 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+
+  const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+  if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  // Verify admin
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (!profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
 
   // Fetch business tier
   const { data: biz } = await supabase
@@ -55,20 +47,11 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+
+  const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+  if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  // Verify admin
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (!profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
 
   const body = await request.json();
   const { capability, action, reason } = body as {
@@ -86,7 +69,7 @@ export async function POST(
     await supabase
       .from('capability_overrides')
       .upsert(
-        { business_id: id, capability, granted_by: user.id, reason: reason || null },
+        { business_id: id, capability, granted_by: admin.id, reason: reason || null },
         { onConflict: 'business_id,capability' },
       );
 
@@ -115,7 +98,7 @@ export async function POST(
 
   // Audit log
   await supabase.from('admin_audit_logs').insert({
-    actor_id: user.id,
+    actor_id: admin.id,
     action: action === 'grant' ? 'grant_capability' : 'revoke_capability',
     entity_type: 'business',
     entity_id: id,

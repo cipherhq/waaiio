@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { sendEmail } from '@/lib/email/client';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force';
 import { randomInt, createHmac, timingSafeEqual } from 'crypto';
 import { logger } from '@/lib/logger';
-
-const ADMIN_ROLES = ['admin', 'support', 'finance', 'operations'];
 
 function corsHeaders(origin?: string | null) {
   const allowedOrigins = [
@@ -58,29 +57,18 @@ async function handleSend(request: NextRequest, body: Record<string, unknown>, c
 
   const emailLower = (email as string).toLowerCase().trim();
 
-  // Verify the caller has a valid Supabase session
-  const authHeader = request.headers.get('Authorization');
-  const token = authHeader?.replace('Bearer ', '');
-  if (!token) {
+  const admin = await requirePlatformAdmin(request);
+  if (!admin || admin.id !== userId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors });
   }
 
+  // Fetch phone for WhatsApp OTP delivery
   const supabase = createServiceClient();
-  const { data: { user } } = await supabase.auth.getUser(token);
-  if (!user || user.id !== userId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors });
-  }
-
-  // Verify the user is an admin role
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role, phone')
-    .eq('id', user.id)
+    .select('phone')
+    .eq('id', admin.id)
     .maybeSingle();
-
-  if (!profile || !ADMIN_ROLES.includes(profile.role)) {
-    return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403, headers: cors });
-  }
 
   // Rate limit: 3 sends per email per 10 minutes
   const sendLimit = await rateLimitResponseAsync(`admin-otp-send:${emailLower}`, 3, 600_000);
@@ -131,7 +119,7 @@ async function handleSend(request: NextRequest, body: Record<string, unknown>, c
     }
   } else {
     // WhatsApp — send via Meta Cloud API
-    if (!profile.phone) {
+    if (!profile?.phone) {
       return NextResponse.json({ error: 'No phone number on your profile. Use email instead.' }, { status: 400, headers: cors });
     }
 
@@ -144,7 +132,7 @@ async function handleSend(request: NextRequest, body: Record<string, unknown>, c
     }
 
     // Send a plain text message via Meta Cloud API
-    const waPhone = profile.phone.replace(/\D/g, ''); // strip non-digits
+    const waPhone = profile!.phone!.replace(/\D/g, ''); // strip non-digits (safe — guarded by check above)
     try {
       const response = await fetch(`https://graph.facebook.com/v19.0/${phoneNumberId}/messages`, {
         method: 'POST',

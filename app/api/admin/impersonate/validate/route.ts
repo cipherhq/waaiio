@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { verifyAdminRole } from '@/lib/admin-auth';
 import { cookies } from 'next/headers';
 import { logger } from '@/lib/logger';
 
@@ -36,13 +37,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify the admin is still valid (admin role)
-    const { data: adminProfile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', tokenRecord.admin_id)
-      .maybeSingle();
-
-    if (!adminProfile || adminProfile.role !== 'admin') {
+    const isStillAdmin = await verifyAdminRole(tokenRecord.admin_id, { requiredRole: 'admin' });
+    if (!isStillAdmin) {
       return NextResponse.json({ error: 'Admin account is no longer valid' }, { status: 403 });
     }
 

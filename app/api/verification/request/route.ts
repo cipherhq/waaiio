@@ -3,24 +3,15 @@ import { createClient } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/email/client';
 import { kycRequestedEmail } from '@/lib/email/templates';
 import { getDocTypeLabel, type CountryCode } from '@/lib/constants';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 
 export async function POST(request: NextRequest) {
+  const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+  if (!admin) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // Verify admin
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (!profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
 
   const body = await request.json();
   const { business_id, requested_level, documents_required, message } = body;
@@ -38,7 +29,7 @@ export async function POST(request: NextRequest) {
     .insert({
       business_id,
       requested_level,
-      requested_by: user.id,
+      requested_by: admin.userId,
       documents_required: documents_required || [],
       message: message || null,
       status: 'pending',
@@ -83,7 +74,7 @@ export async function POST(request: NextRequest) {
 
   // Audit log
   await supabase.from('admin_audit_logs').insert({
-    actor_id: user.id,
+    actor_id: admin.userId,
     action: 'request_verification',
     entity_type: 'business',
     entity_id: business_id,

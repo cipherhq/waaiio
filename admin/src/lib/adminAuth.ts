@@ -11,6 +11,15 @@ export interface AdminSession {
 
 const ALLOWED_ROLES: AdminRole[] = ['admin', 'support', 'finance', 'operations'];
 
+/**
+ * Require a platform admin session.
+ *
+ * Canonical authority: auth.users app_metadata.role
+ *
+ * Does NOT trust profiles.role for admin authorization.
+ * Does NOT fall back to profiles.role when app_metadata is absent.
+ * Does NOT trust raw_user_meta_data.
+ */
 export async function requireAdminSession(): Promise<AdminSession> {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) throw sessionError;
@@ -21,40 +30,14 @@ export async function requireAdminSession(): Promise<AdminSession> {
     throw new Error('No active session. Sign in as an admin and try again.');
   }
 
-  const { data: profile, error: profileError } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
+  // Canonical authority: app_metadata.role (set server-side, never user-writable)
+  const appMetadataRole = user.app_metadata?.role as AdminRole | undefined;
 
-  if (profileError) throw profileError;
-  if (!profile || !ALLOWED_ROLES.includes(profile.role as AdminRole)) {
+  if (!appMetadataRole || !ALLOWED_ROLES.includes(appMetadataRole)) {
     throw new Error('Signed-in account does not have admin access.');
   }
 
-  const dbRole = profile.role as AdminRole;
-
-  // Cross-check JWT app_metadata.role against DB role for defense-in-depth.
-  // If someone manages to UPDATE their own profiles.role, the JWT still has
-  // the authoritative role set by the server via auth.admin.updateUserById().
-  const jwtRole = user.app_metadata?.role as AdminRole | undefined;
-
-  let effectiveRole: AdminRole;
-  if (jwtRole && ALLOWED_ROLES.includes(jwtRole)) {
-    // Both sources exist — use the MORE RESTRICTIVE one
-    const roleRank: Record<AdminRole, number> = { operations: 0, support: 1, finance: 1, admin: 2 };
-    effectiveRole = (roleRank[jwtRole] ?? 0) <= (roleRank[dbRole] ?? 0) ? jwtRole : dbRole;
-  } else {
-    // Legacy user without app_metadata.role — fall back to DB
-    effectiveRole = dbRole;
-  }
-
-  // Warn on mismatch so we can audit and backfill app_metadata
-  if (jwtRole && jwtRole !== dbRole) {
-    console.warn(`[ADMIN AUTH] Role mismatch: JWT=${jwtRole}, DB=${dbRole}. Using ${effectiveRole}`);
-  }
-
-  return { userId: user.id, email: user.email || '', role: effectiveRole };
+  return { userId: user.id, email: user.email || '', role: appMetadataRole };
 }
 
 /** Check if current admin session has full admin privileges (not just support). */

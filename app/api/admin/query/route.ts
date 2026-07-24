@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
 
 function corsHeaders(origin?: string | null) {
@@ -35,28 +36,12 @@ export async function POST(request: NextRequest) {
   const origin = request.headers.get('origin');
   const cors = corsHeaders(origin);
 
-  // Verify admin auth
-  const authHeader = request.headers.get('Authorization');
-  const token = authHeader?.replace('Bearer ', '');
-  if (!token) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors });
+  const admin = await requirePlatformAdmin(request);
+  if (!admin) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 403, headers: cors });
   }
 
   const supabase = createServiceClient();
-  const { data: { user } } = await supabase.auth.getUser(token);
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors });
-  }
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (!profile || !['admin', 'support', 'finance', 'operations'].includes(profile.role)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors });
-  }
 
   try {
     const body = await request.json();
@@ -114,7 +99,7 @@ export async function POST(request: NextRequest) {
       operations: OPERATIONS_TABLES,
       support: SUPPORT_TABLES,
     };
-    const allowedTables = TABLE_MAP[profile.role] || SUPPORT_TABLES;
+    const allowedTables = TABLE_MAP[admin.role] || SUPPORT_TABLES;
 
     if (!allowedTables.includes(table)) {
       return NextResponse.json({ error: 'Table not allowed' }, { status: 403, headers: cors });
@@ -122,7 +107,7 @@ export async function POST(request: NextRequest) {
 
     // Non-admin roles: restrict select to prevent relationship traversal (e.g., '*, profiles(*)')
     let safeSelect = select;
-    if (profile.role !== 'admin') {
+    if (admin.role !== 'admin') {
       // Strip any relationship traversal patterns like "table(*)" or "table!inner(*)"
       safeSelect = select.replace(/\w+[!]?\w*\([^)]*\)/g, '').replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim() || '*';
     }
