@@ -6,15 +6,24 @@ import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
+
+const ALLOWED_TRANSFER_METHODS = ['paystack_transfer', 'stripe_transfer', 'manual_bank', 'manual_cash'] as const;
+type TransferMethod = typeof ALLOWED_TRANSFER_METHODS[number];
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+
+  // FIN-001: Payout kill switch — must be explicitly enabled
+  if (process.env.ENABLE_PAYOUTS !== 'true') {
+    return NextResponse.json({ error: 'Payouts are currently disabled' }, { status: 503 });
+  }
 
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) {
@@ -26,8 +35,11 @@ export async function POST(
   const body = await request.json();
   const { transfer_method, reference, notes } = body;
 
-  if (!transfer_method) {
-    return NextResponse.json({ error: 'Missing transfer_method' }, { status: 400 });
+  // FIN-001: Strict transfer-method allowlist
+  if (!transfer_method || !ALLOWED_TRANSFER_METHODS.includes(transfer_method as TransferMethod)) {
+    return NextResponse.json({
+      error: `transfer_method must be one of: ${ALLOWED_TRANSFER_METHODS.join(', ')}`,
+    }, { status: 400 });
   }
 
   // Fetch the payout
@@ -288,7 +300,8 @@ export async function POST(
 
     return NextResponse.json({ success: true, status: finalStatus });
   } catch (error) {
-    logger.error('Approve payout error:', (error as Error).message);
+    logger.withContext({ op: 'payout.approve', payoutId: id, ...safeLogErrorContext(error) })
+      .error('[PAYOUT] Approve failed');
     return NextResponse.json({ error: 'Failed to approve payout' }, { status: 500 });
   }
 }

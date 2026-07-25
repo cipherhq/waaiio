@@ -15,11 +15,17 @@ function getSquareBaseUrl(): string {
 }
 
 export async function GET(request: NextRequest) {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+
+  // FIN-001: Square Connect feature gate — must be explicitly enabled
+  if (process.env.ENABLE_SQUARE_CONNECT !== 'true') {
+    return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=square_disabled`);
+  }
+
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
   const state = searchParams.get('state');
   const error = searchParams.get('error');
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
   if (error) {
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=square_denied`);

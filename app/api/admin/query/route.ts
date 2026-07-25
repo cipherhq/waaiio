@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 function corsHeaders(origin?: string | null) {
   const allowedOrigins = [
@@ -101,6 +102,37 @@ export async function POST(request: NextRequest) {
     };
     const allowedTables = TABLE_MAP[admin.role] || SUPPORT_TABLES;
 
+    // FIN-001: Column-level allowlists for sensitive tables (non-admin roles)
+    // These tables contain provider credentials or bank details that must not
+    // be returned through the generic query route for non-admin roles.
+    const APPROVED_COLUMNS: Record<string, string[]> = {
+      payout_accounts: [
+        'id', 'business_id', 'gateway', 'bank_name', 'account_name',
+        'platform_percentage', 'is_active', 'verified_at', 'created_at',
+        'updated_at', 'country_code',
+      ],
+      whatsapp_channels: [
+        'id', 'business_id', 'phone_number', 'display_name', 'quality_rating',
+        'status', 'channel_type', 'is_active', 'country_code', 'waba_id',
+        'phone_number_id', 'created_at', 'updated_at',
+      ],
+      businesses: [
+        'id', 'name', 'slug', 'category', 'country_code', 'currency',
+        'owner_id', 'status', 'payout_mode', 'verification_level',
+        'payout_limit_monthly', 'created_at', 'updated_at',
+        'description', 'address', 'city', 'state', 'zip_code',
+        'phone', 'email', 'website', 'logo_url', 'cover_url',
+        'timezone', 'booking_advance_days', 'booking_cancel_hours',
+      ],
+    };
+
+    // FIN-001: Columns that must never be returned through the generic query
+    // route, even for admin. Access to these requires a dedicated purpose-built route.
+    const CREDENTIAL_COLUMNS = new Set([
+      'meta_access_token', 'square_access_token', 'square_refresh_token',
+      'stripe_account_id', 'google_calendar_token', 'google_calendar_refresh_token',
+    ]);
+
     if (!allowedTables.includes(table)) {
       return NextResponse.json({ error: 'Table not allowed' }, { status: 403, headers: cors });
     }
@@ -154,13 +186,35 @@ export async function POST(request: NextRequest) {
     const { data, error, count: rowCount } = await query;
 
     if (error) {
-      logger.error('[ADMIN QUERY] db error:', error);
+      logger.withContext({ op: 'admin-query', table, ...safeLogErrorContext(error) })
+        .error('[ADMIN QUERY] db error');
       return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: cors });
+    }
+
+    // FIN-001: Strip credential columns from all responses (including admin)
+    // and enforce column allowlists for non-admin roles
+    if (Array.isArray(data)) {
+      const approvedCols = admin.role !== 'admin' ? APPROVED_COLUMNS[table] : null;
+      const approvedSet = approvedCols ? new Set(approvedCols) : null;
+
+      for (const row of data) {
+        for (const key of Object.keys(row)) {
+          // Always strip credential columns regardless of role
+          if (CREDENTIAL_COLUMNS.has(key)) {
+            delete row[key];
+          }
+          // For non-admin roles with column allowlists, strip unapproved columns
+          else if (approvedSet && !approvedSet.has(key)) {
+            delete row[key];
+          }
+        }
+      }
     }
 
     return NextResponse.json({ data, count: rowCount }, { headers: cors });
   } catch (error) {
-    logger.error('[ADMIN QUERY] error:', error);
+    logger.withContext({ op: 'admin-query', ...safeLogErrorContext(error) })
+      .error('[ADMIN QUERY] error');
     return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: cors });
   }
 }

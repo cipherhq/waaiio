@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { randomUUID } from 'crypto';
 
 const squareAppId = process.env.SQUARE_OAUTH_APP_ID || process.env.SQUARE_APPLICATION_ID || '';
@@ -13,6 +14,11 @@ function getSquareOAuthUrl(): string {
 }
 
 export async function POST(request: NextRequest) {
+  // FIN-001: Square Connect feature gate — must be explicitly enabled
+  if (process.env.ENABLE_SQUARE_CONNECT !== 'true') {
+    return NextResponse.json({ error: 'Square Connect is currently disabled' }, { status: 503 });
+  }
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
@@ -56,7 +62,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ url: oauthUrl });
   } catch (error) {
-    logger.error('Square Connect error:', (error as Error).message);
+    logger.withContext({ op: 'square-connect', ...safeLogErrorContext(error) })
+      .error('[SQUARE-CONNECT] Failed to start onboarding');
     return NextResponse.json({ error: 'Failed to start Square onboarding' }, { status: 500 });
   }
 }
