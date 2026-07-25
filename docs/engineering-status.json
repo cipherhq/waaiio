@@ -154,6 +154,24 @@
       "blockers": [],
       "next_action": "Close Issue #41 after this verification-ledger PR merges",
       "notes": "No-migration containment: ENABLE_PAYOUTS kill switch, ENABLE_SQUARE_CONNECT gate, ENABLE_STRIPE_CONNECT gate, query-level safe-column registry for all 39 non-admin tables, transfer-method allowlist with provider-config validation, safe logging. All three feature gates remain default-off — no production configuration was changed. Implementation base: 68ba1cb4. Production-verified on canonical Vercel project waaiio serving www.waaiio.com. Authenticated cron verification completed 2026-07-25."
+    },
+    {
+      "id": "FIN-002",
+      "title": "Atomic payout execution and provider idempotency",
+      "stage": "IN_PROGRESS",
+      "owner": "claude",
+      "issue_numbers": [48],
+      "pr_numbers": [],
+      "implementation_sha": null,
+      "reviewed_sha": null,
+      "merge_sha": null,
+      "deployed_sha": null,
+      "environment": null,
+      "production_verified_at": null,
+      "verification_evidence": [],
+      "blockers": [],
+      "next_action": "Complete implementation, local testing, and draft PR",
+      "notes": "Atomic payout claim via Postgres RPC, provider idempotency keys (Paystack reference + Stripe Idempotency-Key), token-guarded finalization, review_required for uncertain outcomes. Launch scope: paystack_transfer and stripe_transfer only. Square and Flutterwave outbound payouts deferred to Issue #49. Migration 292."
     }
   ]
 }
