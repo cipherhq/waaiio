@@ -85,22 +85,20 @@
     {
       "id": "GOV-001",
       "title": "Engineering governance foundation",
-      "stage": "LOCALLY_TESTED",
+      "stage": "INDEPENDENTLY_REVIEWED",
       "owner": "claude",
       "issue_numbers": [],
       "pr_numbers": [39],
-      "implementation_sha": null,
-      "reviewed_sha": null,
+      "implementation_sha": "4b1a7d82fd2d947fe2105806b16b105be2e8bef2",
+      "reviewed_sha": "6638c5b94f5ae5d0b2424aab1637099ffa8dfe19",
       "merge_sha": null,
       "deployed_sha": null,
       "environment": null,
       "production_verified_at": null,
       "verification_evidence": [],
-      "blockers": [
-        "Requires independent review approval"
-      ],
-      "next_action": "Address review feedback, then await independent review approval and merge authorization",
-      "notes": "Governance-only PR. No application code, migrations, or production configuration changes. Automatic Vercel Preview deployment occurred on waaiio project; blowded (production) was skipped. Preview deployments do not advance milestones to DEPLOYED."
+      "blockers": [],
+      "next_action": "Await final CI and merge authorization",
+      "notes": "Governance-only PR. No application code, migrations, or production configuration changes. Automatic Vercel Preview deployment occurred on waaiio project; blowded (production) was skipped. Preview deployments do not advance milestones to DEPLOYED. Independent review completed on commit 6638c5b9."
     }
   ]
 }

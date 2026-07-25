@@ -12,7 +12,7 @@ Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineerin
 | AUTH-001 | Prevent admin privilege escalation | `PRODUCTION_VERIFIED` | #36 | `78e28344` |
 | AUTH-000 | Phone OTP via WhatsApp template | `DEPLOYED` | #37, #38 | `641c31b0` |
 | FIN-LEGACY | Financial integrity hardening | `STRANDED` | #18, #19, #20, #21 | none |
-| GOV-001 | Engineering governance foundation | `LOCALLY_TESTED` | #39 | none |
+| GOV-001 | Engineering governance foundation | `INDEPENDENTLY_REVIEWED` | #39 | none |
 
 ## Stage Definitions
 
@@ -45,7 +45,7 @@ PR #21 (`fix/combined-18-19-20`, head `22168545`) contains tested but unmerged f
 
 ## Active Next Actions
 
-1. **Address GOV-001 review feedback** — correct and push to PR #39
+1. **GOV-001: await final CI and merge authorization** — PR #39 independently reviewed
 2. **Resolve Meta WABA billing** — required before AUTH-000 production verification
 3. **Extract FIN-LEGACY protections** — payout idempotency, Square OAuth, credential filtering
 4. **Create tracking issues** — for AUTH-001 closure and financial safety milestones

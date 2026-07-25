@@ -121,6 +121,24 @@ for (const m of ledger.milestones) {
 
 // ── 8. Stage-specific evidence requirements ──
 for (const m of ledger.milestones) {
+  // IMPLEMENTED, LOCALLY_TESTED, INDEPENDENTLY_REVIEWED or later must have implementation_sha
+  if (['IMPLEMENTED', 'LOCALLY_TESTED', 'INDEPENDENTLY_REVIEWED', 'MERGED', 'DEPLOYED', 'PRODUCTION_VERIFIED', 'CLOSED'].includes(m.stage)) {
+    if (m.implementation_sha && SHA_REGEX.test(m.implementation_sha)) {
+      pass(`${m.id}: implementation_sha present and valid format`);
+    } else {
+      fail(`${m.id}: stage "${m.stage}" requires a valid implementation_sha`);
+    }
+  }
+
+  // INDEPENDENTLY_REVIEWED must have reviewed_sha
+  if (['INDEPENDENTLY_REVIEWED'].includes(m.stage)) {
+    if (m.reviewed_sha && SHA_REGEX.test(m.reviewed_sha)) {
+      pass(`${m.id}: reviewed_sha present and valid format`);
+    } else {
+      fail(`${m.id}: stage "${m.stage}" requires a valid reviewed_sha`);
+    }
+  }
+
   // MERGED or later must have merge_sha
   if (['MERGED', 'DEPLOYED', 'PRODUCTION_VERIFIED', 'CLOSED'].includes(m.stage)) {
     if (m.merge_sha && SHA_REGEX.test(m.merge_sha)) {
@@ -206,16 +224,16 @@ try {
   }
   pass(`Ancestry reference: ${ancestryRef} (full history: ${fullHistory})`);
 
-  // Verify the reconciled main SHA is reachable
+  // Verify the reconciled main SHA is an ancestor of origin/main (not just that it exists)
   if (ledger.last_reconciled_main_sha) {
     try {
-      execSync(`git cat-file -t ${ledger.last_reconciled_main_sha}`, { stdio: 'pipe' });
-      pass(`Reconciled SHA ${ledger.last_reconciled_main_sha.slice(0, 8)} exists in local history`);
+      execSync(`git merge-base --is-ancestor ${ledger.last_reconciled_main_sha} ${ancestryRef}`, { stdio: 'pipe' });
+      pass(`Reconciled SHA ${ledger.last_reconciled_main_sha.slice(0, 8)} is ancestor of ${ancestryRef}`);
     } catch {
       if (fullHistory) {
-        fail(`Reconciled SHA ${ledger.last_reconciled_main_sha.slice(0, 8)} not found with full history available`);
+        fail(`Reconciled SHA ${ledger.last_reconciled_main_sha.slice(0, 8)} is NOT ancestor of ${ancestryRef} — ledger references a SHA not on main`);
       } else {
-        warn(`Reconciled SHA ${ledger.last_reconciled_main_sha.slice(0, 8)} not found (shallow clone — may need fetch)`);
+        warn(`Reconciled SHA ${ledger.last_reconciled_main_sha.slice(0, 8)} ancestry unverifiable (shallow clone)`);
       }
     }
   }
