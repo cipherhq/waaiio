@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
-  "last_reconciled_main_sha": "6024500f62c600d9b4fd0bfc9f470cf3c5538035",
-  "last_reconciled_at": "2026-07-25T03:30:00Z",
+  "last_reconciled_main_sha": "c6f9b02ce659555016835cdd7fc0b34ad389ba1b",
+  "last_reconciled_at": "2026-07-25T04:15:00Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -85,20 +85,20 @@
     {
       "id": "GOV-001",
       "title": "Engineering governance foundation",
-      "stage": "INDEPENDENTLY_REVIEWED",
+      "stage": "MERGED",
       "owner": "claude",
       "issue_numbers": [],
       "pr_numbers": [39],
       "implementation_sha": "4b1a7d82fd2d947fe2105806b16b105be2e8bef2",
       "reviewed_sha": "6638c5b94f5ae5d0b2424aab1637099ffa8dfe19",
-      "merge_sha": null,
+      "merge_sha": "c6f9b02ce659555016835cdd7fc0b34ad389ba1b",
       "deployed_sha": null,
       "environment": null,
       "production_verified_at": null,
       "verification_evidence": [],
       "blockers": [],
-      "next_action": "Await final CI and merge authorization",
-      "notes": "Governance-only PR. No application code, migrations, or production configuration changes. Automatic Vercel Preview deployment occurred on waaiio project; blowded (production) was skipped. Preview deployments do not advance milestones to DEPLOYED. Independent review completed on commit 6638c5b9."
+      "next_action": "Enable branch protection on main per docs/BRANCH-PROTECTION.md",
+      "notes": "Governance-only PR. No application code, migrations, or production configuration changes. PR #39 squash-merged. Automatic Vercel Preview deployments do not advance milestones to DEPLOYED."
     }
   ]
 }

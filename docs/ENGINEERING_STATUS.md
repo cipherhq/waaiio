@@ -3,7 +3,7 @@
 Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineering-status.json)
 
 **Last reconciled:** 2026-07-25
-**Main SHA:** `6024500f62c600d9b4fd0bfc9f470cf3c5538035`
+**Main SHA:** `c6f9b02ce659555016835cdd7fc0b34ad389ba1b`
 
 ## Milestone Status
 
@@ -12,7 +12,7 @@ Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineerin
 | AUTH-001 | Prevent admin privilege escalation | `PRODUCTION_VERIFIED` | #36 | `78e28344` |
 | AUTH-000 | Phone OTP via WhatsApp template | `DEPLOYED` | #37, #38 | `641c31b0` |
 | FIN-LEGACY | Financial integrity hardening | `STRANDED` | #18, #19, #20, #21 | none |
-| GOV-001 | Engineering governance foundation | `INDEPENDENTLY_REVIEWED` | #39 | none |
+| GOV-001 | Engineering governance foundation | `MERGED` | #39 | `c6f9b02c` |
 
 ## Stage Definitions
 
@@ -45,7 +45,7 @@ PR #21 (`fix/combined-18-19-20`, head `22168545`) contains tested but unmerged f
 
 ## Active Next Actions
 
-1. **GOV-001: await final CI and merge authorization** — PR #39 independently reviewed
+1. **GOV-001: enable branch protection** — PR #39 merged; enable settings per `docs/BRANCH-PROTECTION.md`
 2. **Resolve Meta WABA billing** — required before AUTH-000 production verification
 3. **Extract FIN-LEGACY protections** — payout idempotency, Square OAuth, credential filtering
 4. **Create tracking issues** — for AUTH-001 closure and financial safety milestones
