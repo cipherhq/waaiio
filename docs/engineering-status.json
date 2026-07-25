@@ -115,7 +115,7 @@
     {
       "id": "FIN-001",
       "title": "Financial and credential containment on current main",
-      "stage": "PRODUCTION_VERIFIED",
+      "stage": "DEPLOYED",
       "owner": "claude",
       "issue_numbers": [41],
       "pr_numbers": [44],
@@ -124,7 +124,7 @@
       "merge_sha": "d886c8d99eedc5d13ae9bfb152c5eb3f9dfad5fe",
       "deployed_sha": "b98896937624db33070b04f53b367f0e007bdd89",
       "environment": "production",
-      "production_verified_at": "2026-07-25T16:12:34Z",
+      "production_verified_at": null,
       "verification_evidence": [
         "Canonical Vercel project: waaiio (prj_QkvBTiDA905GHTwX5DQCJVyZzd9d)",
         "Customer domain: www.waaiio.com",
@@ -140,20 +140,23 @@
         "Square callback route: 503 (no code exchange)",
         "Stripe connect route: 503 (no Stripe redirect)",
         "Stripe callback route: 503 (no provider exchange)",
-        "Payout approve route: 503 (gate fires before auth/lookup)",
-        "Auto-payout cron: 401 (auth-first, then gate — design confirmed)",
-        "Admin query unauthenticated: 403",
+        "Payout approve route (unauthenticated): 503 (gate fires before auth/lookup)",
+        "Auto-payout cron (unauthenticated): 401 (auth-first design confirmed)",
+        "Admin query (unauthenticated): 403",
         "Production logs: no 500 errors, no provider exchange, no credentials logged, no payout mutation",
         "All seven required CI checks passed on final PR #44 head d1c6e978",
         "1174 full tests passed across 66 suites",
         "90 focused FIN-001 containment tests passed",
         "No provider was contacted during verification",
-        "No production data was intentionally modified",
-        "Admin-query authenticated column-restriction verification: pending (no production non-admin session available — 90 CI tests verify query-level enforcement)"
+        "No production data was intentionally modified"
       ],
-      "blockers": [],
-      "next_action": "Close Issue #41 after the production-verification ledger PR merges",
-      "notes": "No-migration containment: ENABLE_PAYOUTS kill switch, ENABLE_SQUARE_CONNECT gate, ENABLE_STRIPE_CONNECT gate, query-level safe-column registry for all 39 non-admin tables, transfer-method allowlist with provider-config validation, safe logging. All three feature gates remain default-off — no production configuration was changed. Implementation base: 68ba1cb4. Verified on canonical Vercel project waaiio serving www.waaiio.com."
+      "blockers": [
+        "Authenticated Finance/Support/Operations admin-query field-restriction verification requires an existing authorized non-admin production test session",
+        "Authenticated admin payout-gate verification was not performed; current evidence is unauthenticated 503",
+        "Valid cron-auth verification of the auto-payout 503 path was not performed; current runtime evidence is unauthenticated 401"
+      ],
+      "next_action": "Complete remaining authenticated production verification using existing authorized test access",
+      "notes": "No-migration containment: ENABLE_PAYOUTS kill switch, ENABLE_SQUARE_CONNECT gate, ENABLE_STRIPE_CONNECT gate, query-level safe-column registry for all 39 non-admin tables, transfer-method allowlist with provider-config validation, safe logging. All three feature gates remain default-off — no production configuration was changed. Implementation base: 68ba1cb4. Deployed to canonical Vercel project waaiio serving www.waaiio.com. Unauthenticated route checks passed; authenticated checks pending."
     }
   ]
 }
