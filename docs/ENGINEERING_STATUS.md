@@ -3,7 +3,7 @@
 Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineering-status.json)
 
 **Last reconciled:** 2026-07-25
-**Main SHA:** `c6f9b02ce659555016835cdd7fc0b34ad389ba1b`
+**Main SHA:** `2563c6a672c5c71443df129b2371c16315fa9957`
 
 ## Milestone Status
 
@@ -12,7 +12,8 @@ Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineerin
 | AUTH-001 | Prevent admin privilege escalation | `PRODUCTION_VERIFIED` | #36 | `78e28344` |
 | AUTH-000 | Phone OTP via WhatsApp template | `DEPLOYED` | #37, #38 | `641c31b0` |
 | FIN-LEGACY | Financial integrity hardening | `STRANDED` | #18, #19, #20, #21 | none |
-| GOV-001 | Engineering governance foundation | `MERGED` | #39 | `c6f9b02c` |
+| GOV-001 | Engineering governance foundation | `MERGED` | #39, #40 | `c6f9b02c` |
+| FIN-001 | Financial and credential containment | `PLANNED` | — | none |
 
 ## Stage Definitions
 
@@ -41,14 +42,13 @@ PR #21 (`fix/combined-18-19-20`, head `22168545`) contains tested but unmerged f
 - Migrations 249-291 are stranded/reserved while PR #21 remains open
 - Auth patterns use obsolete `profiles.role` (replaced by PR #36's `app_metadata`)
 
-**Next action:** Extract useful protections into small, focused PRs with updated auth and renumbered migrations (starting from version 292). Do not merge or rebase PR #21 wholesale.
+**Next action:** Controlled extraction via FIN-001 and subsequent milestones. Do not merge or rebase PR #21 wholesale.
 
 ## Active Next Actions
 
-1. **GOV-001: enable branch protection** — PR #39 merged; enable settings per `docs/BRANCH-PROTECTION.md`
+1. **FIN-001: implement no-migration containment** — Issue #41; payout kill switch, connect feature gates, column restrictions, transfer-method allowlist, safe logging
 2. **Resolve Meta WABA billing** — required before AUTH-000 production verification
-3. **Extract FIN-LEGACY protections** — payout idempotency, Square OAuth, credential filtering
-4. **Create tracking issues** — for AUTH-001 closure and financial safety milestones
+3. **Continue FIN-LEGACY extraction** — payout idempotency, atomic claims, OAuth reconstruction in future milestones
 
 ## Updating This Ledger
 
