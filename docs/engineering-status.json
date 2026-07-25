@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
-  "last_reconciled_main_sha": "c6f9b02ce659555016835cdd7fc0b34ad389ba1b",
-  "last_reconciled_at": "2026-07-25T04:15:00Z",
+  "last_reconciled_main_sha": "7283d776cd32ae511d2c1aba1a540e1db6eaebbb",
+  "last_reconciled_at": "2026-07-25T05:00:00Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -80,7 +80,7 @@
         "PRs #18, #19, #20 are also open and unmerged"
       ],
       "next_action": "Extract useful protections into small focused PRs with updated auth and renumbered migrations (starting from 292)",
-      "notes": "PR #21 contains tested payout safety, Square OAuth, admin credential filtering, and idempotency work that is not present on main. Must not be merged or rebased wholesale. Controlled extraction required."
+      "notes": "PR #21 contains tested payout safety, Square OAuth, admin credential filtering, and idempotency work that is not present on main. Must not be merged or rebased wholesale. Controlled extraction required. FIN-001 is the first controlled extraction milestone."
     },
     {
       "id": "GOV-001",
@@ -88,17 +88,47 @@
       "stage": "MERGED",
       "owner": "claude",
       "issue_numbers": [],
-      "pr_numbers": [39],
+      "pr_numbers": [39, 40],
       "implementation_sha": "4b1a7d82fd2d947fe2105806b16b105be2e8bef2",
       "reviewed_sha": "6638c5b94f5ae5d0b2424aab1637099ffa8dfe19",
       "merge_sha": "c6f9b02ce659555016835cdd7fc0b34ad389ba1b",
       "deployed_sha": null,
       "environment": null,
       "production_verified_at": null,
+      "verification_evidence": [
+        "Main branch protection enabled and verified via GitHub API",
+        "enforce_admins: true — administrators subject to all protections",
+        "Pull requests required for all merges to main",
+        "Required approvals: 0 (temporary solo-maintainer exception — cipherhq is the only collaborator)",
+        "7 required CI checks: Main App, Admin App, Migration validation, Playwright smoke tests, Secret scanning, Dependency audit, Engineering governance",
+        "Strict branch-up-to-date behavior enabled",
+        "Conversation resolution required",
+        "Force pushes blocked",
+        "Branch deletion blocked",
+        "Protection verified by reading back configuration from GitHub API",
+        "No direct-push test was performed"
+      ],
+      "blockers": [],
+      "next_action": "Governance foundation operational. FIN-001 is the active milestone.",
+      "notes": "Governance-only milestone. No application code, migrations, or production configuration changes. PR #39 squash-merged (governance artifacts). PR #40 squash-merged (ledger bookkeeping). Branch protection applied post-merge. No application deployment was required — governance artifacts are documentation, templates, and CI configuration. Automatic Vercel Preview deployments do not advance milestones to DEPLOYED."
+    },
+    {
+      "id": "FIN-001",
+      "title": "Financial and credential containment on current main",
+      "stage": "PLANNED",
+      "owner": "claude",
+      "issue_numbers": [41],
+      "pr_numbers": [],
+      "implementation_sha": null,
+      "reviewed_sha": null,
+      "merge_sha": null,
+      "deployed_sha": null,
+      "environment": null,
+      "production_verified_at": null,
       "verification_evidence": [],
       "blockers": [],
-      "next_action": "Enable branch protection on main per docs/BRANCH-PROTECTION.md",
-      "notes": "Governance-only PR. No application code, migrations, or production configuration changes. PR #39 squash-merged. Automatic Vercel Preview deployments do not advance milestones to DEPLOYED."
+      "next_action": "Implement no-migration containment from current main",
+      "notes": "First controlled extraction from stranded FIN-LEGACY work. No-migration containment only: payout kill switch, Square/Stripe connect feature gates, admin query column restrictions, transfer-method allowlist, safe logging. PR #21 is reference material only — must not be merged or rebased wholesale. All provider calls must be mocked in tests."
     }
   ]
 }
