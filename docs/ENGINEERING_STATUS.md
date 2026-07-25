@@ -13,7 +13,7 @@ Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineerin
 | AUTH-000 | Phone OTP via WhatsApp template | `DEPLOYED` | #37, #38 | `641c31b0` |
 | FIN-LEGACY | Financial integrity hardening | `STRANDED` | #18, #19, #20, #21 | none |
 | GOV-001 | Engineering governance foundation | `MERGED` | #39, #40 | `c6f9b02c` |
-| FIN-001 | Financial and credential containment | `LOCALLY_TESTED` | #44 | none |
+| FIN-001 | Financial and credential containment | `INDEPENDENTLY_REVIEWED` | #44 | none |
 
 ## Stage Definitions
 

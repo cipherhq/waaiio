@@ -115,12 +115,12 @@
     {
       "id": "FIN-001",
       "title": "Financial and credential containment on current main",
-      "stage": "LOCALLY_TESTED",
+      "stage": "INDEPENDENTLY_REVIEWED",
       "owner": "claude",
       "issue_numbers": [41],
       "pr_numbers": [44],
       "implementation_sha": "776f4e36bfd18ba9e261cfcb6b5e6d9e77465426",
-      "reviewed_sha": null,
+      "reviewed_sha": "8bbb0a84d4b661c80d51201b2c45b3317608e75c",
       "merge_sha": null,
       "deployed_sha": null,
       "environment": null,
@@ -138,7 +138,7 @@
         "All provider calls mocked in tests"
       ],
       "blockers": [],
-      "next_action": "Independent review of PR #44",
+      "next_action": "Final CI verification and merge authorization",
       "notes": "No-migration containment: ENABLE_PAYOUTS kill switch, ENABLE_SQUARE_CONNECT gate, ENABLE_STRIPE_CONNECT gate, admin query column restrictions with CREDENTIAL_COLUMNS stripping, transfer-method allowlist, safe logging in all touched files. PR #21 patterns adapted where compatible. Implementation base: 68ba1cb4."
     }
   ]
