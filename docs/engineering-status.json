@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
   "last_reconciled_main_sha": "d886c8d99eedc5d13ae9bfb152c5eb3f9dfad5fe",
-  "last_reconciled_at": "2026-07-25T14:45:00Z",
+  "last_reconciled_at": "2026-07-25T15:08:47Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -128,8 +128,8 @@
       "verification_evidence": [
         "1174 full tests passed across 66 suites",
         "90 focused FIN-001 containment tests passed",
-        "All seven CI checks passed on reviewed head 8bbb0a84",
-        "Initial unrelated OTP observability test failure (otp-delivery-observability contract match) passed on rerun",
+        "All seven required CI checks passed on final PR #44 head d1c6e978571fd93f14b20e3d336dacb682752a28",
+        "Unrelated OTP observability test failure (otp-delivery-observability contract match) passed on rerun",
         "npm ci passes",
         "npm run lint passes (pre-existing warnings only)",
         "npm run build: production build succeeds",

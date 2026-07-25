@@ -3,7 +3,7 @@
 Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineering-status.json)
 
 **Last reconciled:** 2026-07-25
-**Main SHA:** `d886c8d99eedc5d13ae9bfb152c5eb3f9dfad5fe`
+**Last reconciled main SHA:** `d886c8d99eedc5d13ae9bfb152c5eb3f9dfad5fe`
 
 ## Milestone Status
 
