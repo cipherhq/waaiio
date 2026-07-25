@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
-  "last_reconciled_main_sha": "2563c6a672c5c71443df129b2371c16315fa9957",
-  "last_reconciled_at": "2026-07-25T10:23:26Z",
+  "last_reconciled_main_sha": "d886c8d99eedc5d13ae9bfb152c5eb3f9dfad5fe",
+  "last_reconciled_at": "2026-07-25T15:08:47Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -115,31 +115,34 @@
     {
       "id": "FIN-001",
       "title": "Financial and credential containment on current main",
-      "stage": "INDEPENDENTLY_REVIEWED",
+      "stage": "MERGED",
       "owner": "claude",
       "issue_numbers": [41],
       "pr_numbers": [44],
       "implementation_sha": "776f4e36bfd18ba9e261cfcb6b5e6d9e77465426",
       "reviewed_sha": "8bbb0a84d4b661c80d51201b2c45b3317608e75c",
-      "merge_sha": null,
+      "merge_sha": "d886c8d99eedc5d13ae9bfb152c5eb3f9dfad5fe",
       "deployed_sha": null,
       "environment": null,
       "production_verified_at": null,
       "verification_evidence": [
+        "1174 full tests passed across 66 suites",
+        "90 focused FIN-001 containment tests passed",
+        "All seven required CI checks passed on final PR #44 head d1c6e978571fd93f14b20e3d336dacb682752a28",
+        "Unrelated OTP observability test failure (otp-delivery-observability contract match) passed on rerun",
         "npm ci passes",
         "npm run lint passes (pre-existing warnings only)",
-        "npm run test: 1119 tests passed across 66 suites",
         "npm run build: production build succeeds",
         "npm run verify:governance: 0 errors, 0 warnings",
         "Admin typecheck passes",
-        "35 focused FIN-001 containment tests pass",
         "No migration created",
         "No provider API contacted",
-        "All provider calls mocked in tests"
+        "All provider calls mocked in tests",
+        "PR #44 squash-merged into main"
       ],
       "blockers": [],
-      "next_action": "Final CI verification and merge authorization",
-      "notes": "No-migration containment: ENABLE_PAYOUTS kill switch, ENABLE_SQUARE_CONNECT gate, ENABLE_STRIPE_CONNECT gate, admin query column restrictions with CREDENTIAL_COLUMNS stripping, transfer-method allowlist, safe logging in all touched files. PR #21 patterns adapted where compatible. Implementation base: 68ba1cb4."
+      "next_action": "Controlled deployment planning and production verification",
+      "notes": "No-migration containment: ENABLE_PAYOUTS kill switch, ENABLE_SQUARE_CONNECT gate, ENABLE_STRIPE_CONNECT gate, query-level safe-column registry for all 39 non-admin tables, transfer-method allowlist with provider-config validation, safe logging. All three feature gates remain default-off — no production configuration was changed. Implementation base: 68ba1cb4."
     }
   ]
 }
