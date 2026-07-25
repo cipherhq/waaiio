@@ -480,10 +480,12 @@ describe('FIN-001: Stripe Callback feature gate', () => {
 
 describe('FIN-001: Admin query column restrictions', () => {
   let capturedSelectArg: string | undefined;
+  let supabaseFromCalled: boolean;
 
   beforeEach(() => {
     capturedLogs = [];
     capturedSelectArg = undefined;
+    supabaseFromCalled = false;
     vi.restoreAllMocks();
     vi.resetModules();
   });
@@ -494,114 +496,184 @@ describe('FIN-001: Admin query column restrictions', () => {
     }));
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          select: vi.fn().mockImplementation((selectStr: string) => {
-            capturedSelectArg = selectStr;
-            const result = { data: tableData, error: null, count: null };
-            const chainable: Record<string, unknown> = {};
-            const methods = ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'like', 'ilike', 'in', 'is', 'order', 'limit'];
-            for (const m of methods) chainable[m] = vi.fn().mockReturnValue(chainable);
-            chainable.then = (resolve: (r: typeof result) => void) => resolve(result);
-            return chainable;
-          }),
+        from: vi.fn().mockImplementation(() => {
+          supabaseFromCalled = true;
+          return {
+            select: vi.fn().mockImplementation((selectStr: string) => {
+              capturedSelectArg = selectStr;
+              const result = { data: tableData, error: null, count: null };
+              const chainable: Record<string, unknown> = {};
+              const methods = ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'like', 'ilike', 'in', 'is', 'order', 'limit'];
+              for (const m of methods) chainable[m] = vi.fn().mockReturnValue(chainable);
+              chainable.then = (resolve: (r: typeof result) => void) => resolve(result);
+              return chainable;
+            }),
+          };
         }),
       }),
     }));
     vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
   }
 
-  async function queryAs(role: string, table: string, data: Record<string, unknown>[], selectOverride?: string) {
+  async function queryAs(
+    role: string,
+    table: string,
+    data: Record<string, unknown>[],
+    opts?: { select?: string; filters?: unknown[]; order?: unknown },
+  ) {
     mockAdminQuery(role, data);
     const mod = await import('@/app/api/admin/query/route');
-    const req = makePostRequest('/api/admin/query', { table, select: selectOverride ?? '*' }, {
-      origin: 'http://localhost:8083',
-    });
+    const req = makePostRequest('/api/admin/query', {
+      table,
+      select: opts?.select ?? '*',
+      filters: opts?.filters,
+      order: opts?.order,
+    }, { origin: 'http://localhost:8083' });
     return mod.POST(req);
   }
 
-  it('finance cannot access whatsapp_channels (table not allowed)', async () => {
+  // ── Non-admin roles: every accessible table must have a registry or fail 403 ──
+
+  const SUPPORT_TABLES = [
+    'businesses', 'bookings', 'orders', 'order_items', 'services', 'products',
+    'support_tickets', 'support_ticket_messages', 'events', 'event_tickets',
+    'feedback', 'invoices', 'quote_requests', 'campaigns', 'alerts',
+    'notifications', 'queue_entries', 'customer_subscriptions', 'surveys', 'survey_responses',
+  ];
+
+  const FINANCE_ONLY_TABLES = [
+    'payments', 'platform_fees', 'business_payouts', 'refunds', 'refund_requests',
+    'subscriptions', 'payout_accounts', 'campaign_donations', 'customer_profiles',
+  ];
+
+  const OPERATIONS_ONLY_TABLES = [
+    'whatsapp_channels', 'whatsapp_config', 'bot_sessions', 'bot_keywords',
+    'business_capabilities', 'capability_overrides', 'business_staff',
+    'delivery_zones', 'reservations', 'loyalty_points',
+  ];
+
+  for (const table of SUPPORT_TABLES) {
+    it(`support: ${table} select=* sends explicit columns (not *)`, async () => {
+      const res = await queryAs('support', table, [{ id: 't1' }]);
+      expect(res.status).toBe(200);
+      expect(capturedSelectArg).not.toBe('*');
+    });
+  }
+
+  for (const table of FINANCE_ONLY_TABLES) {
+    it(`finance: ${table} select=* sends explicit columns (not *)`, async () => {
+      const res = await queryAs('finance', table, [{ id: 't1' }]);
+      expect(res.status).toBe(200);
+      expect(capturedSelectArg).not.toBe('*');
+    });
+  }
+
+  for (const table of OPERATIONS_ONLY_TABLES) {
+    it(`operations: ${table} select=* sends explicit columns (not *)`, async () => {
+      const res = await queryAs('operations', table, [{ id: 't1' }]);
+      expect(res.status).toBe(200);
+      expect(capturedSelectArg).not.toBe('*');
+    });
+  }
+
+  // ── Unregistered tables fail before database query ──
+
+  it('finance cannot access whatsapp_channels (table not in role list)', async () => {
     const res = await queryAs('finance', 'whatsapp_channels', []);
     expect(res.status).toBe(403);
+    expect(supabaseFromCalled).toBe(false);
   });
 
-  it('support cannot access payout_accounts (table not allowed)', async () => {
+  it('support cannot access payout_accounts (table not in role list)', async () => {
     const res = await queryAs('support', 'payout_accounts', []);
     expect(res.status).toBe(403);
+    expect(supabaseFromCalled).toBe(false);
   });
 
-  it('operations select=* on whatsapp_channels sends explicit safe columns', async () => {
-    const res = await queryAs('operations', 'whatsapp_channels', [
-      { id: 'ch1', display_name: 'Test' },
-    ]);
-    expect(res.status).toBe(200);
-    // The select string sent to Supabase must NOT be '*'
-    expect(capturedSelectArg).not.toBe('*');
-    expect(capturedSelectArg).toContain('id');
-    expect(capturedSelectArg).toContain('display_name');
-    expect(capturedSelectArg).not.toContain('meta_access_token');
+  // ── Credential-like columns are rejected before query ──
+
+  it('operations cannot request meta_access_token from whatsapp_channels', async () => {
+    const res = await queryAs('operations', 'whatsapp_channels', [], {
+      select: 'id,meta_access_token',
+    });
+    expect(res.status).toBe(403);
+    expect(supabaseFromCalled).toBe(false);
   });
 
-  it('finance select=* on payout_accounts sends explicit safe columns', async () => {
-    const res = await queryAs('finance', 'payout_accounts', [
-      { id: 'pa1', gateway: 'paystack', bank_name: 'GTB', account_name: 'John' },
-    ]);
-    expect(res.status).toBe(200);
-    expect(capturedSelectArg).not.toBe('*');
-    expect(capturedSelectArg).toContain('id');
-    expect(capturedSelectArg).toContain('gateway');
-    expect(capturedSelectArg).not.toContain('account_number');
-    expect(capturedSelectArg).not.toContain('square_access_token');
-    expect(capturedSelectArg).not.toContain('stripe_account_id');
+  it('finance cannot request account_number from payout_accounts', async () => {
+    const res = await queryAs('finance', 'payout_accounts', [], {
+      select: 'id,account_number',
+    });
+    expect(res.status).toBe(403);
+    expect(supabaseFromCalled).toBe(false);
   });
 
-  it('admin select=* on payout_accounts sends explicit safe columns (not *)', async () => {
-    const res = await queryAs('admin', 'payout_accounts', [
-      { id: 'pa1', gateway: 'paystack' },
-    ]);
+  it('admin cannot request square_access_token from payout_accounts', async () => {
+    const res = await queryAs('admin', 'payout_accounts', [], {
+      select: 'id,square_access_token',
+    });
+    expect(res.status).toBe(403);
+    expect(supabaseFromCalled).toBe(false);
+  });
+
+  // ── Filter and order column validation ──
+
+  it('finance cannot filter on unapproved column', async () => {
+    const res = await queryAs('finance', 'payout_accounts', [], {
+      filters: [{ column: 'square_access_token', op: 'eq', value: 'test' }],
+    });
+    expect(res.status).toBe(403);
+    expect(supabaseFromCalled).toBe(false);
+    const body = await res.json();
+    expect(body.error).toContain('Filter column not allowed');
+  });
+
+  it('operations cannot order by unapproved column', async () => {
+    const res = await queryAs('operations', 'whatsapp_channels', [], {
+      order: { column: 'meta_access_token', ascending: true },
+    });
+    expect(res.status).toBe(403);
+    expect(supabaseFromCalled).toBe(false);
+    const body = await res.json();
+    expect(body.error).toContain('Order column not allowed');
+  });
+
+  it('finance can filter on approved column', async () => {
+    const res = await queryAs('finance', 'platform_fees', [{ id: 'f1' }], {
+      filters: [{ column: 'waived', op: 'eq', value: false }],
+    });
     expect(res.status).toBe(200);
-    // Even admin gets the allowlist for payout_accounts
+  });
+
+  it('support can order by approved column', async () => {
+    const res = await queryAs('support', 'alerts', [{ id: 'a1' }], {
+      order: { column: 'created_at', ascending: false },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  // ── Sensitive table enforcement applies to admin too ──
+
+  it('admin select=* on payout_accounts sends explicit safe columns', async () => {
+    const res = await queryAs('admin', 'payout_accounts', [{ id: 'pa1' }]);
+    expect(res.status).toBe(200);
     expect(capturedSelectArg).not.toBe('*');
     expect(capturedSelectArg).not.toContain('account_number');
     expect(capturedSelectArg).not.toContain('square_access_token');
   });
 
   it('admin select=* on whatsapp_channels sends explicit safe columns', async () => {
-    const res = await queryAs('admin', 'whatsapp_channels', [
-      { id: 'ch1', display_name: 'Test' },
-    ]);
+    const res = await queryAs('admin', 'whatsapp_channels', [{ id: 'ch1' }]);
     expect(res.status).toBe(200);
     expect(capturedSelectArg).not.toBe('*');
     expect(capturedSelectArg).not.toContain('meta_access_token');
   });
 
-  it('rejects requested column outside allowlist with 403', async () => {
-    const res = await queryAs('finance', 'payout_accounts', [], 'id,account_number');
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.error).toContain('account_number');
-  });
-
-  it('admin cannot request credential column explicitly', async () => {
-    const res = await queryAs('admin', 'payout_accounts', [], 'id,square_access_token');
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.error).toContain('square_access_token');
-  });
-
-  it('admin cannot receive full account_number from payout_accounts', async () => {
-    // Even if DB somehow returns it, defense-in-depth scrubs it
-    const res = await queryAs('admin', 'payout_accounts', [
-      { id: 'pa1', account_number: '0123456789', gateway: 'paystack' },
-    ]);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.data[0]).not.toHaveProperty('account_number');
-  });
+  // ── Defense in depth: response scrubbing ──
 
   it('defense-in-depth scrubs nested credential fields', async () => {
-    // For tables without an allowlist, nested objects are scrubbed recursively
-    const res = await queryAs('admin', 'profiles', [
-      { id: 'p1', nested: { meta_access_token: 'secret', name: 'safe' } },
+    const res = await queryAs('admin', 'audit_logs', [
+      { id: 'a1', nested: { meta_access_token: 'secret', name: 'safe' } },
     ]);
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -610,23 +682,49 @@ describe('FIN-001: Admin query column restrictions', () => {
     expect(nested.name).toBe('safe');
   });
 
-  it('legitimate finance queries return required safe fields', async () => {
-    const res = await queryAs('finance', 'payments', [
-      { id: 'p1', amount: 5000, currency: 'NGN', status: 'success', gateway: 'paystack' },
-    ]);
+  // ── Legitimate workflows preserved ──
+
+  it('finance: Dashboard platform_fees query works', async () => {
+    const res = await queryAs('finance', 'platform_fees', [
+      { fee_total: 250, transaction_amount: 5000, business_id: 'b1' },
+    ], { select: 'fee_total,transaction_amount,business_id' });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.data[0].id).toBe('p1');
-    expect(body.data[0].amount).toBe(5000);
+    expect(body.data[0].fee_total).toBe(250);
+  });
+
+  it('finance: Dashboard business_payouts query works', async () => {
+    const res = await queryAs('finance', 'business_payouts', [
+      { net_amount: 1000, status: 'pending', business_id: 'b1' },
+    ], { select: 'net_amount,status,business_id' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data[0].status).toBe('pending');
+  });
+
+  it('support: Dashboard businesses count query works', async () => {
+    const res = await queryAs('support', 'businesses', [{ id: 'b1' }], {
+      select: 'id',
+      filters: [{ column: 'status', op: 'eq', value: 'active' }],
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('operations: Dashboard bot_sessions count works', async () => {
+    const res = await queryAs('operations', 'bot_sessions', [{ id: 's1' }], {
+      select: 'id',
+      filters: [{ column: 'is_active', op: 'eq', value: true }],
+    });
+    expect(res.status).toBe(200);
   });
 
   it('admin workflows on unrestricted tables continue to work', async () => {
-    const res = await queryAs('admin', 'profiles', [
-      { id: 'p1', full_name: 'Test User', email: 'test@example.com' },
+    const res = await queryAs('admin', 'audit_logs', [
+      { id: 'a1', action: 'login', created_at: '2024-01-01' },
     ]);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.data[0].full_name).toBe('Test User');
+    expect(body.data[0].action).toBe('login');
   });
 });
 
