@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { randomBytes } from 'crypto';
 import { logger } from '@/lib/logger';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 
 function corsHeaders(origin?: string | null) {
   const allowedOrigins = [
@@ -21,40 +22,13 @@ export async function OPTIONS() {
 }
 
 export async function POST(request: NextRequest) {
-  // Auth from header (admin app sends Bearer token)
-  const authHeader = request.headers.get('Authorization');
-  const token = authHeader?.replace('Bearer ', '');
+  // Impersonation is admin-only — support role cannot impersonate businesses
+  const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+  if (!admin) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders() });
+  }
 
   const supabase = createServiceClient();
-
-  // Verify the token by getting the user from Supabase auth
-  let user: { id: string; email?: string } | null = null;
-  if (token) {
-    const { data } = await supabase.auth.getUser(token);
-    user = data?.user || null;
-  }
-  if (!user) {
-    // Fallback: try cookie-based auth
-    const { createClient } = await import('@/lib/supabase/server');
-    const cookieSupabase = await createClient();
-    const { data: { user: cookieUser } } = await cookieSupabase.auth.getUser();
-    user = cookieUser;
-  }
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders() });
-  }
-
-  // Verify admin or support role
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  // Impersonation is admin-only — support role cannot impersonate businesses
-  if (!profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders() });
-  }
 
   const body = await request.json();
   const { business_id } = body;
@@ -84,7 +58,7 @@ export async function POST(request: NextRequest) {
     const { error: insertError } = await supabase
       .from('admin_impersonation_tokens')
       .insert({
-        admin_id: user.id,
+        admin_id: admin.id,
         business_id: business.id,
         token,
         expires_at: expiresAt.toISOString(),
@@ -97,8 +71,8 @@ export async function POST(request: NextRequest) {
 
     // Log to impersonation_logs
     await supabase.from('impersonation_logs').insert({
-      admin_id: user.id,
-      admin_email: user.email || '',
+      admin_id: admin.id,
+      admin_email: admin.email || '',
       target_business_id: business.id,
       target_business_name: business.name,
       action: 'login_as_token_generated',

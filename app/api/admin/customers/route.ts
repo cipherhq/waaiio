@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 
 function corsHeaders(origin?: string | null) {
   const allowedOrigins = [
@@ -19,28 +20,12 @@ export async function OPTIONS() {
 }
 
 export async function GET(request: NextRequest) {
-  // Verify admin auth
-  const authHeader = request.headers.get('Authorization');
-  const token = authHeader?.replace('Bearer ', '');
-  if (!token) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders() });
+  const admin = await requirePlatformAdmin(request, { requiredRole: ['admin', 'support'] });
+  if (!admin) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 403, headers: corsHeaders() });
   }
 
   const supabase = createServiceClient();
-  const { data: { user } } = await supabase.auth.getUser(token);
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders() });
-  }
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (!profile || !['admin', 'support'].includes(profile.role)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders() });
-  }
 
   // Fetch all data using service client (bypasses RLS)
   const [bookingsRes, paymentsRes] = await Promise.all([

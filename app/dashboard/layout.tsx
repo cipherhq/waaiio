@@ -49,15 +49,12 @@ export default async function DashboardLayout({
   let impersonatedBusinessName = '';
 
   if (impersonateBusinessId && impersonateAdminId) {
-    // Validate the admin is still valid (admin or support role)
-    const { data: adminProfile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', impersonateAdminId)
-      .maybeSingle();
+    // Validate the admin is still valid using authoritative app_metadata
+    const { verifyAdminRole } = await import('@/lib/admin-auth');
+    const isAdmin = await verifyAdminRole(impersonateAdminId, { requiredRole: 'admin' });
 
     // Impersonation is admin-only — must match token issuance and validation endpoints
-    if (adminProfile && adminProfile.role === 'admin') {
+    if (isAdmin) {
       // Verify impersonation token exists and is valid (used, not expired)
       const { data: tokenRecord } = await supabase
         .from('admin_impersonation_tokens')

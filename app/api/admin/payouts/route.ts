@@ -1,26 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 
-async function requireAdmin(supabase: any) {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (!profile || profile.role !== 'admin') return null;
-  return user;
-}
+export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
-  const supabase = await createClient();
-  const admin = await requireAdmin(supabase);
+  const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }
+
+  const supabase = await createClient();
 
   const params = request.nextUrl.searchParams;
   const page = Math.max(1, parseInt(params.get('page') || '1'));
