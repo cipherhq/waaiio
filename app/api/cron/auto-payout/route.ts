@@ -3,6 +3,7 @@ import { type NextRequest } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { createCronLogger } from '@/lib/observability/cron';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
@@ -36,6 +37,11 @@ const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);
   if (authError) return authError;
+
+  // FIN-001: Payout kill switch — must be explicitly enabled
+  if (process.env.ENABLE_PAYOUTS !== 'true') {
+    return NextResponse.json({ error: 'Payouts are currently disabled' }, { status: 503 });
+  }
 
   const cron = createCronLogger('auto-payout');
   cron.started();
@@ -275,16 +281,19 @@ export async function GET(request: NextRequest) {
                   flags: [...(holdReasons || []), `Transfer failed: ${transferData.message}`],
                 }).eq('id', payout!.id);
                 held++;
-                logger.error(`[AUTO-PAYOUT] Transfer failed for ${biz.name}:`, transferData.message);
+                logger.withContext({ op: 'auto-payout.transfer', businessId: biz.id })
+                  .error('[AUTO-PAYOUT] Transfer failed');
 
                 // Notify business owner of failure (non-blocking)
                 notifyPayoutFailure(supabase, biz.id, net, getCurrencyCode((biz.country_code || 'NG') as CountryCode), transferData.message).catch(
-                  (err) => logger.error('[AUTO-PAYOUT] Failure email error:', err),
+                  (err) => logger.withContext({ op: 'auto-payout.failure-email', ...safeLogErrorContext(err) })
+                    .error('[AUTO-PAYOUT] Failure email error'),
                 );
               }
             }
           } catch (err) {
-            logger.error(`[AUTO-PAYOUT] Paystack error for ${biz.name}:`, err);
+            logger.withContext({ op: 'auto-payout.paystack', businessId: biz.id, ...safeLogErrorContext(err) })
+              .error('[AUTO-PAYOUT] Paystack error');
             held++;
           }
         }

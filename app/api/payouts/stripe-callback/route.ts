@@ -1,14 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 
 export async function GET(request: NextRequest) {
+  // FIN-001: Stripe Connect feature gate — must be explicitly enabled
+  if (process.env.ENABLE_STRIPE_CONNECT !== 'true') {
+    return NextResponse.json({ error: 'Stripe Connect is currently disabled' }, { status: 503 });
+  }
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   const { searchParams } = new URL(request.url);
   const accountId = searchParams.get('account_id');
   const businessId = searchParams.get('business_id');
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
   if (!accountId || !businessId) {
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=missing_params`);
@@ -66,7 +72,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?connected=true`);
   } catch (error) {
-    logger.error('Stripe callback error:', (error as Error).message);
+    logger.withContext({ op: 'stripe-callback', ...safeLogErrorContext(error) })
+      .error('[STRIPE-CALLBACK] Callback failed');
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=callback_failed`);
   }
 }

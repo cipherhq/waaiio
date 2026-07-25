@@ -345,6 +345,7 @@ describe('Square-callback route handler', () => {
     process.env.SQUARE_OAUTH_APP_SECRET = 'sq-secret';
     process.env.SQUARE_ENVIRONMENT = 'sandbox';
     process.env.NEXT_PUBLIC_APP_URL = 'https://test.waaiio.com';
+    process.env.ENABLE_SQUARE_CONNECT = 'true';
 
     vi.spyOn(console, 'error').mockImplementation(captureErrors);
     vi.spyOn(console, 'log').mockImplementation(captureAll);
@@ -356,6 +357,7 @@ describe('Square-callback route handler', () => {
     delete process.env.SQUARE_OAUTH_APP_SECRET;
     delete process.env.SQUARE_ENVIRONMENT;
     delete process.env.NEXT_PUBLIC_APP_URL;
+    delete process.env.ENABLE_SQUARE_CONNECT;
     vi.unstubAllGlobals();
   });
 

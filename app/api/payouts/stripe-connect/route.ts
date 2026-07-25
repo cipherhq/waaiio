@@ -18,6 +18,11 @@ async function stripeRequest(path: string, body: Record<string, string>) {
 }
 
 export async function POST(request: NextRequest) {
+  // FIN-001: Stripe Connect feature gate — must be explicitly enabled
+  if (process.env.ENABLE_STRIPE_CONNECT !== 'true') {
+    return NextResponse.json({ error: 'Stripe Connect is currently disabled' }, { status: 503 });
+  }
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
@@ -75,7 +80,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ url: link.url });
   } catch (error) {
-    logger.error('Stripe Connect error:', (error as Error).message);
+    logger.withContext({ op: 'stripe-connect', ...safeLogErrorContext(error) })
+      .error('[STRIPE-CONNECT] Failed to create account');
     return NextResponse.json({ error: 'Failed to create Stripe account' }, { status: 500 });
   }
 }

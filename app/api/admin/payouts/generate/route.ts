@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 
 interface Flag {
@@ -243,7 +244,8 @@ export async function POST(request: NextRequest) {
       period: { start: periodStartStr, end: periodEndStr },
     });
   } catch (error) {
-    logger.error('Generate payouts error:', (error as Error).message);
+    logger.withContext({ op: 'payout.generate', ...safeLogErrorContext(error) })
+      .error('[PAYOUT] Generate failed');
     return NextResponse.json({ error: 'Failed to generate payouts' }, { status: 500 });
   }
 }

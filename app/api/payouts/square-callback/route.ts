@@ -15,6 +15,11 @@ function getSquareBaseUrl(): string {
 }
 
 export async function GET(request: NextRequest) {
+  // FIN-001: Square Connect feature gate — must be explicitly enabled
+  if (process.env.ENABLE_SQUARE_CONNECT !== 'true') {
+    return NextResponse.json({ error: 'Square Connect is currently disabled' }, { status: 503 });
+  }
+
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
   const state = searchParams.get('state');
