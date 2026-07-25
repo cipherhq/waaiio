@@ -182,19 +182,56 @@ for (const m of ledger.milestones) {
   }
 }
 
-// ── 9. Git ancestry checks (if git is available) ──
+// ── 9. Git ancestry checks ──
 console.log('\n=== Git Ancestry Checks ===');
 try {
   execSync('git rev-parse HEAD', { stdio: 'pipe' });
-  const mainSha = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
 
+  // Determine if full history is available (fetch-depth: 0 in CI)
+  let fullHistory = false;
+  try {
+    const depth = execSync('git rev-list --count HEAD', { encoding: 'utf-8' }).trim();
+    fullHistory = parseInt(depth, 10) > 100;
+  } catch {
+    // If rev-list fails, assume shallow
+  }
+
+  // Prefer origin/main if available, fall back to HEAD
+  let ancestryRef = 'HEAD';
+  try {
+    execSync('git rev-parse origin/main', { stdio: 'pipe' });
+    ancestryRef = 'origin/main';
+  } catch {
+    // origin/main not available — use HEAD
+  }
+  pass(`Ancestry reference: ${ancestryRef} (full history: ${fullHistory})`);
+
+  // Verify the reconciled main SHA is reachable
+  if (ledger.last_reconciled_main_sha) {
+    try {
+      execSync(`git cat-file -t ${ledger.last_reconciled_main_sha}`, { stdio: 'pipe' });
+      pass(`Reconciled SHA ${ledger.last_reconciled_main_sha.slice(0, 8)} exists in local history`);
+    } catch {
+      if (fullHistory) {
+        fail(`Reconciled SHA ${ledger.last_reconciled_main_sha.slice(0, 8)} not found with full history available`);
+      } else {
+        warn(`Reconciled SHA ${ledger.last_reconciled_main_sha.slice(0, 8)} not found (shallow clone — may need fetch)`);
+      }
+    }
+  }
+
+  // Verify merge SHAs for merged milestones
   for (const m of ledger.milestones) {
     if (m.merge_sha && ['MERGED', 'DEPLOYED', 'PRODUCTION_VERIFIED', 'CLOSED'].includes(m.stage)) {
       try {
-        execSync(`git merge-base --is-ancestor ${m.merge_sha} HEAD`, { stdio: 'pipe' });
-        pass(`${m.id}: merge_sha ${m.merge_sha.slice(0, 8)} is ancestor of current HEAD`);
+        execSync(`git merge-base --is-ancestor ${m.merge_sha} ${ancestryRef}`, { stdio: 'pipe' });
+        pass(`${m.id}: merge_sha ${m.merge_sha.slice(0, 8)} is ancestor of ${ancestryRef}`);
       } catch {
-        warn(`${m.id}: merge_sha ${m.merge_sha.slice(0, 8)} is NOT ancestor of current HEAD (may need fetch)`);
+        if (fullHistory) {
+          fail(`${m.id}: merge_sha ${m.merge_sha.slice(0, 8)} is NOT ancestor of ${ancestryRef} — milestone claims "${m.stage}" but merge SHA is not on main`);
+        } else {
+          warn(`${m.id}: merge_sha ${m.merge_sha.slice(0, 8)} is NOT ancestor of ${ancestryRef} (shallow clone — cannot verify, fetch full history to confirm)`);
+        }
       }
     }
   }

@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
   "last_reconciled_main_sha": "6024500f62c600d9b4fd0bfc9f470cf3c5538035",
-  "last_reconciled_at": "2026-07-25T03:00:00Z",
+  "last_reconciled_at": "2026-07-25T03:30:00Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -17,8 +17,9 @@
       "environment": "production",
       "production_verified_at": "2026-07-25T00:30:00Z",
       "verification_evidence": [
-        "All 7 CI checks passed on merge commit",
-        "Vercel Production deployments successful (blowded + waaiio)",
+        "6 repository CI checks passed: Main App, Admin App, Migration validation, Playwright smoke tests, Secret scanning, Dependency audit",
+        "Vercel Production deployment successful (blowded project)",
+        "Vercel Production deployment successful (waaiio project)",
         "www.waaiio.com HTTP 200",
         "admin.waaiio.com HTTP 200",
         "is_admin() reads auth.users.raw_app_meta_data confirmed",
@@ -28,7 +29,7 @@
       ],
       "blockers": [],
       "next_action": "Close tracking issue when created",
-      "notes": "Admin provisioned before migration. Migration 247 applied. PR #36 squash-merged."
+      "notes": "Admin provisioned before migration. Migration 247 applied. PR #36 squash-merged. Implementation SHA is the PR head (not on main due to squash merge); merge SHA is the squash commit on main."
     },
     {
       "id": "AUTH-000",
@@ -44,7 +45,7 @@
       "environment": "production",
       "production_verified_at": null,
       "verification_evidence": [
-        "Vercel deployment successful",
+        "Vercel Production deployment successful (blowded + waaiio projects)",
         "OTP send returned HTTP 200",
         "Delivery attempt recorded with env_fallback path",
         "Meta delivery status: failed (131042 — Business eligibility payment issue)",
@@ -55,7 +56,7 @@
         "Waaiio Bot WABA requires valid payment method in Meta Business Manager"
       ],
       "next_action": "Resolve Meta WABA billing before re-testing OTP delivery",
-      "notes": "Code and observability deployed successfully. Delivery blocked by Meta billing, not by application code. PR #37 (template send) and PR #38 (observability) both merged."
+      "notes": "Code and observability deployed to production successfully. Delivery blocked by Meta billing, not by application code. PR #37 (template send) and PR #38 (observability) both merged."
     },
     {
       "id": "FIN-LEGACY",
@@ -72,13 +73,34 @@
       "production_verified_at": null,
       "verification_evidence": [],
       "blockers": [
-        "PR #21 contains 100 files and 48 migrations — too large to merge safely",
-        "Migrations 244-291 in PR #21 conflict with main's migrations 247-248",
+        "PR #21 contains 270 changed files and 48 new migrations — too large to merge safely",
+        "Migrations 244-248 in PR #21 directly conflict with main's applied migrations",
+        "Migrations 249-291 in PR #21 are stranded and reserved while the PR remains open",
         "PR #21 auth patterns use obsolete profiles.role (superseded by PR #36)",
         "PRs #18, #19, #20 are also open and unmerged"
       ],
-      "next_action": "Extract useful protections into small focused PRs with updated auth and renumbered migrations",
+      "next_action": "Extract useful protections into small focused PRs with updated auth and renumbered migrations (starting from 292)",
       "notes": "PR #21 contains tested payout safety, Square OAuth, admin credential filtering, and idempotency work that is not present on main. Must not be merged or rebased wholesale. Controlled extraction required."
+    },
+    {
+      "id": "GOV-001",
+      "title": "Engineering governance foundation",
+      "stage": "LOCALLY_TESTED",
+      "owner": "claude",
+      "issue_numbers": [],
+      "pr_numbers": [39],
+      "implementation_sha": null,
+      "reviewed_sha": null,
+      "merge_sha": null,
+      "deployed_sha": null,
+      "environment": null,
+      "production_verified_at": null,
+      "verification_evidence": [],
+      "blockers": [
+        "Requires independent review approval"
+      ],
+      "next_action": "Address review feedback, then await independent review approval and merge authorization",
+      "notes": "Governance-only PR. No application code, migrations, or production configuration changes. Automatic Vercel Preview deployment occurred on waaiio project; blowded (production) was skipped. Preview deployments do not advance milestones to DEPLOYED."
     }
   ]
 }

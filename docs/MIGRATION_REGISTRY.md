@@ -22,7 +22,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 245 | `fix_book_slot_atomic_overloads` | Applied to production | — |
 | 244 | `payment_source_classification` | Applied to production | — |
 
-**Next available version:** 249
+**Next available version:** 292
 
 ## Reservation Process
 
@@ -37,25 +37,39 @@ Before creating a migration:
 
 None.
 
+### Stranded Reservations (PR #21)
+
+While PR #21 (`fix/combined-18-19-20`) remains open, versions 249-291 are reserved by that branch. These cannot be reused until PR #21 is closed or the migrations are explicitly released.
+
+| Range | Status | Reason |
+|-------|--------|--------|
+| 244-248 | **Direct collision** with main | Main already applied these versions with different content |
+| 249-291 | **Stranded / reserved** by open PR #21 | Branch occupies these versions; must not be reused while PR is open |
+
 ### Reservation Format
 
 ```
 | Version | Description | Branch | Reserved By | Date |
 |---------|-------------|--------|-------------|------|
-| 249 | example_migration | fix/example | claude | 2026-07-25 |
+| 292 | example_migration | fix/example | claude | 2026-07-25 |
 ```
 
 ## Rules
 
 1. **Never reuse a version** from a previously applied migration
-2. **Never reuse a version** from an unmerged PR's migration (treat as reserved until the PR is closed)
+2. **Never reuse a version** from an open PR's migration (treat as reserved until the PR is closed)
 3. **Never modify** a migration that has been applied to production
 4. **One migration concern per PR** — do not bundle unrelated schema changes
 5. **Record production application** — after applying a migration, update `engineering-status.json`
 
 ## Stranded Migrations
 
-PR #21 (`fix/combined-18-19-20`) contains migrations 244-291. These versions conflict with main's 244-248. If any of this work is extracted, migrations must be renumbered starting from the next available version at extraction time.
+PR #21 (`fix/combined-18-19-20`) contains migrations across versions 244-291:
+
+- **244-248:** Direct collision with main — main has different migrations at these versions. PR #21's versions for 244-248 are obsolete.
+- **249-291:** New migrations that do not exist on main. These are stranded — the work may be valid but the versions are occupied by an open PR.
+
+If any PR #21 migration work is extracted into a new PR, it must be renumbered starting from 292 (or whatever the next available version is at extraction time).
 
 **Do not apply stranded migrations without renumbering and independent review.**
 

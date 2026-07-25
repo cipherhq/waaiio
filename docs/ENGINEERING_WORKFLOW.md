@@ -4,7 +4,7 @@ Permanent engineering process for Waaiio.
 
 ## Source-of-Truth Hierarchy
 
-1. **Current GitHub `main`** — the deployed codebase
+1. **Current GitHub `main`** — the integrated source branch (may be ahead of production)
 2. **Merged pull requests** — completed work with review trail
 3. **Open pull requests** — proposed changes with diffs
 4. **GitHub Issues** — planned and tracked milestones
@@ -26,8 +26,8 @@ Permanent engineering process for Waaiio.
 | `IMPLEMENTED` | All code changes committed on a feature branch |
 | `LOCALLY_TESTED` | `npm run test` passes; `npm run build` passes; relevant focused tests pass |
 | `INDEPENDENTLY_REVIEWED` | A reviewer other than the implementer has approved or provided substantive feedback |
-| `MERGED` | PR squash-merged into `main`; merge SHA recorded; `git merge-base --is-ancestor <merge-sha> origin/main` passes |
-| `DEPLOYED` | Vercel deployment for the merge commit shows `success`; production URL returns HTTP 200 |
+| `MERGED` | PR squash-merged into `main`; merge SHA recorded; `git merge-base --is-ancestor <merge-sha> origin/main` passes; GitHub PR state is `MERGED` |
+| `DEPLOYED` | Production Vercel deployment (blowded project) for the merge commit shows `success`; production URL returns HTTP 200. Automatic Vercel Preview deployments do not qualify. |
 | `PRODUCTION_VERIFIED` | Post-deployment checks confirm the feature works correctly in production |
 | `CLOSED` | GitHub Issue closed; changelog updated; status ledger updated |
 
@@ -82,14 +82,32 @@ An integration branch (e.g., PR #21 `fix/combined-18-19-20`) may prove compatibi
 
 ## Completion Proof
 
-To verify work is on main:
+Waaiio uses squash merges. The PR head (implementation SHA) is not preserved in main's history. Verify the **merge SHA**, not the implementation SHA:
 
 ```bash
 git fetch origin main
-git merge-base --is-ancestor <implementation-sha> origin/main && echo "PRESENT" || echo "NOT ON MAIN"
+git merge-base --is-ancestor <merge-sha> origin/main && echo "PRESENT" || echo "NOT ON MAIN"
 ```
 
-A failed ancestry check means the work is not present on main regardless of what any chat session, document, or memory claims.
+The implementation SHA is retained as implementation evidence only. It proves what was reviewed, not what is on main.
+
+A failed merge-SHA ancestry check means the work is not present on main regardless of what any chat session, document, or memory claims.
+
+### Deployment vs. Main
+
+`main` may be ahead of production. A commit on `main` is not necessarily deployed. The `DEPLOYED` stage requires evidence that the **production Vercel deployment** (blowded project) succeeded for the specific merge commit. Automatic Vercel Preview deployments on PR branches do not advance a milestone to `DEPLOYED`.
+
+## Updating the Ledger After Merge
+
+A PR cannot mark itself `MERGED` before it merges. The post-merge update process:
+
+1. The PR merges (creating a merge SHA).
+2. In the next commit or PR, update `docs/engineering-status.json`:
+   - Set `stage` to `MERGED`
+   - Record `merge_sha`
+   - Clear `next_action` or set it to the deployment step
+3. After production deployment, update again with `DEPLOYED` and `deployed_sha`.
+4. After production verification, update with `PRODUCTION_VERIFIED` and evidence.
 
 ## Evidence Categories
 
