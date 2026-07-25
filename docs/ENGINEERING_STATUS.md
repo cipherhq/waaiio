@@ -3,7 +3,7 @@
 Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineering-status.json)
 
 **Last reconciled:** 2026-07-25
-**Main SHA:** `2563c6a672c5c71443df129b2371c16315fa9957`
+**Main SHA:** `d886c8d99eedc5d13ae9bfb152c5eb3f9dfad5fe`
 
 ## Milestone Status
 
@@ -13,7 +13,7 @@ Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineerin
 | AUTH-000 | Phone OTP via WhatsApp template | `DEPLOYED` | #37, #38 | `641c31b0` |
 | FIN-LEGACY | Financial integrity hardening | `STRANDED` | #18, #19, #20, #21 | none |
 | GOV-001 | Engineering governance foundation | `MERGED` | #39, #40 | `c6f9b02c` |
-| FIN-001 | Financial and credential containment | `INDEPENDENTLY_REVIEWED` | #44 | none |
+| FIN-001 | Financial and credential containment | `MERGED` | #44 | `d886c8d9` |
 
 ## Stage Definitions
 
