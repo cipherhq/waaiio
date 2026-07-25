@@ -1,0 +1,161 @@
+name: Engineering Milestone
+description: Track a meaningful engineering milestone through implementation, review, merge, deployment, and verification.
+title: "[MILESTONE] "
+labels: ["milestone"]
+body:
+  - type: input
+    id: milestone_id
+    attributes:
+      label: Milestone ID
+      description: "Unique identifier (e.g., AUTH-001, FIN-002, FEAT-003)"
+      placeholder: "AUTH-002"
+    validations:
+      required: true
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: "One-sentence description of what this milestone achieves"
+      placeholder: "Close the admin privilege escalation vulnerability"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: "What is broken, missing, or at risk?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_main_evidence
+    attributes:
+      label: Current Main Evidence
+      description: "What does current main already have? Include SHA and search results."
+      placeholder: |
+        Main SHA: abc123
+        Searched for: [relevant terms]
+        Found: [existing implementations or "confirmed missing"]
+    validations:
+      required: true
+
+  - type: textarea
+    id: existing_implementation
+    attributes:
+      label: Already-Existing Implementation
+      description: "Is any version of this work already on main, an open PR, or a stranded branch?"
+      placeholder: "PR #21 contains a partial implementation but uses obsolete auth patterns"
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: "What files, routes, or systems will be changed?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of Scope
+      description: "What will NOT be changed in this milestone?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: "Specific, testable conditions that must be true when complete"
+    validations:
+      required: true
+
+  - type: textarea
+    id: security
+    attributes:
+      label: Security Requirements
+      description: "Security considerations, threat model, or 'N/A'"
+    validations:
+      required: true
+
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests Required
+      description: "What tests must pass before merge?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: migration_impact
+    attributes:
+      label: Migration Impact
+      description: "Database migrations needed, or 'No migration required'"
+    validations:
+      required: true
+
+  - type: textarea
+    id: provider_access
+    attributes:
+      label: Provider / Environment Access Required
+      description: "External services or production access needed (Stripe, Meta, Supabase, Vercel)"
+      placeholder: "None — code changes only"
+    validations:
+      required: true
+
+  - type: textarea
+    id: rollback_plan
+    attributes:
+      label: Rollback Plan
+      description: "How to reverse this change if something goes wrong"
+    validations:
+      required: true
+
+  - type: textarea
+    id: deployment_plan
+    attributes:
+      label: Deployment Plan
+      description: "Steps to deploy safely (pre-deploy checks, migration order, post-deploy verification)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification_plan
+    attributes:
+      label: Production Verification Plan
+      description: "How to confirm the feature works correctly in production"
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: "Other milestones, PRs, or external changes that must complete first"
+      placeholder: "None"
+
+  - type: textarea
+    id: blockers
+    attributes:
+      label: Blockers
+      description: "Current blockers preventing progress"
+      placeholder: "None"
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-Implementation Checklist
+      description: "Confirm these before any coding begins"
+      options:
+        - label: "Current `origin/main` was fetched and inspected"
+          required: true
+        - label: "Existing open and merged PRs were searched for overlapping work"
+          required: true
+        - label: "`docs/engineering-status.json` was checked for this milestone"
+          required: true
+        - label: "No implementation begins until duplicate-work validation is complete"
+          required: true

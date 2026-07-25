@@ -1,0 +1,84 @@
+{
+  "$schema_version": "1.0.0",
+  "last_reconciled_main_sha": "6024500f62c600d9b4fd0bfc9f470cf3c5538035",
+  "last_reconciled_at": "2026-07-25T03:00:00Z",
+  "milestones": [
+    {
+      "id": "AUTH-001",
+      "title": "Prevent platform administrator privilege escalation",
+      "stage": "PRODUCTION_VERIFIED",
+      "owner": "claude",
+      "issue_numbers": [],
+      "pr_numbers": [36],
+      "implementation_sha": "5fe24189c091d0009bae6eb9d6490035cc5b489e",
+      "reviewed_sha": "5fe24189c091d0009bae6eb9d6490035cc5b489e",
+      "merge_sha": "78e28344492b77752cd34b90b7facbb89c1ca936",
+      "deployed_sha": "78e28344492b77752cd34b90b7facbb89c1ca936",
+      "environment": "production",
+      "production_verified_at": "2026-07-25T00:30:00Z",
+      "verification_evidence": [
+        "All 7 CI checks passed on merge commit",
+        "Vercel Production deployments successful (blowded + waaiio)",
+        "www.waaiio.com HTTP 200",
+        "admin.waaiio.com HTTP 200",
+        "is_admin() reads auth.users.raw_app_meta_data confirmed",
+        "Ordinary user escalation rejected confirmed",
+        "Migration 247 recorded exactly once",
+        "Changelog entry added 2026-07-25"
+      ],
+      "blockers": [],
+      "next_action": "Close tracking issue when created",
+      "notes": "Admin provisioned before migration. Migration 247 applied. PR #36 squash-merged."
+    },
+    {
+      "id": "AUTH-000",
+      "title": "Phone OTP delivery via WhatsApp authentication template",
+      "stage": "DEPLOYED",
+      "owner": "claude",
+      "issue_numbers": [],
+      "pr_numbers": [37, 38],
+      "implementation_sha": "074a70c66fb2cda51a59584554a7a70e31f270e0",
+      "reviewed_sha": "074a70c66fb2cda51a59584554a7a70e31f270e0",
+      "merge_sha": "641c31b002cd598d6238c2482b6d22480a5320fe",
+      "deployed_sha": "641c31b002cd598d6238c2482b6d22480a5320fe",
+      "environment": "production",
+      "production_verified_at": null,
+      "verification_evidence": [
+        "Vercel deployment successful",
+        "OTP send returned HTTP 200",
+        "Delivery attempt recorded with env_fallback path",
+        "Meta delivery status: failed (131042 — Business eligibility payment issue)",
+        "OTP not received by operator"
+      ],
+      "blockers": [
+        "Meta WABA payment/billing issue (error 131042) prevents OTP delivery",
+        "Waaiio Bot WABA requires valid payment method in Meta Business Manager"
+      ],
+      "next_action": "Resolve Meta WABA billing before re-testing OTP delivery",
+      "notes": "Code and observability deployed successfully. Delivery blocked by Meta billing, not by application code. PR #37 (template send) and PR #38 (observability) both merged."
+    },
+    {
+      "id": "FIN-LEGACY",
+      "title": "Financial integrity hardening (legacy combined branch)",
+      "stage": "STRANDED",
+      "owner": "claude",
+      "issue_numbers": [],
+      "pr_numbers": [18, 19, 20, 21],
+      "implementation_sha": "221685456f898c444156ece6d275b104b4b35496",
+      "reviewed_sha": null,
+      "merge_sha": null,
+      "deployed_sha": null,
+      "environment": null,
+      "production_verified_at": null,
+      "verification_evidence": [],
+      "blockers": [
+        "PR #21 contains 100 files and 48 migrations — too large to merge safely",
+        "Migrations 244-291 in PR #21 conflict with main's migrations 247-248",
+        "PR #21 auth patterns use obsolete profiles.role (superseded by PR #36)",
+        "PRs #18, #19, #20 are also open and unmerged"
+      ],
+      "next_action": "Extract useful protections into small focused PRs with updated auth and renumbered migrations",
+      "notes": "PR #21 contains tested payout safety, Square OAuth, admin credential filtering, and idempotency work that is not present on main. Must not be merged or rebased wholesale. Controlled extraction required."
+    }
+  ]
+}

@@ -252,6 +252,24 @@ jobs:
           fi
           echo "✅ RLS check complete."
 
+  # ── Engineering Governance ──
+  governance:
+    name: Engineering governance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+
+      - name: Validate governance artifacts
+        run: node scripts/verify-engineering-governance.mjs
+
   # ── Playwright Smoke Tests ──
   playwright:
     name: Playwright smoke tests

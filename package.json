@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "verify:governance": "node scripts/verify-engineering-governance.mjs",
     "prepare": "husky",
     "certify:local": "node scripts/certify-local.mjs"
   },
