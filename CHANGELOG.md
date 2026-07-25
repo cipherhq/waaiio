@@ -5,6 +5,24 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-25
+
+### Security: Prevent platform administrator privilege escalation
+- **Vulnerability:** Authenticated users could UPDATE `profiles.role` to `'admin'` via the permissive `"Users manage own profile"` FOR ALL RLS policy. `is_admin()` read from `profiles.role`, so a self-escalated user gained full platform admin access across all 32 admin-gated RLS policies and 18 admin API routes.
+- **Canonical authority:** `auth.users.raw_app_meta_data.role` is now the sole platform-role source. This field is set server-side by Supabase Auth admin operations and is never user-writable.
+- `supabase/migrations/247_admin_role_escalation_fix.sql` — Dropped permissive `FOR ALL` profile policy. Created operation-specific `profiles_select_own` (SELECT) and `profiles_update_own` (UPDATE) policies. Revoked all privileges from `authenticated`; granted SELECT + column-restricted UPDATE (first_name, last_name, email, phone, last_login_at, updated_at only). Added `trg_protect_profiles_role` (BEFORE UPDATE) and `trg_protect_profiles_role_insert` (BEFORE INSERT) triggers that reject unauthorized role changes. Redefined `is_admin()` and `is_admin_or_support()` to read `auth.users.raw_app_meta_data` with COALESCE fail-closed. All four functions use SECURITY DEFINER with `SET search_path = ''`.
+- `lib/admin-auth.ts` — New shared `requirePlatformAdmin()` helper. Checks ONLY `app_metadata.role`. Does not trust `profiles.role`, `raw_user_meta_data`, or hardcoded UUIDs.
+- 14 admin API routes + 4 non-admin routes with admin checks (`email/send`, `reseller/invite`, `verification/request`, `verification/review`) + `whatsapp/templates/check` — All updated to use `requirePlatformAdmin()`.
+- `admin/src/lib/adminAuth.ts`, `admin/src/pages/Login.tsx` — Admin panel reads `app_metadata.role` only, no `profiles.role` fallback.
+- `app/dashboard/layout.tsx` — Impersonation re-validation uses `verifyAdminRole()` from trusted Auth source.
+- `scripts/admin-provision.ts` — Admin provisioning via Supabase Auth admin API. Identity resolution uses ONLY Auth — never `profiles`.
+- `lib/__tests__/admin-role-escalation.test.ts` (26 tests), `lib/__tests__/admin-provision.test.ts` (15 tests) — Repository-wide audit for `profiles.role` authorization, hardcoded IDs, browser `auth.admin` calls; migration policy/grant/trigger verification; `requirePlatformAdmin` behavior; template-check route handler with 15 executable spy tests; `verifyCronAuth` contract analysis; admin provisioning identity resolution and metadata preservation.
+- **Removed:** `PLATFORM_OWNERS` hardcoded UUID bypass.
+- **Production deployment:** Commit `78e28344`. Admin provisioned via `app_metadata.role` before migration. Migration 247 applied. Post-deployment verification confirmed: ordinary users cannot escalate, approved profile updates work, `is_admin()` recognizes the provisioned admin, main site and admin site HTTP 200, all six CI checks passed (Main App, Admin App, Migration validation, Playwright smoke tests, Secret scanning, Dependency audit).
+- **Affects:** All `/api/admin/*` routes, admin panel authentication, dashboard impersonation, `profiles` RLS policies, `is_admin()` and `is_admin_or_support()` functions, 32 dependent RLS policies across the database.
+
+---
+
 ## 2026-07-24
 
 ### Observability: Persist WhatsApp OTP delivery status
