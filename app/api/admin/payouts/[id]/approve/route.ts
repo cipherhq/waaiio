@@ -141,10 +141,15 @@ export async function POST(
 
   try {
     let gatewayTransferCode: string | null = null;
-    let finalStatus = 'paid';
+    let finalStatus: string;
 
-    // API-initiated transfers
-    if (transfer_method === 'paystack_transfer' && paystackSecretKey && payout.payout_account_id) {
+    // FIN-001: Automated transfer methods require provider configuration.
+    // They must never fall through to the manual 'paid' path.
+    if (transfer_method === 'paystack_transfer') {
+      if (!paystackSecretKey) {
+        return NextResponse.json({ error: 'Paystack is not configured for transfers' }, { status: 400 });
+      }
+
       // Fetch payout account for bank details
       const { data: payoutAccount } = await supabase
         .from('payout_accounts')
@@ -152,50 +157,59 @@ export async function POST(
         .eq('id', payout.payout_account_id)
         .single();
 
-      if (payoutAccount) {
-        // Create transfer recipient
-        const recipientRes = await fetch('https://api.paystack.co/transferrecipient', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${paystackSecretKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            type: 'nuban',
-            name: payoutAccount.account_name,
-            account_number: payoutAccount.account_number,
-            bank_code: payoutAccount.bank_code,
-            currency: bizCurrency,
-          }),
-        });
-        const recipientData = await recipientRes.json();
-
-        if (recipientData.status && recipientData.data?.recipient_code) {
-          // Initiate transfer
-          const transferRes = await fetch('https://api.paystack.co/transfer', {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${paystackSecretKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              source: 'balance',
-              amount: Math.round(payout.net_amount * 100), // Paystack uses kobo
-              recipient: recipientData.data.recipient_code,
-              reason: `Payout for period ${payout.period_start} to ${payout.period_end}`,
-            }),
-          });
-          const transferData = await transferRes.json();
-
-          if (transferData.status) {
-            gatewayTransferCode = transferData.data.transfer_code;
-            finalStatus = 'processing'; // Will be confirmed via webhook
-          } else {
-            return NextResponse.json({ error: transferData.message || 'Transfer failed' }, { status: 400 });
-          }
-        }
+      if (!payoutAccount?.bank_code || !payoutAccount?.account_number) {
+        return NextResponse.json({ error: 'Payout account missing required bank details for Paystack transfer' }, { status: 400 });
       }
-    } else if (transfer_method === 'stripe_transfer' && stripeSecretKey && payout.payout_account_id) {
+
+      // Create transfer recipient
+      const recipientRes = await fetch('https://api.paystack.co/transferrecipient', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${paystackSecretKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'nuban',
+          name: payoutAccount.account_name,
+          account_number: payoutAccount.account_number,
+          bank_code: payoutAccount.bank_code,
+          currency: bizCurrency,
+        }),
+      });
+      const recipientData = await recipientRes.json();
+
+      if (!recipientData.status || !recipientData.data?.recipient_code) {
+        return NextResponse.json({ error: 'Failed to create Paystack transfer recipient' }, { status: 400 });
+      }
+
+      // Initiate transfer
+      const transferRes = await fetch('https://api.paystack.co/transfer', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${paystackSecretKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          source: 'balance',
+          amount: Math.round(payout.net_amount * 100), // Paystack uses kobo
+          recipient: recipientData.data.recipient_code,
+          reason: `Payout for period ${payout.period_start} to ${payout.period_end}`,
+        }),
+      });
+      const transferData = await transferRes.json();
+
+      if (!transferData.status) {
+        return NextResponse.json({ error: 'Paystack transfer failed' }, { status: 400 });
+      }
+
+      gatewayTransferCode = transferData.data.transfer_code;
+      finalStatus = 'processing'; // Confirmed via webhook
+
+    } else if (transfer_method === 'stripe_transfer') {
+      if (!stripeSecretKey) {
+        return NextResponse.json({ error: 'Stripe is not configured for transfers' }, { status: 400 });
+      }
+
       // Fetch Stripe account ID
       const { data: payoutAccount } = await supabase
         .from('payout_accounts')
@@ -203,29 +217,35 @@ export async function POST(
         .eq('id', payout.payout_account_id)
         .single();
 
-      if (payoutAccount?.stripe_account_id) {
-        const stripeRes = await fetch('https://api.stripe.com/v1/transfers', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${stripeSecretKey}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            amount: String(Math.round(payout.net_amount * 100)), // Stripe uses smallest currency unit
-            currency: bizCurrency.toLowerCase(),
-            destination: payoutAccount.stripe_account_id,
-            description: `Payout for period ${payout.period_start} to ${payout.period_end}`,
-          }),
-        });
-        const stripeData = await stripeRes.json();
-
-        if (stripeData.id) {
-          gatewayTransferCode = stripeData.id;
-          finalStatus = 'processing';
-        } else {
-          return NextResponse.json({ error: stripeData.error?.message || 'Stripe transfer failed' }, { status: 400 });
-        }
+      if (!payoutAccount?.stripe_account_id) {
+        return NextResponse.json({ error: 'Payout account missing Stripe destination account' }, { status: 400 });
       }
+
+      const stripeRes = await fetch('https://api.stripe.com/v1/transfers', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${stripeSecretKey}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          amount: String(Math.round(payout.net_amount * 100)),
+          currency: bizCurrency.toLowerCase(),
+          destination: payoutAccount.stripe_account_id,
+          description: `Payout for period ${payout.period_start} to ${payout.period_end}`,
+        }),
+      });
+      const stripeData = await stripeRes.json();
+
+      if (!stripeData.id) {
+        return NextResponse.json({ error: 'Stripe transfer failed' }, { status: 400 });
+      }
+
+      gatewayTransferCode = stripeData.id;
+      finalStatus = 'processing';
+
+    } else {
+      // Manual methods (manual_bank, manual_cash) — explicit completion
+      finalStatus = 'paid';
     }
     const { error: updateError } = await supabase
       .from('business_payouts')

@@ -35,13 +35,13 @@ const AUTO_APPROVE_LIMIT_USD = 1_000;   // $1,000 max auto-approve
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
 export async function GET(request: NextRequest) {
-  // FIN-001: Payout kill switch — must be explicitly enabled
-  if (process.env.ENABLE_PAYOUTS !== 'true') {
-    return NextResponse.json({ message: 'Payouts disabled', generated: 0 });
-  }
-
   const authError = verifyCronAuth(request);
   if (authError) return authError;
+
+  // FIN-001: Payout kill switch — must be explicitly enabled
+  if (process.env.ENABLE_PAYOUTS !== 'true') {
+    return NextResponse.json({ error: 'Payouts are currently disabled' }, { status: 503 });
+  }
 
   const cron = createCronLogger('auto-payout');
   cron.started();

@@ -6,13 +6,12 @@ import { safeLogErrorContext } from '@/lib/errors';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 
 export async function GET(request: NextRequest) {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-
   // FIN-001: Stripe Connect feature gate — must be explicitly enabled
   if (process.env.ENABLE_STRIPE_CONNECT !== 'true') {
-    return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=stripe_connect_disabled`);
+    return NextResponse.json({ error: 'Stripe Connect is currently disabled' }, { status: 503 });
   }
 
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   const { searchParams } = new URL(request.url);
   const accountId = searchParams.get('account_id');
   const businessId = searchParams.get('business_id');

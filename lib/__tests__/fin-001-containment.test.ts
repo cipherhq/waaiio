@@ -3,10 +3,12 @@
  *
  * Tests proving:
  * - Payout kill switch blocks transfers when disabled
- * - Square Connect gate blocks OAuth when disabled
- * - Stripe Connect gate blocks connection when disabled
- * - Admin query strips credential columns and enforces allowlists
+ * - Auto-payout cron authenticates before gate, returns 503 when disabled
+ * - Square Connect gate blocks OAuth with 503 when disabled
+ * - Stripe Connect gate blocks connection with 503 when disabled
+ * - Admin query enforces column allowlists at query level and scrubs response
  * - Transfer-method allowlist rejects unknown values
+ * - Automated methods fail when provider config is missing
  * - Safe logging in touched error paths
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -45,8 +47,15 @@ function makePostRequest(url: string, body: Record<string, unknown>, headers?: R
   });
 }
 
+function mockLogger() {
+  return {
+    error: captureAll, info: captureAll, debug: captureAll, warn: captureAll,
+    withContext: () => ({ error: captureAll, info: captureAll, debug: captureAll, warn: captureAll }),
+  };
+}
+
 // ═══════════════════════════════════════════════════════════
-// Scope 1: Payout Kill Switch
+// Scope 1: Payout Kill Switch (approve route)
 // ═══════════════════════════════════════════════════════════
 
 describe('FIN-001: Payout kill switch (approve route)', () => {
@@ -85,12 +94,7 @@ describe('FIN-001: Payout kill switch (approve route)', () => {
       payoutApprovedEmail: vi.fn(),
       payoutPaidEmail: vi.fn(),
     }));
-    vi.doMock('@/lib/logger', () => ({
-      logger: {
-        error: captureAll, info: captureAll, debug: captureAll, warn: captureAll,
-        withContext: () => ({ error: captureAll, info: captureAll, debug: captureAll, warn: captureAll }),
-      },
-    }));
+    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
     return import('@/app/api/admin/payouts/[id]/approve/route');
   }
 
@@ -135,10 +139,13 @@ describe('FIN-001: Payout kill switch (approve route)', () => {
     const { POST } = await loadApproveRoute();
     const req = makePostRequest('/api/admin/payouts/test-id/approve', { transfer_method: 'manual_bank' });
     const res = await POST(req, { params: Promise.resolve({ id: 'test-id' }) });
-    // Should get past the gate — will fail on payout not found (404) which is expected
     expect(res.status).not.toBe(503);
   });
 });
+
+// ═══════════════════════════════════════════════════════════
+// Scope 1b: Payout Kill Switch (auto-payout cron)
+// ═══════════════════════════════════════════════════════════
 
 describe('FIN-001: Payout kill switch (auto-payout cron)', () => {
   beforeEach(() => {
@@ -151,7 +158,7 @@ describe('FIN-001: Payout kill switch (auto-payout cron)', () => {
     delete process.env.ENABLE_PAYOUTS;
   });
 
-  async function loadAutoPayout() {
+  async function loadAutoPayout(cronAuthResult: unknown = null) {
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn().mockReturnValue({
         from: vi.fn().mockReturnThis(),
@@ -166,7 +173,7 @@ describe('FIN-001: Payout kill switch (auto-payout cron)', () => {
       }),
     }));
     vi.doMock('@/lib/cron-auth', () => ({
-      verifyCronAuth: vi.fn().mockReturnValue(null),
+      verifyCronAuth: vi.fn().mockReturnValue(cronAuthResult),
     }));
     vi.doMock('@/lib/observability/cron', () => ({
       createCronLogger: vi.fn().mockReturnValue({
@@ -183,34 +190,53 @@ describe('FIN-001: Payout kill switch (auto-payout cron)', () => {
     vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn() }));
     vi.doMock('@/lib/email/templates', () => ({ payoutFailedEmail: vi.fn() }));
     vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
-    vi.doMock('@/lib/logger', () => ({
-      logger: {
-        error: captureAll, info: captureAll, debug: captureAll, warn: captureAll,
-        withContext: () => ({ error: captureAll, info: captureAll, debug: captureAll, warn: captureAll }),
-      },
-    }));
+    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
     return import('@/app/api/cron/auto-payout/route');
   }
 
-  it('returns immediately when ENABLE_PAYOUTS is missing', async () => {
+  it('returns 401 for unauthorized request even when payouts disabled', async () => {
     delete process.env.ENABLE_PAYOUTS;
-    const { GET } = await loadAutoPayout();
+    const { NextResponse } = await import('next/server');
+    const authErrorResponse = NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const { GET } = await loadAutoPayout(authErrorResponse);
+    const req = makeRequest('/api/cron/auto-payout');
+    const res = await GET(req);
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 503 when ENABLE_PAYOUTS is missing (after auth)', async () => {
+    delete process.env.ENABLE_PAYOUTS;
+    const { GET } = await loadAutoPayout(null);
     const req = makeRequest('/api/cron/auto-payout', {
       headers: { Authorization: 'Bearer test-cron-secret' },
     });
     const res = await GET(req);
+    expect(res.status).toBe(503);
     const body = await res.json();
-    expect(body.message).toContain('disabled');
-    expect(body.generated).toBe(0);
+    expect(body.error).toContain('disabled');
+  });
+
+  it('returns 503 when ENABLE_PAYOUTS is "false"', async () => {
+    process.env.ENABLE_PAYOUTS = 'false';
+    const { GET } = await loadAutoPayout(null);
+    const req = makeRequest('/api/cron/auto-payout');
+    const res = await GET(req);
+    expect(res.status).toBe(503);
+  });
+
+  it('returns 503 when ENABLE_PAYOUTS is "1" (invalid truthy)', async () => {
+    process.env.ENABLE_PAYOUTS = '1';
+    const { GET } = await loadAutoPayout(null);
+    const req = makeRequest('/api/cron/auto-payout');
+    const res = await GET(req);
+    expect(res.status).toBe(503);
   });
 
   it('no provider call is made when disabled', async () => {
     delete process.env.ENABLE_PAYOUTS;
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const { GET } = await loadAutoPayout();
-    const req = makeRequest('/api/cron/auto-payout', {
-      headers: { Authorization: 'Bearer test-cron-secret' },
-    });
+    const { GET } = await loadAutoPayout(null);
+    const req = makeRequest('/api/cron/auto-payout');
     await GET(req);
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
@@ -247,12 +273,7 @@ describe('FIN-001: Square Connect feature gate', () => {
         }),
       }),
     }));
-    vi.doMock('@/lib/logger', () => ({
-      logger: {
-        error: captureAll, info: captureAll, debug: captureAll, warn: captureAll,
-        withContext: () => ({ error: captureAll, info: captureAll, debug: captureAll, warn: captureAll }),
-      },
-    }));
+    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
     return import('@/app/api/payouts/square-connect/route');
   }
 
@@ -315,26 +336,21 @@ describe('FIN-001: Square Callback feature gate', () => {
         }),
       }),
     }));
-    vi.doMock('@/lib/logger', () => ({
-      logger: {
-        error: captureAll, info: captureAll, debug: captureAll, warn: captureAll,
-        withContext: () => ({ error: captureAll, info: captureAll, debug: captureAll, warn: captureAll }),
-      },
-    }));
+    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
     vi.doMock('@/lib/redact', () => ({
       safeProviderError: vi.fn().mockReturnValue('Provider error'),
     }));
     return import('@/app/api/payouts/square-callback/route');
   }
 
-  it('redirects with error when ENABLE_SQUARE_CONNECT is missing', async () => {
+  it('returns 503 when ENABLE_SQUARE_CONNECT is missing', async () => {
     delete process.env.ENABLE_SQUARE_CONNECT;
     const { GET } = await loadSquareCallback();
     const req = makeRequest('/api/payouts/square-callback?code=test&state=biz:abc');
     const res = await GET(req);
-    expect(res.status).toBe(307);
-    const location = res.headers.get('location') || '';
-    expect(location).toContain('square_disabled');
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toContain('disabled');
   });
 
   it('no code exchange occurs when disabled', async () => {
@@ -378,12 +394,7 @@ describe('FIN-001: Stripe Connect feature gate', () => {
         }),
       }),
     }));
-    vi.doMock('@/lib/logger', () => ({
-      logger: {
-        error: captureAll, info: captureAll, debug: captureAll, warn: captureAll,
-        withContext: () => ({ error: captureAll, info: captureAll, debug: captureAll, warn: captureAll }),
-      },
-    }));
+    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
     return import('@/app/api/payouts/stripe-connect/route');
   }
 
@@ -438,23 +449,18 @@ describe('FIN-001: Stripe Callback feature gate', () => {
         }),
       }),
     }));
-    vi.doMock('@/lib/logger', () => ({
-      logger: {
-        error: captureAll, info: captureAll, debug: captureAll, warn: captureAll,
-        withContext: () => ({ error: captureAll, info: captureAll, debug: captureAll, warn: captureAll }),
-      },
-    }));
+    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
     return import('@/app/api/payouts/stripe-callback/route');
   }
 
-  it('redirects with error when ENABLE_STRIPE_CONNECT is missing', async () => {
+  it('returns 503 when ENABLE_STRIPE_CONNECT is missing', async () => {
     delete process.env.ENABLE_STRIPE_CONNECT;
     const { GET } = await loadStripeCallback();
     const req = makeRequest('/api/payouts/stripe-callback?account_id=acct_123&business_id=b1');
     const res = await GET(req);
-    expect(res.status).toBe(307);
-    const location = res.headers.get('location') || '';
-    expect(location).toContain('stripe_connect_disabled');
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toContain('disabled');
   });
 
   it('no Stripe API call occurs when disabled', async () => {
@@ -473,8 +479,11 @@ describe('FIN-001: Stripe Callback feature gate', () => {
 // ═══════════════════════════════════════════════════════════
 
 describe('FIN-001: Admin query column restrictions', () => {
+  let capturedSelectArg: string | undefined;
+
   beforeEach(() => {
     capturedLogs = [];
+    capturedSelectArg = undefined;
     vi.restoreAllMocks();
     vi.resetModules();
   });
@@ -486,131 +495,119 @@ describe('FIN-001: Admin query column restrictions', () => {
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn().mockReturnValue({
         from: vi.fn().mockReturnValue({
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnThis(),
-            neq: vi.fn().mockReturnThis(),
-            order: vi.fn().mockReturnThis(),
-            limit: vi.fn().mockReturnThis(),
-            then: undefined,
-            // Resolve the query
-            ...(() => {
-              const result = { data: tableData, error: null, count: null };
-              return {
-                eq: vi.fn().mockReturnThis(),
-                neq: vi.fn().mockReturnThis(),
-                gt: vi.fn().mockReturnThis(),
-                gte: vi.fn().mockReturnThis(),
-                lt: vi.fn().mockReturnThis(),
-                lte: vi.fn().mockReturnThis(),
-                like: vi.fn().mockReturnThis(),
-                ilike: vi.fn().mockReturnThis(),
-                in: vi.fn().mockReturnThis(),
-                is: vi.fn().mockReturnThis(),
-                order: vi.fn().mockReturnThis(),
-                limit: vi.fn().mockReturnThis(),
-                then: (resolve: (r: typeof result) => void) => resolve(result),
-              };
-            })(),
+          select: vi.fn().mockImplementation((selectStr: string) => {
+            capturedSelectArg = selectStr;
+            const result = { data: tableData, error: null, count: null };
+            const chainable: Record<string, unknown> = {};
+            const methods = ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'like', 'ilike', 'in', 'is', 'order', 'limit'];
+            for (const m of methods) chainable[m] = vi.fn().mockReturnValue(chainable);
+            chainable.then = (resolve: (r: typeof result) => void) => resolve(result);
+            return chainable;
           }),
         }),
       }),
     }));
-    vi.doMock('@/lib/logger', () => ({
-      logger: {
-        error: captureAll, info: captureAll, debug: captureAll, warn: captureAll,
-        withContext: () => ({ error: captureAll, info: captureAll, debug: captureAll, warn: captureAll }),
-      },
-    }));
+    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
   }
 
-  async function queryAs(role: string, table: string, data: Record<string, unknown>[]) {
+  async function queryAs(role: string, table: string, data: Record<string, unknown>[], selectOverride?: string) {
     mockAdminQuery(role, data);
     const mod = await import('@/app/api/admin/query/route');
-    const req = makePostRequest('/api/admin/query', { table, select: '*' }, {
+    const req = makePostRequest('/api/admin/query', { table, select: selectOverride ?? '*' }, {
       origin: 'http://localhost:8083',
     });
     return mod.POST(req);
   }
 
-  it('finance cannot retrieve meta_access_token from whatsapp_channels', async () => {
-    // Finance doesn't have whatsapp_channels in their table allowlist
+  it('finance cannot access whatsapp_channels (table not allowed)', async () => {
     const res = await queryAs('finance', 'whatsapp_channels', []);
     expect(res.status).toBe(403);
   });
 
-  it('operations cannot retrieve credential fields from whatsapp_channels', async () => {
-    const res = await queryAs('operations', 'whatsapp_channels', [
-      { id: 'ch1', business_id: 'b1', phone_number: '+1234', meta_access_token: 'EAABx...secret', display_name: 'Test' },
-    ]);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    const row = body.data[0];
-    expect(row).not.toHaveProperty('meta_access_token');
-    expect(row.id).toBe('ch1');
-    expect(row.display_name).toBe('Test');
-  });
-
-  it('support cannot retrieve credential fields', async () => {
-    // Support doesn't have whatsapp_channels or payout_accounts
+  it('support cannot access payout_accounts (table not allowed)', async () => {
     const res = await queryAs('support', 'payout_accounts', []);
     expect(res.status).toBe(403);
   });
 
-  it('finance gets safe payout_accounts columns only', async () => {
+  it('operations select=* on whatsapp_channels sends explicit safe columns', async () => {
+    const res = await queryAs('operations', 'whatsapp_channels', [
+      { id: 'ch1', display_name: 'Test' },
+    ]);
+    expect(res.status).toBe(200);
+    // The select string sent to Supabase must NOT be '*'
+    expect(capturedSelectArg).not.toBe('*');
+    expect(capturedSelectArg).toContain('id');
+    expect(capturedSelectArg).toContain('display_name');
+    expect(capturedSelectArg).not.toContain('meta_access_token');
+  });
+
+  it('finance select=* on payout_accounts sends explicit safe columns', async () => {
     const res = await queryAs('finance', 'payout_accounts', [
-      {
-        id: 'pa1', business_id: 'b1', gateway: 'paystack', bank_name: 'GTB',
-        account_name: 'John Doe', account_number: '0123456789', bank_code: '058',
-        square_access_token: 'sq-secret-token', stripe_account_id: 'acct_xxx',
-        routing_number: '123456', iban: 'DE89...', swift_code: 'DEUTDEFF',
-        platform_percentage: 2.5, is_active: true, verified_at: '2024-01-01',
-        created_at: '2024-01-01', updated_at: '2024-01-01',
-      },
+      { id: 'pa1', gateway: 'paystack', bank_name: 'GTB', account_name: 'John' },
     ]);
     expect(res.status).toBe(200);
-    const body = await res.json();
-    const row = body.data[0];
-    // Approved columns present
-    expect(row.id).toBe('pa1');
-    expect(row.gateway).toBe('paystack');
-    expect(row.bank_name).toBe('GTB');
-    expect(row.account_name).toBe('John Doe');
-    // Sensitive columns stripped
-    expect(row).not.toHaveProperty('account_number');
-    expect(row).not.toHaveProperty('bank_code');
-    expect(row).not.toHaveProperty('square_access_token');
-    expect(row).not.toHaveProperty('stripe_account_id');
-    expect(row).not.toHaveProperty('routing_number');
-    expect(row).not.toHaveProperty('iban');
-    expect(row).not.toHaveProperty('swift_code');
+    expect(capturedSelectArg).not.toBe('*');
+    expect(capturedSelectArg).toContain('id');
+    expect(capturedSelectArg).toContain('gateway');
+    expect(capturedSelectArg).not.toContain('account_number');
+    expect(capturedSelectArg).not.toContain('square_access_token');
+    expect(capturedSelectArg).not.toContain('stripe_account_id');
   });
 
-  it('admin cannot retrieve credential columns via generic query route', async () => {
-    const res = await queryAs('admin', 'whatsapp_channels', [
-      { id: 'ch1', business_id: 'b1', meta_access_token: 'EAABx...secret', display_name: 'Test' },
-    ]);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    const row = body.data[0];
-    // Credential columns stripped even for admin
-    expect(row).not.toHaveProperty('meta_access_token');
-    // Safe columns preserved
-    expect(row.id).toBe('ch1');
-    expect(row.display_name).toBe('Test');
-  });
-
-  it('admin cannot retrieve square_access_token via generic query route', async () => {
+  it('admin select=* on payout_accounts sends explicit safe columns (not *)', async () => {
     const res = await queryAs('admin', 'payout_accounts', [
-      { id: 'pa1', square_access_token: 'sq-secret', stripe_account_id: 'acct_x', account_number: '1234' },
+      { id: 'pa1', gateway: 'paystack' },
+    ]);
+    expect(res.status).toBe(200);
+    // Even admin gets the allowlist for payout_accounts
+    expect(capturedSelectArg).not.toBe('*');
+    expect(capturedSelectArg).not.toContain('account_number');
+    expect(capturedSelectArg).not.toContain('square_access_token');
+  });
+
+  it('admin select=* on whatsapp_channels sends explicit safe columns', async () => {
+    const res = await queryAs('admin', 'whatsapp_channels', [
+      { id: 'ch1', display_name: 'Test' },
+    ]);
+    expect(res.status).toBe(200);
+    expect(capturedSelectArg).not.toBe('*');
+    expect(capturedSelectArg).not.toContain('meta_access_token');
+  });
+
+  it('rejects requested column outside allowlist with 403', async () => {
+    const res = await queryAs('finance', 'payout_accounts', [], 'id,account_number');
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain('account_number');
+  });
+
+  it('admin cannot request credential column explicitly', async () => {
+    const res = await queryAs('admin', 'payout_accounts', [], 'id,square_access_token');
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain('square_access_token');
+  });
+
+  it('admin cannot receive full account_number from payout_accounts', async () => {
+    // Even if DB somehow returns it, defense-in-depth scrubs it
+    const res = await queryAs('admin', 'payout_accounts', [
+      { id: 'pa1', account_number: '0123456789', gateway: 'paystack' },
     ]);
     expect(res.status).toBe(200);
     const body = await res.json();
-    const row = body.data[0];
-    expect(row).not.toHaveProperty('square_access_token');
-    expect(row).not.toHaveProperty('stripe_account_id');
-    // account_number is NOT in CREDENTIAL_COLUMNS but admin doesn't have column allowlist
-    // so it passes through for admin (admin gets all non-credential columns)
-    expect(row.id).toBe('pa1');
+    expect(body.data[0]).not.toHaveProperty('account_number');
+  });
+
+  it('defense-in-depth scrubs nested credential fields', async () => {
+    // For tables without an allowlist, nested objects are scrubbed recursively
+    const res = await queryAs('admin', 'profiles', [
+      { id: 'p1', nested: { meta_access_token: 'secret', name: 'safe' } },
+    ]);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const nested = body.data[0].nested;
+    expect(nested).not.toHaveProperty('meta_access_token');
+    expect(nested.name).toBe('safe');
   });
 
   it('legitimate finance queries return required safe fields', async () => {
@@ -623,30 +620,38 @@ describe('FIN-001: Admin query column restrictions', () => {
     expect(body.data[0].amount).toBe(5000);
   });
 
-  it('admin workflows that do not require secrets continue to work', async () => {
-    const res = await queryAs('admin', 'businesses', [
-      { id: 'b1', name: 'Test Biz', status: 'active', country_code: 'NG' },
+  it('admin workflows on unrestricted tables continue to work', async () => {
+    const res = await queryAs('admin', 'profiles', [
+      { id: 'p1', full_name: 'Test User', email: 'test@example.com' },
     ]);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.data[0].name).toBe('Test Biz');
+    expect(body.data[0].full_name).toBe('Test User');
   });
 });
 
 // ═══════════════════════════════════════════════════════════
-// Scope 5: Transfer-Method Allowlist
+// Scope 5: Transfer-Method Allowlist + Provider Config
 // ═══════════════════════════════════════════════════════════
 
 describe('FIN-001: Transfer-method allowlist', () => {
+  const savedEnv: Record<string, string | undefined> = {};
+
   beforeEach(() => {
     capturedLogs = [];
     vi.restoreAllMocks();
     vi.resetModules();
+    savedEnv.ENABLE_PAYOUTS = process.env.ENABLE_PAYOUTS;
+    savedEnv.PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
+    savedEnv.STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
     process.env.ENABLE_PAYOUTS = 'true';
   });
 
   afterEach(() => {
-    delete process.env.ENABLE_PAYOUTS;
+    for (const [key, val] of Object.entries(savedEnv)) {
+      if (val === undefined) delete process.env[key];
+      else process.env[key] = val;
+    }
   });
 
   async function loadApproveRoute() {
@@ -666,12 +671,7 @@ describe('FIN-001: Transfer-method allowlist', () => {
       payoutApprovedEmail: vi.fn(),
       payoutPaidEmail: vi.fn(),
     }));
-    vi.doMock('@/lib/logger', () => ({
-      logger: {
-        error: captureAll, info: captureAll, debug: captureAll, warn: captureAll,
-        withContext: () => ({ error: captureAll, info: captureAll, debug: captureAll, warn: captureAll }),
-      },
-    }));
+    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
     return import('@/app/api/admin/payouts/[id]/approve/route');
   }
 
@@ -682,7 +682,6 @@ describe('FIN-001: Transfer-method allowlist', () => {
       const { POST } = await loadApproveRoute();
       const req = makePostRequest('/api/admin/payouts/test-id/approve', { transfer_method: method });
       const res = await POST(req, { params: Promise.resolve({ id: 'test-id' }) });
-      // Should get past allowlist — 404 means payout not found, which is expected
       expect(res.status).not.toBe(400);
     });
   }
@@ -703,13 +702,80 @@ describe('FIN-001: Transfer-method allowlist', () => {
     expect(res.status).toBe(400);
   });
 
-  it('unknown transfer method cannot call a provider', async () => {
+  it('unknown transfer method cannot call a provider or update payout', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const { POST } = await loadApproveRoute();
     const req = makePostRequest('/api/admin/payouts/test-id/approve', { transfer_method: 'unknown_method' });
-    await POST(req, { params: Promise.resolve({ id: 'test-id' }) });
+    const res = await POST(req, { params: Promise.resolve({ id: 'test-id' }) });
+    expect(res.status).toBe(400);
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+  });
+
+  it('paystack_transfer rejects before status update when provider key missing', async () => {
+    // Verify source: paystack_transfer checks for paystackSecretKey
+    // and returns 400 before any .update() call
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/admin/payouts/[id]/approve/route.ts'),
+      'utf-8',
+    );
+    // The paystack_transfer branch must check for key absence FIRST
+    const paystackBlock = source.indexOf("transfer_method === 'paystack_transfer'");
+    const paystackKeyCheck = source.indexOf('!paystackSecretKey', paystackBlock);
+    const paystackFetch = source.indexOf("api.paystack.co", paystackBlock);
+    expect(paystackKeyCheck).toBeGreaterThan(paystackBlock);
+    expect(paystackKeyCheck).toBeLessThan(paystackFetch);
+    // Must return error, not fall through
+    expect(source.slice(paystackKeyCheck, paystackKeyCheck + 200)).toContain('not configured');
+  });
+
+  it('stripe_transfer rejects before status update when provider key missing', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/admin/payouts/[id]/approve/route.ts'),
+      'utf-8',
+    );
+    const stripeBlock = source.indexOf("transfer_method === 'stripe_transfer'");
+    const stripeKeyCheck = source.indexOf('!stripeSecretKey', stripeBlock);
+    const stripeFetch = source.indexOf("api.stripe.com", stripeBlock);
+    expect(stripeKeyCheck).toBeGreaterThan(stripeBlock);
+    expect(stripeKeyCheck).toBeLessThan(stripeFetch);
+    expect(source.slice(stripeKeyCheck, stripeKeyCheck + 200)).toContain('not configured');
+  });
+
+  it('stripe_transfer rejects when destination account ID is missing', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/admin/payouts/[id]/approve/route.ts'),
+      'utf-8',
+    );
+    const stripeBlock = source.indexOf("transfer_method === 'stripe_transfer'");
+    // Must check for missing stripe_account_id before fetch
+    const destCheck = source.indexOf('!payoutAccount?.stripe_account_id', stripeBlock);
+    const stripeFetch = source.indexOf("api.stripe.com", stripeBlock);
+    expect(destCheck).toBeGreaterThan(stripeBlock);
+    expect(destCheck).toBeLessThan(stripeFetch);
+  });
+
+  it('automated methods never use the manual paid path', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/admin/payouts/[id]/approve/route.ts'),
+      'utf-8',
+    );
+    // finalStatus should NOT default to 'paid' — only manual methods set it
+    // The code should NOT have: let finalStatus = 'paid' followed by automated branches
+    // Instead, finalStatus should be declared without initial value or set per branch
+    const tryBlock = source.indexOf('try {');
+    const manualBlock = source.indexOf("finalStatus = 'paid'", tryBlock);
+    // The 'paid' assignment must only appear in the manual (else) branch
+    const elseBlock = source.indexOf('// Manual methods', tryBlock);
+    expect(manualBlock).toBeGreaterThan(elseBlock);
   });
 });
 
@@ -730,19 +796,14 @@ describe('FIN-001: Safe logging in touched error paths', () => {
   });
 
   it('approve route error path uses safeLogErrorContext (not raw error)', async () => {
-    // Verify by reading the source that the catch block uses safeLogErrorContext
-    // instead of logging raw error.message. This is a static verification test.
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
       path.resolve('app/api/admin/payouts/[id]/approve/route.ts'),
       'utf-8',
     );
-    // The catch block should use safeLogErrorContext
     expect(source).toContain('safeLogErrorContext');
-    // The catch block should NOT log raw error.message
     expect(source).not.toContain("(error as Error).message");
-    // Should import safeLogErrorContext
     expect(source).toContain("import { safeLogErrorContext } from '@/lib/errors'");
   });
 
@@ -755,7 +816,6 @@ describe('FIN-001: Safe logging in touched error paths', () => {
     );
     expect(source).toContain('safeLogErrorContext');
     expect(source).toContain("import { safeLogErrorContext } from '@/lib/errors'");
-    // Should not log raw error objects in payout-related catch blocks
     expect(source).not.toMatch(/logger\.error\([^)]*,\s*err\s*\)/);
   });
 });

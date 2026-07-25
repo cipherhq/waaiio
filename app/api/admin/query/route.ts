@@ -102,9 +102,10 @@ export async function POST(request: NextRequest) {
     };
     const allowedTables = TABLE_MAP[admin.role] || SUPPORT_TABLES;
 
-    // FIN-001: Column-level allowlists for sensitive tables (non-admin roles)
-    // These tables contain provider credentials or bank details that must not
-    // be returned through the generic query route for non-admin roles.
+    // FIN-001: Column-level allowlists for tables containing credentials or bank details.
+    // These lists define the ONLY columns the generic query route may return.
+    // Non-admin roles: enforced for tables with an allowlist entry.
+    // Admin role: also enforced for sensitive tables to prevent credential/bank leaks.
     const APPROVED_COLUMNS: Record<string, string[]> = {
       payout_accounts: [
         'id', 'business_id', 'gateway', 'bank_name', 'account_name',
@@ -127,21 +128,68 @@ export async function POST(request: NextRequest) {
     };
 
     // FIN-001: Columns that must never be returned through the generic query
-    // route, even for admin. Access to these requires a dedicated purpose-built route.
+    // route for ANY role. Access requires a dedicated purpose-built route.
     const CREDENTIAL_COLUMNS = new Set([
       'meta_access_token', 'square_access_token', 'square_refresh_token',
       'stripe_account_id', 'google_calendar_token', 'google_calendar_refresh_token',
+      'account_number', 'routing_number', 'iban', 'swift_code',
+      'bank_code', 'subaccount_code',
     ]);
 
     if (!allowedTables.includes(table)) {
       return NextResponse.json({ error: 'Table not allowed' }, { status: 403, headers: cors });
     }
 
-    // Non-admin roles: restrict select to prevent relationship traversal (e.g., '*, profiles(*)')
+    // FIN-001: Build a safe select string BEFORE the query reaches Supabase.
+    // 1. Strip relationship traversal for all roles on this generic route.
+    // 2. For tables with an APPROVED_COLUMNS entry, replace '*' with the explicit list
+    //    and reject any requested columns outside it.
+    // 3. For all tables, strip CREDENTIAL_COLUMNS from the select.
     let safeSelect = select;
-    if (admin.role !== 'admin') {
-      // Strip any relationship traversal patterns like "table(*)" or "table!inner(*)"
-      safeSelect = select.replace(/\w+[!]?\w*\([^)]*\)/g, '').replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim() || '*';
+
+    // Strip relationship traversal patterns (e.g. "table(*)", "table!inner(*)")
+    safeSelect = safeSelect
+      .replace(/\w+[!]?\w*\([^)]*\)/g, '')
+      .replace(/,\s*,/g, ',')
+      .replace(/^,|,$/g, '')
+      .trim() || '*';
+
+    const approvedCols = APPROVED_COLUMNS[table];
+
+    if (approvedCols) {
+      // Table has an allowlist — enforce it for ALL roles (including admin)
+      if (safeSelect === '*') {
+        // Replace wildcard with explicit safe columns
+        safeSelect = approvedCols.join(',');
+      } else {
+        // Validate each requested column against the allowlist
+        const requested = safeSelect.split(',').map((c: string) => c.trim()).filter(Boolean);
+        const allowed = new Set(approvedCols);
+        const rejected = requested.filter((c: string) => !allowed.has(c));
+        if (rejected.length > 0) {
+          return NextResponse.json(
+            { error: `Columns not allowed: ${rejected.join(', ')}` },
+            { status: 403, headers: cors },
+          );
+        }
+        safeSelect = requested.join(',');
+      }
+    } else {
+      // Table without an allowlist — strip credential columns from select
+      if (safeSelect === '*') {
+        // Cannot enumerate columns for unrestricted tables, but scrub response later
+        // (defense in depth below)
+      } else {
+        const requested = safeSelect.split(',').map((c: string) => c.trim()).filter(Boolean);
+        const rejected = requested.filter((c: string) => CREDENTIAL_COLUMNS.has(c));
+        if (rejected.length > 0) {
+          return NextResponse.json(
+            { error: `Columns not allowed: ${rejected.join(', ')}` },
+            { status: 403, headers: cors },
+          );
+        }
+        safeSelect = requested.join(',');
+      }
     }
 
     let query: any = count === 'exact'
@@ -191,23 +239,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: cors });
     }
 
-    // FIN-001: Strip credential columns from all responses (including admin)
-    // and enforce column allowlists for non-admin roles
+    // FIN-001: Defense-in-depth — scrub credential columns from all responses
+    // and recursively scrub nested relationship objects.
     if (Array.isArray(data)) {
-      const approvedCols = admin.role !== 'admin' ? APPROVED_COLUMNS[table] : null;
-      const approvedSet = approvedCols ? new Set(approvedCols) : null;
-
-      for (const row of data) {
-        for (const key of Object.keys(row)) {
-          // Always strip credential columns regardless of role
+      const scrubRow = (obj: Record<string, unknown>) => {
+        for (const key of Object.keys(obj)) {
           if (CREDENTIAL_COLUMNS.has(key)) {
-            delete row[key];
-          }
-          // For non-admin roles with column allowlists, strip unapproved columns
-          else if (approvedSet && !approvedSet.has(key)) {
-            delete row[key];
+            delete obj[key];
+          } else if (obj[key] && typeof obj[key] === 'object' && !Array.isArray(obj[key])) {
+            scrubRow(obj[key] as Record<string, unknown>);
+          } else if (Array.isArray(obj[key])) {
+            for (const item of obj[key] as unknown[]) {
+              if (item && typeof item === 'object') scrubRow(item as Record<string, unknown>);
+            }
           }
         }
+      };
+      for (const row of data) {
+        scrubRow(row);
       }
     }
 
