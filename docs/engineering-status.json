@@ -1,0 +1,104 @@
+{
+  "$schema_version": "1.0.0",
+  "last_reconciled_main_sha": "6024500f62c600d9b4fd0bfc9f470cf3c5538035",
+  "last_reconciled_at": "2026-07-25T03:30:00Z",
+  "milestones": [
+    {
+      "id": "AUTH-001",
+      "title": "Prevent platform administrator privilege escalation",
+      "stage": "PRODUCTION_VERIFIED",
+      "owner": "claude",
+      "issue_numbers": [],
+      "pr_numbers": [36],
+      "implementation_sha": "5fe24189c091d0009bae6eb9d6490035cc5b489e",
+      "reviewed_sha": "5fe24189c091d0009bae6eb9d6490035cc5b489e",
+      "merge_sha": "78e28344492b77752cd34b90b7facbb89c1ca936",
+      "deployed_sha": "78e28344492b77752cd34b90b7facbb89c1ca936",
+      "environment": "production",
+      "production_verified_at": "2026-07-25T00:30:00Z",
+      "verification_evidence": [
+        "6 repository CI checks passed: Main App, Admin App, Migration validation, Playwright smoke tests, Secret scanning, Dependency audit",
+        "Vercel Production deployment successful (blowded project)",
+        "Vercel Production deployment successful (waaiio project)",
+        "www.waaiio.com HTTP 200",
+        "admin.waaiio.com HTTP 200",
+        "is_admin() reads auth.users.raw_app_meta_data confirmed",
+        "Ordinary user escalation rejected confirmed",
+        "Migration 247 recorded exactly once",
+        "Changelog entry added 2026-07-25"
+      ],
+      "blockers": [],
+      "next_action": "Close tracking issue when created",
+      "notes": "Admin provisioned before migration. Migration 247 applied. PR #36 squash-merged. Implementation SHA is the PR head (not on main due to squash merge); merge SHA is the squash commit on main."
+    },
+    {
+      "id": "AUTH-000",
+      "title": "Phone OTP delivery via WhatsApp authentication template",
+      "stage": "DEPLOYED",
+      "owner": "claude",
+      "issue_numbers": [],
+      "pr_numbers": [37, 38],
+      "implementation_sha": "074a70c66fb2cda51a59584554a7a70e31f270e0",
+      "reviewed_sha": "074a70c66fb2cda51a59584554a7a70e31f270e0",
+      "merge_sha": "641c31b002cd598d6238c2482b6d22480a5320fe",
+      "deployed_sha": "641c31b002cd598d6238c2482b6d22480a5320fe",
+      "environment": "production",
+      "production_verified_at": null,
+      "verification_evidence": [
+        "Vercel Production deployment successful (blowded + waaiio projects)",
+        "OTP send returned HTTP 200",
+        "Delivery attempt recorded with env_fallback path",
+        "Meta delivery status: failed (131042 — Business eligibility payment issue)",
+        "OTP not received by operator"
+      ],
+      "blockers": [
+        "Meta WABA payment/billing issue (error 131042) prevents OTP delivery",
+        "Waaiio Bot WABA requires valid payment method in Meta Business Manager"
+      ],
+      "next_action": "Resolve Meta WABA billing before re-testing OTP delivery",
+      "notes": "Code and observability deployed to production successfully. Delivery blocked by Meta billing, not by application code. PR #37 (template send) and PR #38 (observability) both merged."
+    },
+    {
+      "id": "FIN-LEGACY",
+      "title": "Financial integrity hardening (legacy combined branch)",
+      "stage": "STRANDED",
+      "owner": "claude",
+      "issue_numbers": [],
+      "pr_numbers": [18, 19, 20, 21],
+      "implementation_sha": "221685456f898c444156ece6d275b104b4b35496",
+      "reviewed_sha": null,
+      "merge_sha": null,
+      "deployed_sha": null,
+      "environment": null,
+      "production_verified_at": null,
+      "verification_evidence": [],
+      "blockers": [
+        "PR #21 contains 270 changed files and 48 new migrations — too large to merge safely",
+        "Migrations 244-248 in PR #21 directly conflict with main's applied migrations",
+        "Migrations 249-291 in PR #21 are stranded and reserved while the PR remains open",
+        "PR #21 auth patterns use obsolete profiles.role (superseded by PR #36)",
+        "PRs #18, #19, #20 are also open and unmerged"
+      ],
+      "next_action": "Extract useful protections into small focused PRs with updated auth and renumbered migrations (starting from 292)",
+      "notes": "PR #21 contains tested payout safety, Square OAuth, admin credential filtering, and idempotency work that is not present on main. Must not be merged or rebased wholesale. Controlled extraction required."
+    },
+    {
+      "id": "GOV-001",
+      "title": "Engineering governance foundation",
+      "stage": "INDEPENDENTLY_REVIEWED",
+      "owner": "claude",
+      "issue_numbers": [],
+      "pr_numbers": [39],
+      "implementation_sha": "4b1a7d82fd2d947fe2105806b16b105be2e8bef2",
+      "reviewed_sha": "6638c5b94f5ae5d0b2424aab1637099ffa8dfe19",
+      "merge_sha": null,
+      "deployed_sha": null,
+      "environment": null,
+      "production_verified_at": null,
+      "verification_evidence": [],
+      "blockers": [],
+      "next_action": "Await final CI and merge authorization",
+      "notes": "Governance-only PR. No application code, migrations, or production configuration changes. Automatic Vercel Preview deployment occurred on waaiio project; blowded (production) was skipped. Preview deployments do not advance milestones to DEPLOYED. Independent review completed on commit 6638c5b9."
+    }
+  ]
+}
