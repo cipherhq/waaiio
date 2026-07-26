@@ -16,13 +16,14 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 | Version | Name | Status | PR |
 |---------|------|--------|-----|
+| 292 | `atomic_payout_claim` | Applied to production | #50 |
 | 248 | `otp_delivery_tracking` | Applied to production | #38 |
 | 247 | `admin_role_escalation_fix` | Applied to production | #36 |
 | 246 | `phone_otp_challenges` | Applied to production | #35 |
 | 245 | `fix_book_slot_atomic_overloads` | Applied to production | — |
 | 244 | `payment_source_classification` | Applied to production | — |
 
-**Next available version:** 292
+**Next available version:** 293
 
 ## Reservation Process
 
