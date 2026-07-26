@@ -5,6 +5,31 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-26
+
+### FIN-002: Require Paystack account_name before claim, move gateway alignment earlier
+- `app/api/admin/payouts/[id]/approve/route.ts` — Added strict `account_name` validation for `paystack_transfer`: must be `typeof string` and non-blank. Returns 400 before claim RPC and provider call. Moved gateway/transfer-method alignment check immediately after payout-account ownership, active, and verification checks (before destination queries and balance verification).
+- `lib/__tests__/fin-002-atomic-payout.test.ts` — Added 3 new tests: account_name null → 400 with zero claim/provider calls, account_name blank → 400 with zero claim/provider calls, valid account_name continues normally. Total: 92 route tests.
+- **Affects:** Admin payout approval (null/blank account_name blocked before claim).
+
+### FIN-002: Review corrections — cron eligibility, gateway alignment, message validation, contention evidence
+- `app/api/cron/auto-payout/route.ts` — `canAutoApprove` now requires all of: NG/GH country, eligible Paystack account (gateway=paystack, active, verified, bank_code, account_number, account_name), PAYSTACK_SECRET_KEY configured, cooling period, velocity, amount limit, business verification. Previously only required `payoutAccount` (any gateway). Hold reasons expanded with specific failure messages.
+- `app/api/admin/payouts/[id]/approve/route.ts` — Added gateway/transfer-method alignment check before claim RPC. `paystack_transfer` requires `gateway=paystack`; `stripe_transfer` requires `gateway=stripe`. Mismatch returns 400 with zero claim RPC calls, zero provider calls, payout state unchanged. Payout account query now fetches `gateway` column.
+- `lib/payments/payout-classification.ts` — Paystack conclusive rejection now requires `typeof message === 'string' && message.trim().length > 0`. Numbers, objects, arrays, booleans, null, and blank strings produce `review_required`. Uses `??` instead of `||` for nullish coalescing.
+- `.github/workflows/ci.yml` — Contention test: Session A stores returned token in persistent `_contention_winner_token` table (not temp table — session-scoped). `WINNER_TOKEN_MATCHES` now compares the returned token to the persisted `claim_token` (was previously comparing `claim_token` to itself). Cleanup drops `_contention_winner_token`.
+- `lib/__tests__/fin-002-atomic-payout.test.ts` — Added 25 new tests: 9 cron auto-approval eligibility (Stripe-only, inactive, unverified, missing bank_code/account_number/account_name, unsupported country, missing key, fully eligible), 6 gateway/method alignment (Paystack+Stripe, Paystack+Flutterwave, Stripe+Paystack, Stripe+Square, matching Paystack, matching Stripe), 10 Paystack malformed message types (number, boolean true/false, object, array, null, blank, valid string, data.message numeric, data.message valid string).
+- **Affects:** Cron auto-payout (Stripe-only accounts no longer auto-approved), admin payout approval (gateway mismatch blocked), Paystack classification (non-string messages no longer treated as conclusive rejection), CI contention test (correct cross-session token comparison).
+
+### FIN-002: Provider body-validated classification, cron account eligibility, RPC result handling
+- `lib/payments/payout-classification.ts` — New shared helpers: `classifyPaystackError()` (requires `status===false` + non-empty message for conclusive 4xx), `classifyStripeError()` (requires error object + type/code/message), `isEligiblePaystackAccount()` (validates gateway, verified_at, bank fields). 408/409/429/5xx/malformed JSON always → review_required.
+- `app/api/admin/payouts/[id]/approve/route.ts` — Replaced inline `isConclusive4xxRejection()` with shared `classifyPaystackError()`/`classifyStripeError()`. Now validates provider response body, not just HTTP status.
+- `app/api/cron/auto-payout/route.ts` — Replaced inline `is4xx` classification (which treated 409 as conclusive failure) with shared `classifyPaystackError()`. Added `isEligiblePaystackAccount()` check before claim — requires gateway=paystack, verified_at, bank_code, account_number, account_name. All transition RPC calls now check both `data` and `error`; zero-row results are logged as failures.
+- `.github/workflows/ci.yml` — Improved two-session contention test: captures Session A claim count (verifies winner=1), adds trap-based cleanup, avoids printing claim tokens in CI logs, verifies exactly-one-winner invariant, cleans up profiles/auth.users.
+- `lib/__tests__/fin-002-atomic-payout.test.ts` — Expanded from 31 to 63 tests. Added: Paystack/Stripe 4xx without valid body → review_required, 409 → review_required, empty error fields → review_required, HTML proxy response → review_required. Added 13 unit tests for shared classification helpers. Added 10 payout-account eligibility tests. Added cron structural verification tests.
+- **Affects:** Admin payout approval, cron auto-payout, provider error classification. A Paystack 409 (duplicate reference) or 4xx with malformed body that was previously marked `failed` (releasing balance) is now correctly marked `review_required` (balance remains reserved).
+
+---
+
 ## 2026-07-25
 
 ### Security: Prevent platform administrator privilege escalation

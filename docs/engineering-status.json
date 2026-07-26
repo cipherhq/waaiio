@@ -154,6 +154,32 @@
       "blockers": [],
       "next_action": "Close Issue #41 after this verification-ledger PR merges",
       "notes": "No-migration containment: ENABLE_PAYOUTS kill switch, ENABLE_SQUARE_CONNECT gate, ENABLE_STRIPE_CONNECT gate, query-level safe-column registry for all 39 non-admin tables, transfer-method allowlist with provider-config validation, safe logging. All three feature gates remain default-off — no production configuration was changed. Implementation base: 68ba1cb4. Production-verified on canonical Vercel project waaiio serving www.waaiio.com. Authenticated cron verification completed 2026-07-25."
+    },
+    {
+      "id": "FIN-002",
+      "title": "Atomic payout execution and provider idempotency",
+      "stage": "INDEPENDENTLY_REVIEWED",
+      "owner": "claude",
+      "issue_numbers": [48],
+      "pr_numbers": [50],
+      "implementation_sha": "0b3dd258d974e78671f651ead3e2382aa54ac7b8",
+      "reviewed_sha": "57078430cc90cf191cec3f9c7665c36c02d51350",
+      "merge_sha": null,
+      "deployed_sha": null,
+      "environment": null,
+      "production_verified_at": null,
+      "verification_evidence": [
+        "Final independent review accepted at head 57078430",
+        "CI run 30203032725 passed all seven required checks",
+        "92 route tests",
+        "24 PostgreSQL assertions",
+        "9 two-session contention assertions",
+        "No provider or production system contacted",
+        "ENABLE_PAYOUTS remained unset"
+      ],
+      "blockers": [],
+      "next_action": "Squash-merge PR #50, verify deployment identity, then plan controlled production application of Migration 292 while ENABLE_PAYOUTS remains disabled.",
+      "notes": "Atomic payout claim via Postgres RPC, provider idempotency keys (Paystack reference + Stripe Idempotency-Key), token-guarded finalization, review_required for uncertain outcomes. Shared body-validated classification (classifyPaystackError/classifyStripeError). Cron auto-approval requires eligible Paystack account + NG/GH country + PAYSTACK_SECRET_KEY. Admin approve validates gateway/method alignment before claim. Paystack rejection requires typeof string message. Contention test compares returned winner token to persisted claim_token. All transition RPCs check data+error. 92 route tests, 24 PostgreSQL assertions, 9 contention assertions. Launch scope: paystack_transfer and stripe_transfer only. Square and Flutterwave deferred to Issue #49. Migration 292. Local PostgreSQL unavailable."
     }
   ]
 }

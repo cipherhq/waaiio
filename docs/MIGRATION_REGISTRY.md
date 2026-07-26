@@ -35,7 +35,9 @@ Before creating a migration:
 
 ### Active Reservations
 
-None.
+| Version | Description | Branch | Reserved by | Date |
+|---------|-------------|--------|-------------|------|
+| 292 | atomic_payout_execution | fix/fin-002-atomic-payout | claude | 2026-07-26 |
 
 ### Stranded Reservations (PR #21)
 

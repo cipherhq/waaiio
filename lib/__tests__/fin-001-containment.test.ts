@@ -866,14 +866,18 @@ describe('FIN-001: Transfer-method allowlist', () => {
       path.resolve('app/api/admin/payouts/[id]/approve/route.ts'),
       'utf-8',
     );
-    // finalStatus should NOT default to 'paid' — only manual methods set it
-    // The code should NOT have: let finalStatus = 'paid' followed by automated branches
-    // Instead, finalStatus should be declared without initial value or set per branch
-    const tryBlock = source.indexOf('try {');
-    const manualBlock = source.indexOf("finalStatus = 'paid'", tryBlock);
-    // The 'paid' assignment must only appear in the manual (else) branch
-    const elseBlock = source.indexOf('// Manual methods', tryBlock);
-    expect(manualBlock).toBeGreaterThan(elseBlock);
+    // Manual methods are handled in a separate branch before the try block
+    // and never enter the automated provider code path (claim + provider call).
+    // The AUTOMATED_TRANSFER_METHODS set separates them explicitly.
+    expect(source).toContain("AUTOMATED_TRANSFER_METHODS.has(transfer_method)");
+    // Manual path sets status to 'paid' directly without claim
+    const manualSection = source.indexOf('!AUTOMATED_TRANSFER_METHODS.has');
+    const paidAssign = source.indexOf("status: 'paid'", manualSection);
+    expect(paidAssign).toBeGreaterThan(manualSection);
+    // The automated try block does NOT contain a 'paid' assignment
+    const tryBlock = source.indexOf('try {', manualSection + 200);
+    const automatedSection = source.slice(tryBlock, source.indexOf('} catch', tryBlock));
+    expect(automatedSection).not.toContain("status: 'paid'");
   });
 });
 
