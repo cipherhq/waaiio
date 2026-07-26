@@ -276,15 +276,18 @@ jobs:
         run: |
           echo "=== FIN-002: Two-session contention test ==="
 
-          # Create a fresh pending payout for the contention test
+          # Create fresh test data for the contention test
           psql -v ON_ERROR_STOP=1 <<'SETUP'
-          INSERT INTO business_payouts (id, business_id, payout_account_id, period_start, period_end,
-            gross_amount, platform_fee, gateway_fee, net_amount, status)
-          VALUES ('99999999-9999-9999-9999-999999999999',
-                  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
-                  'cccccccc-cccc-cccc-cccc-cccccccccccc',
-                  '2024-06-01', '2024-06-07', 8000, 400, 80, 7520, 'pending')
-          ON CONFLICT DO NOTHING;
+          ALTER TABLE auth.users DISABLE TRIGGER ALL;
+          INSERT INTO auth.users (id, email) VALUES ('99aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'contention@test.local') ON CONFLICT DO NOTHING;
+          ALTER TABLE auth.users ENABLE TRIGGER ALL;
+          INSERT INTO profiles (id, first_name, last_name, email) VALUES ('99aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'CT', 'Test', 'ct@test.local') ON CONFLICT DO NOTHING;
+          INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)
+          VALUES ('99bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Contention Test', 'contention-test', '99aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '1 Test', 'Lagos', 'VI', '+0000', 'active', 'platform_managed', 'NG', 'basic') ON CONFLICT DO NOTHING;
+          INSERT INTO payout_accounts (id, business_id, gateway, bank_name, account_name, bank_code, account_number, is_active, verified_at)
+          VALUES ('99cccccc-cccc-cccc-cccc-cccccccccccc', '99bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'paystack', 'Test', 'Test', '058', '0123456789', true, NOW()) ON CONFLICT DO NOTHING;
+          INSERT INTO business_payouts (id, business_id, payout_account_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status)
+          VALUES ('99999999-9999-9999-9999-999999999999', '99bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '99cccccc-cccc-cccc-cccc-cccccccccccc', '2024-06-01', '2024-06-07', 8000, 400, 80, 7520, 'pending') ON CONFLICT DO NOTHING;
           SETUP
 
           # Session A: claim inside a transaction, hold lock with pg_sleep
@@ -349,7 +352,9 @@ jobs:
           echo "  - Token and key remained stable"
 
           # Cleanup
-          psql -c "DELETE FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999'"
+          psql -c "DELETE FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999'" || true
+          psql -c "DELETE FROM payout_accounts WHERE id='99cccccc-cccc-cccc-cccc-cccccccccccc'" || true
+          psql -c "DELETE FROM businesses WHERE id='99bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'" || true
 
   # ── Engineering Governance ──
   governance:
