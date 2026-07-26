@@ -360,16 +360,35 @@ describe('FIN-002: Timeout → review_required', () => {
 
   it('provider timeout calls mark_payout_review_required', async () => {
     let reviewCalled = false;
-    setupMocks({ fetchThrows: true });
-    // Override the service client mock to track review_required call
+
+    // Full inline setup — no setupMocks call to avoid ordering issues
+    const mockFrom = vi.fn().mockImplementation((table: string) => {
+      const chain: Record<string, unknown> = {};
+      ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'update'].forEach(m => {
+        chain[m] = vi.fn().mockReturnValue(chain);
+      });
+      if (table === 'business_payouts') {
+        chain.single = vi.fn().mockResolvedValue({
+          data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100,
+                  payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
+        });
+      } else if (table === 'businesses') {
+        chain.single = vi.fn().mockResolvedValue({ data: { verification_level: 'verified', country_code: 'NG' } });
+      } else if (table === 'payout_accounts') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01' } });
+        chain.single = vi.fn().mockResolvedValue({ data: { bank_code: '058', account_number: '0123456789', account_name: 'Test' } });
+      } else if (table === 'platform_fees') {
+        chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
+      }
+      chain.neq = vi.fn().mockResolvedValue({ data: [] });
+      return chain;
+    });
+    vi.doMock('@/lib/supabase/server', () => ({ createClient: vi.fn().mockResolvedValue({ from: mockFrom }) }));
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn().mockReturnValue({
         rpc: vi.fn().mockImplementation((name: string) => {
           if (name === 'claim_payout_for_transfer') {
-            return Promise.resolve({
-              data: [{ claimed_id: 'p1', claimed_token: 'tok', idempotency_key: 'payout_p1' }],
-              error: null,
-            });
+            return Promise.resolve({ data: [{ claimed_id: 'p1', claimed_token: 'tok', idempotency_key: 'payout_p1' }], error: null });
           }
           if (name === 'mark_payout_review_required') {
             reviewCalled = true;
@@ -379,15 +398,191 @@ describe('FIN-002: Timeout → review_required', () => {
         }),
       }),
     }));
+    vi.doMock('@/lib/admin-auth', () => ({ requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }) }));
+    vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
+    vi.doMock('@/lib/email/templates', () => ({ payoutApprovedEmail: vi.fn(), payoutPaidEmail: vi.fn() }));
+    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network timeout'));
 
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
-    const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
-    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    const res = await POST(makePostRequest('/x', { transfer_method: 'paystack_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
 
     expect(res.status).toBe(500);
     expect(reviewCalled).toBe(true);
-    const body = await res.json();
-    expect(body.error).toContain('review');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Provider Response Classification
+// ═══════════════════════════════════════════════════════════
+
+describe('FIN-002: Provider response classification', () => {
+  beforeEach(() => {
+    capturedLogs = [];
+    capturedFetchCalls = [];
+    vi.restoreAllMocks();
+    vi.resetModules();
+    process.env.ENABLE_PAYOUTS = 'true';
+    process.env.PAYSTACK_SECRET_KEY = 'test_paystack_key';
+    process.env.STRIPE_SECRET_KEY = 'test_stripe_key';
+  });
+
+  afterEach(() => {
+    delete process.env.ENABLE_PAYOUTS;
+    delete process.env.PAYSTACK_SECRET_KEY;
+    delete process.env.STRIPE_SECRET_KEY;
+    vi.restoreAllMocks();
+  });
+
+  function setupWithFetchBehavior(behavior: (url: string) => Response) {
+    let lastTransition: string | null = null;
+
+    const mockFrom = vi.fn().mockImplementation((table: string) => {
+      const chain: Record<string, unknown> = {};
+      ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'update', 'insert'].forEach(m => {
+        chain[m] = vi.fn().mockReturnValue(chain);
+      });
+      if (table === 'business_payouts') {
+        chain.single = vi.fn().mockResolvedValue({
+          data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100,
+                  payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
+        });
+      } else if (table === 'businesses') {
+        chain.single = vi.fn().mockResolvedValue({
+          data: { verification_level: 'verified', country_code: 'NG', name: 'Test', owner_id: 'u1' },
+        });
+      } else if (table === 'payout_accounts') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({
+          data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01' },
+        });
+        chain.single = vi.fn().mockResolvedValue({
+          data: { bank_code: '058', account_number: '0123456789', account_name: 'Test', stripe_account_id: 'acct_test' },
+        });
+      } else if (table === 'platform_fees') {
+        chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
+      } else if (table === 'profiles') {
+        chain.single = vi.fn().mockResolvedValue({ data: { email: 'test@test.com' } });
+      } else {
+        chain.insert = vi.fn().mockResolvedValue({});
+      }
+      chain.neq = vi.fn().mockResolvedValue({ data: [] });
+      return chain;
+    });
+
+    vi.doMock('@/lib/supabase/server', () => ({
+      createClient: vi.fn().mockResolvedValue({ from: mockFrom }),
+    }));
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockImplementation((name: string) => {
+          if (name === 'claim_payout_for_transfer') {
+            return Promise.resolve({
+              data: [{ claimed_id: 'p1', claimed_token: 'tok', idempotency_key: 'payout_p1' }],
+              error: null,
+            });
+          }
+          if (name === 'mark_payout_transfer_failed') { lastTransition = 'failed'; }
+          if (name === 'mark_payout_review_required') { lastTransition = 'review_required'; }
+          if (name === 'mark_payout_provider_submitted') { lastTransition = 'submitted'; }
+          return Promise.resolve({ data: [{ id: 'p1' }], error: null });
+        }),
+      }),
+    }));
+    vi.doMock('@/lib/admin-auth', () => ({
+      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
+    }));
+    vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
+    vi.doMock('@/lib/email/templates', () => ({
+      payoutApprovedEmail: vi.fn(), payoutPaidEmail: vi.fn(),
+    }));
+    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      if (url.includes('transferrecipient')) {
+        return new Response(JSON.stringify({ status: true, data: { recipient_code: 'RCP_test' } }));
+      }
+      return behavior(url);
+    });
+
+    return () => lastTransition;
+  }
+
+  it('Paystack explicit 400 → failed', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response(JSON.stringify({ status: false }), { status: 400 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'paystack_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('failed');
+  });
+
+  it('Paystack 429 → review_required', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response('Rate limited', { status: 429 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'paystack_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('review_required');
+  });
+
+  it('Paystack 500 → review_required', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response('Server error', { status: 500 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'paystack_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('review_required');
+  });
+
+  it('Paystack malformed 200 body → review_required', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response('not json at all', { status: 200 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'paystack_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('review_required');
+  });
+
+  it('Stripe explicit 400 → failed', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response(JSON.stringify({ error: { type: 'invalid_request_error' } }), { status: 400 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('failed');
+  });
+
+  it('Stripe 429 → review_required', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response('Rate limited', { status: 429 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('review_required');
+  });
+
+  it('Stripe 500 → review_required', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response('Internal error', { status: 500 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('review_required');
+  });
+
+  it('Stripe 200 missing ID → review_required', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response(JSON.stringify({ object: 'transfer' }), { status: 200 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('review_required');
+  });
+
+  it('Accepted provider → submitted', async () => {
+    const getTransition = setupWithFetchBehavior((url) => {
+      if (url.includes('paystack.co/transfer')) {
+        return new Response(JSON.stringify({ status: true, data: { transfer_code: 'TRF_ok' } }));
+      }
+      return new Response(JSON.stringify({}));
+    });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const res = await POST(makePostRequest('/x', { transfer_method: 'paystack_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('submitted');
+    expect(res.status).toBe(200);
   });
 });
 

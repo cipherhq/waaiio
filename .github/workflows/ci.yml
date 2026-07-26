@@ -252,6 +252,19 @@ jobs:
           fi
           echo "✅ RLS check complete."
 
+      - name: FIN-002 database concurrency tests
+        if: hashFiles('scripts/test-fin-002-db.sql') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          echo "Running FIN-002 real PostgreSQL tests..."
+          psql -v ON_ERROR_STOP=1 -f scripts/test-fin-002-db.sql
+          echo "✅ FIN-002 database tests complete."
+
   # ── Engineering Governance ──
   governance:
     name: Engineering governance

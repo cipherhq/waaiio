@@ -18,6 +18,19 @@ type TransferMethod = typeof ALLOWED_TRANSFER_METHODS[number];
 // FIN-002: Only these methods initiate automated provider transfers.
 const AUTOMATED_TRANSFER_METHODS = new Set(['paystack_transfer', 'stripe_transfer']);
 
+/**
+ * FIN-002: Classify a provider HTTP response as conclusive rejection or ambiguous.
+ * A conclusive rejection means the provider definitively did NOT accept the transfer.
+ * Ambiguous means we cannot prove the transfer was rejected — it may have been accepted.
+ */
+function isConclusive4xxRejection(res: Response): boolean {
+  const s = res.status;
+  // 400, 401, 403, 422 are conclusive rejections — provider explicitly refused
+  if (s === 400 || s === 401 || s === 403 || s === 422) return true;
+  // 408, 429, 5xx are ambiguous — the request may have been accepted
+  return false;
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -245,7 +258,7 @@ export async function POST(
     let gatewayTransferCode: string | null = null;
 
     if (transfer_method === 'paystack_transfer') {
-      // Create transfer recipient
+      // Create transfer recipient — pre-transfer step, no money movement
       const recipientRes = await fetch('https://api.paystack.co/transferrecipient', {
         method: 'POST',
         headers: {
@@ -260,18 +273,25 @@ export async function POST(
           currency: bizCurrency,
         }),
       });
-      const recipientData = await recipientRes.json();
 
-      if (!recipientData.status || !recipientData.data?.recipient_code) {
-        // Recipient creation is a pre-transfer step — conclusive failure
-        const { data: failResult, error: failErr } = await serviceClient.rpc(
-          'mark_payout_transfer_failed',
-          { p_payout_id: id, p_claim_token: claimToken },
-        );
-        if (failErr || !failResult?.length) {
-          logger.withContext({ op: 'payout.fail-transition', payoutId: id })
-            .error('[PAYOUT] Failed to mark transfer failed');
+      // Recipient creation: conclusive 4xx → failed; 429/5xx → review_required
+      if (!recipientRes.ok) {
+        if (isConclusive4xxRejection(recipientRes)) {
+          await transitionFailed(serviceClient, id, claimToken, logger);
+          return NextResponse.json({ error: 'Failed to create Paystack transfer recipient' }, { status: 400 });
         }
+        // Ambiguous — rate limit or server error
+        await transitionReviewRequired(serviceClient, id, claimToken, logger);
+        return NextResponse.json({ error: 'Paystack recipient creation uncertain — requires review' }, { status: 500 });
+      }
+
+      let recipientData: Record<string, unknown>;
+      try { recipientData = await recipientRes.json(); }
+      catch { await transitionReviewRequired(serviceClient, id, claimToken, logger); return NextResponse.json({ error: 'Malformed provider response — requires review' }, { status: 500 }); }
+
+      if (!recipientData.status || !(recipientData.data as Record<string, unknown>)?.recipient_code) {
+        // Valid response but no recipient — conclusive pre-transfer failure
+        await transitionFailed(serviceClient, id, claimToken, logger);
         return NextResponse.json({ error: 'Failed to create Paystack transfer recipient' }, { status: 400 });
       }
 
@@ -285,27 +305,34 @@ export async function POST(
         body: JSON.stringify({
           source: 'balance',
           amount: Math.round(payout.net_amount * 100),
-          recipient: recipientData.data.recipient_code,
+          recipient: (recipientData.data as Record<string, unknown>).recipient_code,
           reference: providerKey,
           reason: `Payout for period ${payout.period_start} to ${payout.period_end}`,
         }),
       });
-      const transferData = await transferRes.json();
 
-      if (!transferData.status) {
-        // Provider conclusively rejected the transfer
-        const { data: failResult, error: failErr } = await serviceClient.rpc(
-          'mark_payout_transfer_failed',
-          { p_payout_id: id, p_claim_token: claimToken },
-        );
-        if (failErr || !failResult?.length) {
-          logger.withContext({ op: 'payout.fail-transition', payoutId: id })
-            .error('[PAYOUT] Failed to mark transfer failed');
+      // Transfer response classification
+      if (!transferRes.ok) {
+        if (isConclusive4xxRejection(transferRes)) {
+          await transitionFailed(serviceClient, id, claimToken, logger);
+          return NextResponse.json({ error: 'Paystack transfer rejected' }, { status: 400 });
         }
-        return NextResponse.json({ error: 'Paystack transfer failed' }, { status: 400 });
+        // 429/5xx after transfer request — uncertain whether transfer was accepted
+        await transitionReviewRequired(serviceClient, id, claimToken, logger);
+        return NextResponse.json({ error: 'Paystack transfer outcome uncertain — requires review' }, { status: 500 });
       }
 
-      gatewayTransferCode = transferData.data.transfer_code;
+      let transferData: Record<string, unknown>;
+      try { transferData = await transferRes.json(); }
+      catch { await transitionReviewRequired(serviceClient, id, claimToken, logger); return NextResponse.json({ error: 'Malformed provider response — requires review' }, { status: 500 }); }
+
+      if (!transferData.status || !(transferData.data as Record<string, unknown>)?.transfer_code) {
+        // 200 but missing expected fields — ambiguous
+        await transitionReviewRequired(serviceClient, id, claimToken, logger);
+        return NextResponse.json({ error: 'Paystack transfer response missing expected data — requires review' }, { status: 500 });
+      }
+
+      gatewayTransferCode = (transferData.data as Record<string, unknown>).transfer_code as string;
 
     } else if (transfer_method === 'stripe_transfer') {
       const stripeRes = await fetch('https://api.stripe.com/v1/transfers', {
@@ -322,21 +349,27 @@ export async function POST(
           description: `Payout for period ${payout.period_start} to ${payout.period_end}`,
         }),
       });
-      const stripeData = await stripeRes.json();
 
-      if (!stripeData.id) {
-        const { data: failResult, error: failErr } = await serviceClient.rpc(
-          'mark_payout_transfer_failed',
-          { p_payout_id: id, p_claim_token: claimToken },
-        );
-        if (failErr || !failResult?.length) {
-          logger.withContext({ op: 'payout.fail-transition', payoutId: id })
-            .error('[PAYOUT] Failed to mark transfer failed');
+      if (!stripeRes.ok) {
+        if (isConclusive4xxRejection(stripeRes)) {
+          await transitionFailed(serviceClient, id, claimToken, logger);
+          return NextResponse.json({ error: 'Stripe transfer rejected' }, { status: 400 });
         }
-        return NextResponse.json({ error: 'Stripe transfer failed' }, { status: 400 });
+        await transitionReviewRequired(serviceClient, id, claimToken, logger);
+        return NextResponse.json({ error: 'Stripe transfer outcome uncertain — requires review' }, { status: 500 });
       }
 
-      gatewayTransferCode = stripeData.id;
+      let stripeData: Record<string, unknown>;
+      try { stripeData = await stripeRes.json(); }
+      catch { await transitionReviewRequired(serviceClient, id, claimToken, logger); return NextResponse.json({ error: 'Malformed provider response — requires review' }, { status: 500 }); }
+
+      if (!stripeData.id) {
+        // 200 but no transfer ID — ambiguous
+        await transitionReviewRequired(serviceClient, id, claimToken, logger);
+        return NextResponse.json({ error: 'Stripe response missing transfer ID — requires review' }, { status: 500 });
+      }
+
+      gatewayTransferCode = stripeData.id as string;
     }
 
     // FIN-002: Token-guarded submission — persists provider transfer code
@@ -359,20 +392,43 @@ export async function POST(
     return NextResponse.json({ success: true, status: 'processing' });
 
   } catch (error) {
-    // Ambiguous outcome — timeout, connection reset, malformed response
+    // Ambiguous outcome — network timeout, connection reset
     logger.withContext({ op: 'payout.approve', payoutId: id, ...safeLogErrorContext(error) })
       .error('[PAYOUT] Provider call failed with uncertain outcome');
-
-    const { error: reviewErr } = await serviceClient.rpc(
-      'mark_payout_review_required',
-      { p_payout_id: id, p_claim_token: claimToken },
-    );
-    if (reviewErr) {
-      logger.withContext({ op: 'payout.review-transition', payoutId: id })
-        .error('[PAYOUT] Failed to mark review_required — payout remains processing');
-    }
-
+    await transitionReviewRequired(serviceClient, id, claimToken, logger);
     return NextResponse.json({ error: 'Payout requires manual review — provider outcome uncertain' }, { status: 500 });
+  }
+}
+
+/** Token-guarded transition to failed (conclusive rejection). */
+async function transitionFailed(
+  client: ReturnType<typeof createServiceClient>,
+  payoutId: string,
+  claimToken: string,
+  log: typeof logger,
+) {
+  const { data, error } = await client.rpc('mark_payout_transfer_failed', {
+    p_payout_id: payoutId, p_claim_token: claimToken,
+  });
+  if (error || !data?.length) {
+    log.withContext({ op: 'payout.fail-transition', payoutId })
+      .error('[PAYOUT] Failed to mark transfer failed');
+  }
+}
+
+/** Token-guarded transition to review_required (ambiguous outcome). */
+async function transitionReviewRequired(
+  client: ReturnType<typeof createServiceClient>,
+  payoutId: string,
+  claimToken: string,
+  log: typeof logger,
+) {
+  const { error } = await client.rpc('mark_payout_review_required', {
+    p_payout_id: payoutId, p_claim_token: claimToken,
+  });
+  if (error) {
+    log.withContext({ op: 'payout.review-transition', payoutId })
+      .error('[PAYOUT] Failed to mark review_required — payout remains processing');
   }
 }
 
