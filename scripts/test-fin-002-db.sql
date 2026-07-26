@@ -9,8 +9,17 @@
 
 -- ── Setup: create test data ──
 
+-- Disable triggers on auth.users to avoid handle_new_user firing
+-- (the CI auth.users stub may not have all columns the trigger expects)
+ALTER TABLE auth.users DISABLE TRIGGER ALL;
 INSERT INTO auth.users (id, email) VALUES
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'test-fin002@test.local');
+ALTER TABLE auth.users ENABLE TRIGGER ALL;
+
+-- Create matching profile
+INSERT INTO profiles (id, full_name, email) VALUES
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'FIN-002 Test', 'test-fin002@test.local')
+  ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO businesses (id, name, slug, category, country_code, status, verification_level, owner_id, payout_mode)
 VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'FIN-002 Test', 'fin002-test', 'other', 'NG', 'active', 'verified',
@@ -358,7 +367,10 @@ END $$;
 DELETE FROM business_payouts WHERE business_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 DELETE FROM payout_accounts WHERE business_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 DELETE FROM businesses WHERE id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+DELETE FROM profiles WHERE id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+ALTER TABLE auth.users DISABLE TRIGGER ALL;
 DELETE FROM auth.users WHERE id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+ALTER TABLE auth.users ENABLE TRIGGER ALL;
 
 \echo ''
 \echo '=== FIN-002: All 22 database tests PASSED ==='
