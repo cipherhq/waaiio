@@ -16,9 +16,9 @@ INSERT INTO auth.users (id, email) VALUES
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'test-fin002@test.local');
 ALTER TABLE auth.users ENABLE TRIGGER ALL;
 
--- Create matching profile
-INSERT INTO profiles (id, full_name, email) VALUES
-  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'FIN-002 Test', 'test-fin002@test.local')
+-- Create matching profile (profiles has first_name/last_name, not full_name)
+INSERT INTO profiles (id, first_name, last_name, email) VALUES
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'FIN002', 'Test', 'test-fin002@test.local')
   ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO businesses (id, name, slug, category, country_code, status, verification_level, owner_id, payout_mode)
