@@ -158,7 +158,7 @@
     {
       "id": "FIN-002",
       "title": "Atomic payout execution and provider idempotency",
-      "stage": "MERGED",
+      "stage": "DEPLOYED",
       "owner": "claude",
       "issue_numbers": [48],
       "pr_numbers": [50],
@@ -181,10 +181,23 @@
         "Vercel automatic deployment completed for 7556dec5 (production)",
         "www.waaiio.com HTTP 200 confirmed post-deployment",
         "ENABLE_PAYOUTS remains unset (confirmed in FIN-001 production verification, not changed since)",
-        "Migration 292 NOT applied to production database — application code deployed, schema changes pending controlled application"
+        "Migration 292 applied to production via Management API on 2026-07-26T14:39Z",
+        "Migration 292 file SHA256: 30469f60b57a728b41406a55e14799e1c20c4d6b5c785e34eab5c610d417b1d5",
+        "Management API returned HTTP 201 with null error",
+        "3 columns verified: claim_token UUID, provider_idempotency_key TEXT, processing_started_at TIMESTAMPTZ",
+        "Unique partial index idx_payouts_provider_idempotency_key verified: indisunique=true, indisvalid=true, indisready=true",
+        "4 RPCs verified: claim_payout_for_transfer(uuid,text,uuid), mark_payout_provider_submitted(uuid,uuid,text), mark_payout_transfer_failed(uuid,uuid), mark_payout_review_required(uuid,uuid)",
+        "All 4 RPCs: SECURITY DEFINER, owner=postgres, search_path=public",
+        "Privileges: service_role=EXECUTE, anon=denied, authenticated=denied for all 4 RPCs",
+        "finalize_payout_transfer absent, no conflicting overloads",
+        "11 existing payout rows unchanged, all pending, all new columns NULL",
+        "Migration 292 recorded in remote schema_migrations via migration repair",
+        "ENABLE_PAYOUTS remains unset after migration",
+        "www.waaiio.com HTTP 200 after migration",
+        "No provider contacted, no payout data modified"
       ],
       "blockers": [],
-      "next_action": "Apply Migration 292 through the controlled production migration process while ENABLE_PAYOUTS remains disabled, then verify schema/RPC permissions before any payout feature activation.",
+      "next_action": "Independent review of Migration 292 production application evidence before FIN-002 production verification and Issue #48 closure.",
       "notes": "Atomic payout claim via Postgres RPC, provider idempotency keys (Paystack reference + Stripe Idempotency-Key), token-guarded finalization, review_required for uncertain outcomes. Shared body-validated classification (classifyPaystackError/classifyStripeError). Cron auto-approval requires eligible Paystack account + NG/GH country + PAYSTACK_SECRET_KEY. Admin approve validates gateway/method alignment before claim. Paystack rejection requires typeof string message. Contention test compares returned winner token to persisted claim_token. All transition RPCs check data+error. 92 route tests, 24 PostgreSQL assertions, 9 contention assertions. Launch scope: paystack_transfer and stripe_transfer only. Square and Flutterwave deferred to Issue #49. Migration 292. Local PostgreSQL unavailable."
     }
   ]
