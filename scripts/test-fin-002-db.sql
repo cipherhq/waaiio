@@ -182,16 +182,23 @@ END $$;
 -- ══════════════════════════════════════════
 -- Test 10: Cannot return to held
 -- ══════════════════════════════════════════
-\echo 'Test 10: No RPC writes held status (real assertion)'
+\echo 'Test 10: No RPC sets status to held (real assertion)'
 DO $$
 DECLARE v_count INT;
 BEGIN
-  -- Verify no function body contains the string "'held'" as a target status
+  -- Verify no transition RPC body contains "status = 'held'" as a SET target.
+  -- claim_payout_for_transfer reads 'held' in WHERE (allowed), but never writes it.
   SELECT COUNT(*) INTO v_count FROM pg_proc
-  WHERE proname IN ('claim_payout_for_transfer', 'mark_payout_provider_submitted',
+  WHERE proname IN ('mark_payout_provider_submitted',
                     'mark_payout_transfer_failed', 'mark_payout_review_required')
     AND prosrc LIKE '%''held''%';
-  ASSERT v_count = 0, 'no FIN-002 RPC should write held, found: ' || v_count;
+  ASSERT v_count = 0, 'no transition RPC should reference held, found: ' || v_count;
+
+  -- Also verify claim RPC does not SET status to held
+  SELECT COUNT(*) INTO v_count FROM pg_proc
+  WHERE proname = 'claim_payout_for_transfer'
+    AND prosrc LIKE '%status = ''held''%';
+  ASSERT v_count = 0, 'claim RPC should not SET status to held';
   RAISE NOTICE '  PASS';
 END $$;
 
