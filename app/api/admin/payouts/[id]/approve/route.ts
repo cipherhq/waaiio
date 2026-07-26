@@ -114,6 +114,18 @@ export async function POST(
     return NextResponse.json({ error: 'Cannot approve payout: payout account has not been verified.' }, { status: 400 });
   }
 
+  // ── Gateway / transfer-method alignment ──
+  // FIN-002: The payout account's gateway must match the requested transfer method.
+  // Checked immediately after account validation, before any destination or balance queries.
+  if (AUTOMATED_TRANSFER_METHODS.has(transfer_method)) {
+    const expectedGateway = transfer_method === 'paystack_transfer' ? 'paystack' : 'stripe';
+    if (payoutAcct.gateway !== expectedGateway) {
+      return NextResponse.json({
+        error: `Transfer method ${transfer_method} requires a ${expectedGateway} payout account, but the account gateway is ${payoutAcct.gateway || 'unknown'}.`,
+      }, { status: 400 });
+    }
+  }
+
   // ── Balance verification (includes review_required as reserved) ──
   const { data: balancePayments } = await supabase
     .from('platform_fees')
@@ -196,6 +208,9 @@ export async function POST(
     if (!payoutAccount?.bank_code || !payoutAccount?.account_number) {
       return NextResponse.json({ error: 'Payout account missing required bank details for Paystack transfer' }, { status: 400 });
     }
+    if (typeof payoutAccount.account_name !== 'string' || payoutAccount.account_name.trim().length === 0) {
+      return NextResponse.json({ error: 'Payout account missing account_name for Paystack transfer' }, { status: 400 });
+    }
     paystackBankDetails = { bank_code: payoutAccount.bank_code, account_number: payoutAccount.account_number, account_name: payoutAccount.account_name };
   } else if (transfer_method === 'stripe_transfer') {
     const { data: payoutAccount } = await supabase
@@ -208,19 +223,6 @@ export async function POST(
       return NextResponse.json({ error: 'Payout account missing Stripe destination account' }, { status: 400 });
     }
     stripeDestination = payoutAccount.stripe_account_id;
-  }
-
-  // ── Gateway / transfer-method alignment ──
-  // FIN-002: The payout account's gateway must match the requested transfer method.
-  // A mismatch means the admin selected the wrong method — reject before claim.
-  const expectedGateway = transfer_method === 'paystack_transfer' ? 'paystack'
-    : transfer_method === 'stripe_transfer' ? 'stripe'
-    : null;
-
-  if (expectedGateway && payoutAcct.gateway !== expectedGateway) {
-    return NextResponse.json({
-      error: `Transfer method ${transfer_method} requires a ${expectedGateway} payout account, but the account gateway is ${payoutAcct.gateway || 'unknown'}.`,
-    }, { status: 400 });
   }
 
   // ═══════════════════════════════════════════════════════════

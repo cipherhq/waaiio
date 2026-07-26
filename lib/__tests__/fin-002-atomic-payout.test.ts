@@ -56,6 +56,7 @@ interface MockConfig {
   manualUpdateResult?: unknown[] | null;
   fetchThrows?: boolean;
   payoutAccountGateway?: string;
+  payoutAccountName?: string | null;
 }
 
 function setupMocks(config: MockConfig = {}) {
@@ -74,6 +75,7 @@ function setupMocks(config: MockConfig = {}) {
     manualUpdateResult = [{ id: 'p1' }],
     fetchThrows = false,
     payoutAccountGateway = 'paystack',
+    payoutAccountName = 'Test',
   } = config;
 
   capturedFetchCalls = [];
@@ -99,7 +101,7 @@ function setupMocks(config: MockConfig = {}) {
         data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01', gateway: payoutAccountGateway },
       });
       chain.single = vi.fn().mockResolvedValue({
-        data: { bank_code: '058', account_number: '0123456789', account_name: 'Test',
+        data: { bank_code: '058', account_number: '0123456789', account_name: payoutAccountName,
                 stripe_account_id: 'acct_test', gateway: payoutAccountGateway },
       });
     } else if (table === 'platform_fees') {
@@ -1323,6 +1325,72 @@ describe('FIN-002: Admin gateway/transfer-method alignment', () => {
     setupMocks({ payoutAccountGateway: 'stripe' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'stripe_transfer' });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(200);
+    expect(capturedFetchCalls.length).toBeGreaterThan(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Paystack account_name Validation Before Claim
+// ═══════════════════════════════════════════════════════════
+
+describe('FIN-002: Paystack account_name required before claim', () => {
+  beforeEach(() => {
+    capturedLogs = [];
+    capturedFetchCalls = [];
+    vi.restoreAllMocks();
+    vi.resetModules();
+    process.env.ENABLE_PAYOUTS = 'true';
+    process.env.PAYSTACK_SECRET_KEY = 'test_paystack_key';
+  });
+
+  afterEach(() => {
+    delete process.env.ENABLE_PAYOUTS;
+    delete process.env.PAYSTACK_SECRET_KEY;
+    vi.restoreAllMocks();
+  });
+
+  it('account_name null → 400, zero claim calls, zero provider calls', async () => {
+    let claimCalled = false;
+    setupMocks({ payoutAccountName: null });
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockImplementation(() => { claimCalled = true; return Promise.resolve({ data: [], error: null }); }),
+      }),
+    }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('account_name');
+    expect(claimCalled).toBe(false);
+    expect(capturedFetchCalls.length).toBe(0);
+  });
+
+  it('account_name blank → 400, zero claim calls, zero provider calls', async () => {
+    let claimCalled = false;
+    setupMocks({ payoutAccountName: '   ' });
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockImplementation(() => { claimCalled = true; return Promise.resolve({ data: [], error: null }); }),
+      }),
+    }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('account_name');
+    expect(claimCalled).toBe(false);
+    expect(capturedFetchCalls.length).toBe(0);
+  });
+
+  it('valid account_name → normal execution continues', async () => {
+    setupMocks({ payoutAccountName: 'John Doe' });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
     expect(res.status).toBe(200);
     expect(capturedFetchCalls.length).toBeGreaterThan(0);

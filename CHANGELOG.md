@@ -7,6 +7,11 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-26
 
+### FIN-002: Require Paystack account_name before claim, move gateway alignment earlier
+- `app/api/admin/payouts/[id]/approve/route.ts` — Added strict `account_name` validation for `paystack_transfer`: must be `typeof string` and non-blank. Returns 400 before claim RPC and provider call. Moved gateway/transfer-method alignment check immediately after payout-account ownership, active, and verification checks (before destination queries and balance verification).
+- `lib/__tests__/fin-002-atomic-payout.test.ts` — Added 3 new tests: account_name null → 400 with zero claim/provider calls, account_name blank → 400 with zero claim/provider calls, valid account_name continues normally. Total: 92 route tests.
+- **Affects:** Admin payout approval (null/blank account_name blocked before claim).
+
 ### FIN-002: Review corrections — cron eligibility, gateway alignment, message validation, contention evidence
 - `app/api/cron/auto-payout/route.ts` — `canAutoApprove` now requires all of: NG/GH country, eligible Paystack account (gateway=paystack, active, verified, bank_code, account_number, account_name), PAYSTACK_SECRET_KEY configured, cooling period, velocity, amount limit, business verification. Previously only required `payoutAccount` (any gateway). Hold reasons expanded with specific failure messages.
 - `app/api/admin/payouts/[id]/approve/route.ts` — Added gateway/transfer-method alignment check before claim RPC. `paystack_transfer` requires `gateway=paystack`; `stripe_transfer` requires `gateway=stripe`. Mismatch returns 400 with zero claim RPC calls, zero provider calls, payout state unchanged. Payout account query now fetches `gateway` column.
