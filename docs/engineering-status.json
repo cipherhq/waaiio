@@ -170,8 +170,8 @@
       "production_verified_at": null,
       "verification_evidence": [],
       "blockers": [],
-      "next_action": "Independent review of true two-session concurrency evidence, eligible cron payout-account selection, and provider rejection-body validation",
-      "notes": "Atomic payout claim via Postgres RPC, provider idempotency keys (Paystack reference + Stripe Idempotency-Key), token-guarded finalization, review_required for uncertain outcomes. Launch scope: paystack_transfer and stripe_transfer only. Square and Flutterwave outbound payouts deferred to Issue #49. Migration 292."
+      "next_action": "Independent review of completed FIN-002 implementation and executed two-session PostgreSQL contention evidence",
+      "notes": "Atomic payout claim via Postgres RPC, provider idempotency keys (Paystack reference + Stripe Idempotency-Key), token-guarded finalization, review_required for uncertain outcomes. Shared body-validated classification (classifyPaystackError/classifyStripeError). Cron requires eligible verified Paystack account. All transition RPCs check data+error. 63 route tests, 22 PostgreSQL assertions, two-session contention CI test. Launch scope: paystack_transfer and stripe_transfer only. Square and Flutterwave deferred to Issue #49. Migration 292. Local PostgreSQL unavailable."
     }
   ]
 }

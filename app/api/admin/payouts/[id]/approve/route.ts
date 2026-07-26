@@ -8,6 +8,7 @@ import { getCountry } from '@/lib/countries';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+import { classifyPaystackError, classifyStripeError } from '@/lib/payments/payout-classification';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
@@ -18,25 +19,8 @@ type TransferMethod = typeof ALLOWED_TRANSFER_METHODS[number];
 // FIN-002: Only these methods initiate automated provider transfers.
 const AUTOMATED_TRANSFER_METHODS = new Set(['paystack_transfer', 'stripe_transfer']);
 
-/**
- * FIN-002: Classify whether a provider HTTP response is a conclusive rejection.
- * Returns true ONLY when we can definitively prove the provider did NOT accept.
- * Requires both an approved HTTP status AND a valid rejection body.
- *
- * 408/409/429/5xx are always ambiguous — the request may have been accepted.
- * 4xx without a valid rejection body is also ambiguous.
- */
-function isConclusive4xxRejection(res: Response): boolean {
-  const s = res.status;
-  // 408 (timeout), 409 (conflict/idempotent duplicate), 429 (rate limit) are ambiguous
-  if (s === 408 || s === 409 || s === 429) return false;
-  // 5xx are always ambiguous
-  if (s >= 500) return false;
-  // Only 400, 401, 403, 422 MAY be conclusive — but body must be validated by caller
-  if (s === 400 || s === 401 || s === 403 || s === 422) return true;
-  // Any other status is ambiguous
-  return false;
-}
+// FIN-002: Provider response classification is in lib/payments/payout-classification.ts
+// Shared between Admin and cron to prevent classification drift.
 
 export async function POST(
   request: NextRequest,
@@ -281,13 +265,13 @@ export async function POST(
         }),
       });
 
-      // Recipient creation: conclusive 4xx → failed; 429/5xx → review_required
+      // FIN-002: Classify recipient creation response with body validation
       if (!recipientRes.ok) {
-        if (isConclusive4xxRejection(recipientRes)) {
+        const classification = await classifyPaystackError(recipientRes);
+        if (classification === 'conclusive_rejection') {
           await transitionFailed(serviceClient, id, claimToken, logger);
           return NextResponse.json({ error: 'Failed to create Paystack transfer recipient' }, { status: 400 });
         }
-        // Ambiguous — rate limit or server error
         await transitionReviewRequired(serviceClient, id, claimToken, logger);
         return NextResponse.json({ error: 'Paystack recipient creation uncertain — requires review' }, { status: 500 });
       }
@@ -318,13 +302,13 @@ export async function POST(
         }),
       });
 
-      // Transfer response classification
+      // FIN-002: Classify transfer response with body validation
       if (!transferRes.ok) {
-        if (isConclusive4xxRejection(transferRes)) {
+        const classification = await classifyPaystackError(transferRes);
+        if (classification === 'conclusive_rejection') {
           await transitionFailed(serviceClient, id, claimToken, logger);
           return NextResponse.json({ error: 'Paystack transfer rejected' }, { status: 400 });
         }
-        // 429/5xx after transfer request — uncertain whether transfer was accepted
         await transitionReviewRequired(serviceClient, id, claimToken, logger);
         return NextResponse.json({ error: 'Paystack transfer outcome uncertain — requires review' }, { status: 500 });
       }
@@ -357,8 +341,10 @@ export async function POST(
         }),
       });
 
+      // FIN-002: Classify Stripe error with body validation
       if (!stripeRes.ok) {
-        if (isConclusive4xxRejection(stripeRes)) {
+        const classification = await classifyStripeError(stripeRes);
+        if (classification === 'conclusive_rejection') {
           await transitionFailed(serviceClient, id, claimToken, logger);
           return NextResponse.json({ error: 'Stripe transfer rejected' }, { status: 400 });
         }

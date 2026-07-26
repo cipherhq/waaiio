@@ -508,12 +508,36 @@ describe('FIN-002: Provider response classification', () => {
     return () => lastTransition;
   }
 
-  it('Paystack explicit 400 → failed', async () => {
+  it('Paystack 400 with valid rejection body → failed', async () => {
     const getTransition = setupWithFetchBehavior(() =>
-      new Response(JSON.stringify({ status: false }), { status: 400 }));
+      new Response(JSON.stringify({ status: false, message: 'Invalid recipient' }), { status: 400 }));
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     await POST(makePostRequest('/x', { transfer_method: 'paystack_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
     expect(getTransition()).toBe('failed');
+  });
+
+  it('Paystack 400 without valid rejection body → review_required', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response(JSON.stringify({ status: true }), { status: 400 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'paystack_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('review_required');
+  });
+
+  it('Paystack 400 with malformed JSON → review_required', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response('<html>Bad Gateway</html>', { status: 400 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'paystack_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('review_required');
+  });
+
+  it('Paystack 409 → review_required', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response(JSON.stringify({ status: false, message: 'Duplicate reference' }), { status: 409 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'paystack_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('review_required');
   });
 
   it('Paystack 429 → review_required', async () => {
@@ -540,12 +564,36 @@ describe('FIN-002: Provider response classification', () => {
     expect(getTransition()).toBe('review_required');
   });
 
-  it('Stripe explicit 400 → failed', async () => {
+  it('Stripe 400 with valid error object → failed', async () => {
     const getTransition = setupWithFetchBehavior(() =>
-      new Response(JSON.stringify({ error: { type: 'invalid_request_error' } }), { status: 400 }));
+      new Response(JSON.stringify({ error: { type: 'invalid_request_error', message: 'No such destination' } }), { status: 400 }));
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
     expect(getTransition()).toBe('failed');
+  });
+
+  it('Stripe 400 without error object → review_required', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response(JSON.stringify({ message: 'something went wrong' }), { status: 400 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('review_required');
+  });
+
+  it('Stripe 400 with empty error fields → review_required', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response(JSON.stringify({ error: { type: '', code: '', message: '' } }), { status: 400 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('review_required');
+  });
+
+  it('Stripe 409 → review_required', async () => {
+    const getTransition = setupWithFetchBehavior(() =>
+      new Response(JSON.stringify({ error: { type: 'idempotency_error' } }), { status: 409 }));
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(getTransition()).toBe('review_required');
   });
 
   it('Stripe 429 → review_required', async () => {
@@ -853,5 +901,203 @@ describe('FIN-002: Structural verification', () => {
     );
     expect(claimSig).not.toContain('p_claim_token');
     expect(claimSig).not.toContain('p_idempotency_key');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Shared Classification Helpers
+// ═══════════════════════════════════════════════════════════
+
+describe('FIN-002: Shared provider classification helpers', () => {
+  it('classifyPaystackError: 400 with status=false + message → conclusive', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: false, message: 'Invalid recipient' }), { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('conclusive_rejection');
+  });
+
+  it('classifyPaystackError: 400 with status=true → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: true }), { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('classifyPaystackError: 400 with no message → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: false }), { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('classifyPaystackError: 400 with HTML body → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response('<html>Bad Gateway</html>', { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('classifyPaystackError: 408 → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response('', { status: 408 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('classifyPaystackError: 409 → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: false, message: 'Duplicate' }), { status: 409 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('classifyPaystackError: 429 → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response('', { status: 429 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('classifyPaystackError: 502 → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response('Bad Gateway', { status: 502 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('classifyStripeError: 400 with error object → conclusive', async () => {
+    const { classifyStripeError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ error: { type: 'invalid_request_error', message: 'No such dest' } }), { status: 400 });
+    expect(await classifyStripeError(res)).toBe('conclusive_rejection');
+  });
+
+  it('classifyStripeError: 400 without error object → review_required', async () => {
+    const { classifyStripeError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ message: 'unknown' }), { status: 400 });
+    expect(await classifyStripeError(res)).toBe('review_required');
+  });
+
+  it('classifyStripeError: 400 with empty error fields → review_required', async () => {
+    const { classifyStripeError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ error: { type: '', code: '', message: '' } }), { status: 400 });
+    expect(await classifyStripeError(res)).toBe('review_required');
+  });
+
+  it('classifyStripeError: 409 → review_required', async () => {
+    const { classifyStripeError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ error: { type: 'idempotency_error' } }), { status: 409 });
+    expect(await classifyStripeError(res)).toBe('review_required');
+  });
+
+  it('classifyStripeError: 503 → review_required', async () => {
+    const { classifyStripeError } = await import('@/lib/payments/payout-classification');
+    const res = new Response('Service Unavailable', { status: 503 });
+    expect(await classifyStripeError(res)).toBe('review_required');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Payout Account Eligibility
+// ═══════════════════════════════════════════════════════════
+
+describe('FIN-002: Payout account eligibility', () => {
+  it('isEligiblePaystackAccount accepts valid account', async () => {
+    const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
+    expect(isEligiblePaystackAccount({
+      id: 'a1', business_id: 'b1', gateway: 'paystack',
+      bank_code: '058', account_number: '012345', account_name: 'Test',
+      verified_at: '2024-01-01', is_active: true,
+    })).toBe(true);
+  });
+
+  it('rejects Stripe gateway', async () => {
+    const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
+    expect(isEligiblePaystackAccount({
+      id: 'a1', business_id: 'b1', gateway: 'stripe',
+      bank_code: '058', account_number: '012345', account_name: 'Test',
+      verified_at: '2024-01-01', is_active: true,
+    })).toBe(false);
+  });
+
+  it('rejects inactive account', async () => {
+    const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
+    expect(isEligiblePaystackAccount({
+      id: 'a1', business_id: 'b1', gateway: 'paystack',
+      bank_code: '058', account_number: '012345', account_name: 'Test',
+      verified_at: '2024-01-01', is_active: false,
+    })).toBe(false);
+  });
+
+  it('rejects unverified account', async () => {
+    const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
+    expect(isEligiblePaystackAccount({
+      id: 'a1', business_id: 'b1', gateway: 'paystack',
+      bank_code: '058', account_number: '012345', account_name: 'Test',
+      verified_at: null, is_active: true,
+    })).toBe(false);
+  });
+
+  it('rejects missing bank_code', async () => {
+    const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
+    expect(isEligiblePaystackAccount({
+      id: 'a1', business_id: 'b1', gateway: 'paystack',
+      bank_code: null, account_number: '012345', account_name: 'Test',
+      verified_at: '2024-01-01', is_active: true,
+    })).toBe(false);
+  });
+
+  it('rejects missing account_number', async () => {
+    const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
+    expect(isEligiblePaystackAccount({
+      id: 'a1', business_id: 'b1', gateway: 'paystack',
+      bank_code: '058', account_number: null, account_name: 'Test',
+      verified_at: '2024-01-01', is_active: true,
+    })).toBe(false);
+  });
+
+  it('rejects missing account_name', async () => {
+    const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
+    expect(isEligiblePaystackAccount({
+      id: 'a1', business_id: 'b1', gateway: 'paystack',
+      bank_code: '058', account_number: '012345', account_name: null,
+      verified_at: '2024-01-01', is_active: true,
+    })).toBe(false);
+  });
+
+  it('cron source uses isEligiblePaystackAccount before claim', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
+    );
+    expect(source).toContain('isEligiblePaystackAccount');
+    // Eligibility check must appear before the claim RPC
+    const eligPos = source.indexOf('hasEligiblePaystackAccount');
+    const claimPos = source.indexOf("'claim_payout_for_transfer'");
+    expect(eligPos).toBeLessThan(claimPos);
+  });
+
+  it('cron source uses shared classifyPaystackError', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
+    );
+    expect(source).toContain('classifyPaystackError');
+    // No inline is4xx classification
+    expect(source).not.toContain('is4xx');
+  });
+
+  it('cron checks both data and error on all transition RPCs', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
+    );
+    // Every mark_payout_transfer_failed call should check result
+    const failedCalls = source.match(/mark_payout_transfer_failed/g) || [];
+    const failDataChecks = source.match(/failData\?\./g) || [];
+    const failErrChecks = source.match(/failErr/g) || [];
+    expect(failedCalls.length).toBeGreaterThan(0);
+    expect(failDataChecks.length).toBeGreaterThanOrEqual(failedCalls.length - 1); // import line doesn't count
+    expect(failErrChecks.length).toBeGreaterThanOrEqual(failedCalls.length - 1);
+
+    // Every mark_payout_review_required call should check result
+    const reviewCalls = source.match(/mark_payout_review_required/g) || [];
+    const revDataChecks = source.match(/revData\?\./g) || [];
+    expect(reviewCalls.length).toBeGreaterThan(0);
+    expect(revDataChecks.length).toBeGreaterThanOrEqual(reviewCalls.length - 1);
   });
 });

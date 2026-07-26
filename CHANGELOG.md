@@ -5,6 +5,18 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-26
+
+### FIN-002: Provider body-validated classification, cron account eligibility, RPC result handling
+- `lib/payments/payout-classification.ts` — New shared helpers: `classifyPaystackError()` (requires `status===false` + non-empty message for conclusive 4xx), `classifyStripeError()` (requires error object + type/code/message), `isEligiblePaystackAccount()` (validates gateway, verified_at, bank fields). 408/409/429/5xx/malformed JSON always → review_required.
+- `app/api/admin/payouts/[id]/approve/route.ts` — Replaced inline `isConclusive4xxRejection()` with shared `classifyPaystackError()`/`classifyStripeError()`. Now validates provider response body, not just HTTP status.
+- `app/api/cron/auto-payout/route.ts` — Replaced inline `is4xx` classification (which treated 409 as conclusive failure) with shared `classifyPaystackError()`. Added `isEligiblePaystackAccount()` check before claim — requires gateway=paystack, verified_at, bank_code, account_number, account_name. All transition RPC calls now check both `data` and `error`; zero-row results are logged as failures.
+- `.github/workflows/ci.yml` — Improved two-session contention test: captures Session A claim count (verifies winner=1), adds trap-based cleanup, avoids printing claim tokens in CI logs, verifies exactly-one-winner invariant, cleans up profiles/auth.users.
+- `lib/__tests__/fin-002-atomic-payout.test.ts` — Expanded from 31 to 63 tests. Added: Paystack/Stripe 4xx without valid body → review_required, 409 → review_required, empty error fields → review_required, HTML proxy response → review_required. Added 13 unit tests for shared classification helpers. Added 10 payout-account eligibility tests. Added cron structural verification tests.
+- **Affects:** Admin payout approval, cron auto-payout, provider error classification. A Paystack 409 (duplicate reference) or 4xx with malformed body that was previously marked `failed` (releasing balance) is now correctly marked `review_required` (balance remains reserved).
+
+---
+
 ## 2026-07-25
 
 ### Security: Prevent platform administrator privilege escalation
