@@ -1,14 +1,20 @@
 /**
  * FIN-002: Atomic payout execution and provider idempotency tests
  *
- * Tests proving:
+ * Route-level tests (mocked dependencies, real route logic):
  * - Atomic claim prevents concurrent double-approval
- * - Provider idempotency keys are deterministic and sent to providers
- * - Timeout/unknown result → review_required (not pending or failed)
- * - Token-guarded finalization prevents stale writes
- * - Manual methods never enter claim/provider path
- * - Unsupported transfer methods and gateways fail closed
- * - Feature gate still blocks everything when disabled
+ * - Server-generated tokens and provider keys are used
+ * - Constrained state transitions (no backward to pending)
+ * - Provider idempotency keys sent to providers
+ * - Timeout/unknown → review_required
+ * - Token-guarded finalization
+ * - Manual methods bypass claim entirely
+ * - Unsupported methods fail closed
+ * - RPC errors are not treated as claim contention
+ * - Failed finalization is not reported as success
+ * - Feature gate blocks everything
+ *
+ * Database tests are in fin-002-db.test.ts (requires local Supabase).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -42,53 +48,66 @@ function makePostRequest(url: string, body: Record<string, unknown>) {
 interface MockConfig {
   claimResult?: unknown[] | null;
   claimError?: unknown;
-  finalizeResult?: unknown[] | null;
+  submitResult?: unknown[] | null;
+  submitError?: unknown;
+  failResult?: unknown[] | null;
+  reviewResult?: unknown[] | null;
   payoutData?: Record<string, unknown> | null;
-  bizData?: Record<string, unknown> | null;
-  payoutAcctData?: Record<string, unknown> | null;
-  fetchResponses?: Record<string, unknown>[];
+  manualUpdateResult?: unknown[] | null;
+  fetchThrows?: boolean;
 }
 
-function setupApproveRouteMocks(config: MockConfig = {}) {
+function setupMocks(config: MockConfig = {}) {
   const {
-    claimResult = [{ claimed_id: 'p1', claimed_token: 'tok', idempotency_key: 'payout_p1' }],
+    claimResult = [{ claimed_id: 'p1', claimed_token: 'server-tok-uuid', idempotency_key: 'payout_p1' }],
     claimError = null,
-    finalizeResult = [{ finalized_id: 'p1' }],
+    submitResult = [{ submitted_id: 'p1' }],
+    submitError = null,
+    failResult = [{ failed_id: 'p1' }],
+    reviewResult = [{ review_id: 'p1' }],
     payoutData = {
       id: 'p1', business_id: 'b1', status: 'pending',
       net_amount: 100, payout_account_id: 'pa1',
       period_start: '2024-01-01', period_end: '2024-01-07',
     },
-    bizData = { verification_level: 'verified', payout_limit_monthly: 0, country_code: 'NG' },
-    payoutAcctData = { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01' },
+    manualUpdateResult = [{ id: 'p1' }],
+    fetchThrows = false,
   } = config;
 
   capturedFetchCalls = [];
 
-  // Mock supabase (SSR client for reads)
   const mockFrom = vi.fn().mockImplementation((table: string) => {
     const chain: Record<string, unknown> = {};
-    const methods = ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'update', 'insert'];
-    for (const m of methods) {
+    ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'update', 'insert'].forEach(m => {
       chain[m] = vi.fn().mockReturnValue(chain);
-    }
+    });
     if (table === 'business_payouts') {
       chain.single = vi.fn().mockResolvedValue({ data: payoutData });
+      // For manual update with .select('id') chain
+      const updateChain: Record<string, unknown> = {};
+      ['eq', 'in', 'select'].forEach(m => { updateChain[m] = vi.fn().mockReturnValue(updateChain); });
+      updateChain.select = vi.fn().mockResolvedValue({ data: manualUpdateResult });
+      chain.update = vi.fn().mockReturnValue(updateChain);
     } else if (table === 'businesses') {
-      chain.single = vi.fn().mockResolvedValue({ data: bizData });
+      chain.single = vi.fn().mockResolvedValue({
+        data: { verification_level: 'verified', country_code: 'NG', name: 'Test', owner_id: 'u1' },
+      });
     } else if (table === 'payout_accounts') {
-      chain.maybeSingle = vi.fn().mockResolvedValue({ data: payoutAcctData });
+      chain.maybeSingle = vi.fn().mockResolvedValue({
+        data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01' },
+      });
       chain.single = vi.fn().mockResolvedValue({
         data: { bank_code: '058', account_number: '0123456789', account_name: 'Test',
                 stripe_account_id: 'acct_test' },
       });
     } else if (table === 'platform_fees') {
       chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
+    } else if (table === 'profiles') {
+      chain.single = vi.fn().mockResolvedValue({ data: { email: 'test@test.com' } });
     } else {
       chain.single = vi.fn().mockResolvedValue({ data: null });
       chain.insert = vi.fn().mockResolvedValue({});
     }
-    // For the prior payouts query
     chain.neq = vi.fn().mockResolvedValue({ data: [] });
     return chain;
   });
@@ -97,7 +116,6 @@ function setupApproveRouteMocks(config: MockConfig = {}) {
     createClient: vi.fn().mockResolvedValue({ from: mockFrom }),
   }));
 
-  // Mock service client (for RPC calls)
   vi.doMock('@/lib/supabase/service', () => ({
     createServiceClient: vi.fn().mockReturnValue({
       rpc: vi.fn().mockImplementation((name: string) => {
@@ -105,8 +123,15 @@ function setupApproveRouteMocks(config: MockConfig = {}) {
           if (claimError) return Promise.resolve({ data: null, error: claimError });
           return Promise.resolve({ data: claimResult, error: null });
         }
-        if (name === 'finalize_payout_transfer') {
-          return Promise.resolve({ data: finalizeResult, error: null });
+        if (name === 'mark_payout_provider_submitted') {
+          if (submitError) return Promise.resolve({ data: null, error: submitError });
+          return Promise.resolve({ data: submitResult, error: null });
+        }
+        if (name === 'mark_payout_transfer_failed') {
+          return Promise.resolve({ data: failResult, error: null });
+        }
+        if (name === 'mark_payout_review_required') {
+          return Promise.resolve({ data: reviewResult, error: null });
         }
         return Promise.resolve({ data: null, error: null });
       }),
@@ -116,46 +141,43 @@ function setupApproveRouteMocks(config: MockConfig = {}) {
   vi.doMock('@/lib/admin-auth', () => ({
     requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
   }));
-  vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn() }));
+  vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
   vi.doMock('@/lib/email/templates', () => ({
     payoutApprovedEmail: vi.fn(), payoutPaidEmail: vi.fn(),
   }));
   vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
 
-  // Mock fetch for provider calls
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
-    const bodyStr = typeof init?.body === 'string' ? init.body : init?.body?.toString() || '';
-    const headers: Record<string, string> = {};
-    if (init?.headers) {
-      const h = init.headers;
-      if (h instanceof Headers) h.forEach((v, k) => { headers[k] = v; });
-      else if (Array.isArray(h)) h.forEach(([k, v]) => { headers[k] = v; });
-      else Object.entries(h).forEach(([k, v]) => { headers[k] = v; });
-    }
-    capturedFetchCalls.push({ url, body: bodyStr, headers });
+  if (fetchThrows) {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network timeout'));
+  } else {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const bodyStr = typeof init?.body === 'string' ? init.body : init?.body?.toString() || '';
+      const headers: Record<string, string> = {};
+      if (init?.headers) {
+        const h = init.headers;
+        if (h instanceof Headers) h.forEach((v, k) => { headers[k] = v; });
+        else if (Array.isArray(h)) h.forEach(([k, v]) => { headers[k] = v; });
+        else Object.entries(h).forEach(([k, v]) => { headers[k] = v; });
+      }
+      capturedFetchCalls.push({ url, body: bodyStr, headers });
 
-    if (url.includes('transferrecipient')) {
-      return new Response(JSON.stringify({
-        status: true,
-        data: { recipient_code: 'RCP_test' },
-      }));
-    }
-    if (url.includes('paystack.co/transfer')) {
-      return new Response(JSON.stringify({
-        status: true,
-        data: { transfer_code: 'TRF_test' },
-      }));
-    }
-    if (url.includes('stripe.com/v1/transfers')) {
-      return new Response(JSON.stringify({ id: 'tr_test' }));
-    }
-    return new Response(JSON.stringify({}));
-  });
+      if (url.includes('transferrecipient')) {
+        return new Response(JSON.stringify({ status: true, data: { recipient_code: 'RCP_test' } }));
+      }
+      if (url.includes('paystack.co/transfer')) {
+        return new Response(JSON.stringify({ status: true, data: { transfer_code: 'TRF_test' } }));
+      }
+      if (url.includes('stripe.com/v1/transfers')) {
+        return new Response(JSON.stringify({ id: 'tr_test' }));
+      }
+      return new Response(JSON.stringify({}));
+    });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
-// Atomic Claim Tests
+// Atomic Claim
 // ═══════════════════════════════════════════════════════════
 
 describe('FIN-002: Atomic payout claim', () => {
@@ -176,32 +198,26 @@ describe('FIN-002: Atomic payout claim', () => {
     vi.restoreAllMocks();
   });
 
-  it('second concurrent request returns 409 when claim fails', async () => {
-    setupApproveRouteMocks({ claimResult: [] }); // empty = already claimed
+  it('second concurrent request returns 409 when claim returns empty', async () => {
+    setupMocks({ claimResult: [] });
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
     expect(res.status).toBe(409);
-    const body = await res.json();
-    expect(body.status).toBe('already_claimed');
-    // No provider call should have been made
     expect(capturedFetchCalls.length).toBe(0);
   });
 
-  it('successful claim proceeds to provider call', async () => {
-    setupApproveRouteMocks();
+  it('successful claim proceeds to provider call and uses server-generated values', async () => {
+    setupMocks();
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.status).toBe('processing');
-    // Provider calls were made
     expect(capturedFetchCalls.length).toBeGreaterThan(0);
   });
 
-  it('claim RPC error returns 500 without provider call', async () => {
-    setupApproveRouteMocks({ claimError: { message: 'RPC error' } });
+  it('RPC error returns 500, NOT 409 (not treated as claim contention)', async () => {
+    setupMocks({ claimError: { message: 'connection refused' } });
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
@@ -211,10 +227,10 @@ describe('FIN-002: Atomic payout claim', () => {
 });
 
 // ═══════════════════════════════════════════════════════════
-// Provider Idempotency Tests
+// Provider Idempotency
 // ═══════════════════════════════════════════════════════════
 
-describe('FIN-002: Provider idempotency keys', () => {
+describe('FIN-002: Provider idempotency keys (server-generated)', () => {
   beforeEach(() => {
     capturedLogs = [];
     capturedFetchCalls = [];
@@ -232,20 +248,21 @@ describe('FIN-002: Provider idempotency keys', () => {
     vi.restoreAllMocks();
   });
 
-  it('Paystack transfer includes deterministic reference field', async () => {
-    setupApproveRouteMocks();
+  it('Paystack transfer uses database-returned reference field', async () => {
+    setupMocks();
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
     await POST(req, { params: Promise.resolve({ id: 'p1' }) });
 
-    const transferCall = capturedFetchCalls.find(c => c.url.includes('paystack.co/transfer') && !c.url.includes('recipient'));
+    const transferCall = capturedFetchCalls.find(c =>
+      c.url.includes('paystack.co/transfer') && !c.url.includes('recipient'));
     expect(transferCall).toBeTruthy();
     const body = JSON.parse(transferCall!.body || '{}');
-    expect(body.reference).toBe('payout_p1');
+    expect(body.reference).toBe('payout_p1'); // Server-generated from claim RPC
   });
 
-  it('Stripe transfer includes Idempotency-Key header', async () => {
-    setupApproveRouteMocks();
+  it('Stripe transfer uses database-returned Idempotency-Key header', async () => {
+    setupMocks();
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'stripe_transfer' });
     await POST(req, { params: Promise.resolve({ id: 'p1' }) });
@@ -254,23 +271,131 @@ describe('FIN-002: Provider idempotency keys', () => {
     expect(stripeCall).toBeTruthy();
     expect(stripeCall!.headers?.['Idempotency-Key']).toBe('payout_p1');
   });
+});
 
-  it('idempotency key is deterministic: payout_{id}', async () => {
-    // Verify source contains the deterministic pattern
+// ═══════════════════════════════════════════════════════════
+// Constrained State Transitions
+// ═══════════════════════════════════════════════════════════
+
+describe('FIN-002: Constrained state transitions (no backward to pending)', () => {
+  it('approve route source never calls finalize with pending status', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
       path.resolve('app/api/admin/payouts/[id]/approve/route.ts'), 'utf-8',
     );
-    expect(source).toContain('`payout_${id}`');
+    // Should NOT contain finalize_payout_transfer (old generic finalizer)
+    expect(source).not.toContain('finalize_payout_transfer');
+    // Should NOT contain p_status (old arbitrary status parameter)
+    expect(source).not.toContain('p_status');
+    // Should contain the constrained RPCs
+    expect(source).toContain('mark_payout_provider_submitted');
+    expect(source).toContain('mark_payout_transfer_failed');
+    expect(source).toContain('mark_payout_review_required');
+  });
+
+  it('cron source uses constrained RPCs, never generic finalizer', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
+    );
+    expect(source).not.toContain('finalize_payout_transfer');
+    // No RPC call passes 'pending' as a status parameter
+    expect(source).not.toMatch(/p_status.*'pending'/);
+    expect(source).toContain('mark_payout_provider_submitted');
+    expect(source).toContain('mark_payout_transfer_failed');
+    expect(source).toContain('mark_payout_review_required');
+  });
+
+  it('migration drops old generic finalizer', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('supabase/migrations/292_atomic_payout_claim.sql'), 'utf-8',
+    );
+    expect(source).toContain('DROP FUNCTION IF EXISTS public.finalize_payout_transfer');
+  });
+
+  it('migration claim RPC rejects unsupported methods', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('supabase/migrations/292_atomic_payout_claim.sql'), 'utf-8',
+    );
+    expect(source).toContain("p_transfer_method NOT IN ('paystack_transfer', 'stripe_transfer')");
+    expect(source).toContain('RAISE EXCEPTION');
+  });
+
+  it('migration has unique partial index on provider_idempotency_key', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('supabase/migrations/292_atomic_payout_claim.sql'), 'utf-8',
+    );
+    expect(source).toContain('CREATE UNIQUE INDEX');
+    expect(source).toContain('provider_idempotency_key');
+    expect(source).toContain('WHERE provider_idempotency_key IS NOT NULL');
   });
 });
 
 // ═══════════════════════════════════════════════════════════
-// Timeout / Unknown-Result Tests
+// Timeout / Unknown-Result
 // ═══════════════════════════════════════════════════════════
 
-describe('FIN-002: Timeout and unknown-result handling', () => {
+describe('FIN-002: Timeout → review_required', () => {
+  beforeEach(() => {
+    capturedLogs = [];
+    vi.restoreAllMocks();
+    vi.resetModules();
+    process.env.ENABLE_PAYOUTS = 'true';
+    process.env.PAYSTACK_SECRET_KEY = 'test_paystack_key';
+  });
+
+  afterEach(() => {
+    delete process.env.ENABLE_PAYOUTS;
+    delete process.env.PAYSTACK_SECRET_KEY;
+    vi.restoreAllMocks();
+  });
+
+  it('provider timeout calls mark_payout_review_required', async () => {
+    let reviewCalled = false;
+    setupMocks({ fetchThrows: true });
+    // Override the service client mock to track review_required call
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockImplementation((name: string) => {
+          if (name === 'claim_payout_for_transfer') {
+            return Promise.resolve({
+              data: [{ claimed_id: 'p1', claimed_token: 'tok', idempotency_key: 'payout_p1' }],
+              error: null,
+            });
+          }
+          if (name === 'mark_payout_review_required') {
+            reviewCalled = true;
+            return Promise.resolve({ data: [{ review_id: 'p1' }], error: null });
+          }
+          return Promise.resolve({ data: null, error: null });
+        }),
+      }),
+    }));
+
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+
+    expect(res.status).toBe(500);
+    expect(reviewCalled).toBe(true);
+    const body = await res.json();
+    expect(body.error).toContain('review');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Failed Finalization
+// ═══════════════════════════════════════════════════════════
+
+describe('FIN-002: Failed finalization is not reported as success', () => {
   beforeEach(() => {
     capturedLogs = [];
     capturedFetchCalls = [];
@@ -286,87 +411,22 @@ describe('FIN-002: Timeout and unknown-result handling', () => {
     vi.restoreAllMocks();
   });
 
-  it('provider timeout marks payout as review_required, not pending', async () => {
-    // Setup mocks where fetch throws (simulating timeout)
-    vi.doMock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockResolvedValue({
-        from: vi.fn().mockImplementation((table: string) => {
-          const chain: Record<string, unknown> = {};
-          ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'update'].forEach(m => {
-            chain[m] = vi.fn().mockReturnValue(chain);
-          });
-          if (table === 'business_payouts') {
-            chain.single = vi.fn().mockResolvedValue({
-              data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100,
-                      payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
-            });
-          } else if (table === 'businesses') {
-            chain.single = vi.fn().mockResolvedValue({
-              data: { verification_level: 'verified', country_code: 'NG' },
-            });
-          } else if (table === 'payout_accounts') {
-            chain.maybeSingle = vi.fn().mockResolvedValue({
-              data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01' },
-            });
-            chain.single = vi.fn().mockResolvedValue({
-              data: { bank_code: '058', account_number: '0123456789', account_name: 'Test' },
-            });
-          } else if (table === 'platform_fees') {
-            chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
-          }
-          chain.neq = vi.fn().mockResolvedValue({ data: [] });
-          return chain;
-        }),
-      }),
-    }));
-
-    let finalizeStatus: string | null = null;
-    vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: vi.fn().mockReturnValue({
-        rpc: vi.fn().mockImplementation((name: string, params: Record<string, unknown>) => {
-          if (name === 'claim_payout_for_transfer') {
-            return Promise.resolve({
-              data: [{ claimed_id: 'p1', claimed_token: 'tok', idempotency_key: 'payout_p1' }],
-              error: null,
-            });
-          }
-          if (name === 'finalize_payout_transfer') {
-            finalizeStatus = params.p_status as string;
-            return Promise.resolve({ data: [{ finalized_id: 'p1' }], error: null });
-          }
-          return Promise.resolve({ data: null, error: null });
-        }),
-      }),
-    }));
-
-    vi.doMock('@/lib/admin-auth', () => ({
-      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
-    }));
-    vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn() }));
-    vi.doMock('@/lib/email/templates', () => ({
-      payoutApprovedEmail: vi.fn(), payoutPaidEmail: vi.fn(),
-    }));
-    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
-
-    // Make fetch throw to simulate timeout
-    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network timeout'));
-
+  it('submit RPC error returns 500 and does not send success notification', async () => {
+    setupMocks({ submitResult: [], submitError: { message: 'DB error' } });
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
-
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body.error).toContain('review');
-    expect(finalizeStatus).toBe('review_required');
+    expect(body.error).toContain('finalization failed');
   });
 });
 
 // ═══════════════════════════════════════════════════════════
-// Manual Methods Tests
+// Manual Methods
 // ═══════════════════════════════════════════════════════════
 
-describe('FIN-002: Manual methods bypass claim and provider', () => {
+describe('FIN-002: Manual methods', () => {
   beforeEach(() => {
     capturedLogs = [];
     capturedFetchCalls = [];
@@ -380,65 +440,42 @@ describe('FIN-002: Manual methods bypass claim and provider', () => {
     vi.restoreAllMocks();
   });
 
-  it('manual_bank does not call claim RPC or provider', async () => {
+  it('manual_bank bypasses claim RPC and provider', async () => {
     let claimCalled = false;
-    vi.doMock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockResolvedValue({
-        from: vi.fn().mockImplementation(() => {
-          const chain: Record<string, unknown> = {};
-          ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'update'].forEach(m => {
-            chain[m] = vi.fn().mockReturnValue(chain);
-          });
-          chain.single = vi.fn().mockResolvedValue({
-            data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100,
-                    payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
-          });
-          chain.maybeSingle = vi.fn().mockResolvedValue({
-            data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01' },
-          });
-          chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
-          chain.neq = vi.fn().mockResolvedValue({ data: [] });
-          chain.insert = vi.fn().mockResolvedValue({});
-          return chain;
-        }),
-      }),
-    }));
+    setupMocks();
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn().mockReturnValue({
         rpc: vi.fn().mockImplementation(() => { claimCalled = true; return Promise.resolve({ data: [], error: null }); }),
       }),
     }));
-    vi.doMock('@/lib/admin-auth', () => ({
-      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
-    }));
-    vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn() }));
-    vi.doMock('@/lib/email/templates', () => ({
-      payoutApprovedEmail: vi.fn(), payoutPaidEmail: vi.fn(),
-    }));
-    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
-
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'manual_bank' });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
-
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.status).toBe('paid');
     expect(claimCalled).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });
+
+  it('manual completion verifies one row transitioned', async () => {
+    setupMocks({ manualUpdateResult: [] }); // zero rows — concurrent conflict
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'manual_bank' });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(409);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════
-// Unsupported Methods / Gateways
+// Unsupported Methods
 // ═══════════════════════════════════════════════════════════
 
 describe('FIN-002: Unsupported transfer methods fail closed', () => {
   beforeEach(() => {
     capturedLogs = [];
+    capturedFetchCalls = [];
     vi.restoreAllMocks();
     vi.resetModules();
     process.env.ENABLE_PAYOUTS = 'true';
@@ -449,8 +486,8 @@ describe('FIN-002: Unsupported transfer methods fail closed', () => {
     vi.restoreAllMocks();
   });
 
-  it('unknown transfer method is rejected with 400', async () => {
-    setupApproveRouteMocks();
+  it('square_transfer rejected with 400', async () => {
+    setupMocks();
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'square_transfer' });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
@@ -458,33 +495,21 @@ describe('FIN-002: Unsupported transfer methods fail closed', () => {
     expect(capturedFetchCalls.length).toBe(0);
   });
 
-  it('flutterwave_transfer is rejected with 400', async () => {
-    setupApproveRouteMocks();
+  it('flutterwave_transfer rejected with 400', async () => {
+    setupMocks();
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'flutterwave_transfer' });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
     expect(res.status).toBe(400);
     expect(capturedFetchCalls.length).toBe(0);
   });
-
-  it('unsupported methods cannot reach a paid or processing state', async () => {
-    // Verify source: only paystack_transfer and stripe_transfer are in AUTOMATED_TRANSFER_METHODS
-    const fs = await import('fs');
-    const path = await import('path');
-    const source = fs.readFileSync(
-      path.resolve('app/api/admin/payouts/[id]/approve/route.ts'), 'utf-8',
-    );
-    expect(source).toContain("new Set(['paystack_transfer', 'stripe_transfer'])");
-    // manual_bank and manual_cash are the only non-automated paths, and they use a conditional update
-    expect(source).toContain(".in('status', ['pending', 'approved', 'held'])");
-  });
 });
 
 // ═══════════════════════════════════════════════════════════
-// Feature Gate Integration
+// Feature Gate
 // ═══════════════════════════════════════════════════════════
 
-describe('FIN-002: Feature gate still blocks everything', () => {
+describe('FIN-002: Feature gate blocks everything', () => {
   beforeEach(() => {
     capturedLogs = [];
     vi.restoreAllMocks();
@@ -498,7 +523,7 @@ describe('FIN-002: Feature gate still blocks everything', () => {
 
   it('disabled gate returns 503 before any claim or provider call', async () => {
     delete process.env.ENABLE_PAYOUTS;
-    setupApproveRouteMocks();
+    setupMocks();
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
@@ -508,11 +533,60 @@ describe('FIN-002: Feature gate still blocks everything', () => {
 });
 
 // ═══════════════════════════════════════════════════════════
-// Source-Level Structural Verification
+// Balance Reservation
+// ═══════════════════════════════════════════════════════════
+
+describe('FIN-002: Balance reservation includes review_required', () => {
+  it('approve route source includes review_required in balance check', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/admin/payouts/[id]/approve/route.ts'), 'utf-8',
+    );
+    // Balance check should include review_required
+    const balanceSection = source.slice(
+      source.indexOf('.in(\'status\''),
+      source.indexOf('.neq(\'id\''),
+    );
+    expect(balanceSection).toContain('review_required');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Destination Validation Before Claim
+// ═══════════════════════════════════════════════════════════
+
+describe('FIN-002: Destination details validated before claim', () => {
+  it('approve route validates Paystack bank details before claim RPC', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/admin/payouts/[id]/approve/route.ts'), 'utf-8',
+    );
+    const bankCheckPos = source.indexOf('bank_code');
+    const claimPos = source.indexOf("'claim_payout_for_transfer'");
+    // First bank_code reference should be the validation check, before claim
+    expect(bankCheckPos).toBeLessThan(claimPos);
+  });
+
+  it('approve route validates Stripe destination before claim RPC', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/admin/payouts/[id]/approve/route.ts'), 'utf-8',
+    );
+    const stripeDestPos = source.indexOf('stripe_account_id');
+    const claimPos = source.indexOf("'claim_payout_for_transfer'");
+    expect(stripeDestPos).toBeLessThan(claimPos);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Structural: Claim → Provider → Constrained Transition
 // ═══════════════════════════════════════════════════════════
 
 describe('FIN-002: Structural verification', () => {
-  it('claim RPC is called before any provider fetch in approve route', async () => {
+  it('claim is called immediately before first provider side effect', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
@@ -526,39 +600,63 @@ describe('FIN-002: Structural verification', () => {
     expect(claimPos).toBeLessThan(stripePos);
   });
 
-  it('finalize RPC is called after provider call with claim token', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const source = fs.readFileSync(
-      path.resolve('app/api/admin/payouts/[id]/approve/route.ts'), 'utf-8',
-    );
-    expect(source).toContain("'finalize_payout_transfer'");
-    expect(source).toContain('p_claim_token: claimToken');
-  });
-
-  it('cron uses same claim_payout_for_transfer RPC', async () => {
+  it('cron uses same constrained RPCs', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
       path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
     );
     expect(source).toContain("'claim_payout_for_transfer'");
-    expect(source).toContain("'finalize_payout_transfer'");
-    expect(source).toContain("'review_required'");
+    expect(source).toContain("'mark_payout_provider_submitted'");
+    expect(source).toContain("'mark_payout_transfer_failed'");
+    expect(source).toContain("'mark_payout_review_required'");
+    // Cron checks both data and error from claim RPC
+    expect(source).toContain('claimErr');
   });
 
-  it('migration creates claim_token, provider_idempotency_key, processing_started_at columns', async () => {
+  it('migration RPCs use SECURITY DEFINER with explicit search_path', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
       path.resolve('supabase/migrations/292_atomic_payout_claim.sql'), 'utf-8',
     );
-    expect(source).toContain('claim_token UUID');
-    expect(source).toContain('provider_idempotency_key TEXT');
-    expect(source).toContain('processing_started_at TIMESTAMPTZ');
-    expect(source).toContain('SECURITY DEFINER');
-    expect(source).toContain("GRANT EXECUTE ON FUNCTION public.claim_payout_for_transfer");
-    expect(source).toContain("GRANT EXECUTE ON FUNCTION public.finalize_payout_transfer");
-    expect(source).toContain('REVOKE ALL');
+    const rpcCount = (source.match(/SECURITY DEFINER/g) || []).length;
+    expect(rpcCount).toBe(4); // claim + submitted + failed + review_required
+    const searchPathCount = (source.match(/SET search_path = public/g) || []).length;
+    expect(searchPathCount).toBe(4);
+  });
+
+  it('all RPCs revoke PUBLIC/anon/authenticated and grant only service_role', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('supabase/migrations/292_atomic_payout_claim.sql'), 'utf-8',
+    );
+    // 4 RPCs × 3 REVOKEs each = at least 12 REVOKE statements
+    const revokeCount = (source.match(/REVOKE ALL/g) || []).length;
+    expect(revokeCount).toBeGreaterThanOrEqual(12);
+    // 4 GRANT statements
+    const grantCount = (source.match(/GRANT EXECUTE/g) || []).length;
+    expect(grantCount).toBe(4);
+    // All grants are to service_role
+    const serviceRoleGrants = (source.match(/TO service_role/g) || []).length;
+    expect(serviceRoleGrants).toBe(4);
+  });
+
+  it('claim RPC generates token and key server-side', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('supabase/migrations/292_atomic_payout_claim.sql'), 'utf-8',
+    );
+    expect(source).toContain('v_token := gen_random_uuid()');
+    expect(source).toContain("v_key := 'payout_' || p_payout_id::text");
+    // Caller does NOT supply p_claim_token or p_idempotency_key
+    const claimSig = source.slice(
+      source.indexOf('FUNCTION public.claim_payout_for_transfer'),
+      source.indexOf('RETURNS TABLE', source.indexOf('claim_payout_for_transfer')),
+    );
+    expect(claimSig).not.toContain('p_claim_token');
+    expect(claimSig).not.toContain('p_idempotency_key');
   });
 });

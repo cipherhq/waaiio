@@ -161,7 +161,7 @@
       "stage": "IN_PROGRESS",
       "owner": "claude",
       "issue_numbers": [48],
-      "pr_numbers": [],
+      "pr_numbers": [50],
       "implementation_sha": null,
       "reviewed_sha": null,
       "merge_sha": null,
@@ -170,7 +170,7 @@
       "production_verified_at": null,
       "verification_evidence": [],
       "blockers": [],
-      "next_action": "Complete implementation, local testing, and draft PR",
+      "next_action": "Independent review of corrected FIN-002 implementation and real database concurrency evidence",
       "notes": "Atomic payout claim via Postgres RPC, provider idempotency keys (Paystack reference + Stripe Idempotency-Key), token-guarded finalization, review_required for uncertain outcomes. Launch scope: paystack_transfer and stripe_transfer only. Square and Flutterwave outbound payouts deferred to Issue #49. Migration 292."
     }
   ]

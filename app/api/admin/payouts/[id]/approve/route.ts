@@ -8,7 +8,6 @@ import { getCountry } from '@/lib/countries';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
-import { randomUUID } from 'crypto';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
@@ -17,7 +16,6 @@ const ALLOWED_TRANSFER_METHODS = ['paystack_transfer', 'stripe_transfer', 'manua
 type TransferMethod = typeof ALLOWED_TRANSFER_METHODS[number];
 
 // FIN-002: Only these methods initiate automated provider transfers.
-// All others are manual completion or unsupported.
 const AUTOMATED_TRANSFER_METHODS = new Set(['paystack_transfer', 'stripe_transfer']);
 
 export async function POST(
@@ -26,7 +24,7 @@ export async function POST(
 ) {
   const { id } = await params;
 
-  // FIN-001: Payout kill switch — must be explicitly enabled
+  // FIN-001: Payout kill switch
   if (process.env.ENABLE_PAYOUTS !== 'true') {
     return NextResponse.json({ error: 'Payouts are currently disabled' }, { status: 503 });
   }
@@ -37,7 +35,6 @@ export async function POST(
   }
 
   const supabase = await createClient();
-
   const body = await request.json();
   const { transfer_method, reference, notes } = body;
 
@@ -48,7 +45,7 @@ export async function POST(
     }, { status: 400 });
   }
 
-  // Fetch the payout
+  // ── Fetch and validate payout ──
   const { data: payout } = await supabase
     .from('business_payouts')
     .select('*, payout_account_id')
@@ -63,7 +60,7 @@ export async function POST(
     return NextResponse.json({ error: 'Payout cannot be approved in current status' }, { status: 400 });
   }
 
-  // Verification level check
+  // ── Business verification ──
   const { data: bizCheck } = await supabase
     .from('businesses')
     .select('verification_level, payout_limit_monthly, country_code')
@@ -79,7 +76,7 @@ export async function POST(
     }, { status: 400 });
   }
 
-  // --- Payout account verification ---
+  // ── Payout account verification ──
   if (!payout.payout_account_id) {
     return NextResponse.json({
       error: 'Cannot approve payout: no payout account configured for this business.',
@@ -93,9 +90,7 @@ export async function POST(
     .maybeSingle();
 
   if (!payoutAcct) {
-    return NextResponse.json({
-      error: 'Cannot approve payout: payout account not found.',
-    }, { status: 400 });
+    return NextResponse.json({ error: 'Cannot approve payout: payout account not found.' }, { status: 400 });
   }
 
   if (payoutAcct.business_id !== payout.business_id) {
@@ -104,24 +99,18 @@ export async function POST(
       payout_business_id: payout.business_id,
       account_business_id: payoutAcct.business_id,
     });
-    return NextResponse.json({
-      error: 'Security violation: payout account does not belong to this business.',
-    }, { status: 403 });
+    return NextResponse.json({ error: 'Security violation: payout account does not belong to this business.' }, { status: 403 });
   }
 
   if (!payoutAcct.is_active) {
-    return NextResponse.json({
-      error: 'Cannot approve payout: payout account is inactive.',
-    }, { status: 400 });
+    return NextResponse.json({ error: 'Cannot approve payout: payout account is inactive.' }, { status: 400 });
   }
 
   if (!payoutAcct.verified_at) {
-    return NextResponse.json({
-      error: 'Cannot approve payout: payout account has not been verified.',
-    }, { status: 400 });
+    return NextResponse.json({ error: 'Cannot approve payout: payout account has not been verified.' }, { status: 400 });
   }
 
-  // Re-verify balance before approving — prevent overpayment
+  // ── Balance verification (includes review_required as reserved) ──
   const { data: balancePayments } = await supabase
     .from('platform_fees')
     .select('transaction_amount, fee_total')
@@ -132,7 +121,7 @@ export async function POST(
     .from('business_payouts')
     .select('net_amount')
     .eq('business_id', payout.business_id)
-    .in('status', ['paid', 'processing', 'approved'])
+    .in('status', ['paid', 'processing', 'approved', 'review_required'])
     .neq('id', id);
 
   const totalEarned = (balancePayments || []).reduce((sum, f) => sum + (f.transaction_amount - f.fee_total), 0);
@@ -145,9 +134,13 @@ export async function POST(
     }, { status: 400 });
   }
 
-  // ── Manual methods: no claim needed, no provider call ──
+  // ═══════════════════════════════════════════════════════════
+  // Manual methods: no claim, no provider call
+  // ═══════════════════════════════════════════════════════════
+
   if (!AUTOMATED_TRANSFER_METHODS.has(transfer_method)) {
-    const { error: manualError } = await supabase
+    // Atomic conditional update — verifies exactly one row transitions
+    const { data: manualResult } = await supabase
       .from('business_payouts')
       .update({
         status: 'paid',
@@ -160,19 +153,24 @@ export async function POST(
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
-      .in('status', ['pending', 'approved', 'held']);
+      .in('status', ['pending', 'approved', 'held'])
+      .select('id');
 
-    if (manualError) {
-      return NextResponse.json({ error: 'Failed to update payout' }, { status: 500 });
+    if (!manualResult || manualResult.length === 0) {
+      return NextResponse.json({
+        error: 'Payout status has changed — cannot complete manual payout',
+      }, { status: 409 });
     }
 
     await logAndNotify(supabase, id, payout, admin, 'paid', transfer_method, null, reference);
     return NextResponse.json({ success: true, status: 'paid' });
   }
 
-  // ── Automated methods: claim atomically, then call provider ──
+  // ═══════════════════════════════════════════════════════════
+  // Automated methods: all deterministic checks before claim
+  // ═══════════════════════════════════════════════════════════
 
-  // FIN-001: Provider configuration pre-checks
+  // Provider config pre-checks
   if (transfer_method === 'paystack_transfer' && !paystackSecretKey) {
     return NextResponse.json({ error: 'Paystack is not configured for transfers' }, { status: 400 });
   }
@@ -180,17 +178,45 @@ export async function POST(
     return NextResponse.json({ error: 'Stripe is not configured for transfers' }, { status: 400 });
   }
 
-  // FIN-002: Atomic claim — prevents concurrent double-approval
-  const claimToken = randomUUID();
-  const idempotencyKey = `payout_${id}`;
+  // Destination details pre-check — before claim, not after
+  let paystackBankDetails: { bank_code: string; account_number: string; account_name: string } | null = null;
+  let stripeDestination: string | null = null;
+
+  if (transfer_method === 'paystack_transfer') {
+    const { data: payoutAccount } = await supabase
+      .from('payout_accounts')
+      .select('bank_code, account_number, account_name')
+      .eq('id', payout.payout_account_id)
+      .single();
+
+    if (!payoutAccount?.bank_code || !payoutAccount?.account_number) {
+      return NextResponse.json({ error: 'Payout account missing required bank details for Paystack transfer' }, { status: 400 });
+    }
+    paystackBankDetails = { bank_code: payoutAccount.bank_code, account_number: payoutAccount.account_number, account_name: payoutAccount.account_name };
+  } else if (transfer_method === 'stripe_transfer') {
+    const { data: payoutAccount } = await supabase
+      .from('payout_accounts')
+      .select('stripe_account_id')
+      .eq('id', payout.payout_account_id)
+      .single();
+
+    if (!payoutAccount?.stripe_account_id) {
+      return NextResponse.json({ error: 'Payout account missing Stripe destination account' }, { status: 400 });
+    }
+    stripeDestination = payoutAccount.stripe_account_id;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // FIN-002: Atomic claim — immediately before first provider side effect
+  // PostgreSQL generates claim_token and provider_idempotency_key
+  // ═══════════════════════════════════════════════════════════
+
   const serviceClient = createServiceClient();
 
   const { data: claimResult, error: claimError } = await serviceClient.rpc(
     'claim_payout_for_transfer',
     {
       p_payout_id: id,
-      p_claim_token: claimToken,
-      p_idempotency_key: idempotencyKey,
       p_transfer_method: transfer_method,
       p_approved_by: admin.id,
     },
@@ -203,12 +229,15 @@ export async function POST(
   }
 
   if (!claimResult || claimResult.length === 0) {
-    // Another request already claimed this payout
     return NextResponse.json({
       error: 'Payout is already being processed or has been completed',
       status: 'already_claimed',
     }, { status: 409 });
   }
+
+  // Use server-generated values
+  const claimToken: string = claimResult[0].claimed_token;
+  const providerKey: string = claimResult[0].idempotency_key;
 
   // ── Provider call — only the successful claimant reaches here ──
 
@@ -216,22 +245,6 @@ export async function POST(
     let gatewayTransferCode: string | null = null;
 
     if (transfer_method === 'paystack_transfer') {
-      const { data: payoutAccount } = await supabase
-        .from('payout_accounts')
-        .select('bank_code, account_number, account_name')
-        .eq('id', payout.payout_account_id)
-        .single();
-
-      if (!payoutAccount?.bank_code || !payoutAccount?.account_number) {
-        // Release claim — missing bank details
-        await serviceClient.rpc('finalize_payout_transfer', {
-          p_payout_id: id,
-          p_claim_token: claimToken,
-          p_status: 'pending',
-        });
-        return NextResponse.json({ error: 'Payout account missing required bank details' }, { status: 400 });
-      }
-
       // Create transfer recipient
       const recipientRes = await fetch('https://api.paystack.co/transferrecipient', {
         method: 'POST',
@@ -241,25 +254,28 @@ export async function POST(
         },
         body: JSON.stringify({
           type: 'nuban',
-          name: payoutAccount.account_name,
-          account_number: payoutAccount.account_number,
-          bank_code: payoutAccount.bank_code,
+          name: paystackBankDetails!.account_name,
+          account_number: paystackBankDetails!.account_number,
+          bank_code: paystackBankDetails!.bank_code,
           currency: bizCurrency,
         }),
       });
       const recipientData = await recipientRes.json();
 
       if (!recipientData.status || !recipientData.data?.recipient_code) {
-        // Recipient creation failed — definitive failure, release claim
-        await serviceClient.rpc('finalize_payout_transfer', {
-          p_payout_id: id,
-          p_claim_token: claimToken,
-          p_status: 'pending',
-        });
+        // Recipient creation is a pre-transfer step — conclusive failure
+        const { data: failResult, error: failErr } = await serviceClient.rpc(
+          'mark_payout_transfer_failed',
+          { p_payout_id: id, p_claim_token: claimToken },
+        );
+        if (failErr || !failResult?.length) {
+          logger.withContext({ op: 'payout.fail-transition', payoutId: id })
+            .error('[PAYOUT] Failed to mark transfer failed');
+        }
         return NextResponse.json({ error: 'Failed to create Paystack transfer recipient' }, { status: 400 });
       }
 
-      // Initiate transfer with idempotency reference
+      // Initiate transfer with server-generated idempotency reference
       const transferRes = await fetch('https://api.paystack.co/transfer', {
         method: 'POST',
         headers: {
@@ -270,99 +286,91 @@ export async function POST(
           source: 'balance',
           amount: Math.round(payout.net_amount * 100),
           recipient: recipientData.data.recipient_code,
-          reference: idempotencyKey,
+          reference: providerKey,
           reason: `Payout for period ${payout.period_start} to ${payout.period_end}`,
         }),
       });
       const transferData = await transferRes.json();
 
       if (!transferData.status) {
-        // Provider rejected — definitive failure, release claim
-        await serviceClient.rpc('finalize_payout_transfer', {
-          p_payout_id: id,
-          p_claim_token: claimToken,
-          p_status: 'pending',
-        });
+        // Provider conclusively rejected the transfer
+        const { data: failResult, error: failErr } = await serviceClient.rpc(
+          'mark_payout_transfer_failed',
+          { p_payout_id: id, p_claim_token: claimToken },
+        );
+        if (failErr || !failResult?.length) {
+          logger.withContext({ op: 'payout.fail-transition', payoutId: id })
+            .error('[PAYOUT] Failed to mark transfer failed');
+        }
         return NextResponse.json({ error: 'Paystack transfer failed' }, { status: 400 });
       }
 
       gatewayTransferCode = transferData.data.transfer_code;
 
     } else if (transfer_method === 'stripe_transfer') {
-      const { data: payoutAccount } = await supabase
-        .from('payout_accounts')
-        .select('stripe_account_id')
-        .eq('id', payout.payout_account_id)
-        .single();
-
-      if (!payoutAccount?.stripe_account_id) {
-        await serviceClient.rpc('finalize_payout_transfer', {
-          p_payout_id: id,
-          p_claim_token: claimToken,
-          p_status: 'pending',
-        });
-        return NextResponse.json({ error: 'Payout account missing Stripe destination account' }, { status: 400 });
-      }
-
       const stripeRes = await fetch('https://api.stripe.com/v1/transfers', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${stripeSecretKey}`,
           'Content-Type': 'application/x-www-form-urlencoded',
-          'Idempotency-Key': idempotencyKey,
+          'Idempotency-Key': providerKey,
         },
         body: new URLSearchParams({
           amount: String(Math.round(payout.net_amount * 100)),
           currency: bizCurrency.toLowerCase(),
-          destination: payoutAccount.stripe_account_id,
+          destination: stripeDestination!,
           description: `Payout for period ${payout.period_start} to ${payout.period_end}`,
         }),
       });
       const stripeData = await stripeRes.json();
 
       if (!stripeData.id) {
-        // Provider rejected — release claim
-        await serviceClient.rpc('finalize_payout_transfer', {
-          p_payout_id: id,
-          p_claim_token: claimToken,
-          p_status: 'pending',
-        });
+        const { data: failResult, error: failErr } = await serviceClient.rpc(
+          'mark_payout_transfer_failed',
+          { p_payout_id: id, p_claim_token: claimToken },
+        );
+        if (failErr || !failResult?.length) {
+          logger.withContext({ op: 'payout.fail-transition', payoutId: id })
+            .error('[PAYOUT] Failed to mark transfer failed');
+        }
         return NextResponse.json({ error: 'Stripe transfer failed' }, { status: 400 });
       }
 
       gatewayTransferCode = stripeData.id;
     }
 
-    // FIN-002: Token-guarded finalization — only this claimant can complete
-    const { data: finResult } = await serviceClient.rpc('finalize_payout_transfer', {
-      p_payout_id: id,
-      p_claim_token: claimToken,
-      p_status: 'processing',
-      p_gateway_transfer_code: gatewayTransferCode,
-    });
+    // FIN-002: Token-guarded submission — persists provider transfer code
+    const { data: submitResult, error: submitErr } = await serviceClient.rpc(
+      'mark_payout_provider_submitted',
+      {
+        p_payout_id: id,
+        p_claim_token: claimToken,
+        p_gateway_transfer_code: gatewayTransferCode,
+      },
+    );
 
-    if (!finResult || finResult.length === 0) {
-      logger.withContext({ op: 'payout.finalize', payoutId: id })
-        .error('[PAYOUT] Finalization failed — claim token mismatch or status changed');
-      return NextResponse.json({ error: 'Payout finalization failed' }, { status: 500 });
+    if (submitErr || !submitResult?.length) {
+      logger.withContext({ op: 'payout.submit-transition', payoutId: id })
+        .error('[PAYOUT] Provider submitted but finalization failed — payout remains processing');
+      return NextResponse.json({ error: 'Payout transfer submitted but finalization failed — requires review' }, { status: 500 });
     }
 
     await logAndNotify(supabase, id, payout, admin, 'processing', transfer_method, gatewayTransferCode, reference);
     return NextResponse.json({ success: true, status: 'processing' });
 
   } catch (error) {
-    // FIN-002: Timeout or unknown error — mark as review_required, not pending
-    // This prevents unsafe retry with a new idempotency key
+    // Ambiguous outcome — timeout, connection reset, malformed response
     logger.withContext({ op: 'payout.approve', payoutId: id, ...safeLogErrorContext(error) })
       .error('[PAYOUT] Provider call failed with uncertain outcome');
 
-    try {
-      await serviceClient.rpc('finalize_payout_transfer', {
-        p_payout_id: id,
-        p_claim_token: claimToken,
-        p_status: 'review_required',
-      });
-    } catch { /* best-effort — the payout stays in processing if this fails */ }
+    const { error: reviewErr } = await serviceClient.rpc(
+      'mark_payout_review_required',
+      { p_payout_id: id, p_claim_token: claimToken },
+    );
+    if (reviewErr) {
+      logger.withContext({ op: 'payout.review-transition', payoutId: id })
+        .error('[PAYOUT] Failed to mark review_required — payout remains processing');
+    }
 
     return NextResponse.json({ error: 'Payout requires manual review — provider outcome uncertain' }, { status: 500 });
   }
@@ -381,7 +389,6 @@ async function logAndNotify(
   gatewayTransferCode: string | null,
   reference?: string,
 ) {
-  // Audit log
   await supabase.from('admin_audit_logs').insert({
     actor_id: admin.id,
     action: 'approve_payout',
