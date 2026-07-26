@@ -191,18 +191,25 @@ export async function GET(request: NextRequest) {
       const avgPerDay = transactionCount / 7;
       const autoApproveLimit = isNG ? AUTO_APPROVE_LIMIT_NGN : AUTO_APPROVE_LIMIT_USD;
 
+      // FIN-002: Auto-approval requires ALL conditions — eligible Paystack
+      // account in a supported country with a configured provider key.
+      // Any failure creates the payout as pending for admin review.
       const canAutoApprove =
+        isNG &&
+        hasEligiblePaystackAccount &&
+        paystackSecretKey !== '' &&
         bizAge >= COOLING_PERIOD_DAYS &&
-        payoutAccount &&
         avgPerDay < VELOCITY_THRESHOLD &&
         net <= autoApproveLimit &&
         (biz.verification_level || 'unverified') !== 'unverified';
 
       const status = canAutoApprove ? 'approved' : 'pending';
       const holdReasons: string[] = [];
-      if (bizAge < COOLING_PERIOD_DAYS) holdReasons.push('Business too new (cooling period)');
+      if (!isNG) holdReasons.push('Business country not supported for automatic Paystack transfer');
       if (!payoutAccount) holdReasons.push('No payout account configured');
-      if (payoutAccount && !hasEligiblePaystackAccount && isNG) holdReasons.push('Payout account not eligible for Paystack transfer');
+      if (payoutAccount && !hasEligiblePaystackAccount) holdReasons.push('Payout account not eligible for Paystack transfer (requires gateway=paystack, active, verified, bank_code, account_number, account_name)');
+      if (!paystackSecretKey) holdReasons.push('PAYSTACK_SECRET_KEY not configured');
+      if (bizAge < COOLING_PERIOD_DAYS) holdReasons.push('Business too new (cooling period)');
       if (avgPerDay >= VELOCITY_THRESHOLD) holdReasons.push('High transaction velocity');
       if (net > autoApproveLimit) holdReasons.push(`Amount exceeds auto-approve limit`);
       if ((biz.verification_level || 'unverified') === 'unverified') holdReasons.push('Business not verified');

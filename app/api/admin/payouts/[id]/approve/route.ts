@@ -89,7 +89,7 @@ export async function POST(
 
   const { data: payoutAcct } = await supabase
     .from('payout_accounts')
-    .select('id, business_id, is_active, verified_at')
+    .select('id, business_id, is_active, verified_at, gateway')
     .eq('id', payout.payout_account_id)
     .maybeSingle();
 
@@ -208,6 +208,19 @@ export async function POST(
       return NextResponse.json({ error: 'Payout account missing Stripe destination account' }, { status: 400 });
     }
     stripeDestination = payoutAccount.stripe_account_id;
+  }
+
+  // ── Gateway / transfer-method alignment ──
+  // FIN-002: The payout account's gateway must match the requested transfer method.
+  // A mismatch means the admin selected the wrong method — reject before claim.
+  const expectedGateway = transfer_method === 'paystack_transfer' ? 'paystack'
+    : transfer_method === 'stripe_transfer' ? 'stripe'
+    : null;
+
+  if (expectedGateway && payoutAcct.gateway !== expectedGateway) {
+    return NextResponse.json({
+      error: `Transfer method ${transfer_method} requires a ${expectedGateway} payout account, but the account gateway is ${payoutAcct.gateway || 'unknown'}.`,
+    }, { status: 400 });
   }
 
   // ═══════════════════════════════════════════════════════════

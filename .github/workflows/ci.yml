@@ -279,6 +279,7 @@ jobs:
           # Trap-based cleanup — runs even on test failure
           cleanup() {
             echo "Cleaning up contention test data..."
+            psql -c "DROP TABLE IF EXISTS _contention_winner_token" 2>/dev/null || true
             psql -c "DELETE FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999'" 2>/dev/null || true
             psql -c "DELETE FROM payout_accounts WHERE id='99cccccc-cccc-cccc-cccc-cccccccccccc'" 2>/dev/null || true
             psql -c "DELETE FROM businesses WHERE id='99bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'" 2>/dev/null || true
@@ -302,11 +303,17 @@ jobs:
           VALUES ('99999999-9999-9999-9999-999999999999', '99bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '99cccccc-cccc-cccc-cccc-cccccccccccc', '2024-06-01', '2024-06-07', 8000, 400, 80, 7520, 'pending') ON CONFLICT DO NOTHING;
           SETUP
 
+          # Create a persistent table to hold Session A's returned token for
+          # cross-session comparison (temp tables are session-scoped).
+          psql -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS _contention_winner_token (claimed_token UUID);"
+
           # Session A: claim inside a transaction, hold lock with pg_sleep.
-          # Capture claim count (not token values) to verify winner status.
+          # Store the returned token into the persistent comparison table (not printed).
           psql -v ON_ERROR_STOP=1 -t -A <<'SESSION_A' > /tmp/session_a_result.txt 2>&1 &
           BEGIN;
-          SELECT COUNT(*) FROM claim_payout_for_transfer('99999999-9999-9999-9999-999999999999', 'paystack_transfer', NULL);
+          INSERT INTO _contention_winner_token
+            SELECT claimed_token FROM claim_payout_for_transfer('99999999-9999-9999-9999-999999999999', 'paystack_transfer', NULL);
+          SELECT COUNT(*) FROM _contention_winner_token;
           -- Hold the transaction open for 2 seconds so Session B overlaps
           SELECT pg_sleep(2);
           COMMIT;
@@ -342,10 +349,12 @@ jobs:
           TOKEN_NOT_NULL=$(psql -t -A -c "SELECT claim_token IS NOT NULL FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999'")
           KEY_MATCHES=$(psql -t -A -c "SELECT provider_idempotency_key = 'payout_99999999-9999-9999-9999-999999999999' FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999'")
 
-          # Verify winner's token is the persisted token (without printing either value)
+          # Verify winner's returned token matches the persisted claim_token
+          # (without printing either value). Session A stored its returned token
+          # in _contention_winner_token; compare it to the payout's claim_token.
           WINNER_TOKEN_MATCHES=$(psql -t -A <<'VERIFY'
-          SELECT (SELECT claim_token FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999') IS NOT NULL
-            AND (SELECT claim_token FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999')
+          SELECT (SELECT claimed_token FROM _contention_winner_token) IS NOT NULL
+            AND (SELECT claimed_token FROM _contention_winner_token)
               = (SELECT claim_token FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999');
           VERIFY
           )

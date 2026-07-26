@@ -53,10 +53,11 @@ export async function classifyPaystackError(
     return 'review_required';
   }
 
-  // Must have a non-empty rejection message
+  // Must have a non-empty string rejection message — numbers, objects,
+  // arrays, booleans, null, and blank strings are not conclusive.
   const message = body.message
-    || (body.data && typeof body.data === 'object' && (body.data as Record<string, unknown>).message);
-  if (!message || (typeof message === 'string' && message.trim() === '')) {
+    ?? (body.data && typeof body.data === 'object' ? (body.data as Record<string, unknown>).message : undefined);
+  if (typeof message !== 'string' || message.trim().length === 0) {
     return 'review_required';
   }
 

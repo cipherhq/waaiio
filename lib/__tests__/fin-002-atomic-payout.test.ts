@@ -55,6 +55,7 @@ interface MockConfig {
   payoutData?: Record<string, unknown> | null;
   manualUpdateResult?: unknown[] | null;
   fetchThrows?: boolean;
+  payoutAccountGateway?: string;
 }
 
 function setupMocks(config: MockConfig = {}) {
@@ -72,6 +73,7 @@ function setupMocks(config: MockConfig = {}) {
     },
     manualUpdateResult = [{ id: 'p1' }],
     fetchThrows = false,
+    payoutAccountGateway = 'paystack',
   } = config;
 
   capturedFetchCalls = [];
@@ -94,11 +96,11 @@ function setupMocks(config: MockConfig = {}) {
       });
     } else if (table === 'payout_accounts') {
       chain.maybeSingle = vi.fn().mockResolvedValue({
-        data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01' },
+        data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01', gateway: payoutAccountGateway },
       });
       chain.single = vi.fn().mockResolvedValue({
         data: { bank_code: '058', account_number: '0123456789', account_name: 'Test',
-                stripe_account_id: 'acct_test' },
+                stripe_account_id: 'acct_test', gateway: payoutAccountGateway },
       });
     } else if (table === 'platform_fees') {
       chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
@@ -262,7 +264,7 @@ describe('FIN-002: Provider idempotency keys (server-generated)', () => {
   });
 
   it('Stripe transfer uses database-returned Idempotency-Key header', async () => {
-    setupMocks();
+    setupMocks({ payoutAccountGateway: 'stripe' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'stripe_transfer' });
     await POST(req, { params: Promise.resolve({ id: 'p1' }) });
@@ -375,8 +377,8 @@ describe('FIN-002: Timeout → review_required', () => {
       } else if (table === 'businesses') {
         chain.single = vi.fn().mockResolvedValue({ data: { verification_level: 'verified', country_code: 'NG' } });
       } else if (table === 'payout_accounts') {
-        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01' } });
-        chain.single = vi.fn().mockResolvedValue({ data: { bank_code: '058', account_number: '0123456789', account_name: 'Test' } });
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01', gateway: 'paystack' } });
+        chain.single = vi.fn().mockResolvedValue({ data: { bank_code: '058', account_number: '0123456789', account_name: 'Test', gateway: 'paystack' } });
       } else if (table === 'platform_fees') {
         chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
       }
@@ -434,8 +436,9 @@ describe('FIN-002: Provider response classification', () => {
     vi.restoreAllMocks();
   });
 
-  function setupWithFetchBehavior(behavior: (url: string) => Response) {
+  function setupWithFetchBehavior(behavior: (url: string) => Response, opts?: { gateway?: string }) {
     let lastTransition: string | null = null;
+    const gw = opts?.gateway ?? 'paystack';
 
     const mockFrom = vi.fn().mockImplementation((table: string) => {
       const chain: Record<string, unknown> = {};
@@ -453,10 +456,10 @@ describe('FIN-002: Provider response classification', () => {
         });
       } else if (table === 'payout_accounts') {
         chain.maybeSingle = vi.fn().mockResolvedValue({
-          data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01' },
+          data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01', gateway: gw },
         });
         chain.single = vi.fn().mockResolvedValue({
-          data: { bank_code: '058', account_number: '0123456789', account_name: 'Test', stripe_account_id: 'acct_test' },
+          data: { bank_code: '058', account_number: '0123456789', account_name: 'Test', stripe_account_id: 'acct_test', gateway: gw },
         });
       } else if (table === 'platform_fees') {
         chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
@@ -566,7 +569,7 @@ describe('FIN-002: Provider response classification', () => {
 
   it('Stripe 400 with valid error object → failed', async () => {
     const getTransition = setupWithFetchBehavior(() =>
-      new Response(JSON.stringify({ error: { type: 'invalid_request_error', message: 'No such destination' } }), { status: 400 }));
+      new Response(JSON.stringify({ error: { type: 'invalid_request_error', message: 'No such destination' } }), { status: 400 }), { gateway: 'stripe' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
     expect(getTransition()).toBe('failed');
@@ -574,7 +577,7 @@ describe('FIN-002: Provider response classification', () => {
 
   it('Stripe 400 without error object → review_required', async () => {
     const getTransition = setupWithFetchBehavior(() =>
-      new Response(JSON.stringify({ message: 'something went wrong' }), { status: 400 }));
+      new Response(JSON.stringify({ message: 'something went wrong' }), { status: 400 }), { gateway: 'stripe' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
     expect(getTransition()).toBe('review_required');
@@ -582,7 +585,7 @@ describe('FIN-002: Provider response classification', () => {
 
   it('Stripe 400 with empty error fields → review_required', async () => {
     const getTransition = setupWithFetchBehavior(() =>
-      new Response(JSON.stringify({ error: { type: '', code: '', message: '' } }), { status: 400 }));
+      new Response(JSON.stringify({ error: { type: '', code: '', message: '' } }), { status: 400 }), { gateway: 'stripe' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
     expect(getTransition()).toBe('review_required');
@@ -590,7 +593,7 @@ describe('FIN-002: Provider response classification', () => {
 
   it('Stripe 409 → review_required', async () => {
     const getTransition = setupWithFetchBehavior(() =>
-      new Response(JSON.stringify({ error: { type: 'idempotency_error' } }), { status: 409 }));
+      new Response(JSON.stringify({ error: { type: 'idempotency_error' } }), { status: 409 }), { gateway: 'stripe' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
     expect(getTransition()).toBe('review_required');
@@ -598,7 +601,7 @@ describe('FIN-002: Provider response classification', () => {
 
   it('Stripe 429 → review_required', async () => {
     const getTransition = setupWithFetchBehavior(() =>
-      new Response('Rate limited', { status: 429 }));
+      new Response('Rate limited', { status: 429 }), { gateway: 'stripe' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
     expect(getTransition()).toBe('review_required');
@@ -606,7 +609,7 @@ describe('FIN-002: Provider response classification', () => {
 
   it('Stripe 500 → review_required', async () => {
     const getTransition = setupWithFetchBehavior(() =>
-      new Response('Internal error', { status: 500 }));
+      new Response('Internal error', { status: 500 }), { gateway: 'stripe' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
     expect(getTransition()).toBe('review_required');
@@ -614,7 +617,7 @@ describe('FIN-002: Provider response classification', () => {
 
   it('Stripe 200 missing ID → review_required', async () => {
     const getTransition = setupWithFetchBehavior(() =>
-      new Response(JSON.stringify({ object: 'transfer' }), { status: 200 }));
+      new Response(JSON.stringify({ object: 'transfer' }), { status: 200 }), { gateway: 'stripe' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     await POST(makePostRequest('/x', { transfer_method: 'stripe_transfer' }), { params: Promise.resolve({ id: 'p1' }) });
     expect(getTransition()).toBe('review_required');
@@ -1099,5 +1102,295 @@ describe('FIN-002: Payout account eligibility', () => {
     const revDataChecks = source.match(/revData\?\./g) || [];
     expect(reviewCalls.length).toBeGreaterThan(0);
     expect(revDataChecks.length).toBeGreaterThanOrEqual(reviewCalls.length - 1);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Cron Auto-Approval Eligibility
+// ═══════════════════════════════════════════════════════════
+
+describe('FIN-002: Cron auto-approval requires eligible Paystack account', () => {
+  it('canAutoApprove requires isNG, hasEligiblePaystackAccount, and paystackSecretKey', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
+    );
+    // canAutoApprove must include all three critical conditions
+    const approveBlock = source.slice(
+      source.indexOf('const canAutoApprove'),
+      source.indexOf('const status = canAutoApprove'),
+    );
+    expect(approveBlock).toContain('isNG');
+    expect(approveBlock).toContain('hasEligiblePaystackAccount');
+    expect(approveBlock).toContain("paystackSecretKey !== ''");
+  });
+
+  it('Stripe-only account → not auto-approved, no claim, no provider call', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
+    );
+    // isEligiblePaystackAccount returns false for gateway='stripe',
+    // so hasEligiblePaystackAccount = false, canAutoApprove = false.
+    // The transfer block is guarded by isNG && hasEligiblePaystackAccount.
+    const transferGuard = source.slice(
+      source.indexOf('if (isNG && hasEligiblePaystackAccount'),
+      source.indexOf('claim_payout_for_transfer'),
+    );
+    expect(transferGuard).toContain('isNG');
+    expect(transferGuard).toContain('hasEligiblePaystackAccount');
+  });
+
+  it('inactive Paystack account → not eligible', async () => {
+    const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
+    expect(isEligiblePaystackAccount({
+      id: 'a1', business_id: 'b1', gateway: 'paystack',
+      bank_code: '058', account_number: '012345', account_name: 'Test',
+      verified_at: '2024-01-01', is_active: false,
+    })).toBe(false);
+  });
+
+  it('unverified Paystack account → not eligible', async () => {
+    const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
+    expect(isEligiblePaystackAccount({
+      id: 'a1', business_id: 'b1', gateway: 'paystack',
+      bank_code: '058', account_number: '012345', account_name: 'Test',
+      verified_at: null, is_active: true,
+    })).toBe(false);
+  });
+
+  it('missing bank_code → not eligible', async () => {
+    const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
+    expect(isEligiblePaystackAccount({
+      id: 'a1', business_id: 'b1', gateway: 'paystack',
+      bank_code: null, account_number: '012345', account_name: 'Test',
+      verified_at: '2024-01-01', is_active: true,
+    })).toBe(false);
+  });
+
+  it('missing account_number → not eligible', async () => {
+    const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
+    expect(isEligiblePaystackAccount({
+      id: 'a1', business_id: 'b1', gateway: 'paystack',
+      bank_code: '058', account_number: null, account_name: 'Test',
+      verified_at: '2024-01-01', is_active: true,
+    })).toBe(false);
+  });
+
+  it('missing account_name → not eligible', async () => {
+    const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
+    expect(isEligiblePaystackAccount({
+      id: 'a1', business_id: 'b1', gateway: 'paystack',
+      bank_code: '058', account_number: '012345', account_name: null,
+      verified_at: '2024-01-01', is_active: true,
+    })).toBe(false);
+  });
+
+  it('unsupported country (US) → canAutoApprove is false', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
+    );
+    // isNG only true for NG/GH
+    expect(source).toContain("biz.country_code === 'NG' || biz.country_code === 'GH'");
+    // canAutoApprove requires isNG
+    const approveBlock = source.slice(
+      source.indexOf('const canAutoApprove'),
+      source.indexOf('const status = canAutoApprove'),
+    );
+    expect(approveBlock).toContain('isNG');
+  });
+
+  it('Paystack key missing → canAutoApprove is false', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
+    );
+    const approveBlock = source.slice(
+      source.indexOf('const canAutoApprove'),
+      source.indexOf('const status = canAutoApprove'),
+    );
+    expect(approveBlock).toContain("paystackSecretKey !== ''");
+    // Hold reason for missing key
+    expect(source).toContain('PAYSTACK_SECRET_KEY not configured');
+  });
+
+  it('fully eligible NG Paystack account → may auto-approve', async () => {
+    const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
+    // Fully eligible account
+    expect(isEligiblePaystackAccount({
+      id: 'a1', business_id: 'b1', gateway: 'paystack',
+      bank_code: '058', account_number: '0123456789', account_name: 'Test User',
+      verified_at: '2024-01-01', is_active: true,
+    })).toBe(true);
+    // canAutoApprove in cron requires isNG (NG/GH), hasEligiblePaystackAccount,
+    // paystackSecretKey, cooling period, velocity, limit, and verification — all are checked
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
+    );
+    const approveBlock = source.slice(
+      source.indexOf('const canAutoApprove'),
+      source.indexOf('const status = canAutoApprove'),
+    );
+    expect(approveBlock).toContain('isNG');
+    expect(approveBlock).toContain('hasEligiblePaystackAccount');
+    expect(approveBlock).toContain("paystackSecretKey !== ''");
+    expect(approveBlock).toContain('bizAge >= COOLING_PERIOD_DAYS');
+    expect(approveBlock).toContain('avgPerDay < VELOCITY_THRESHOLD');
+    expect(approveBlock).toContain('net <= autoApproveLimit');
+    expect(approveBlock).toContain("'unverified'");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Admin Gateway / Transfer-Method Alignment
+// ═══════════════════════════════════════════════════════════
+
+describe('FIN-002: Admin gateway/transfer-method alignment', () => {
+  beforeEach(() => {
+    capturedLogs = [];
+    capturedFetchCalls = [];
+    vi.restoreAllMocks();
+    vi.resetModules();
+    process.env.ENABLE_PAYOUTS = 'true';
+    process.env.PAYSTACK_SECRET_KEY = 'test_paystack_key';
+    process.env.STRIPE_SECRET_KEY = 'test_stripe_key';
+  });
+
+  afterEach(() => {
+    delete process.env.ENABLE_PAYOUTS;
+    delete process.env.PAYSTACK_SECRET_KEY;
+    delete process.env.STRIPE_SECRET_KEY;
+    vi.restoreAllMocks();
+  });
+
+  it('paystack_transfer with stripe account → 400, no claim, no provider call', async () => {
+    setupMocks({ payoutAccountGateway: 'stripe' });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('paystack');
+    expect(capturedFetchCalls.length).toBe(0);
+  });
+
+  it('paystack_transfer with flutterwave account → 400, no claim, no provider call', async () => {
+    setupMocks({ payoutAccountGateway: 'flutterwave' });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(400);
+    expect(capturedFetchCalls.length).toBe(0);
+  });
+
+  it('stripe_transfer with paystack account → 400, no claim, no provider call', async () => {
+    setupMocks({ payoutAccountGateway: 'paystack' });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'stripe_transfer' });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('stripe');
+    expect(capturedFetchCalls.length).toBe(0);
+  });
+
+  it('stripe_transfer with square account → 400, no claim, no provider call', async () => {
+    setupMocks({ payoutAccountGateway: 'square' });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'stripe_transfer' });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(400);
+    expect(capturedFetchCalls.length).toBe(0);
+  });
+
+  it('matching paystack gateway continues normally', async () => {
+    setupMocks({ payoutAccountGateway: 'paystack' });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(200);
+    expect(capturedFetchCalls.length).toBeGreaterThan(0);
+  });
+
+  it('matching stripe gateway continues normally', async () => {
+    setupMocks({ payoutAccountGateway: 'stripe' });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'stripe_transfer' });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(200);
+    expect(capturedFetchCalls.length).toBeGreaterThan(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Paystack Malformed Message Validation
+// ═══════════════════════════════════════════════════════════
+
+describe('FIN-002: Paystack rejection requires strict string message', () => {
+  it('numeric message → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: false, message: 42 }), { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('boolean true message → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: false, message: true }), { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('boolean false message → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: false, message: false }), { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('object message → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: false, message: { error: 'fail' } }), { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('array message → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: false, message: ['error'] }), { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('null message → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: false, message: null }), { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('blank string message → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: false, message: '   ' }), { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('valid string message → conclusive_rejection', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: false, message: 'Invalid account' }), { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('conclusive_rejection');
+  });
+
+  it('data.message that is numeric → review_required', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: false, data: { message: 123 } }), { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('review_required');
+  });
+
+  it('data.message that is valid string → conclusive_rejection', async () => {
+    const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
+    const res = new Response(JSON.stringify({ status: false, data: { message: 'Invalid recipient' } }), { status: 400 });
+    expect(await classifyPaystackError(res)).toBe('conclusive_rejection');
   });
 });
