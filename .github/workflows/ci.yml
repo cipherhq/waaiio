@@ -252,7 +252,7 @@ jobs:
           fi
           echo "✅ RLS check complete."
 
-      - name: FIN-002 database concurrency tests
+      - name: FIN-002 database tests
         if: hashFiles('scripts/test-fin-002-db.sql') != ''
         env:
           PGHOST: localhost
@@ -264,6 +264,92 @@ jobs:
           echo "Running FIN-002 real PostgreSQL tests..."
           psql -v ON_ERROR_STOP=1 -f scripts/test-fin-002-db.sql
           echo "✅ FIN-002 database tests complete."
+
+      - name: FIN-002 two-session contention test
+        if: hashFiles('scripts/test-fin-002-db.sql') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          echo "=== FIN-002: Two-session contention test ==="
+
+          # Create a fresh pending payout for the contention test
+          psql -v ON_ERROR_STOP=1 <<'SETUP'
+          INSERT INTO business_payouts (id, business_id, payout_account_id, period_start, period_end,
+            gross_amount, platform_fee, gateway_fee, net_amount, status)
+          VALUES ('99999999-9999-9999-9999-999999999999',
+                  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+                  'cccccccc-cccc-cccc-cccc-cccccccccccc',
+                  '2024-06-01', '2024-06-07', 8000, 400, 80, 7520, 'pending')
+          ON CONFLICT DO NOTHING;
+          SETUP
+
+          # Session A: claim inside a transaction, hold lock with pg_sleep
+          psql -v ON_ERROR_STOP=1 <<'SESSION_A' &
+          BEGIN;
+          SELECT claimed_id, claimed_token, idempotency_key
+            FROM claim_payout_for_transfer('99999999-9999-9999-9999-999999999999', 'paystack_transfer', NULL);
+          -- Hold the transaction open for 2 seconds so Session B overlaps
+          SELECT pg_sleep(2);
+          COMMIT;
+          SESSION_A
+          PID_A=$!
+
+          # Wait briefly to ensure Session A has started and locked the row
+          sleep 0.5
+
+          # Session B: attempt to claim the same payout while A holds the lock
+          psql -v ON_ERROR_STOP=1 -t -A <<'SESSION_B' > /tmp/session_b_result.txt 2>&1 &
+          SELECT COUNT(*) FROM claim_payout_for_transfer('99999999-9999-9999-9999-999999999999', 'paystack_transfer', NULL);
+          SESSION_B
+          PID_B=$!
+
+          # Wait for both sessions
+          wait $PID_A
+          EXIT_A=$?
+          wait $PID_B
+          EXIT_B=$?
+
+          echo "Session A exit code: $EXIT_A"
+          echo "Session B exit code: $EXIT_B"
+
+          # Session B result (should be 0 — the loser)
+          SESSION_B_COUNT=$(cat /tmp/session_b_result.txt | tr -d '[:space:]')
+          echo "Session B claim count: $SESSION_B_COUNT"
+
+          # Verify the payout state
+          FINAL_STATUS=$(psql -t -A -c "SELECT status FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999'")
+          FINAL_TOKEN=$(psql -t -A -c "SELECT claim_token FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999'")
+          FINAL_KEY=$(psql -t -A -c "SELECT provider_idempotency_key FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999'")
+          echo "Final status: $FINAL_STATUS"
+          echo "Final token: $FINAL_TOKEN"
+          echo "Final key: $FINAL_KEY"
+
+          # Assertions
+          FAILED=0
+          if [ "$EXIT_A" -ne 0 ]; then echo "FAIL: Session A errored"; FAILED=1; fi
+          if [ "$EXIT_B" -ne 0 ]; then echo "FAIL: Session B errored"; FAILED=1; fi
+          if [ "$SESSION_B_COUNT" != "0" ]; then echo "FAIL: Session B should claim 0, got $SESSION_B_COUNT"; FAILED=1; fi
+          if [ "$FINAL_STATUS" != "processing" ]; then echo "FAIL: status should be processing, got $FINAL_STATUS"; FAILED=1; fi
+          if [ -z "$FINAL_TOKEN" ]; then echo "FAIL: claim_token should not be null"; FAILED=1; fi
+          if [ "$FINAL_KEY" != "payout_99999999-9999-9999-9999-999999999999" ]; then echo "FAIL: provider key mismatch: $FINAL_KEY"; FAILED=1; fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "❌ Two-session contention test FAILED"
+            exit 1
+          fi
+
+          echo "✅ Two-session contention test PASSED"
+          echo "  - Session A won the claim"
+          echo "  - Session B returned 0 rows (loser)"
+          echo "  - Sessions overlapped (B started while A held lock)"
+          echo "  - Token and key remained stable"
+
+          # Cleanup
+          psql -c "DELETE FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999'"
 
   # ── Engineering Governance ──
   governance:

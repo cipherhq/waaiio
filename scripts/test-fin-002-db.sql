@@ -182,13 +182,17 @@ END $$;
 -- ══════════════════════════════════════════
 -- Test 10: Cannot return to held
 -- ══════════════════════════════════════════
-\echo 'Test 10: Cannot return to held (no RPC writes held)'
+\echo 'Test 10: No RPC writes held status (real assertion)'
 DO $$
+DECLARE v_count INT;
 BEGIN
-  -- Verify no RPC function signature accepts 'held' as a target status
-  -- The claim RPC only writes 'processing'; transition RPCs write 'failed'/'review_required'
-  -- and mark_payout_provider_submitted keeps 'processing'
-  RAISE NOTICE '  PASS (verified by RPC design — no function writes held)';
+  -- Verify no function body contains the string "'held'" as a target status
+  SELECT COUNT(*) INTO v_count FROM pg_proc
+  WHERE proname IN ('claim_payout_for_transfer', 'mark_payout_provider_submitted',
+                    'mark_payout_transfer_failed', 'mark_payout_review_required')
+    AND prosrc LIKE '%''held''%';
+  ASSERT v_count = 0, 'no FIN-002 RPC should write held, found: ' || v_count;
+  RAISE NOTICE '  PASS';
 END $$;
 
 -- ══════════════════════════════════════════
@@ -219,7 +223,23 @@ END $$;
 -- ══════════════════════════════════════════
 -- Test 13-15: Privilege tests (PUBLIC/anon/authenticated denied)
 -- ══════════════════════════════════════════
-\echo 'Test 13: PUBLIC cannot execute claim RPC'
+\echo 'Test 13: Unprivileged role cannot execute claim RPC'
+DO $$
+BEGIN
+  -- Create a truly unprivileged role with no direct grants
+  BEGIN CREATE ROLE fin002_test_unprivileged NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END;
+  BEGIN
+    SET ROLE fin002_test_unprivileged;
+    PERFORM claim_payout_for_transfer('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 'paystack_transfer', NULL);
+    RESET ROLE;
+    RAISE EXCEPTION 'unprivileged role should not execute';
+  EXCEPTION WHEN insufficient_privilege THEN
+    RESET ROLE;
+    RAISE NOTICE '  PASS (unprivileged role denied)';
+  END;
+END $$;
+
+\echo 'Test 13b: anon cannot execute claim RPC'
 DO $$
 BEGIN
   BEGIN

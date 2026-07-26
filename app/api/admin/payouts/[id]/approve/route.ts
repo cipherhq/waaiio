@@ -19,15 +19,22 @@ type TransferMethod = typeof ALLOWED_TRANSFER_METHODS[number];
 const AUTOMATED_TRANSFER_METHODS = new Set(['paystack_transfer', 'stripe_transfer']);
 
 /**
- * FIN-002: Classify a provider HTTP response as conclusive rejection or ambiguous.
- * A conclusive rejection means the provider definitively did NOT accept the transfer.
- * Ambiguous means we cannot prove the transfer was rejected — it may have been accepted.
+ * FIN-002: Classify whether a provider HTTP response is a conclusive rejection.
+ * Returns true ONLY when we can definitively prove the provider did NOT accept.
+ * Requires both an approved HTTP status AND a valid rejection body.
+ *
+ * 408/409/429/5xx are always ambiguous — the request may have been accepted.
+ * 4xx without a valid rejection body is also ambiguous.
  */
 function isConclusive4xxRejection(res: Response): boolean {
   const s = res.status;
-  // 400, 401, 403, 422 are conclusive rejections — provider explicitly refused
+  // 408 (timeout), 409 (conflict/idempotent duplicate), 429 (rate limit) are ambiguous
+  if (s === 408 || s === 409 || s === 429) return false;
+  // 5xx are always ambiguous
+  if (s >= 500) return false;
+  // Only 400, 401, 403, 422 MAY be conclusive — but body must be validated by caller
   if (s === 400 || s === 401 || s === 403 || s === 422) return true;
-  // 408, 429, 5xx are ambiguous — the request may have been accepted
+  // Any other status is ambiguous
   return false;
 }
 
@@ -423,10 +430,10 @@ async function transitionReviewRequired(
   claimToken: string,
   log: typeof logger,
 ) {
-  const { error } = await client.rpc('mark_payout_review_required', {
+  const { data, error } = await client.rpc('mark_payout_review_required', {
     p_payout_id: payoutId, p_claim_token: claimToken,
   });
-  if (error) {
+  if (error || !data?.length) {
     log.withContext({ op: 'payout.review-transition', payoutId })
       .error('[PAYOUT] Failed to mark review_required — payout remains processing');
   }
