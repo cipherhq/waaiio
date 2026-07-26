@@ -21,9 +21,9 @@ INSERT INTO profiles (id, first_name, last_name, email) VALUES
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'FIN002', 'Test', 'test-fin002@test.local')
   ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO businesses (id, name, slug, category, country_code, status, verification_level, owner_id, payout_mode)
+INSERT INTO businesses (id, name, slug, category, country_code, status, verification_level, owner_id, payout_mode, address)
 VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'FIN-002 Test', 'fin002-test', 'other', 'NG', 'active', 'basic',
-        'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'platform_managed');
+        'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'platform_managed', '123 Test St');
 
 INSERT INTO payout_accounts (id, business_id, gateway, bank_name, account_name, bank_code, account_number, is_active, verified_at)
 VALUES ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'paystack', 'Test Bank', 'Test', '058', '0123456789', true, NOW());
