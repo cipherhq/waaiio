@@ -22,7 +22,7 @@ INSERT INTO profiles (id, first_name, last_name, email) VALUES
   ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO businesses (id, name, slug, category, country_code, status, verification_level, owner_id, payout_mode)
-VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'FIN-002 Test', 'fin002-test', 'other', 'NG', 'active', 'verified',
+VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'FIN-002 Test', 'fin002-test', 'other', 'NG', 'active', 'basic',
         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'platform_managed');
 
 INSERT INTO payout_accounts (id, business_id, gateway, bank_name, account_name, bank_code, account_number, is_active, verified_at)
