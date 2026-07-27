@@ -16,7 +16,8 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 | Version | Name | Status | PR | Notes |
 |---------|------|--------|----|-------|
-| 293 | `fix_production_table_exposure` | Pending | #54 | Security remediation — do not apply until PR reviewed and approved |
+| 294 | `complete_migration_119_index` | Pending | — | Completes missing idx_form_responses_business from Migration 119 |
+| 293 | `fix_production_table_exposure` | Applied to production (verified) | #54 | Security remediation — production-verified per PR #55 |
 | 292 | `atomic_payout_claim` | Applied to production | #50 | |
 | 248 | `otp_delivery_tracking` | Applied to production | #38 | |
 | 247 | `admin_role_escalation_fix` | Applied to production | #36 | |
@@ -27,7 +28,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 199 | *(see stranded range)* | **Not applied to production** | — | Part of stranded PR #21 range |
 | 119 | *(partial)* | **Partially applied** | — | Issue #53 preflight found partial application; do not re-run or repair |
 
-**Next available version:** 294
+**Next available version:** 295
 
 ## Reservation Process
 
@@ -42,6 +43,7 @@ Before creating a migration:
 
 | Version | Description | Branch | Reserved by | Date |
 |---------|-------------|--------|-------------|------|
+| 294 | complete_migration_119_index | fix/complete-migration-119-index | claude | 2026-07-27 |
 | 292 | atomic_payout_execution | fix/fin-002-atomic-payout | claude | 2026-07-26 |
 
 ### Stranded Reservations (PR #21)

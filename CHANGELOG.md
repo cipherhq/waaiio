@@ -7,6 +7,12 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-27
 
+### Database: Complete Migration 119 form response index
+- `supabase/migrations/294_complete_migration_119_index.sql` — Creates the missing `idx_form_responses_business` index on `public.form_responses(business_id)`. Issue #53 preflight confirmed Migration 119 was partially applied to production: tables, RLS policies, and other indexes exist, but this one index was skipped. Uses `CREATE INDEX IF NOT EXISTS` for idempotent execution. Does not modify historical Migration 119.
+  - **Affects:** `form_responses` table query performance on `business_id` lookups
+  - **Could break:** Nothing — additive index only, IF NOT EXISTS guards against double-apply
+- `docs/MIGRATION_REGISTRY.md` — Updated: Migration 293 status to production-verified, added Migration 294, next available version = 295.
+
 ### Security: Remove public access to sensitive platform tables (P0)
 - `supabase/migrations/293_fix_production_table_exposure.sql` — Drops 4 overly permissive RLS policies discovered during Issue #53 preflight. Creates restricted public views for `whatsapp_channels` and `businesses` with `security_barrier = true`. Supersedes the security intent of migration 223 (which was never applied to production). No credential values are deleted, nulled, or modified.
   - Drops `shared_channels_public_read` on `whatsapp_channels` (exposed Meta API tokens to anon)
