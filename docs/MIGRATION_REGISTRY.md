@@ -16,7 +16,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 | Version | Name | Status | PR | Notes |
 |---------|------|--------|----|-------|
-| 294 | `complete_migration_119_index` | Pending | — | Completes missing idx_form_responses_business from Migration 119 |
+| 294 | `complete_migration_119_index` | Applied to production (verified) | #56 | Completes missing idx_form_responses_business from Migration 119 |
 | 293 | `fix_production_table_exposure` | Applied to production (verified) | #54 | Security remediation — production-verified per PR #55 |
 | 292 | `atomic_payout_claim` | Applied to production | #50 | |
 | 248 | `otp_delivery_tracking` | Applied to production | #38 | |
@@ -26,7 +26,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 244 | `payment_source_classification` | **Not applied to production** | — | Issue #53 preflight confirmed this migration was never applied |
 | 200 | *(see stranded range)* | **Not applied to production** | — | Part of stranded PR #21 range |
 | 199 | *(see stranded range)* | **Not applied to production** | — | Part of stranded PR #21 range |
-| 119 | *(partial)* | **Partially applied** | — | Issue #53 preflight found partial application; do not re-run or repair |
+| 119 | `forms` | Applied (completed by Migration 294) | #56 | All statements satisfied: tables, policies, indexes exist. Final missing index supplied by Migration 294. Individually recorded as applied. |
 
 **Next available version:** 295
 
@@ -43,7 +43,6 @@ Before creating a migration:
 
 | Version | Description | Branch | Reserved by | Date |
 |---------|-------------|--------|-------------|------|
-| 294 | complete_migration_119_index | fix/complete-migration-119-index | claude | 2026-07-27 |
 | 292 | atomic_payout_execution | fix/fin-002-atomic-payout | claude | 2026-07-26 |
 
 ### Stranded Reservations (PR #21)
@@ -95,6 +94,6 @@ If any PR #21 migration work is extracted into a new PR, it must be renumbered s
 
 Per Issue #53 preflight findings:
 - Migrations 101–246 must **NOT** be bulk-repaired via `supabase migration repair`
-- Migration 119 is partially applied and must not be re-run
+- Migration 119 is now fully satisfied and individually recorded as applied (completed by Migration 294)
 - Migrations 199, 200, and 244 are not applied to production
 - Any repair must be individually assessed and approved
