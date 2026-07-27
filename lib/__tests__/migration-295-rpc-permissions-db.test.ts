@@ -103,7 +103,7 @@ describe('Migration 295: Real PostgreSQL RPC permission tests', () => {
 
     // Step B: Capture before-state
     const funcDefResult = runSQL(
-      `SELECT pg_get_functiondef(oid) FROM pg_proc p
+      `SELECT pg_get_functiondef(p.oid) FROM pg_proc p
        JOIN pg_namespace n ON p.pronamespace = n.oid
        WHERE n.nspname = 'public' AND p.proname = 'process_recurring_charge'
        AND pg_get_function_identity_arguments(p.oid) = 'p_event_id text, p_event_type text, p_gateway_ref text, p_auth_code text, p_cust_code text, p_amount_kobo bigint, p_currency text, p_channel text, p_card_last_four text, p_card_brand text';`
@@ -267,7 +267,7 @@ describe('Migration 295: Real PostgreSQL RPC permission tests', () => {
 
   it('function definition unchanged after Migration 295', () => {
     const result = runSQL(
-      `SELECT pg_get_functiondef(oid) FROM pg_proc p
+      `SELECT pg_get_functiondef(p.oid) FROM pg_proc p
        JOIN pg_namespace n ON p.pronamespace = n.oid
        WHERE n.nspname = 'public' AND p.proname = 'process_recurring_charge'
        AND pg_get_function_identity_arguments(p.oid) = 'p_event_id text, p_event_type text, p_gateway_ref text, p_auth_code text, p_cust_code text, p_amount_kobo bigint, p_currency text, p_channel text, p_card_last_four text, p_card_brand text';`
@@ -327,7 +327,7 @@ describe('Migration 295: Real PostgreSQL RPC permission tests', () => {
 
   it('function definition unchanged after second application', () => {
     const result = runSQL(
-      `SELECT pg_get_functiondef(oid) FROM pg_proc p
+      `SELECT pg_get_functiondef(p.oid) FROM pg_proc p
        JOIN pg_namespace n ON p.pronamespace = n.oid
        WHERE n.nspname = 'public' AND p.proname = 'process_recurring_charge'
        AND pg_get_function_identity_arguments(p.oid) = 'p_event_id text, p_event_type text, p_gateway_ref text, p_auth_code text, p_cust_code text, p_amount_kobo bigint, p_currency text, p_channel text, p_card_last_four text, p_card_brand text';`
@@ -343,7 +343,7 @@ describe('Migration 295: Real PostgreSQL RPC permission tests', () => {
     // This is verified by the static tests. Here we confirm the function body is
     // identical to what it was before the migration.
     const result = runSQL(
-      `SELECT pg_get_functiondef(oid) FROM pg_proc p
+      `SELECT pg_get_functiondef(p.oid) FROM pg_proc p
        JOIN pg_namespace n ON p.pronamespace = n.oid
        WHERE n.nspname = 'public' AND p.proname = 'process_recurring_charge'
        AND pg_get_function_identity_arguments(p.oid) = 'p_event_id text, p_event_type text, p_gateway_ref text, p_auth_code text, p_cust_code text, p_amount_kobo bigint, p_currency text, p_channel text, p_card_last_four text, p_card_brand text';`
