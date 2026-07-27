@@ -62,10 +62,6 @@ describe('P0: Migration 293 — static SQL structure', () => {
     expect(viewDef).not.toContain('meta_token_expires_at');
   });
 
-  it('revokes ALL from PUBLIC on whatsapp_channels base table', () => {
-    expect(migration293).toContain('REVOKE ALL ON public.whatsapp_channels FROM PUBLIC');
-  });
-
   it('revokes ALL from PUBLIC on whatsapp_channels_public view before granting', () => {
     expect(migration293).toContain('REVOKE ALL ON public.whatsapp_channels_public FROM PUBLIC');
   });
@@ -116,10 +112,6 @@ describe('P0: Migration 293 — static SQL structure', () => {
   // ─── businesses ───
   it('drops public_read_active_businesses policy', () => {
     expect(migration293).toContain('DROP POLICY IF EXISTS "public_read_active_businesses"');
-  });
-
-  it('revokes ALL from PUBLIC on businesses base table', () => {
-    expect(migration293).toContain('REVOKE ALL ON public.businesses FROM PUBLIC');
   });
 
   it('creates businesses_public view with security_barrier and safe columns only', () => {
@@ -185,8 +177,7 @@ describe('P0: Migration 293 — static SQL structure', () => {
     expect(ownerSection).toContain('business_id IN');
   });
 
-  it('revokes from PUBLIC and anon on bot_keywords', () => {
-    expect(migration293).toContain('REVOKE ALL ON public.bot_keywords FROM PUBLIC');
+  it('revokes anon from bot_keywords', () => {
     expect(migration293).toContain('REVOKE ALL ON public.bot_keywords FROM anon');
   });
 
