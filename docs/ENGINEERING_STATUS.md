@@ -2,8 +2,8 @@
 
 Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineering-status.json)
 
-**Last reconciled:** 2026-07-26
-**Last reconciled main SHA:** `7556dec59e1983b1ceea78c4b59842841f7f24fa`
+**Last reconciled:** 2026-07-27
+**Last reconciled main SHA:** `90b0f7668b06c5d2f41b753eb40dbe30379e58dd`
 
 ## Milestone Status
 
@@ -15,6 +15,7 @@ Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineerin
 | GOV-001 | Engineering governance foundation | `MERGED` | #39, #40 | `c6f9b02c` |
 | FIN-001 | Financial and credential containment | `PRODUCTION_VERIFIED` | #44 | `d886c8d9` |
 | FIN-002 | Atomic payout execution and provider idempotency | `DEPLOYED` | #50 | `7556dec5` |
+| SEC-001 | Remove public access to sensitive platform tables | `PRODUCTION_VERIFIED` | #54 | `90b0f766` |
 
 ## Stage Definitions
 
