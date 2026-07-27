@@ -10,8 +10,9 @@
  * Fallback does NOT trigger on permission errors, network errors, empty results,
  * or any other failure — only on the exact "relation does not exist" condition.
  *
- * After migration 293 is applied, direct base-table access will be denied by
- * REVOKE and these helpers will always use the view path.
+ * The fallback is transitional and supports application-first deployment only.
+ * Migration 293 must not be applied before the new application version is live.
+ * After migration 293, direct base-table access is denied and views are used.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -32,37 +33,77 @@ export function isRelationNotFound(error: { code?: string; message?: string } | 
 }
 
 /** Safe columns exposed by businesses_public view (migration 293). */
-export const BUSINESSES_PUBLIC_COLUMNS = [
+export const BUSINESSES_PUBLIC_COLUMNS: ReadonlySet<string> = new Set([
   'id', 'name', 'slug', 'description', 'address', 'city', 'state',
   'country_code', 'phone', 'email', 'logo_url', 'cover_photo_url',
   'category', 'flow_type', 'operating_hours', 'rating_avg', 'rating_count',
   'total_bookings', 'instagram_handle', 'timezone', 'recurring_enabled',
   'bot_code', 'status', 'created_at', 'updated_at',
-] as const;
+]);
 
 /** Safe columns exposed by whatsapp_channels_public view (migration 293). */
-export const CHANNELS_PUBLIC_COLUMNS = [
+export const CHANNELS_PUBLIC_COLUMNS: ReadonlySet<string> = new Set([
   'id', 'country_code', 'phone_number', 'display_name', 'channel_type', 'is_active',
-] as const;
+]);
+
+/** Pattern for a valid simple column identifier: letters, digits, underscores only. */
+const SAFE_COLUMN_RE = /^[a-z_][a-z0-9_]*$/;
+
+/**
+ * Parse and validate a comma-separated column string against an allowlist.
+ * Rejects wildcards (*), aliases (AS), nested selections (table.col),
+ * function calls (fn()), and relationship expressions (table!inner).
+ *
+ * @throws Error if any column is not in the allowlist or is not a simple identifier.
+ */
+export function validateColumns(columns: string, allowlist: ReadonlySet<string>, context: string): string[] {
+  const parsed = columns.split(',').map((c) => c.trim()).filter(Boolean);
+
+  if (parsed.length === 0) {
+    throw new Error(`${context}: empty column selection`);
+  }
+
+  for (const col of parsed) {
+    if (col === '*') {
+      throw new Error(`${context}: wildcard (*) selections are not allowed`);
+    }
+    if (!SAFE_COLUMN_RE.test(col)) {
+      throw new Error(
+        `${context}: unsafe column expression "${col}" — only simple column identifiers are allowed`,
+      );
+    }
+    if (!allowlist.has(col)) {
+      throw new Error(
+        `${context}: column "${col}" is not in the safe allowlist`,
+      );
+    }
+  }
+
+  return parsed;
+}
 
 type AnyQuery = any;
 
 /**
  * Query businesses_public view with automatic fallback to the base table
  * (safe columns only, status = 'active' filter) when the view does not exist.
+ *
+ * Validates columns against BUSINESSES_PUBLIC_COLUMNS before issuing any query.
+ * Fails closed on unknown, nested, aliased, or wildcard column expressions.
  */
 export async function queryBusinessesPublic(
   supabase: SupabaseClient,
   columns: string,
   applyFilters?: (query: AnyQuery) => AnyQuery,
 ): Promise<{ data: any; error: any }> {
+  validateColumns(columns, BUSINESSES_PUBLIC_COLUMNS, 'queryBusinessesPublic');
+
   let query: AnyQuery = supabase.from('businesses_public').select(columns);
   if (applyFilters) query = applyFilters(query);
 
   const result = await query;
 
   if (isRelationNotFound(result.error)) {
-    // View doesn't exist yet — fall back to base table with safe columns + active filter
     let fallback: AnyQuery = supabase
       .from('businesses')
       .select(columns)
@@ -77,19 +118,23 @@ export async function queryBusinessesPublic(
 /**
  * Query whatsapp_channels_public view with automatic fallback to the base table
  * (safe columns only, shared + active filter) when the view does not exist.
+ *
+ * Validates columns against CHANNELS_PUBLIC_COLUMNS before issuing any query.
+ * Fails closed on unknown, nested, aliased, or wildcard column expressions.
  */
 export async function queryChannelsPublic(
   supabase: SupabaseClient,
   columns: string,
   applyFilters?: (query: AnyQuery) => AnyQuery,
 ): Promise<{ data: any; error: any }> {
+  validateColumns(columns, CHANNELS_PUBLIC_COLUMNS, 'queryChannelsPublic');
+
   let query: AnyQuery = supabase.from('whatsapp_channels_public').select(columns);
   if (applyFilters) query = applyFilters(query);
 
   const result = await query;
 
   if (isRelationNotFound(result.error)) {
-    // View doesn't exist yet — fall back to base table with safe columns + shared/active filter
     let fallback: AnyQuery = supabase
       .from('whatsapp_channels')
       .select(columns)

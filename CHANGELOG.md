@@ -18,21 +18,31 @@ If something breaks, check this log to find what changed and when.
   - Policies use explicit DROP + CREATE (not IF NOT EXISTS) to guarantee exact definitions
   - Creates `bot_keywords_service_read` and `bot_keywords_owner_read` policies
   - Revokes access from PUBLIC, anon, and authenticated on base tables
-  - Explicitly grants only required privileges to service_role on processed_webhook_events
+  - Grants SELECT, INSERT, UPDATE, DELETE to service_role on processed_webhook_events (all four required by webhook handlers and cleanup cron)
+  - REVOKE ALL FROM PUBLIC on all four sensitive base tables
   - Views: REVOKE ALL FROM PUBLIC then GRANT SELECT only to anon, authenticated
-  - Audit block verifies no unsafe policies remain after migration
-- `lib/supabase/safe-view-query.ts` — Zero-downtime transition helpers. Query views first; fall back to base table (safe columns only) when PostgreSQL reports relation not found (42P01). Does NOT fall back on permission errors, network errors, or other failures.
+  - Strengthened audit block: checks for ANY policy granting anon access (not just named policies), verifies effective privileges with has_table_privilege(), verifies service_role has exactly required privileges
+- `lib/supabase/safe-view-query.ts` — Zero-downtime transition helpers with column allowlist enforcement. Validates requested columns against BUSINESSES_PUBLIC_COLUMNS / CHANNELS_PUBLIC_COLUMNS before issuing any query. Rejects wildcards, aliases, nested selections, functions, relationship expressions, and unknown columns. Falls back to base table (safe columns only) exclusively on PostgreSQL 42P01 (relation not found). Does NOT fall back on permission errors, network errors, or other failures.
 - `app/b/[slug]/page.tsx` — Public booking page uses `queryBusinessesPublic()` fallback helper.
 - `app/recurring/[slug]/page.tsx` — Recurring setup page uses `queryBusinessesPublic()` fallback helper.
 - `app/get-started/OnboardingWizard.tsx` — Shared channel queries use `queryChannelsPublic()` fallback helper.
 - `app/dashboard/page.tsx`, `app/dashboard/qr-code/page.tsx`, `app/dashboard/keyword-campaigns/page.tsx` — Shared channel fallback queries use `queryChannelsPublic()` fallback helper.
-- `lib/__tests__/p0-table-exposure.test.ts` — Tests verifying migration SQL structure, view safety, application fallback usage, zero-downtime fallback logic, active-business semantics, and PostgreSQL authorization (real DB when available).
+- `lib/__tests__/p0-table-exposure.test.ts` — Static tests: migration SQL structure, view safety, application fallback usage, column allowlist enforcement, active-business semantics.
+- `lib/__tests__/p0-table-exposure-db.test.ts` — Real PostgreSQL authorization tests: 20 role-based assertions applied against an isolated database. Runs in CI via Migration validation job. Fails on any skip or failure.
+- `.github/workflows/ci.yml` — Added P0 authorization test step to Migration validation job with TEST_DATABASE_URL pointing to CI-local PostgreSQL. Enforces zero skips, zero failures.
 - **Active-business semantics:** The `businesses` table has only `status` (enum: pending/active/suspended). There is no `is_active` column. The canonical public-visibility predicate is `status = 'active'`.
 - **Recovery plan:** Forward-only. The rollback plan NEVER restores the dropped policies. If the views need adjustment, a new forward migration (294+) corrects them. Application code rollback is safe because the fallback helpers gracefully handle both pre- and post-migration states.
-- **Deployment sequence:** Application code can deploy before or after migration 293. The `safe-view-query.ts` helpers ensure zero downtime in either order.
-  - If app deploys first: views don't exist → fallback queries base tables with safe columns only
-  - If migration runs first: old app code already uses view names that now exist → works
-  - After both: views exist and base-table anon access is revoked → views used exclusively
+- **Deployment sequence (application-first only):**
+  1. Merge and deploy the new application code.
+  2. Confirm the production deployment is healthy.
+  3. Confirm public business, recurring, onboarding and shared-channel flows work using the 42P01 fallback.
+  4. Only then apply migration 293.
+  5. Verify the views exist and direct base-table access is denied.
+  6. Verify public pages now use the views.
+  7. Mark migration 293 as applied in migration history.
+  - Migration 293 must NOT be applied before the new application version is live.
+  - If the application deployment fails, do NOT apply migration 293.
+  - The fallback is transitional and supports application-first deployment only.
 - **Affects:** Public business pages, onboarding, dashboard shared-channel fallbacks. All authenticated dashboard queries continue via owner RLS policies. Migration 223 is not modified. No production deployment was manually authorised or performed. A Vercel Preview may have been automatically created by the branch push. Production remains unchanged.
 
 ---

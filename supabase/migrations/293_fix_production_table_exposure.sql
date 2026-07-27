@@ -12,6 +12,10 @@
 --
 -- All changes are idempotent (IF EXISTS / IF NOT EXISTS guards on drops).
 -- Policies are explicitly DROP + CREATE (not IF NOT EXISTS) to guarantee exact definitions.
+--
+-- Deployment: application code MUST be deployed and verified BEFORE this migration runs.
+-- The application uses safe-view-query.ts fallback helpers that handle the pre-migration state.
+-- If the application deployment fails, do NOT apply this migration.
 
 -- ════════════════════════════════════════════════════════════
 -- 1. whatsapp_channels: Remove anonymous access to Meta tokens
@@ -21,9 +25,15 @@
 -- waba_id, phone_number_id) to anon users for shared channels.
 DROP POLICY IF EXISTS "shared_channels_public_read" ON public.whatsapp_channels;
 
--- Revoke direct table access from anon BEFORE creating the view.
--- service_role and authenticated owner policies on the base table remain.
+-- Revoke direct table access from PUBLIC and anon.
+REVOKE ALL ON public.whatsapp_channels FROM PUBLIC;
 REVOKE ALL ON public.whatsapp_channels FROM anon;
+
+-- Re-grant privileges to authenticated and service_role after REVOKE FROM PUBLIC
+-- removed inherited grants. Existing owner/admin RLS policies on the base table
+-- require these privileges to function.
+GRANT SELECT ON public.whatsapp_channels TO authenticated, service_role;
+GRANT INSERT, UPDATE, DELETE ON public.whatsapp_channels TO service_role;
 
 -- Create a restricted public view exposing only safe fields.
 -- The onboarding wizard (OnboardingWizard.tsx) needs phone_number from shared channels.
@@ -75,8 +85,13 @@ REVOKE ALL ON public.processed_webhook_events FROM anon;
 REVOKE ALL ON public.processed_webhook_events FROM authenticated;
 
 -- Grant only the privileges service_role actually needs.
--- service_role needs SELECT (dedup check), INSERT (record event), DELETE (cleanup).
-GRANT SELECT, INSERT, DELETE ON public.processed_webhook_events TO service_role;
+-- service_role needs:
+--   SELECT — dedup check (SELECT 1 FROM processed_webhook_events WHERE event_id = ...)
+--   INSERT — record new event (.upsert() / INSERT)
+--   UPDATE — update status, attempts, completed_at (.update() in webhook handlers)
+--            Also required by .upsert() which does INSERT ... ON CONFLICT DO UPDATE
+--   DELETE — cleanup cron (app/api/cron/cleanup/route.ts)
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.processed_webhook_events TO service_role;
 
 -- ════════════════════════════════════════════════════════════
 -- 3. businesses: Replace unrestricted anon policy with safe view
@@ -100,8 +115,15 @@ GRANT SELECT, INSERT, DELETE ON public.processed_webhook_events TO service_role;
 -- Drop the unrestricted anon SELECT policy
 DROP POLICY IF EXISTS "public_read_active_businesses" ON public.businesses;
 
--- Revoke direct anon table access before creating the view.
+-- Revoke direct table access from PUBLIC and anon before creating the view.
+REVOKE ALL ON public.businesses FROM PUBLIC;
 REVOKE ALL ON public.businesses FROM anon;
+
+-- Re-grant privileges to authenticated and service_role after REVOKE FROM PUBLIC
+-- removed inherited grants. Existing owner/admin/reseller RLS policies on the
+-- base table require these privileges to function.
+GRANT SELECT, INSERT, UPDATE ON public.businesses TO authenticated;
+GRANT ALL ON public.businesses TO service_role;
 
 -- Create a restricted public view with only safe columns.
 -- Uses security_barrier to prevent information leakage through
@@ -174,27 +196,42 @@ CREATE POLICY "bot_keywords_owner_read"
     )
   );
 
--- Revoke direct anon access. Authenticated users are scoped by owner_read policy above.
+-- Revoke direct access from PUBLIC and anon.
 REVOKE ALL ON public.bot_keywords FROM PUBLIC;
 REVOKE ALL ON public.bot_keywords FROM anon;
 
+-- Re-grant SELECT to authenticated and service_role.
+-- After REVOKE ALL FROM PUBLIC, inherited privileges are removed.
+-- Authenticated users are scoped by the bot_keywords_owner_read RLS policy.
+-- service_role is scoped by the bot_keywords_service_read RLS policy.
+GRANT SELECT ON public.bot_keywords TO authenticated, service_role;
+
 -- ════════════════════════════════════════════════════════════
--- 5. Audit: verify no remaining unsafe anon/public policies
+-- 5. Audit: verify no remaining unsafe policies or privileges
 -- ════════════════════════════════════════════════════════════
 
--- Fail the migration if any policy on these 4 tables still grants
--- unrestricted access to anon or public roles.
--- This DO block checks pg_policies with both schemaname and tablename scoped.
+-- This verification block does three things:
+--   A. Checks that none of the 4 known unsafe policy names survived
+--   B. Checks that no OTHER policy on these tables grants access to anon or public
+--   C. Verifies effective table privileges using has_table_privilege()
+--
+-- Scoped by schemaname = 'public' AND tablename for each table.
+-- Fails the migration with RAISE EXCEPTION if any check fails.
 DO $$
 DECLARE
   unsafe_count integer;
   unsafe_details text;
+  anon_priv text;
+  public_priv text;
+  tbl text;
+  sensitive_tables text[] := ARRAY['whatsapp_channels', 'processed_webhook_events', 'businesses', 'bot_keywords'];
 BEGIN
+  -- A. Check known unsafe policy names
   SELECT count(*), string_agg(policyname || ' on ' || tablename, ', ')
   INTO unsafe_count, unsafe_details
   FROM pg_policies
   WHERE schemaname = 'public'
-    AND tablename IN ('whatsapp_channels', 'processed_webhook_events', 'businesses', 'bot_keywords')
+    AND tablename = ANY(sensitive_tables)
     AND policyname IN (
       'shared_channels_public_read',
       'processed_webhook_events_service_all',
@@ -203,6 +240,57 @@ BEGIN
     );
 
   IF unsafe_count > 0 THEN
-    RAISE EXCEPTION 'Migration 293 verification failed: unsafe policies still exist: %', unsafe_details;
+    RAISE EXCEPTION 'Migration 293 audit A failed: known unsafe policies still exist: %', unsafe_details;
+  END IF;
+
+  -- B. Check for ANY policy granting anon or public access on these base tables
+  SELECT count(*), string_agg(policyname || ' on ' || tablename || ' (roles: ' || array_to_string(roles, ',') || ')', '; ')
+  INTO unsafe_count, unsafe_details
+  FROM pg_policies
+  WHERE schemaname = 'public'
+    AND tablename = ANY(sensitive_tables)
+    AND (
+      roles @> ARRAY['anon']::name[]
+      OR roles = '{}'::name[]
+    );
+
+  IF unsafe_count > 0 THEN
+    RAISE EXCEPTION 'Migration 293 audit B failed: policies granting anon access on sensitive tables: %', unsafe_details;
+  END IF;
+
+  -- C. Verify effective table privileges via has_table_privilege()
+  --    anon should have NO direct base-table privileges on any sensitive table.
+  --    PUBLIC should have NO direct base-table privileges on any sensitive table.
+  FOREACH tbl IN ARRAY sensitive_tables LOOP
+    -- Check anon effective privileges
+    IF has_table_privilege('anon', 'public.' || tbl, 'SELECT') THEN
+      RAISE EXCEPTION 'Migration 293 audit C failed: anon has SELECT privilege on %', tbl;
+    END IF;
+    IF has_table_privilege('anon', 'public.' || tbl, 'INSERT') THEN
+      RAISE EXCEPTION 'Migration 293 audit C failed: anon has INSERT privilege on %', tbl;
+    END IF;
+    IF has_table_privilege('anon', 'public.' || tbl, 'UPDATE') THEN
+      RAISE EXCEPTION 'Migration 293 audit C failed: anon has UPDATE privilege on %', tbl;
+    END IF;
+    IF has_table_privilege('anon', 'public.' || tbl, 'DELETE') THEN
+      RAISE EXCEPTION 'Migration 293 audit C failed: anon has DELETE privilege on %', tbl;
+    END IF;
+  END LOOP;
+
+  -- Verify service_role has exactly the required privileges:
+  --   processed_webhook_events: SELECT, INSERT, UPDATE, DELETE
+  --   bot_keywords: SELECT (via RLS policy, not direct grant beyond what owner policies need)
+  --   whatsapp_channels, businesses: preserved for authenticated owner/admin RLS
+  IF NOT has_table_privilege('service_role', 'public.processed_webhook_events', 'SELECT') THEN
+    RAISE EXCEPTION 'Migration 293 audit C failed: service_role missing SELECT on processed_webhook_events';
+  END IF;
+  IF NOT has_table_privilege('service_role', 'public.processed_webhook_events', 'INSERT') THEN
+    RAISE EXCEPTION 'Migration 293 audit C failed: service_role missing INSERT on processed_webhook_events';
+  END IF;
+  IF NOT has_table_privilege('service_role', 'public.processed_webhook_events', 'UPDATE') THEN
+    RAISE EXCEPTION 'Migration 293 audit C failed: service_role missing UPDATE on processed_webhook_events';
+  END IF;
+  IF NOT has_table_privilege('service_role', 'public.processed_webhook_events', 'DELETE') THEN
+    RAISE EXCEPTION 'Migration 293 audit C failed: service_role missing DELETE on processed_webhook_events';
   END IF;
 END $$;
