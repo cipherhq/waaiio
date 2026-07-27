@@ -162,17 +162,38 @@ describe('P0: Real PostgreSQL authorization tests', () => {
       }
     }
 
+    // In CI, override the hardcoded auth.uid() stub with one that reads request.jwt.claims
+    if (isFullSchema) {
+      runSQL(`
+        CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS
+        $fn$ SELECT NULLIF(current_setting('request.jwt.claims', true)::json->>'sub', '')::uuid $fn$
+        LANGUAGE sql STABLE;
+      `);
+    }
+
     // Insert test data (works in both modes)
     // Use ON CONFLICT DO NOTHING to be idempotent
     if (isFullSchema) {
-      // CI full schema: insert with required NOT NULL fields
+      // CI full schema: must satisfy FK to profiles→auth.users and NOT NULL constraints
       runSQL(`
-        INSERT INTO public.businesses (id, owner_id, name, slug, status, address, city, phone,
+        ALTER TABLE auth.users DISABLE TRIGGER ALL;
+        INSERT INTO auth.users (id, email) VALUES
+          ('${OWNER_UUID}', 'p0owner@test.local'),
+          ('${OTHER_UUID}', 'p0other@test.local')
+        ON CONFLICT DO NOTHING;
+        ALTER TABLE auth.users ENABLE TRIGGER ALL;
+
+        INSERT INTO profiles (id, first_name, last_name, email) VALUES
+          ('${OWNER_UUID}', 'P0', 'Owner', 'p0owner@test.local'),
+          ('${OTHER_UUID}', 'P0', 'Other', 'p0other@test.local')
+        ON CONFLICT DO NOTHING;
+
+        INSERT INTO public.businesses (id, owner_id, name, slug, status, address, city, neighborhood, phone,
           google_calendar_token, payment_channels, metadata, country_code)
         VALUES
-          ('${BIZ_A}', '${OWNER_UUID}', 'P0 Active Biz', 'p0-active-biz', 'active', '1 Test St', 'Lagos', '+0', 'secret-token-123', '{"stripe": true}', '{"internal": true}', 'NG'),
-          ('${BIZ_B}', '${OTHER_UUID}', 'P0 Pending Biz', 'p0-pending-biz', 'pending', '2 Test St', 'Lagos', '+0', 'secret-token-456', null, null, 'NG'),
-          ('${BIZ_C}', '${OTHER_UUID}', 'P0 Suspended Biz', 'p0-suspended-biz', 'suspended', '3 Test St', 'Lagos', '+0', 'secret-token-789', null, null, 'NG')
+          ('${BIZ_A}', '${OWNER_UUID}', 'P0 Active Biz', 'p0-active-biz', 'active', '1 Test St', 'Lagos', 'VI', '+0', 'secret-token-123', '{"stripe": true}', '{"internal": true}', 'NG'),
+          ('${BIZ_B}', '${OTHER_UUID}', 'P0 Pending Biz', 'p0-pending-biz', 'pending', '2 Test St', 'Lagos', 'VI', '+0', 'secret-token-456', null, null, 'NG'),
+          ('${BIZ_C}', '${OTHER_UUID}', 'P0 Suspended Biz', 'p0-suspended-biz', 'suspended', '3 Test St', 'Lagos', 'VI', '+0', 'secret-token-789', null, null, 'NG')
         ON CONFLICT (slug) DO NOTHING;
       `);
     } else {
@@ -215,6 +236,20 @@ describe('P0: Real PostgreSQL authorization tests', () => {
       DELETE FROM public.whatsapp_channels WHERE id IN ('${CH_SHARED}', '${CH_DEDICATED}');
       DELETE FROM public.businesses WHERE slug IN ('p0-active-biz', 'p0-pending-biz', 'p0-suspended-biz');
     `);
+    if (isFullSchema) {
+      // Restore original CI auth.uid() stub
+      runSQL(`
+        CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS
+        $fn$ SELECT '00000000-0000-0000-0000-000000000000'::UUID $fn$
+        LANGUAGE SQL STABLE;
+      `);
+      runSQL(`
+        DELETE FROM profiles WHERE id IN ('${OWNER_UUID}', '${OTHER_UUID}');
+        ALTER TABLE auth.users DISABLE TRIGGER ALL;
+        DELETE FROM auth.users WHERE id IN ('${OWNER_UUID}', '${OTHER_UUID}');
+        ALTER TABLE auth.users ENABLE TRIGGER ALL;
+      `);
+    }
 
     if (!isFullSchema) {
       // Local mode only: clean up tables and schema
