@@ -10,7 +10,8 @@
 --   3. businesses: public_read_active_businesses exposes all columns to anon
 --   4. bot_keywords: anyone_read_system_category allows anon to read routing logic
 --
--- All changes are idempotent (IF EXISTS / IF NOT EXISTS guards).
+-- All changes are idempotent (IF EXISTS / IF NOT EXISTS guards on drops).
+-- Policies are explicitly DROP + CREATE (not IF NOT EXISTS) to guarantee exact definitions.
 
 -- ════════════════════════════════════════════════════════════
 -- 1. whatsapp_channels: Remove anonymous access to Meta tokens
@@ -20,9 +21,19 @@
 -- waba_id, phone_number_id) to anon users for shared channels.
 DROP POLICY IF EXISTS "shared_channels_public_read" ON public.whatsapp_channels;
 
+-- Revoke direct table access from anon BEFORE creating the view.
+-- service_role and authenticated owner policies on the base table remain.
+REVOKE ALL ON public.whatsapp_channels FROM anon;
+
 -- Create a restricted public view exposing only safe fields.
 -- The onboarding wizard (OnboardingWizard.tsx) needs phone_number from shared channels.
-CREATE OR REPLACE VIEW public.whatsapp_channels_public AS
+-- View ownership defaults to the migration-running role (typically postgres/supabase_admin).
+-- Simple views on a single table without aggregation are automatically updatable in
+-- PostgreSQL, but we explicitly revoke INSERT/UPDATE/DELETE below to prevent misuse.
+-- security_barrier is added to prevent information leakage through user-defined functions
+-- in WHERE clauses that might bypass the view's filter conditions.
+CREATE OR REPLACE VIEW public.whatsapp_channels_public
+  WITH (security_barrier = true) AS
 SELECT
   id,
   country_code,
@@ -33,40 +44,39 @@ SELECT
 FROM public.whatsapp_channels
 WHERE channel_type = 'shared' AND is_active = true;
 
--- Grant the view to anon/authenticated (replaces the dropped base-table policy)
+-- Revoke everything from the view first, then grant only SELECT.
+-- This ensures no INSERT/UPDATE/DELETE is possible via the view.
+REVOKE ALL ON public.whatsapp_channels_public FROM PUBLIC;
 GRANT SELECT ON public.whatsapp_channels_public TO anon, authenticated;
-
--- Revoke direct table access from anon (service_role and owner policies remain)
-REVOKE ALL ON public.whatsapp_channels FROM anon;
 
 -- ════════════════════════════════════════════════════════════
 -- 2. processed_webhook_events: Remove anon/authenticated access
 -- ════════════════════════════════════════════════════════════
 
--- Drop the overly permissive USING(true) policy from migration 021
--- that was never cleaned up by migration 023.
+-- Drop the overly permissive USING(true) policy from migration 021.
+-- This policy has no role restriction, granting full R/W to anon.
 DROP POLICY IF EXISTS "processed_webhook_events_service_all" ON public.processed_webhook_events;
 
--- Verify the correct service_role-only policy exists
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE tablename = 'processed_webhook_events'
-    AND policyname = 'processed_webhook_events_service_only'
-  ) THEN
-    CREATE POLICY "processed_webhook_events_service_only"
-      ON public.processed_webhook_events
-      FOR ALL
-      TO service_role
-      USING (true)
-      WITH CHECK (true);
-  END IF;
-END $$;
+-- Explicitly DROP then CREATE the service_role-only policy to guarantee exact definition.
+-- Using DROP + CREATE (not IF NOT EXISTS) ensures the policy matches our intent exactly,
+-- even if a prior partial migration left a stale version.
+DROP POLICY IF EXISTS "processed_webhook_events_service_only" ON public.processed_webhook_events;
+CREATE POLICY "processed_webhook_events_service_only"
+  ON public.processed_webhook_events
+  FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
 
--- Revoke direct table access from anon and authenticated
+-- Revoke direct table access from PUBLIC, anon, and authenticated.
+-- Only service_role should access this table (webhook dedup from server-side handlers).
+REVOKE ALL ON public.processed_webhook_events FROM PUBLIC;
 REVOKE ALL ON public.processed_webhook_events FROM anon;
 REVOKE ALL ON public.processed_webhook_events FROM authenticated;
+
+-- Grant only the privileges service_role actually needs.
+-- service_role needs SELECT (dedup check), INSERT (record event), DELETE (cleanup).
+GRANT SELECT, INSERT, DELETE ON public.processed_webhook_events TO service_role;
 
 -- ════════════════════════════════════════════════════════════
 -- 3. businesses: Replace unrestricted anon policy with safe view
@@ -77,10 +87,12 @@ REVOKE ALL ON public.processed_webhook_events FROM authenticated;
 --   google_calendar_token, google_calendar_refresh_token,
 --   payment_channels, custom_fee_percentage, custom_fee_flat, metadata
 --
--- Public pages only need: id, name, slug, description, address, city, state,
--- country_code, phone, email, logo_url, cover_photo_url, category, flow_type,
--- operating_hours, rating_avg, rating_count, total_bookings, instagram_handle,
--- timezone, recurring_enabled, bot_code, status
+-- Public pages only need the columns listed in the view below.
+--
+-- The canonical "publicly visible business" predicate is: status = 'active'
+-- The businesses table has a status column of type restaurant_status
+-- (enum: 'pending', 'active', 'suspended'). There is NO is_active boolean
+-- column on the businesses table. The status enum is the sole authority.
 --
 -- Strategy: drop the anon base-table policy, create a restricted view,
 -- keep the authenticated owner/admin/reseller policies on the base table.
@@ -88,8 +100,17 @@ REVOKE ALL ON public.processed_webhook_events FROM authenticated;
 -- Drop the unrestricted anon SELECT policy
 DROP POLICY IF EXISTS "public_read_active_businesses" ON public.businesses;
 
--- Create a restricted public view with only safe columns
-CREATE OR REPLACE VIEW public.businesses_public AS
+-- Revoke direct anon table access before creating the view.
+REVOKE ALL ON public.businesses FROM anon;
+
+-- Create a restricted public view with only safe columns.
+-- Uses security_barrier to prevent information leakage through
+-- user-defined functions that might bypass the WHERE filter.
+-- Credential columns explicitly excluded:
+--   google_calendar_token, google_calendar_refresh_token,
+--   payment_channels, custom_fee_percentage, custom_fee_flat, metadata
+CREATE OR REPLACE VIEW public.businesses_public
+  WITH (security_barrier = true) AS
 SELECT
   id,
   name,
@@ -119,10 +140,9 @@ SELECT
 FROM public.businesses
 WHERE status = 'active';
 
+-- Revoke everything from the view first, then grant only SELECT.
+REVOKE ALL ON public.businesses_public FROM PUBLIC;
 GRANT SELECT ON public.businesses_public TO anon, authenticated;
-
--- Revoke direct anon table access (owner/admin/reseller policies remain)
-REVOKE ALL ON public.businesses FROM anon;
 
 -- ════════════════════════════════════════════════════════════
 -- 4. bot_keywords: Remove anonymous read access
@@ -131,41 +151,58 @@ REVOKE ALL ON public.businesses FROM anon;
 -- Drop the policy that allows anon to read system/category keywords
 DROP POLICY IF EXISTS "anyone_read_system_category" ON public.bot_keywords;
 
--- Create service_role-only read policy (bot engine runs as service_role)
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE tablename = 'bot_keywords'
-    AND policyname = 'bot_keywords_service_read'
-  ) THEN
-    CREATE POLICY "bot_keywords_service_read"
-      ON public.bot_keywords
-      FOR SELECT
-      TO service_role
-      USING (true);
-  END IF;
-END $$;
+-- Explicitly DROP then CREATE policies to guarantee exact definitions.
+-- service_role read: bot engine runs as service_role and needs full keyword access.
+DROP POLICY IF EXISTS "bot_keywords_service_read" ON public.bot_keywords;
+CREATE POLICY "bot_keywords_service_read"
+  ON public.bot_keywords
+  FOR SELECT
+  TO service_role
+  USING (true);
 
--- Ensure business owners can read their own keywords (dashboard keywords page)
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE tablename = 'bot_keywords'
-    AND policyname = 'bot_keywords_owner_read'
-  ) THEN
-    CREATE POLICY "bot_keywords_owner_read"
-      ON public.bot_keywords
-      FOR SELECT
-      TO authenticated
-      USING (
-        business_id IN (
-          SELECT id FROM public.businesses WHERE owner_id = auth.uid()
-        )
-      );
-  END IF;
-END $$;
+-- Owner read: business owners need to read their own keywords (dashboard keywords page).
+-- Scoped via subquery to businesses owned by the current authenticated user.
+-- Cross-business access is denied: owner_id = auth.uid() restricts to owned businesses only.
+DROP POLICY IF EXISTS "bot_keywords_owner_read" ON public.bot_keywords;
+CREATE POLICY "bot_keywords_owner_read"
+  ON public.bot_keywords
+  FOR SELECT
+  TO authenticated
+  USING (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE owner_id = auth.uid()
+    )
+  );
 
--- Revoke direct anon access
+-- Revoke direct anon access. Authenticated users are scoped by owner_read policy above.
+REVOKE ALL ON public.bot_keywords FROM PUBLIC;
 REVOKE ALL ON public.bot_keywords FROM anon;
+
+-- ════════════════════════════════════════════════════════════
+-- 5. Audit: verify no remaining unsafe anon/public policies
+-- ════════════════════════════════════════════════════════════
+
+-- Fail the migration if any policy on these 4 tables still grants
+-- unrestricted access to anon or public roles.
+-- This DO block checks pg_policies with both schemaname and tablename scoped.
+DO $$
+DECLARE
+  unsafe_count integer;
+  unsafe_details text;
+BEGIN
+  SELECT count(*), string_agg(policyname || ' on ' || tablename, ', ')
+  INTO unsafe_count, unsafe_details
+  FROM pg_policies
+  WHERE schemaname = 'public'
+    AND tablename IN ('whatsapp_channels', 'processed_webhook_events', 'businesses', 'bot_keywords')
+    AND policyname IN (
+      'shared_channels_public_read',
+      'processed_webhook_events_service_all',
+      'public_read_active_businesses',
+      'anyone_read_system_category'
+    );
+
+  IF unsafe_count > 0 THEN
+    RAISE EXCEPTION 'Migration 293 verification failed: unsafe policies still exist: %', unsafe_details;
+  END IF;
+END $$;

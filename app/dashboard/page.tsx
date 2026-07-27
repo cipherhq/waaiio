@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
 import {
   formatCurrency,
   getLocale,
@@ -99,8 +100,7 @@ export default function DashboardOverview() {
           : Promise.resolve({ data: null }),
         supabase.from('whatsapp_channels').select('phone_number')
           .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
-        supabase.from('whatsapp_channels_public').select('phone_number')
-          .limit(1).maybeSingle(),
+        queryChannelsPublic(supabase, 'phone_number', (q) => q.limit(1).maybeSingle()),
       ]);
 
       // Priority: assigned > dedicated > shared

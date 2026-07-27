@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { queryBusinessesPublic } from '@/lib/supabase/safe-view-query';
 import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { type CountryCode } from '@/lib/constants';
@@ -44,11 +45,11 @@ export default function RecurringSetupPage() {
     async function load() {
       const supabase = createClient();
 
-      const { data: biz } = await supabase
-        .from('businesses_public')
-        .select('id, name, slug, category, country_code, recurring_enabled')
-        .eq('slug', slug)
-        .single();
+      const { data: biz } = await queryBusinessesPublic(
+        supabase,
+        'id, name, slug, category, country_code, recurring_enabled',
+        (q) => q.eq('slug', slug).single(),
+      );
 
       if (!biz || !biz.recurring_enabled) {
         setLoading(false);

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
 import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -89,13 +90,12 @@ export default function KeywordCampaignsPage() {
       if (data?.phone_number) {
         setWaPhone(data.phone_number);
       } else {
-        // Try shared channel for country
-        const { data: shared } = await supabase
-          .from('whatsapp_channels_public')
-          .select('phone_number')
-          .eq('country_code', business.country_code || 'US')
-          .limit(1)
-          .maybeSingle();
+        // Try shared channel for country (with zero-downtime view fallback)
+        const { data: shared } = await queryChannelsPublic(
+          supabase,
+          'phone_number',
+          (q) => q.eq('country_code', business.country_code || 'US').limit(1).maybeSingle(),
+        );
         if (shared?.phone_number) setWaPhone(shared.phone_number);
       }
     }

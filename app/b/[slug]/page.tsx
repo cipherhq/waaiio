@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { createClient } from '@/lib/supabase/server';
+import { queryBusinessesPublic } from '@/lib/supabase/safe-view-query';
 import BookingForm from './BookingForm';
 
 export const revalidate = 30; // ISR: regenerate every 30 seconds
@@ -12,11 +13,11 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const { slug } = await params;
   const supabase = await createClient();
 
-  const { data: business } = await supabase
-    .from('businesses_public')
-    .select('name, description')
-    .eq('slug', slug)
-    .single();
+  const { data: business } = await queryBusinessesPublic(
+    supabase,
+    'name, description',
+    (q) => q.eq('slug', slug).single(),
+  );
 
   if (!business) {
     return { title: 'Business Not Found | Waaiio' };
@@ -41,13 +42,11 @@ export default async function PublicBookingPage({ params }: PageProps) {
   const { slug } = await params;
   const supabase = await createClient();
 
-  const { data: business } = await supabase
-    .from('businesses_public')
-    .select(
-      'id, name, slug, logo_url, description, address, operating_hours, country_code',
-    )
-    .eq('slug', slug)
-    .single();
+  const { data: business } = await queryBusinessesPublic(
+    supabase,
+    'id, name, slug, logo_url, description, address, operating_hours, country_code',
+    (q) => q.eq('slug', slug).single(),
+  );
 
   if (!business) {
     return (

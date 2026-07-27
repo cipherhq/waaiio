@@ -8,21 +8,32 @@ If something breaks, check this log to find what changed and when.
 ## 2026-07-27
 
 ### Security: Remove public access to sensitive platform tables (P0)
-- `supabase/migrations/293_fix_production_table_exposure.sql` — Drops 4 overly permissive RLS policies discovered during Issue #53 preflight. Creates restricted public views for `whatsapp_channels` and `businesses`. Supersedes the security intent of migration 223 (which was never applied to production). No credential values are deleted, nulled, or modified.
+- `supabase/migrations/293_fix_production_table_exposure.sql` — Drops 4 overly permissive RLS policies discovered during Issue #53 preflight. Creates restricted public views for `whatsapp_channels` and `businesses` with `security_barrier = true`. Supersedes the security intent of migration 223 (which was never applied to production). No credential values are deleted, nulled, or modified.
   - Drops `shared_channels_public_read` on `whatsapp_channels` (exposed Meta API tokens to anon)
   - Drops `processed_webhook_events_service_all` (granted full R/W to anon)
   - Drops `public_read_active_businesses` on `businesses` (exposed all columns including Google OAuth tokens to anon)
   - Drops `anyone_read_system_category` on `bot_keywords` (allowed anon to read routing logic)
-  - Creates `whatsapp_channels_public` view (id, country_code, phone_number, display_name, channel_type, is_active)
-  - Creates `businesses_public` view (25 safe columns, no tokens/credentials/internal config)
+  - Creates `whatsapp_channels_public` view (id, country_code, phone_number, display_name, channel_type, is_active) with security_barrier
+  - Creates `businesses_public` view (25 safe columns, no tokens/credentials/internal config) with security_barrier
+  - Policies use explicit DROP + CREATE (not IF NOT EXISTS) to guarantee exact definitions
   - Creates `bot_keywords_service_read` and `bot_keywords_owner_read` policies
-  - Revokes direct anon access on all 4 tables
-- `app/b/[slug]/page.tsx` — Public booking page queries `businesses_public` view instead of base table.
-- `app/recurring/[slug]/page.tsx` — Recurring setup page queries `businesses_public` view.
-- `app/get-started/OnboardingWizard.tsx` — Shared channel queries use `whatsapp_channels_public` view.
-- `app/dashboard/page.tsx`, `app/dashboard/qr-code/page.tsx`, `app/dashboard/keyword-campaigns/page.tsx` — Shared channel fallback queries use `whatsapp_channels_public` view.
-- `lib/__tests__/p0-table-exposure.test.ts` — 25 focused tests verifying policy drops, view safety, application corrections, and that no credentials are deleted.
-- **Affects:** Public business pages, onboarding, dashboard shared-channel fallbacks. All authenticated dashboard queries continue via owner RLS policies. Migration 223 is not modified.
+  - Revokes access from PUBLIC, anon, and authenticated on base tables
+  - Explicitly grants only required privileges to service_role on processed_webhook_events
+  - Views: REVOKE ALL FROM PUBLIC then GRANT SELECT only to anon, authenticated
+  - Audit block verifies no unsafe policies remain after migration
+- `lib/supabase/safe-view-query.ts` — Zero-downtime transition helpers. Query views first; fall back to base table (safe columns only) when PostgreSQL reports relation not found (42P01). Does NOT fall back on permission errors, network errors, or other failures.
+- `app/b/[slug]/page.tsx` — Public booking page uses `queryBusinessesPublic()` fallback helper.
+- `app/recurring/[slug]/page.tsx` — Recurring setup page uses `queryBusinessesPublic()` fallback helper.
+- `app/get-started/OnboardingWizard.tsx` — Shared channel queries use `queryChannelsPublic()` fallback helper.
+- `app/dashboard/page.tsx`, `app/dashboard/qr-code/page.tsx`, `app/dashboard/keyword-campaigns/page.tsx` — Shared channel fallback queries use `queryChannelsPublic()` fallback helper.
+- `lib/__tests__/p0-table-exposure.test.ts` — Tests verifying migration SQL structure, view safety, application fallback usage, zero-downtime fallback logic, active-business semantics, and PostgreSQL authorization (real DB when available).
+- **Active-business semantics:** The `businesses` table has only `status` (enum: pending/active/suspended). There is no `is_active` column. The canonical public-visibility predicate is `status = 'active'`.
+- **Recovery plan:** Forward-only. The rollback plan NEVER restores the dropped policies. If the views need adjustment, a new forward migration (294+) corrects them. Application code rollback is safe because the fallback helpers gracefully handle both pre- and post-migration states.
+- **Deployment sequence:** Application code can deploy before or after migration 293. The `safe-view-query.ts` helpers ensure zero downtime in either order.
+  - If app deploys first: views don't exist → fallback queries base tables with safe columns only
+  - If migration runs first: old app code already uses view names that now exist → works
+  - After both: views exist and base-table anon access is revoked → views used exclusively
+- **Affects:** Public business pages, onboarding, dashboard shared-channel fallbacks. All authenticated dashboard queries continue via owner RLS policies. Migration 223 is not modified. No production deployment was manually authorised or performed. A Vercel Preview may have been automatically created by the branch push. Production remains unchanged.
 
 ---
 
