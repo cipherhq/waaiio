@@ -45,6 +45,7 @@ export default function CampaignsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>('list');
   const [donations, setDonations] = useState<Donation[]>([]);
   const [donationsLoading, setDonationsLoading] = useState(false);
@@ -146,6 +147,7 @@ export default function CampaignsPage() {
       return;
     }
     setSaving(true);
+    setSaveError(null);
     const supabase = createClient();
 
     // Resolve currency from business country
@@ -167,10 +169,46 @@ export default function CampaignsPage() {
       allow_after_goal_met: form.allow_after_goal_met,
     };
 
+    let writeError: { code?: string; message?: string } | null = null;
     if (view === 'add') {
-      await supabase.from('campaigns').insert(payload);
+      const { error } = await supabase.from('campaigns').insert(payload);
+      writeError = error;
     } else {
-      await supabase.from('campaigns').update(payload).eq('id', form.id);
+      const { error } = await supabase.from('campaigns').update(payload).eq('id', form.id);
+      writeError = error;
+    }
+
+    if (writeError) {
+      // Toggle columns may not exist if Migration 199 hasn't been applied.
+      // Retry without them and warn the user that toggle settings were not persisted.
+      const isColumnMissing = writeError.code === '42703' || writeError.code === 'PGRST204';
+      if (isColumnMissing) {
+        const { allow_after_end_date: _a, allow_after_goal_met: _b, ...legacyPayload } = payload;
+        let retryError: { code?: string; message?: string } | null = null;
+        if (view === 'add') {
+          const { error } = await supabase.from('campaigns').insert(legacyPayload);
+          retryError = error;
+        } else {
+          const { error } = await supabase.from('campaigns').update(legacyPayload).eq('id', form.id);
+          retryError = error;
+        }
+        if (retryError) {
+          setSaving(false);
+          setSaveError(`Failed to save campaign: ${retryError.message}`);
+          return;
+        }
+        // Saved without toggles — warn but proceed
+        setSaving(false);
+        setSaveError(null);
+        setView('list');
+        loadCampaigns();
+        alert('Campaign saved, but "Allow after end date" and "Allow after goal met" settings could not be saved. A database update is required to enable these settings.');
+        return;
+      }
+      // Unrelated error — do not navigate away
+      setSaving(false);
+      setSaveError(`Failed to save campaign: ${writeError.message}`);
+      return;
     }
 
     setSaving(false);
@@ -412,6 +450,13 @@ export default function CampaignsPage() {
             />
           </div>
         </div>
+
+        {/* Save error banner */}
+        {saveError && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {saveError}
+          </div>
+        )}
 
         {/* Save / Cancel / Delete footer */}
         <div className="mt-6 flex gap-3 border-t border-gray-100 pt-4">

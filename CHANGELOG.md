@@ -7,6 +7,15 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-27
 
+### Campaigns: Enforce donation continuation settings (allow_after_end_date / allow_after_goal_met)
+- `lib/bot/flows/crowdfunding.flow.ts` — WhatsApp crowdfunding flow now queries expanded column set including `allow_after_end_date` and `allow_after_goal_met`. On column-missing error (42703/PGRST204 specifically mentioning toggle columns), falls back to legacy select and defaults both to true. Unrelated errors (auth, RLS, network) are NOT caught by fallback. Expired campaigns blocked when `allow_after_end_date=false`; funded campaigns blocked when `allow_after_goal_met=false`. Enforcement at prompt (list filter) and validate (re-check) levels.
+  - **Affects:** WhatsApp donation flows, campaign list display
+  - **Could break:** Nothing — backward-compatible before Migration 199; enforces toggles after
+- `app/dashboard/campaigns/page.tsx` — Campaign save now captures insert/update errors. On column-missing error, retries without toggle columns and warns user. On other errors, shows inline error banner and does not navigate away. Previously errors were silently discarded.
+  - **Affects:** Campaign create/edit UI
+  - **Could break:** Nothing — adds error visibility that was missing
+- `lib/bot/flows/__tests__/crowdfunding-donation-toggles.test.ts` — 22 focused tests covering error classifier, expanded query, legacy fallback, unrelated error passthrough, all toggle enforcement scenarios, dashboard error handling, and cross-business isolation.
+
 ### Operations: Record Migration 119 and 294 production verification
 - `docs/MIGRATION_REGISTRY.md` — Migration 294 status updated to production-verified (PR #56). Migration 119 status updated from partially-applied to aligned (completed by Migration 294). Obsolete Migration 294 reservation removed.
 - `docs/engineering-status.json` — Added OPS-001 milestone (IN_PROGRESS) for Issue #53 migration history alignment. Reconciled to main SHA `66c5ad29`. SEC-001 next_action updated to reflect Migration 119 resolved.
