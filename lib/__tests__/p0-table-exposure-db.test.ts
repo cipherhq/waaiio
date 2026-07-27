@@ -109,7 +109,7 @@ describe('P0: Real PostgreSQL authorization tests', () => {
 
         CREATE TABLE IF NOT EXISTS public.processed_webhook_events (
           id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-          event_id text NOT NULL UNIQUE, gateway text, event_type text,
+          event_id text NOT NULL UNIQUE, gateway text DEFAULT 'test', event_type text DEFAULT 'test',
           status text DEFAULT 'pending', attempts int DEFAULT 1,
           first_received_at timestamptz DEFAULT now(), last_attempted_at timestamptz DEFAULT now(),
           completed_at timestamptz, processed_at timestamptz DEFAULT now());
@@ -192,8 +192,8 @@ describe('P0: Real PostgreSQL authorization tests', () => {
           google_calendar_token, payment_channels, metadata, country_code)
         VALUES
           ('${BIZ_A}', '${OWNER_UUID}', 'P0 Active Biz', 'p0-active-biz', 'active', '1 Test St', 'Lagos', 'VI', '+0', 'secret-token-123', '{"stripe": true}', '{"internal": true}', 'NG'),
-          ('${BIZ_B}', '${OTHER_UUID}', 'P0 Pending Biz', 'p0-pending-biz', 'pending', '2 Test St', 'Lagos', 'VI', '+0', 'secret-token-456', null, null, 'NG'),
-          ('${BIZ_C}', '${OTHER_UUID}', 'P0 Suspended Biz', 'p0-suspended-biz', 'suspended', '3 Test St', 'Lagos', 'VI', '+0', 'secret-token-789', null, null, 'NG')
+          ('${BIZ_B}', '${OTHER_UUID}', 'P0 Pending Biz', 'p0-pending-biz', 'pending', '2 Test St', 'Lagos', 'VI', '+0', 'secret-token-456', '{}', '{}', 'NG'),
+          ('${BIZ_C}', '${OTHER_UUID}', 'P0 Suspended Biz', 'p0-suspended-biz', 'suspended', '3 Test St', 'Lagos', 'VI', '+0', 'secret-token-789', '{}', '{}', 'NG')
         ON CONFLICT (slug) DO NOTHING;
       `);
     } else {
@@ -216,16 +216,28 @@ describe('P0: Real PostgreSQL authorization tests', () => {
       ON CONFLICT DO NOTHING;
     `);
 
-    runSQL(`INSERT INTO public.processed_webhook_events (event_id, gateway, status) VALUES ('p0_evt_test', 'test', 'pending') ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO public.processed_webhook_events (event_id, gateway, event_type, status) VALUES ('p0_evt_test', 'test', 'test', 'pending') ON CONFLICT DO NOTHING;`);
 
-    runSQL(`
-      INSERT INTO public.bot_keywords (business_id, keyword, scope, response)
-      VALUES
-        ('${BIZ_A}', 'p0hello', 'system', 'Hi!'),
-        ('${BIZ_A}', 'p0menu', 'custom', 'Menu'),
-        ('${BIZ_B}', 'p0help', 'custom', 'Help')
-      ON CONFLICT DO NOTHING;
-    `);
+    // bot_keywords schema varies: local has (keyword, scope, response), CI has (keyword, scope, action_type, payload)
+    if (isFullSchema) {
+      runSQL(`
+        INSERT INTO public.bot_keywords (business_id, keyword, scope, action_type, payload)
+        VALUES
+          ('${BIZ_A}', 'p0hello', 'system', 'reply', 'Hi!'),
+          ('${BIZ_A}', 'p0menu', 'business', 'reply', 'Menu'),
+          ('${BIZ_B}', 'p0help', 'business', 'reply', 'Help')
+        ON CONFLICT DO NOTHING;
+      `);
+    } else {
+      runSQL(`
+        INSERT INTO public.bot_keywords (business_id, keyword, scope, response)
+        VALUES
+          ('${BIZ_A}', 'p0hello', 'system', 'Hi!'),
+          ('${BIZ_A}', 'p0menu', 'custom', 'Menu'),
+          ('${BIZ_B}', 'p0help', 'custom', 'Help')
+        ON CONFLICT DO NOTHING;
+      `);
+    }
   }, 30000);
 
   afterAll(() => {
@@ -307,7 +319,7 @@ describe('P0: Real PostgreSQL authorization tests', () => {
     const selectR = runSQL("SELECT event_id FROM public.processed_webhook_events WHERE event_id = 'p0_evt_test';", 'service_role');
     expect(selectR.exitCode).toBe(0);
 
-    const insertR = runSQL("INSERT INTO public.processed_webhook_events (event_id, gateway, status) VALUES ('p0_evt_sr', 'test', 'pending');", 'service_role');
+    const insertR = runSQL("INSERT INTO public.processed_webhook_events (event_id, gateway, event_type, status) VALUES ('p0_evt_sr', 'test', 'test', 'pending');", 'service_role');
     expect(insertR.exitCode).toBe(0);
 
     const updateR = runSQL("UPDATE public.processed_webhook_events SET status = 'completed' WHERE event_id = 'p0_evt_sr';", 'service_role');
