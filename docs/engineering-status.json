@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
-  "last_reconciled_main_sha": "7556dec59e1983b1ceea78c4b59842841f7f24fa",
-  "last_reconciled_at": "2026-07-26T13:17:29Z",
+  "last_reconciled_main_sha": "90b0f7668b06c5d2f41b753eb40dbe30379e58dd",
+  "last_reconciled_at": "2026-07-27T14:42:12Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -199,6 +199,50 @@
       "blockers": [],
       "next_action": "Independent review of Migration 292 production application evidence before FIN-002 production verification and Issue #48 closure.",
       "notes": "Atomic payout claim via Postgres RPC, provider idempotency keys (Paystack reference + Stripe Idempotency-Key), token-guarded finalization, review_required for uncertain outcomes. Shared body-validated classification (classifyPaystackError/classifyStripeError). Cron auto-approval requires eligible Paystack account + NG/GH country + PAYSTACK_SECRET_KEY. Admin approve validates gateway/method alignment before claim. Paystack rejection requires typeof string message. Contention test compares returned winner token to persisted claim_token. All transition RPCs check data+error. 92 route tests, 24 PostgreSQL assertions, 9 contention assertions. Launch scope: paystack_transfer and stripe_transfer only. Square and Flutterwave deferred to Issue #49. Migration 292. Local PostgreSQL unavailable."
+    },
+    {
+      "id": "SEC-001",
+      "title": "Remove public access to sensitive platform tables",
+      "stage": "PRODUCTION_VERIFIED",
+      "owner": "claude",
+      "issue_numbers": [53],
+      "pr_numbers": [54],
+      "implementation_sha": "af25735348c5dc20ad8dd1f8502476d2341dade6",
+      "reviewed_sha": "af25735348c5dc20ad8dd1f8502476d2341dade6",
+      "merge_sha": "90b0f7668b06c5d2f41b753eb40dbe30379e58dd",
+      "deployed_sha": "90b0f7668b06c5d2f41b753eb40dbe30379e58dd",
+      "environment": "production",
+      "production_verified_at": "2026-07-27T14:42:12Z",
+      "verification_evidence": [
+        "Migration 293 file SHA-256: c0d15d4fd01b67a3b30158f499d75f0cec31b73b40b66abe81f830b19f1f8cc0",
+        "Application deployment verified: Vercel Production deployment success for 90b0f766",
+        "Preflight: 4 unsafe policies confirmed present, 2 views confirmed absent, RLS enabled on all 4 tables",
+        "Migration applied via Supabase Management API SQL execution",
+        "4 unsafe policies removed: shared_channels_public_read, processed_webhook_events_service_all, public_read_active_businesses, anyone_read_system_category",
+        "2 views created: businesses_public (25 safe columns, security_barrier), whatsapp_channels_public (6 safe columns, security_barrier)",
+        "anon has_table_privilege = false for SELECT on all 4 sensitive base tables",
+        "anon views restricted to SELECT-only (INSERT/UPDATE/DELETE revoked)",
+        "authenticated cannot access processed_webhook_events",
+        "service_role retains SELECT, INSERT, UPDATE, DELETE on processed_webhook_events",
+        "bot_keywords_owner_read scoped via auth.uid() ownership chain",
+        "businesses_public view uses WHERE status = 'active' (excludes pending and suspended)",
+        "Credential aggregate counts unchanged: businesses=34, google_cal_token=0, google_cal_refresh=0, wa_channels=5, meta_access_token=1, webhook_events=505, bot_keywords=62",
+        "No credential value was read, printed, modified, or deleted",
+        "www.waaiio.com HTTP 200 post-migration",
+        "Public business pages: clean Not Found UI (no 500)",
+        "Onboarding /get-started: HTTP 200",
+        "Recurring booking pages: HTTP 200",
+        "businesses_public returns 34 active businesses",
+        "whatsapp_channels_public returns 4 shared active channels",
+        "Migration 293 recorded exactly once in schema_migrations",
+        "No other migration applied or repaired",
+        "20 real PostgreSQL authorization tests passed in CI (0 failed, 0 skipped)",
+        "74 static migration tests passed",
+        "72 column allowlist and fallback tests passed"
+      ],
+      "blockers": [],
+      "next_action": "Issue #53 remains open for migration history repair of 119, 199, 200, 244",
+      "notes": "P0 security remediation. Migration 293 supersedes the intent of migration 223 (which was never applied to production). Application code deployed with zero-downtime fallback helpers (safe-view-query.ts) before migration was applied. Column allowlist enforcement prevents unsafe column selection. Independent security review addressed across 7 focused corrections. Issue #53 remains open for remaining migration history gaps (119 partially applied, 199/200/244 not applied, 101-246 must not be bulk-repaired)."
     }
   ]
 }
