@@ -45,7 +45,7 @@ export default function RecurringSetupPage() {
       const supabase = createClient();
 
       const { data: biz } = await supabase
-        .from('businesses')
+        .from('businesses_public')
         .select('id, name, slug, category, country_code, recurring_enabled')
         .eq('slug', slug)
         .single();

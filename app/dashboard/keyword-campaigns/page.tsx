@@ -91,11 +91,9 @@ export default function KeywordCampaignsPage() {
       } else {
         // Try shared channel for country
         const { data: shared } = await supabase
-          .from('whatsapp_channels')
+          .from('whatsapp_channels_public')
           .select('phone_number')
           .eq('country_code', business.country_code || 'US')
-          .eq('channel_type', 'shared')
-          .eq('is_active', true)
           .limit(1)
           .maybeSingle();
         if (shared?.phone_number) setWaPhone(shared.phone_number);

@@ -251,21 +251,17 @@ function OnboardingWizard() {
         const supabase = createClient();
         // Try country-specific shared channel first
         let { data } = await supabase
-          .from('whatsapp_channels')
+          .from('whatsapp_channels_public')
           .select('phone_number')
           .eq('country_code', selectedCountry)
-          .eq('channel_type', 'shared')
-          .eq('is_active', true)
           .limit(1)
           .maybeSingle();
 
         if (!data) {
           // Fallback: any active shared channel
           const result = await supabase
-            .from('whatsapp_channels')
+            .from('whatsapp_channels_public')
             .select('phone_number')
-            .eq('channel_type', 'shared')
-            .eq('is_active', true)
             .limit(1)
             .maybeSingle();
           data = result.data;

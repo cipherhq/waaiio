@@ -99,8 +99,8 @@ export default function DashboardOverview() {
           : Promise.resolve({ data: null }),
         supabase.from('whatsapp_channels').select('phone_number')
           .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
-        supabase.from('whatsapp_channels').select('phone_number')
-          .eq('channel_type', 'shared').eq('is_active', true).limit(1).maybeSingle(),
+        supabase.from('whatsapp_channels_public').select('phone_number')
+          .limit(1).maybeSingle(),
       ]);
 
       // Priority: assigned > dedicated > shared

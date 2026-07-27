@@ -5,6 +5,27 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-27
+
+### Security: Remove public access to sensitive platform tables (P0)
+- `supabase/migrations/293_fix_production_table_exposure.sql` — Drops 4 overly permissive RLS policies discovered during Issue #53 preflight. Creates restricted public views for `whatsapp_channels` and `businesses`. Supersedes the security intent of migration 223 (which was never applied to production). No credential values are deleted, nulled, or modified.
+  - Drops `shared_channels_public_read` on `whatsapp_channels` (exposed Meta API tokens to anon)
+  - Drops `processed_webhook_events_service_all` (granted full R/W to anon)
+  - Drops `public_read_active_businesses` on `businesses` (exposed all columns including Google OAuth tokens to anon)
+  - Drops `anyone_read_system_category` on `bot_keywords` (allowed anon to read routing logic)
+  - Creates `whatsapp_channels_public` view (id, country_code, phone_number, display_name, channel_type, is_active)
+  - Creates `businesses_public` view (25 safe columns, no tokens/credentials/internal config)
+  - Creates `bot_keywords_service_read` and `bot_keywords_owner_read` policies
+  - Revokes direct anon access on all 4 tables
+- `app/b/[slug]/page.tsx` — Public booking page queries `businesses_public` view instead of base table.
+- `app/recurring/[slug]/page.tsx` — Recurring setup page queries `businesses_public` view.
+- `app/get-started/OnboardingWizard.tsx` — Shared channel queries use `whatsapp_channels_public` view.
+- `app/dashboard/page.tsx`, `app/dashboard/qr-code/page.tsx`, `app/dashboard/keyword-campaigns/page.tsx` — Shared channel fallback queries use `whatsapp_channels_public` view.
+- `lib/__tests__/p0-table-exposure.test.ts` — 25 focused tests verifying policy drops, view safety, application corrections, and that no credentials are deleted.
+- **Affects:** Public business pages, onboarding, dashboard shared-channel fallbacks. All authenticated dashboard queries continue via owner RLS policies. Migration 223 is not modified.
+
+---
+
 ## 2026-07-26
 
 ### FIN-002: Require Paystack account_name before claim, move gateway alignment earlier
