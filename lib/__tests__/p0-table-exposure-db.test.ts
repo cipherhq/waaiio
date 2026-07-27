@@ -119,6 +119,8 @@ describe('P0: Real PostgreSQL authorization tests', () => {
           id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
           business_id uuid REFERENCES public.businesses(id),
           keyword text, scope text DEFAULT 'custom', response text);
+        -- Match production: system keywords have NULL business_id
+        ALTER TABLE public.bot_keywords ALTER COLUMN business_id DROP NOT NULL;
         ALTER TABLE public.bot_keywords ENABLE ROW LEVEL SECURITY;
       `);
 
@@ -216,14 +218,15 @@ describe('P0: Real PostgreSQL authorization tests', () => {
       ON CONFLICT DO NOTHING;
     `);
 
-    runSQL(`INSERT INTO public.processed_webhook_events (event_id, gateway, event_type, status) VALUES ('p0_evt_test', 'test', 'test', 'pending') ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO public.processed_webhook_events (event_id, gateway, event_type, status) VALUES ('p0_evt_test', 'test', 'test', 'received') ON CONFLICT DO NOTHING;`);
 
     // bot_keywords schema varies: local has (keyword, scope, response), CI has (keyword, scope, action_type, payload)
     if (isFullSchema) {
+      // system scope requires business_id IS NULL (system_no_business constraint)
       runSQL(`
         INSERT INTO public.bot_keywords (business_id, keyword, scope, action_type, payload)
         VALUES
-          ('${BIZ_A}', 'p0hello', 'system', 'reply', 'Hi!'),
+          (NULL, 'p0hello', 'system', 'reply', 'Hi!'),
           ('${BIZ_A}', 'p0menu', 'business', 'reply', 'Menu'),
           ('${BIZ_B}', 'p0help', 'business', 'reply', 'Help')
         ON CONFLICT DO NOTHING;
@@ -232,7 +235,7 @@ describe('P0: Real PostgreSQL authorization tests', () => {
       runSQL(`
         INSERT INTO public.bot_keywords (business_id, keyword, scope, response)
         VALUES
-          ('${BIZ_A}', 'p0hello', 'system', 'Hi!'),
+          (NULL, 'p0hello', 'system', 'Hi!'),
           ('${BIZ_A}', 'p0menu', 'custom', 'Menu'),
           ('${BIZ_B}', 'p0help', 'custom', 'Help')
         ON CONFLICT DO NOTHING;
@@ -319,9 +322,10 @@ describe('P0: Real PostgreSQL authorization tests', () => {
     const selectR = runSQL("SELECT event_id FROM public.processed_webhook_events WHERE event_id = 'p0_evt_test';", 'service_role');
     expect(selectR.exitCode).toBe(0);
 
-    const insertR = runSQL("INSERT INTO public.processed_webhook_events (event_id, gateway, event_type, status) VALUES ('p0_evt_sr', 'test', 'test', 'pending');", 'service_role');
+    const insertR = runSQL("INSERT INTO public.processed_webhook_events (event_id, gateway, event_type, status) VALUES ('p0_evt_sr', 'test', 'test', 'received');", 'service_role');
     expect(insertR.exitCode).toBe(0);
 
+    // Use valid status per CHECK constraint: received, processing, completed, failed
     const updateR = runSQL("UPDATE public.processed_webhook_events SET status = 'completed' WHERE event_id = 'p0_evt_sr';", 'service_role');
     expect(updateR.exitCode).toBe(0);
 
@@ -364,7 +368,9 @@ describe('P0: Real PostgreSQL authorization tests', () => {
     expect(result.exitCode).not.toBe(0);
   });
 
-  it('13. authenticated owner can read own bot_keywords', () => {
+  it('13. authenticated owner can read own business bot_keywords', () => {
+    // Owner sees keywords for their businesses (p0menu on BIZ_A)
+    // Owner does NOT see system keywords (business_id NULL) or other business keywords
     const result = runSQL(
       `BEGIN;
        SET LOCAL ROLE authenticated;
@@ -373,7 +379,6 @@ describe('P0: Real PostgreSQL authorization tests', () => {
        COMMIT;`,
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('p0hello');
     expect(result.stdout).toContain('p0menu');
   });
 
@@ -385,14 +390,18 @@ describe('P0: Real PostgreSQL authorization tests', () => {
        SELECT keyword FROM public.bot_keywords WHERE keyword LIKE 'p0%';
        COMMIT;`,
     );
+    // p0help is owned by OTHER_UUID, not visible to OWNER_UUID
     expect(result.stdout).not.toContain('p0help');
+    // p0hello is system scope (NULL business_id), not matched by owner_read policy
+    expect(result.stdout).not.toContain('p0hello');
   });
 
-  it('15. service_role can read all bot_keywords', () => {
+  it('15. service_role can read all bot_keywords including system and cross-business', () => {
     const result = runSQL("SELECT keyword FROM public.bot_keywords WHERE keyword LIKE 'p0%';", 'service_role');
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('p0hello');
-    expect(result.stdout).toContain('p0help');
+    expect(result.stdout).toContain('p0hello'); // system keyword
+    expect(result.stdout).toContain('p0menu');  // business A keyword
+    expect(result.stdout).toContain('p0help');  // business B keyword
   });
 
   // ─── Credential integrity ───
