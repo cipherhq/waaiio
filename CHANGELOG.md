@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-27
 
+### Operations: Record Migration 199 production verification
+- `docs/MIGRATION_REGISTRY.md` — Migration 199 status updated to applied and production-verified (PR #58). Both columns (allow_after_end_date, allow_after_goal_met) confirmed as BOOLEAN NOT NULL DEFAULT true. Existing campaign count remained 5.
+- `docs/engineering-status.json` — OPS-001 updated: Migration 199 verification evidence added, PR #58 merge SHA recorded, blockers reduced to migrations 200 and 244, next action set to Migration 200 read-only preflight. Reconciled to main SHA `41c97522`.
+- `docs/ENGINEERING_STATUS.md` — OPS-001 row updated with PR #58 and merge SHA `41c97522`. Reconciled SHA updated.
+- `CHANGELOG.md` — This entry.
+  - **Affects:** Engineering ledgers and Issue #53 tracking only
+  - **Could break:** Nothing — documentation only, no application code or SQL changes
+
 ### Campaigns: Enforce donation continuation settings (allow_after_end_date / allow_after_goal_met)
 - `lib/utils/campaign-column-fallback.ts` — Shared narrow classifier for Migration 199 toggle columns. Matches 42703/PGRST204 only when message mentions `allow_after_end_date` or `allow_after_goal_met`. Used by both bot flow and dashboard.
 - `lib/bot/flows/crowdfunding.flow.ts` — WhatsApp crowdfunding flow now queries expanded column set. On toggle-column-missing error, falls back to legacy select. Unrelated errors (auth, RLS, network) return a generic temporary-error message (not "No active campaigns") and are logged server-side via logger/safeLogErrorContext. Legacy retry failures also return the generic error. No raw DB details in user-facing output.
