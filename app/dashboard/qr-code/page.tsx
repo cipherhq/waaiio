@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 
@@ -61,8 +62,7 @@ export default function QRCodePage() {
           : Promise.resolve({ data: null }),
         supabase.from('whatsapp_channels').select('phone_number')
           .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
-        supabase.from('whatsapp_channels').select('phone_number')
-          .eq('channel_type', 'shared').eq('is_active', true).limit(1).maybeSingle(),
+        queryChannelsPublic(supabase, 'phone_number', (q) => q.limit(1).maybeSingle()),
       ]);
 
       // Priority: assigned > dedicated > shared > business.phone fallback

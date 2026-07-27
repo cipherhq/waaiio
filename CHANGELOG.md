@@ -5,6 +5,48 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-27
+
+### Security: Remove public access to sensitive platform tables (P0)
+- `supabase/migrations/293_fix_production_table_exposure.sql` — Drops 4 overly permissive RLS policies discovered during Issue #53 preflight. Creates restricted public views for `whatsapp_channels` and `businesses` with `security_barrier = true`. Supersedes the security intent of migration 223 (which was never applied to production). No credential values are deleted, nulled, or modified.
+  - Drops `shared_channels_public_read` on `whatsapp_channels` (exposed Meta API tokens to anon)
+  - Drops `processed_webhook_events_service_all` (granted full R/W to anon)
+  - Drops `public_read_active_businesses` on `businesses` (exposed all columns including Google OAuth tokens to anon)
+  - Drops `anyone_read_system_category` on `bot_keywords` (allowed anon to read routing logic)
+  - Creates `whatsapp_channels_public` view (id, country_code, phone_number, display_name, channel_type, is_active) with security_barrier
+  - Creates `businesses_public` view (25 safe columns, no tokens/credentials/internal config) with security_barrier
+  - Policies use explicit DROP + CREATE (not IF NOT EXISTS) to guarantee exact definitions
+  - Creates `bot_keywords_service_read` and `bot_keywords_owner_read` policies
+  - Revokes access from PUBLIC, anon, and authenticated on base tables
+  - Grants SELECT, INSERT, UPDATE, DELETE to service_role on processed_webhook_events (all four required by webhook handlers and cleanup cron)
+  - REVOKE ALL FROM PUBLIC on all four sensitive base tables
+  - Views: REVOKE ALL FROM PUBLIC then GRANT SELECT only to anon, authenticated
+  - Strengthened audit block: checks for ANY policy granting anon access (not just named policies), verifies effective privileges with has_table_privilege(), verifies service_role has exactly required privileges
+- `lib/supabase/safe-view-query.ts` — Zero-downtime transition helpers with column allowlist enforcement. Validates requested columns against BUSINESSES_PUBLIC_COLUMNS / CHANNELS_PUBLIC_COLUMNS before issuing any query. Rejects wildcards, aliases, nested selections, functions, relationship expressions, and unknown columns. Falls back to base table (safe columns only) exclusively on PostgreSQL 42P01 (relation not found). Does NOT fall back on permission errors, network errors, or other failures.
+- `app/b/[slug]/page.tsx` — Public booking page uses `queryBusinessesPublic()` fallback helper.
+- `app/recurring/[slug]/page.tsx` — Recurring setup page uses `queryBusinessesPublic()` fallback helper.
+- `app/get-started/OnboardingWizard.tsx` — Shared channel queries use `queryChannelsPublic()` fallback helper.
+- `app/dashboard/page.tsx`, `app/dashboard/qr-code/page.tsx`, `app/dashboard/keyword-campaigns/page.tsx` — Shared channel fallback queries use `queryChannelsPublic()` fallback helper.
+- `lib/__tests__/p0-table-exposure.test.ts` — Static tests: migration SQL structure, view safety, application fallback usage, column allowlist enforcement, active-business semantics.
+- `lib/__tests__/p0-table-exposure-db.test.ts` — Real PostgreSQL authorization tests: 20 role-based assertions applied against an isolated database. Runs in CI via Migration validation job. Fails on any skip or failure.
+- `.github/workflows/ci.yml` — Added P0 authorization test step to Migration validation job with TEST_DATABASE_URL pointing to CI-local PostgreSQL. Enforces zero skips, zero failures.
+- **Active-business semantics:** The `businesses` table has only `status` (enum: pending/active/suspended). There is no `is_active` column. The canonical public-visibility predicate is `status = 'active'`.
+- **Recovery plan:** Forward-only. The rollback plan NEVER restores the dropped policies. If the views need adjustment, a new forward migration (294+) corrects them. Application code rollback is safe because the fallback helpers gracefully handle both pre- and post-migration states.
+- **Deployment sequence (application-first only):**
+  1. Merge and deploy the new application code.
+  2. Confirm the production deployment is healthy.
+  3. Confirm public business, recurring, onboarding and shared-channel flows work using the 42P01 fallback.
+  4. Only then apply migration 293.
+  5. Verify the views exist and direct base-table access is denied.
+  6. Verify public pages now use the views.
+  7. Mark migration 293 as applied in migration history.
+  - Migration 293 must NOT be applied before the new application version is live.
+  - If the application deployment fails, do NOT apply migration 293.
+  - The fallback is transitional and supports application-first deployment only.
+- **Affects:** Public business pages, onboarding, dashboard shared-channel fallbacks. All authenticated dashboard queries continue via owner RLS policies. Migration 223 is not modified. No production deployment was manually authorised or performed. A Vercel Preview may have been automatically created by the branch push. Production remains unchanged.
+
+---
+
 ## 2026-07-26
 
 ### FIN-002: Require Paystack account_name before claim, move gateway alignment earlier

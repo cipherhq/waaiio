@@ -14,16 +14,20 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 ## Current State
 
-| Version | Name | Status | PR |
-|---------|------|--------|-----|
-| 292 | `atomic_payout_claim` | Applied to production | #50 |
-| 248 | `otp_delivery_tracking` | Applied to production | #38 |
-| 247 | `admin_role_escalation_fix` | Applied to production | #36 |
-| 246 | `phone_otp_challenges` | Applied to production | #35 |
-| 245 | `fix_book_slot_atomic_overloads` | Applied to production | — |
-| 244 | `payment_source_classification` | Applied to production | — |
+| Version | Name | Status | PR | Notes |
+|---------|------|--------|----|-------|
+| 293 | `fix_production_table_exposure` | Pending | #54 | Security remediation — do not apply until PR reviewed and approved |
+| 292 | `atomic_payout_claim` | Applied to production | #50 | |
+| 248 | `otp_delivery_tracking` | Applied to production | #38 | |
+| 247 | `admin_role_escalation_fix` | Applied to production | #36 | |
+| 246 | `phone_otp_challenges` | Applied to production | #35 | |
+| 245 | `fix_book_slot_atomic_overloads` | Applied to production | — | |
+| 244 | `payment_source_classification` | **Not applied to production** | — | Issue #53 preflight confirmed this migration was never applied |
+| 200 | *(see stranded range)* | **Not applied to production** | — | Part of stranded PR #21 range |
+| 199 | *(see stranded range)* | **Not applied to production** | — | Part of stranded PR #21 range |
+| 119 | *(partial)* | **Partially applied** | — | Issue #53 preflight found partial application; do not re-run or repair |
 
-**Next available version:** 293
+**Next available version:** 294
 
 ## Reservation Process
 
@@ -81,4 +85,14 @@ If any PR #21 migration work is extracted into a new PR, it must be renumbered s
 - Migrations are forward-only in production
 - If a migration causes issues, create a new forward-fix migration
 - Never `DROP` or `ALTER` a production migration file retroactively
-- Document rollback procedures in the PR description before applying
+- Document forward-recovery procedures in the PR description before applying
+- **Never restore a rollback that recreates a policy confirmed to expose credentials or sensitive data**
+- For security migrations: rollback plan must retain restrictive DB changes; only application code may be rolled back
+
+## Bulk Repair Prohibition
+
+Per Issue #53 preflight findings:
+- Migrations 101–246 must **NOT** be bulk-repaired via `supabase migration repair`
+- Migration 119 is partially applied and must not be re-run
+- Migrations 199, 200, and 244 are not applied to production
+- Any repair must be individually assessed and approved

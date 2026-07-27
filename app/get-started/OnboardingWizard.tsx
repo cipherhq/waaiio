@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
+import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
 import { getPostHogClient } from '@/lib/posthog/client';
 import {
   CATEGORY_FLOW_MAP,
@@ -250,24 +251,19 @@ function OnboardingWizard() {
       try {
         const supabase = createClient();
         // Try country-specific shared channel first
-        let { data } = await supabase
-          .from('whatsapp_channels')
-          .select('phone_number')
-          .eq('country_code', selectedCountry)
-          .eq('channel_type', 'shared')
-          .eq('is_active', true)
-          .limit(1)
-          .maybeSingle();
+        let { data } = await queryChannelsPublic(
+          supabase,
+          'phone_number',
+          (q) => q.eq('country_code', selectedCountry).limit(1).maybeSingle(),
+        );
 
         if (!data) {
           // Fallback: any active shared channel
-          const result = await supabase
-            .from('whatsapp_channels')
-            .select('phone_number')
-            .eq('channel_type', 'shared')
-            .eq('is_active', true)
-            .limit(1)
-            .maybeSingle();
+          const result = await queryChannelsPublic(
+            supabase,
+            'phone_number',
+            (q) => q.limit(1).maybeSingle(),
+          );
           data = result.data;
         }
 
