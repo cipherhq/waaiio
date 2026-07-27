@@ -180,8 +180,9 @@ export default function CampaignsPage() {
 
     if (writeError) {
       // Toggle columns may not exist if Migration 199 hasn't been applied.
-      // Retry without them and warn the user that toggle settings were not persisted.
-      const isColumnMissing = writeError.code === '42703' || writeError.code === 'PGRST204';
+      // Narrow check: only retry when the error specifically mentions the toggle columns.
+      const { isToggleColumnMissing } = await import('@/lib/utils/campaign-column-fallback');
+      const isColumnMissing = isToggleColumnMissing(writeError);
       if (isColumnMissing) {
         const { allow_after_end_date: _a, allow_after_goal_met: _b, ...legacyPayload } = payload;
         let retryError: { code?: string; message?: string } | null = null;

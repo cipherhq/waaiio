@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { crowdfundingFlow } from '../crowdfunding.flow';
-import { isToggleColumnMissing } from '../crowdfunding.flow';
+import { isToggleColumnMissing } from '@/lib/utils/campaign-column-fallback';
 import { createCaptureSender, FIXTURES } from '../../__tests__/bot-harness';
 import type { FlowContext } from '../types';
 
@@ -90,6 +90,8 @@ function buildCtx(overrides: {
 const YESTERDAY = new Date(Date.now() - 86400000).toISOString().split('T')[0];
 const TOMORROW = new Date(Date.now() + 86400000).toISOString().split('T')[0];
 
+const GENERIC_ERROR_TEXT = 'Something went wrong loading campaigns';
+
 function makeCampaign(overrides: Record<string, unknown> = {}) {
   return {
     id: 'camp-001',
@@ -109,51 +111,80 @@ function makeCampaign(overrides: Record<string, unknown> = {}) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// isToggleColumnMissing — error classifier
+// Shared classifier — isToggleColumnMissing
 // ═══════════════════════════════════════════════════════════
 
-describe('isToggleColumnMissing', () => {
-  it('returns true for PostgreSQL 42703 mentioning toggle column', () => {
+describe('isToggleColumnMissing (shared classifier)', () => {
+  it('returns true for 42703 mentioning allow_after_end_date', () => {
     expect(isToggleColumnMissing({
       code: '42703',
       message: 'column campaigns.allow_after_end_date does not exist',
     })).toBe(true);
   });
 
-  it('returns true for PGRST204 mentioning toggle column', () => {
+  it('returns true for PGRST204 mentioning allow_after_goal_met', () => {
     expect(isToggleColumnMissing({
       code: 'PGRST204',
       message: 'Could not find column allow_after_goal_met',
     })).toBe(true);
   });
 
-  it('returns false for 42703 about a different column', () => {
+  it('rejects 42703 about an unrelated column', () => {
     expect(isToggleColumnMissing({
       code: '42703',
       message: 'column campaigns.some_other_col does not exist',
     })).toBe(false);
   });
 
-  it('returns false for authentication error', () => {
+  it('rejects PGRST204 about an unrelated column', () => {
+    expect(isToggleColumnMissing({
+      code: 'PGRST204',
+      message: 'Could not find column currency',
+    })).toBe(false);
+  });
+
+  it('rejects authentication error (42501)', () => {
     expect(isToggleColumnMissing({
       code: '42501',
       message: 'permission denied for table campaigns',
     })).toBe(false);
   });
 
-  it('returns false for RLS error', () => {
+  it('rejects RLS / JWT error (PGRST301)', () => {
     expect(isToggleColumnMissing({
       code: 'PGRST301',
       message: 'JWT expired',
     })).toBe(false);
   });
 
-  it('returns false for null error', () => {
+  it('rejects null error', () => {
     expect(isToggleColumnMissing(null)).toBe(false);
   });
 
-  it('returns false for error with no code', () => {
-    expect(isToggleColumnMissing({ message: 'network error' })).toBe(false);
+  it('rejects error with no code (network error)', () => {
+    expect(isToggleColumnMissing({ message: 'fetch failed' })).toBe(false);
+  });
+
+  it('accepts only the two Migration 199 columns', () => {
+    // allow_after_end_date
+    expect(isToggleColumnMissing({
+      code: '42703',
+      message: 'column allow_after_end_date does not exist',
+    })).toBe(true);
+    // allow_after_goal_met
+    expect(isToggleColumnMissing({
+      code: '42703',
+      message: 'column allow_after_goal_met does not exist',
+    })).toBe(true);
+    // anything else with 42703
+    expect(isToggleColumnMissing({
+      code: '42703',
+      message: 'column status does not exist',
+    })).toBe(false);
+    expect(isToggleColumnMissing({
+      code: '42703',
+      message: 'column goal_amount does not exist',
+    })).toBe(false);
   });
 });
 
@@ -182,15 +213,12 @@ describe('Crowdfunding donation toggles — select_campaign', () => {
 
   it('pre-Migration-199 fallback defaults both toggles to true', async () => {
     const legacyCampaign = makeCampaign({ end_date: YESTERDAY });
-    // Remove toggle columns to simulate pre-migration data
     delete (legacyCampaign as any).allow_after_end_date;
     delete (legacyCampaign as any).allow_after_goal_met;
 
     const db = createCampaignMock(
-      // Legacy fallback resolves successfully
       { data: [legacyCampaign], error: null },
       {
-        // First call (expanded) fails with column-missing
         firstCallResolvesWith: {
           data: null,
           error: { code: '42703', message: 'column campaigns.allow_after_end_date does not exist' },
@@ -208,7 +236,7 @@ describe('Crowdfunding donation toggles — select_campaign', () => {
     expect(messages[0].items[0].title).toBe('Building Fund');
   });
 
-  it('unrelated query error is NOT caught by fallback', async () => {
+  it('unrelated error causes no legacy retry and returns generic error', async () => {
     const db = createCampaignMock({
       data: null,
       error: { code: '42501', message: 'permission denied for table campaigns' },
@@ -217,12 +245,58 @@ describe('Crowdfunding donation toggles — select_campaign', () => {
 
     const messages = await step.prompt(ctx);
 
-    // Error is not a column-missing error, so no retry.
-    // allCampaigns is null → filter produces empty → "No active campaigns"
-    expect(messages).toHaveLength(1);
-    expect(messages[0].body || messages[0].text).toContain('No active campaigns');
-    // from() should only be called once (no retry)
+    // No retry — from() called only once
     expect(db.from).toHaveBeenCalledTimes(1);
+    // Returns generic temporary-error message, NOT "No active campaigns"
+    expect(messages).toHaveLength(1);
+    const text = messages[0].text || messages[0].body || '';
+    expect(text).toContain(GENERIC_ERROR_TEXT);
+    expect(text).not.toContain('No active campaigns');
+    // No raw DB error details leaked
+    expect(text).not.toContain('permission denied');
+    expect(text).not.toContain('42501');
+  });
+
+  it('legacy retry failure returns generic error', async () => {
+    const db = createCampaignMock(
+      // Legacy retry also fails
+      { data: null, error: { code: '42P01', message: 'relation "campaigns" does not exist' } },
+      {
+        // First call fails with toggle-column-missing
+        firstCallResolvesWith: {
+          data: null,
+          error: { code: '42703', message: 'column campaigns.allow_after_end_date does not exist' },
+        },
+      },
+    );
+    const ctx = buildCtx({ db });
+
+    const messages = await step.prompt(ctx);
+
+    // Retried (2 from() calls) but both failed
+    expect(db.from).toHaveBeenCalledTimes(2);
+    // Returns generic error, not "No active campaigns"
+    const text = messages[0].text || messages[0].body || '';
+    expect(text).toContain(GENERIC_ERROR_TEXT);
+    expect(text).not.toContain('No active campaigns');
+    // No raw DB details leaked
+    expect(text).not.toContain('42P01');
+    expect(text).not.toContain('relation');
+  });
+
+  it('no secrets or raw DB errors in user-facing output for network failure', async () => {
+    const db = createCampaignMock({
+      data: null,
+      error: { message: 'FetchError: request to https://cxcmiqotkowhxinjbytg.supabase.co failed, reason: ECONNREFUSED' },
+    });
+    const ctx = buildCtx({ db });
+
+    const messages = await step.prompt(ctx);
+    const text = messages[0].text || messages[0].body || '';
+    expect(text).toContain(GENERIC_ERROR_TEXT);
+    expect(text).not.toContain('supabase.co');
+    expect(text).not.toContain('ECONNREFUSED');
+    expect(text).not.toContain('FetchError');
   });
 
   it('expired campaign + allow_after_end_date=false is blocked', async () => {
@@ -279,15 +353,10 @@ describe('Crowdfunding donation toggles — select_campaign', () => {
 
   it('both restrictions are independently enforced', async () => {
     const campaigns = [
-      // Expired + blocked
       makeCampaign({ id: 'c1', title: 'Expired Blocked', end_date: YESTERDAY, allow_after_end_date: false }),
-      // Funded + blocked
       makeCampaign({ id: 'c2', title: 'Funded Blocked', goal_amount: 1000, raised_amount: 1000, allow_after_goal_met: false }),
-      // Expired + allowed
       makeCampaign({ id: 'c3', title: 'Expired OK', end_date: YESTERDAY, allow_after_end_date: true }),
-      // Funded + allowed
       makeCampaign({ id: 'c4', title: 'Funded OK', goal_amount: 1000, raised_amount: 1000, allow_after_goal_met: true }),
-      // Neither restricted
       makeCampaign({ id: 'c5', title: 'Open', end_date: TOMORROW }),
     ];
     const db = createCampaignMock({ data: campaigns, error: null });
@@ -390,7 +459,6 @@ describe('Crowdfunding donation toggles — validate re-check', () => {
     const ctx = buildCtx({ db });
 
     const result = await step.validate('campaign_camp-001', ctx);
-    // Expired but toggles missing → defaults to true → allowed
     expect(result.valid).toBe(true);
   });
 });
@@ -401,14 +469,6 @@ describe('Crowdfunding donation toggles — validate re-check', () => {
 
 describe('Dashboard campaign save — error handling', () => {
   it('write failure is not reported as success', async () => {
-    // This is a structural test: verify that handleSave in the page component
-    // captures errors and does not navigate away.
-    // The actual component behaviour is tested by the presence of:
-    // 1. `writeError` capture from insert/update
-    // 2. `setSaveError(...)` on failure
-    // 3. early return (no `setView('list')`) on error
-    //
-    // We verify this contract by reading the source and confirming the pattern.
     const fs = await import('fs');
     const src = fs.readFileSync(
       require('path').resolve(__dirname, '../../../../app/dashboard/campaigns/page.tsx'),
@@ -422,12 +482,25 @@ describe('Dashboard campaign save — error handling', () => {
     // Error state is set on failure
     expect(src).toContain('setSaveError(');
 
-    // Column-missing retry path exists
-    expect(src).toContain('isColumnMissing');
+    // Column-missing uses the shared narrow classifier
+    expect(src).toContain('isToggleColumnMissing(writeError)');
     expect(src).toContain('legacyPayload');
 
     // Error banner is rendered
     expect(src).toContain('saveError &&');
+  });
+
+  it('dashboard classifier rejects unrelated 42703 columns', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      require('path').resolve(__dirname, '../../../../app/dashboard/campaigns/page.tsx'),
+      'utf-8',
+    );
+
+    // Uses the shared classifier (not a broad code-only check)
+    expect(src).toContain('isToggleColumnMissing(writeError)');
+    // Does NOT have the old broad check
+    expect(src).not.toContain("writeError.code === '42703' || writeError.code === 'PGRST204'");
   });
 
   it('no cross-business writes — business_id is always set in payload', async () => {
@@ -437,11 +510,8 @@ describe('Dashboard campaign save — error handling', () => {
       'utf-8',
     );
 
-    // Payload always includes business_id from the authenticated business context
     expect(src).toContain('business_id: business.id');
-    // Update is scoped to form.id
     expect(src).toContain(".update(payload).eq('id', form.id)");
-    // Legacy retry also scoped
     expect(src).toContain(".update(legacyPayload).eq('id', form.id)");
   });
 });

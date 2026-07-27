@@ -11,15 +11,7 @@ import { handlePostCompletion } from './shared/post-completion';
 import { recordPlatformFee as _recordFee } from '@/lib/payments/process-success';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter } from '@/lib/whitelabel';
-
-// PostgreSQL 42703 = undefined_column; PGRST204 = PostgREST column-not-found.
-// Only match errors that specifically mention the toggle columns added by Migration 199.
-export function isToggleColumnMissing(error: { code?: string; message?: string } | null): boolean {
-  if (!error || !error.code) return false;
-  if (error.code !== '42703' && error.code !== 'PGRST204') return false;
-  const msg = (error.message || '').toLowerCase();
-  return msg.includes('allow_after_end_date') || msg.includes('allow_after_goal_met');
-}
+import { isToggleColumnMissing } from '@/lib/utils/campaign-column-fallback';
 
 const EXPANDED_CAMPAIGN_SELECT = 'id, title, description, goal_amount, raised_amount, donor_count, end_date, allow_after_end_date, allow_after_goal_met' as const;
 const LEGACY_CAMPAIGN_SELECT = 'id, title, description, goal_amount, raised_amount, donor_count, end_date' as const;
@@ -45,18 +37,29 @@ const selectCampaignStep: FlowStepConfig = {
       .order('created_at', { ascending: false })
       .limit(20);
 
-    if (queryError && isToggleColumnMissing(queryError)) {
-      // Migration 199 not applied — retry without toggle columns
-      const legacy = await ctx.supabase
-        .from('campaigns')
-        .select(LEGACY_CAMPAIGN_SELECT)
-        .eq('business_id', ctx.business.id)
-        .eq('status', 'active')
-        .is('deleted_at', null)
-        .order('created_at', { ascending: false })
-        .limit(20);
-      allCampaigns = legacy.data as typeof allCampaigns;
-      queryError = legacy.error;
+    if (queryError) {
+      if (isToggleColumnMissing(queryError)) {
+        // Migration 199 not applied — retry without toggle columns
+        const legacy = await ctx.supabase
+          .from('campaigns')
+          .select(LEGACY_CAMPAIGN_SELECT)
+          .eq('business_id', ctx.business.id)
+          .eq('status', 'active')
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false })
+          .limit(20);
+        if (legacy.error) {
+          logger.withContext({ op: 'crowdfunding.select-campaign', ...safeLogErrorContext(legacy.error) })
+            .error('[CROWDFUNDING] Legacy campaign query failed');
+          return [{ type: 'text', text: 'Something went wrong loading campaigns. Please try again shortly.' }];
+        }
+        allCampaigns = legacy.data as typeof allCampaigns;
+      } else {
+        // Unrelated error (auth, RLS, network, etc.) — do not show "no campaigns"
+        logger.withContext({ op: 'crowdfunding.select-campaign', ...safeLogErrorContext(queryError) })
+          .error('[CROWDFUNDING] Campaign query failed');
+        return [{ type: 'text', text: 'Something went wrong loading campaigns. Please try again shortly.' }];
+      }
     }
 
     // Filter: exclude campaigns past end date or that met their goal.

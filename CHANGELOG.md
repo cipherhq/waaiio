@@ -8,13 +8,14 @@ If something breaks, check this log to find what changed and when.
 ## 2026-07-27
 
 ### Campaigns: Enforce donation continuation settings (allow_after_end_date / allow_after_goal_met)
-- `lib/bot/flows/crowdfunding.flow.ts` — WhatsApp crowdfunding flow now queries expanded column set including `allow_after_end_date` and `allow_after_goal_met`. On column-missing error (42703/PGRST204 specifically mentioning toggle columns), falls back to legacy select and defaults both to true. Unrelated errors (auth, RLS, network) are NOT caught by fallback. Expired campaigns blocked when `allow_after_end_date=false`; funded campaigns blocked when `allow_after_goal_met=false`. Enforcement at prompt (list filter) and validate (re-check) levels.
+- `lib/utils/campaign-column-fallback.ts` — Shared narrow classifier for Migration 199 toggle columns. Matches 42703/PGRST204 only when message mentions `allow_after_end_date` or `allow_after_goal_met`. Used by both bot flow and dashboard.
+- `lib/bot/flows/crowdfunding.flow.ts` — WhatsApp crowdfunding flow now queries expanded column set. On toggle-column-missing error, falls back to legacy select. Unrelated errors (auth, RLS, network) return a generic temporary-error message (not "No active campaigns") and are logged server-side via logger/safeLogErrorContext. Legacy retry failures also return the generic error. No raw DB details in user-facing output.
   - **Affects:** WhatsApp donation flows, campaign list display
   - **Could break:** Nothing — backward-compatible before Migration 199; enforces toggles after
-- `app/dashboard/campaigns/page.tsx` — Campaign save now captures insert/update errors. On column-missing error, retries without toggle columns and warns user. On other errors, shows inline error banner and does not navigate away. Previously errors were silently discarded.
+- `app/dashboard/campaigns/page.tsx` — Campaign save captures write errors. Uses the shared `isToggleColumnMissing` classifier (not a broad code-only check) to retry without toggle columns only for the two Migration 199 columns. Other errors show inline banner. Previously errors were silently discarded.
   - **Affects:** Campaign create/edit UI
   - **Could break:** Nothing — adds error visibility that was missing
-- `lib/bot/flows/__tests__/crowdfunding-donation-toggles.test.ts` — 22 focused tests covering error classifier, expanded query, legacy fallback, unrelated error passthrough, all toggle enforcement scenarios, dashboard error handling, and cross-business isolation.
+- `lib/bot/flows/__tests__/crowdfunding-donation-toggles.test.ts` — 27 focused tests covering shared classifier, expanded query, legacy fallback, unrelated error passthrough, legacy retry failure, no-secrets-in-output, all toggle enforcement scenarios, dashboard error handling, and cross-business isolation.
 
 ### Operations: Record Migration 119 and 294 production verification
 - `docs/MIGRATION_REGISTRY.md` — Migration 294 status updated to production-verified (PR #56). Migration 119 status updated from partially-applied to aligned (completed by Migration 294). Obsolete Migration 294 reservation removed.
