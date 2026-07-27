@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-27
 
+### Operations: Record Migration 200 production verification
+- `docs/MIGRATION_REGISTRY.md` — Migration 200 (partner_events_api) status updated to applied and production-verified. api_key_id nullable UUID with FK to api_keys(id) ON DELETE SET NULL; partial B-tree index exists; event count remained 14; existing events remain NULL. Production-verified 2026-07-27.
+- `docs/engineering-status.json` — OPS-001 updated: Migration 200 verification evidence added, PR #59 merge SHA recorded, blockers reduced to Migration 244 only, next action set to Migration 244 read-only preflight. Reconciled to main SHA `42dca86f`.
+- `docs/ENGINEERING_STATUS.md` — OPS-001 row updated with PR #59 and merge SHA `42dca86f`. Reconciled SHA updated.
+- `CHANGELOG.md` — This entry.
+  - **Affects:** Engineering ledgers and Issue #53 tracking only
+  - **Could break:** Nothing — documentation only, no application code or SQL changes
+
 ### Operations: Record Migration 199 production verification
 - `docs/MIGRATION_REGISTRY.md` — Migration 199 status updated to applied and production-verified (PR #58). Both columns (allow_after_end_date, allow_after_goal_met) confirmed as BOOLEAN NOT NULL DEFAULT true. Existing campaign count remained 5.
 - `docs/engineering-status.json` — OPS-001 updated: Migration 199 verification evidence added, PR #58 merge SHA recorded, blockers reduced to migrations 200 and 244, next action set to Migration 200 read-only preflight. Reconciled to main SHA `41c97522`.

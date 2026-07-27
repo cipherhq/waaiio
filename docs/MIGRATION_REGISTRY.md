@@ -24,7 +24,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 246 | `phone_otp_challenges` | Applied to production | #35 | |
 | 245 | `fix_book_slot_atomic_overloads` | Applied to production | — | |
 | 244 | `payment_source_classification` | **Not applied to production** | — | Issue #53 preflight confirmed this migration was never applied |
-| 200 | *(see stranded range)* | **Not applied to production** | — | Part of stranded PR #21 range |
+| 200 | `partner_events_api` | Applied to production (verified) | — | Production-verified 2026-07-27. api_key_id nullable UUID with FK to api_keys(id) ON DELETE SET NULL; partial B-tree index exists; event count remained 14; existing events remain NULL. |
 | 199 | `campaign_donation_toggles` | Applied to production (verified) | #58 | Adds allow_after_end_date and allow_after_goal_met BOOLEAN columns to campaigns. Production-verified 2026-07-27. |
 | 119 | `forms` | Applied (completed by Migration 294) | #56 | All statements satisfied: tables, policies, indexes exist. Final missing index supplied by Migration 294. Individually recorded as applied. |
 
@@ -96,5 +96,6 @@ Per Issue #53 preflight findings:
 - Migrations 101–246 must **NOT** be bulk-repaired via `supabase migration repair`
 - Migration 119 is now fully satisfied and individually recorded as applied (completed by Migration 294)
 - Migration 199 is production-verified (PR #58)
-- Migrations 200 and 244 are not applied to production
+- Migration 200 is production-verified (2026-07-27)
+- Migration 244 is not applied to production
 - Any repair must be individually assessed and approved

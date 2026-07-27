@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
-  "last_reconciled_main_sha": "41c9752271cbdb7f95eabbf3770bd073514ca52a",
-  "last_reconciled_at": "2026-07-27T19:06:08Z",
+  "last_reconciled_main_sha": "42dca86f42c4e5f0329a7cc8e4b9d436d9098a3c",
+  "last_reconciled_at": "2026-07-27T21:30:46Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -250,7 +250,7 @@
       "stage": "IN_PROGRESS",
       "owner": "claude",
       "issue_numbers": [53],
-      "pr_numbers": [56, 58],
+      "pr_numbers": [56, 58, 59],
       "implementation_sha": null,
       "reviewed_sha": null,
       "merge_sha": "41c9752271cbdb7f95eabbf3770bd073514ca52a",
@@ -270,14 +270,17 @@
         "PR #56 merged as 66c5ad2917460bd37178f470bac040fc2c4ed719",
         "Migration 199 production verification complete — both columns (allow_after_end_date, allow_after_goal_met) exist as BOOLEAN NOT NULL DEFAULT true",
         "Existing campaign count remained 5",
-        "PR #58 merged as 41c9752271cbdb7f95eabbf3770bd073514ca52a"
+        "PR #58 merged as 41c9752271cbdb7f95eabbf3770bd073514ca52a",
+        "Migration 200 (partner_events_api) production verification complete — api_key_id nullable UUID with FK to api_keys(id) ON DELETE SET NULL",
+        "Partial B-tree index on events.api_key_id verified",
+        "Event count remained 14; existing events api_key_id remain NULL",
+        "PR #59 merged as 42dca86f42c4e5f0329a7cc8e4b9d436d9098a3c"
       ],
       "blockers": [
-        "Migration 200 not applied to production — requires individual preflight",
         "Migration 244 not applied to production — requires individual preflight"
       ],
-      "next_action": "Migration 200 read-only preflight",
-      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migration 119, 294, and 199 production verification complete. Migrations 200 and 244 remain unresolved. Bulk repair of migrations 101-246 remains prohibited. Each remaining migration requires individual assessment before application or repair."
+      "next_action": "Migration 244 read-only preflight",
+      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migration 119, 294, 199, and 200 production verification complete. Migration 244 remains the only confirmed unresolved migration. Bulk repair of migrations 101-246 remains prohibited. Each remaining migration requires individual assessment before application or repair."
     }
   ]
 }
