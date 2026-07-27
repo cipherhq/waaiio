@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
-  "last_reconciled_main_sha": "90b0f7668b06c5d2f41b753eb40dbe30379e58dd",
-  "last_reconciled_at": "2026-07-27T14:42:12Z",
+  "last_reconciled_main_sha": "66c5ad2917460bd37178f470bac040fc2c4ed719",
+  "last_reconciled_at": "2026-07-27T16:58:52Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -241,8 +241,41 @@
         "72 column allowlist and fallback tests passed"
       ],
       "blockers": [],
-      "next_action": "Issue #53 remains open for migration history repair of 119, 199, 200, 244",
-      "notes": "P0 security remediation. Migration 293 supersedes the intent of migration 223 (which was never applied to production). Application code deployed with zero-downtime fallback helpers (safe-view-query.ts) before migration was applied. Column allowlist enforcement prevents unsafe column selection. Independent security review addressed across 7 focused corrections. Issue #53 remains open for remaining migration history gaps (119 partially applied, 199/200/244 not applied, 101-246 must not be bulk-repaired)."
+      "next_action": "Issue #53 remains open for migration history repair of 199, 200, 244",
+      "notes": "P0 security remediation. Migration 293 supersedes the intent of migration 223 (which was never applied to production). Application code deployed with zero-downtime fallback helpers (safe-view-query.ts) before migration was applied. Column allowlist enforcement prevents unsafe column selection. Independent security review addressed across 7 focused corrections. Issue #53 remains open for remaining migration history gaps (199/200/244 not applied, 101-246 must not be bulk-repaired). Migration 119 resolved via Migration 294."
+    },
+    {
+      "id": "OPS-001",
+      "title": "Migration history alignment (Issue #53)",
+      "stage": "IN_PROGRESS",
+      "owner": "claude",
+      "issue_numbers": [53],
+      "pr_numbers": [56],
+      "implementation_sha": null,
+      "reviewed_sha": null,
+      "merge_sha": "66c5ad2917460bd37178f470bac040fc2c4ed719",
+      "deployed_sha": null,
+      "environment": "production",
+      "production_verified_at": null,
+      "verification_evidence": [
+        "Migration 294 applied to production via Management API on 2026-07-27",
+        "Migration 294 file SHA-256: c781cff56c454c56e10453bc9ea89a3afe64ef135c7ff1ad00732a7bd045e2b0",
+        "idx_form_responses_business verified: non-unique B-tree on form_responses(business_id)",
+        "form_responses row count unchanged: 5 before, 5 after",
+        "Re-execution confirmed harmless (IF NOT EXISTS)",
+        "Migration 294 recorded exactly once in schema_migrations",
+        "Migration 119 recorded exactly once in schema_migrations (all statements satisfied)",
+        "No other migration applied or repaired",
+        "No production record contents accessed",
+        "PR #56 merged as 66c5ad2917460bd37178f470bac040fc2c4ed719"
+      ],
+      "blockers": [
+        "Migration 199 not applied to production — requires individual preflight",
+        "Migration 200 not applied to production — requires individual preflight",
+        "Migration 244 not applied to production — requires individual preflight"
+      ],
+      "next_action": "Migration 199 read-only preflight",
+      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migration 119 and 294 production verification complete. Migrations 199, 200, and 244 remain unresolved. Bulk repair of migrations 101-246 remains prohibited. Each remaining migration requires individual assessment before application or repair."
     }
   ]
 }

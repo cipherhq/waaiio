@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-27
 
+### Operations: Record Migration 119 and 294 production verification
+- `docs/MIGRATION_REGISTRY.md` — Migration 294 status updated to production-verified (PR #56). Migration 119 status updated from partially-applied to aligned (completed by Migration 294). Obsolete Migration 294 reservation removed.
+- `docs/engineering-status.json` — Added OPS-001 milestone (IN_PROGRESS) for Issue #53 migration history alignment. Reconciled to main SHA `66c5ad29`. SEC-001 next_action updated to reflect Migration 119 resolved.
+- `docs/ENGINEERING_STATUS.md` — Added OPS-001 row. Reconciled SHA updated.
+- `CHANGELOG.md` — This entry.
+  - **Affects:** Engineering ledgers and Issue #53 tracking only
+  - **Could break:** Nothing — documentation only, no application code or SQL changes
+
 ### Database: Complete Migration 119 form response index
 - `supabase/migrations/294_complete_migration_119_index.sql` — Creates the missing `idx_form_responses_business` index on `public.form_responses(business_id)`. Issue #53 preflight confirmed Migration 119 was partially applied to production: tables, RLS policies, and other indexes exist, but this one index was skipped. Uses `CREATE INDEX IF NOT EXISTS` for idempotent execution. Does not modify historical Migration 119.
   - **Affects:** `form_responses` table query performance on `business_id` lookups
