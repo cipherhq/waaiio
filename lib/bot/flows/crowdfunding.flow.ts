@@ -11,6 +11,10 @@ import { handlePostCompletion } from './shared/post-completion';
 import { recordPlatformFee as _recordFee } from '@/lib/payments/process-success';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter } from '@/lib/whitelabel';
+import { isToggleColumnMissing } from '@/lib/utils/campaign-column-fallback';
+
+const EXPANDED_CAMPAIGN_SELECT = 'id, title, description, goal_amount, raised_amount, donor_count, end_date, allow_after_end_date, allow_after_goal_met' as const;
+const LEGACY_CAMPAIGN_SELECT = 'id, title, description, goal_amount, raised_amount, donor_count, end_date' as const;
 
 const selectCampaignStep: FlowStepConfig = {
   id: 'select_campaign',
@@ -19,19 +23,48 @@ const selectCampaignStep: FlowStepConfig = {
     if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
     const today = new Date().toISOString().split('T')[0];
-    // Query only columns that exist — allow_after_end_date/allow_after_goal_met
-    // may not exist if migration 199 hasn't been run yet
-    const { data: allCampaigns } = await ctx.supabase
+
+    // Try expanded select including donation-continuation toggles (Migration 199).
+    // If the toggle columns don't exist yet, fall back to legacy select.
+    // The ?? true fallback in the filter below defaults both toggles to "allow"
+    // (preserving current behaviour for pre-migration databases).
+    let { data: allCampaigns, error: queryError } = await ctx.supabase
       .from('campaigns')
-      .select('id, title, description, goal_amount, raised_amount, donor_count, end_date')
+      .select(EXPANDED_CAMPAIGN_SELECT)
       .eq('business_id', ctx.business.id)
       .eq('status', 'active')
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(20);
 
-    // Filter: exclude campaigns past end date or that met their goal
-    // Default to allowing donations (true) if toggle columns don't exist
+    if (queryError) {
+      if (isToggleColumnMissing(queryError)) {
+        // Migration 199 not applied — retry without toggle columns
+        const legacy = await ctx.supabase
+          .from('campaigns')
+          .select(LEGACY_CAMPAIGN_SELECT)
+          .eq('business_id', ctx.business.id)
+          .eq('status', 'active')
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false })
+          .limit(20);
+        if (legacy.error) {
+          logger.withContext({ op: 'crowdfunding.select-campaign', ...safeLogErrorContext(legacy.error) })
+            .error('[CROWDFUNDING] Legacy campaign query failed');
+          return [{ type: 'text', text: 'Something went wrong loading campaigns. Please try again shortly.' }];
+        }
+        allCampaigns = legacy.data as typeof allCampaigns;
+      } else {
+        // Unrelated error (auth, RLS, network, etc.) — do not show "no campaigns"
+        logger.withContext({ op: 'crowdfunding.select-campaign', ...safeLogErrorContext(queryError) })
+          .error('[CROWDFUNDING] Campaign query failed');
+        return [{ type: 'text', text: 'Something went wrong loading campaigns. Please try again shortly.' }];
+      }
+    }
+
+    // Filter: exclude campaigns past end date or that met their goal.
+    // When toggle columns are absent (legacy fallback), ?? true preserves
+    // current behaviour — all donations allowed.
     const campaigns = (allCampaigns || []).filter(c => {
       const allowAfterEnd = (c as Record<string, unknown>).allow_after_end_date ?? true;
       const allowAfterGoal = (c as Record<string, unknown>).allow_after_goal_met ?? true;
