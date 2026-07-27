@@ -7,6 +7,15 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-27
 
+### Security: Restrict process_recurring_charge RPC execution (Migration 295)
+- `supabase/migrations/295_restrict_recurring_charge_rpc_execute.sql` — Forward security migration. Explicitly revokes pre-existing direct `anon` and `authenticated` EXECUTE grants on `process_recurring_charge(text, text, text, text, text, bigint, text, text, text, text)` that survived Migration 244's `REVOKE ... FROM PUBLIC`. Also re-applies REVOKE FROM PUBLIC and confirms GRANT EXECUTE TO service_role. Does NOT modify function body, owner, SECURITY DEFINER, search_path, or finance logic.
+- `lib/__tests__/migration-295-rpc-permissions.test.ts` — 15 focused static analysis tests verifying: correct function signature targeting, all required REVOKE/GRANT statements, no function/schema modifications, idempotency, and pg_roles guards.
+- `docs/MIGRATION_REGISTRY.md` — Migration 295 registered as pending review. Next available version updated to 296.
+- `CHANGELOG.md` — This entry.
+  - **Affects:** EXECUTE privilege on `process_recurring_charge` RPC for anon and authenticated roles
+  - **Could break:** Nothing — permission-only change, no function or schema modifications. Only service_role (used by webhooks/cron) needs EXECUTE.
+  - **Not yet applied to production** — requires review and merge before application.
+
 ### Operations: Record Migration 200 production verification
 - `docs/MIGRATION_REGISTRY.md` — Migration 200 (partner_events_api) status updated to applied and production-verified. api_key_id nullable UUID with FK to api_keys(id) ON DELETE SET NULL; partial B-tree index exists; event count remained 14; existing events remain NULL. Production-verified 2026-07-27.
 - `docs/engineering-status.json` — OPS-001 updated: Migration 200 verification evidence added, PR #59 merge SHA recorded, blockers reduced to Migration 244 only, next action set to Migration 244 read-only preflight. Reconciled to main SHA `42dca86f`.
