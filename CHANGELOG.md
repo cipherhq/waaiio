@@ -7,6 +7,24 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-28
 
+### Operations: Migration 297 production verification and Migration 115 completion
+- `docs/MIGRATION_REGISTRY.md` — Migration 297 status updated to production-verified (#63). Migration 115 status updated to fully satisfied and individually recorded.
+- `docs/engineering-status.json` — OPS-001 updated: PR #63 merged, Migration 297 production-verified, Migration 115 fully satisfied.
+- `docs/ENGINEERING_STATUS.md` — OPS-001 row updated with PR #63 and merge SHA 16dad878.
+  - **Affects:** Engineering ledgers and Issue #53 tracking only
+  - **Could break:** Nothing — documentation only
+
+### Operations: Migration reconciliation repair plan
+- `docs/migrations/101-246-production-reconciliation.json` — Evidence-backed manifest for all 146 migrations in the 101-246 range. Each entry includes original and current classification, repair eligibility, and verification status. 8 aligned/tracked, 127 verified-applied-untracked, 9 not-verifiable-safely, 2 superseded.
+- `docs/migrations/101-246-repair-allowlist.json` — Immutable allowlist of 127 verified-but-untracked migrations eligible for controlled repair. Includes checksums and evidence digests.
+- `docs/migrations/101-246-repair-runbook.md` — Controlled batching runbook with 9 proposed batches (max 15 versions each), stop conditions, and final reconciliation steps.
+- `scripts/validate-migration-repair-allowlist.mjs` — Deterministic validator: checks JSON validity, duplicate/sorted versions, filename/checksum against repository, classification eligibility against manifest, and count agreement.
+- `.github/workflows/ci.yml` — CI validation step added for migration repair plan in governance job.
+- `package.json` — Added `verify:migration-repair-plan` npm script.
+- `docs/MIGRATION_REGISTRY.md` — Updated remaining untracked migration counts and repair runbook reference.
+  - **Affects:** Migration repair process, CI pipeline, Issue #53 tracking
+  - **Could break:** Nothing — documentation, tooling, and CI only. No migration SQL modified. No production operation occurred.
+
 ### Database: Complete Migration 115 properties trigger (Migration 297)
 - `supabase/migrations/297_complete_migration_115_trigger.sql` — Forward trigger creation. Creates the missing `properties_updated_at` trigger on `public.properties` using the existing `public.update_updated_at()` function. BEFORE UPDATE, FOR EACH ROW. Idempotent via pg_trigger check. Fails clearly if prerequisites are missing. No data backfill required.
 - `lib/__tests__/migration-297-trigger.test.ts` — 18 static migration-source tests verifying: correct target table, trigger name, timing, row-level, function call, idempotency guard, prerequisite checks. Migration 297 creates only the missing trigger schema object. It does not modify tables, columns, function bodies, policies or existing row data.

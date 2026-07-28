@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
-  "last_reconciled_main_sha": "ae53720569d9b7c6bf2bf520d5283665e918c35b",
-  "last_reconciled_at": "2026-07-28T01:44:50Z",
+  "last_reconciled_main_sha": "16dad8785f31e752c0319d871dd5bee0871a1d46",
+  "last_reconciled_at": "2026-07-28T03:42:41Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -250,10 +250,10 @@
       "stage": "IN_PROGRESS",
       "owner": "claude",
       "issue_numbers": [53],
-      "pr_numbers": [56, 58, 59, 62],
+      "pr_numbers": [56, 58, 59, 62, 63],
       "implementation_sha": null,
       "reviewed_sha": null,
-      "merge_sha": "ae53720569d9b7c6bf2bf520d5283665e918c35b",
+      "merge_sha": "16dad8785f31e752c0319d871dd5bee0871a1d46",
       "deployed_sha": null,
       "environment": "production",
       "production_verified_at": null,
@@ -281,14 +281,22 @@
         "PR #62 merged as ae53720569d9b7c6bf2bf520d5283665e918c35b",
         "Migrations 176, 181, 182 individually verified and recorded 2026-07-28",
         "Migration 115 remains partial — only properties_updated_at trigger missing (11 of 12 durable effects present)",
-        "Migration 297 (complete_migration_115_trigger) created to supply the missing trigger"
+        "Migration 297 (complete_migration_115_trigger) created to supply the missing trigger",
+        "PR #63 merged as 16dad8785f31e752c0319d871dd5bee0871a1d46",
+        "Migration 297 production-verified: properties_updated_at trigger confirmed present",
+        "Migration 115 fully satisfied — all 12 durable schema effects present",
+        "Evidence-backed reconciliation manifest created for all 146 migrations (101-246)",
+        "Immutable repair allowlist generated for 127 verified-but-untracked candidates",
+        "Controlled batching runbook created (9 batches, maximum 15 versions per batch)",
+        "CI-integrated validator script added (scripts/validate-migration-repair-allowlist.mjs)"
       ],
       "blockers": [
-        "Migration 115 partially applied — properties_updated_at trigger missing (Migration 297 pending review)",
-        "127 migration repair candidates remain untouched"
+        "127 migration repair candidates awaiting controlled repair-plan execution",
+        "9 NOT_VERIFIABLE_SAFELY migrations require new evidence before disposition",
+        "2 SUPERSEDED migrations (122, 130) require final disposition decision"
       ],
-      "next_action": "Review, merge and production-verify Migration 297",
-      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migrations 119, 199, 200, 244, 294, 295, 296 production-verified. Migrations 176, 181, 182 individually verified and recorded. Migration 115 remains partial (only trigger missing) — Migration 297 created as forward fix. 127 migration repair candidates remain untouched. Bulk repair of migrations 101-246 remains prohibited."
+      "next_action": "Execute controlled repair batches per approved runbook (docs/migrations/101-246-repair-runbook.md)",
+      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migrations 115, 119, 199, 200, 244, 294, 295, 296, 297 production-verified. Migrations 176, 181, 182 individually verified and recorded. Migration 115 fully satisfied (completed by Migration 297, PR #63). 127 repair candidates documented in immutable allowlist with controlled batching runbook. 9 NOT_VERIFIABLE_SAFELY and 2 SUPERSEDED migrations excluded from repair. No migration repair was executed."
     }
   ]
 }

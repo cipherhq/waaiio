@@ -546,6 +546,9 @@ jobs:
       - name: Validate governance artifacts
         run: node scripts/verify-engineering-governance.mjs
 
+      - name: Validate migration repair plan
+        run: npm run verify:migration-repair-plan
+
   # ── Playwright Smoke Tests ──
   playwright:
     name: Playwright smoke tests

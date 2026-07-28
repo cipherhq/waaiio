@@ -1,0 +1,119 @@
+# Migration 101-246 Controlled Repair Runbook
+
+## Purpose
+
+This runbook governs the controlled repair of 127 verified-but-untracked migrations (101-246) in the Supabase remote schema_migrations table. Each migration has been individually verified as applied to production via durable schema evidence but is not tracked in the remote migration history.
+
+## Constraints
+
+1. **No blind bulk repair.** Every version must be individually present in the immutable allowlist (`docs/migrations/101-246-repair-allowlist.json`).
+2. **Maximum 15 versions per batch.** Each batch is a single PR and a single production operation.
+3. **Allowlist is immutable.** If a version needs to be added or removed, the allowlist must be regenerated and re-validated through CI before any batch uses it.
+4. **Checksum verification required.** Before repairing any version, verify the local file checksum matches the allowlist checksum.
+5. **No SQL execution.** `supabase migration repair` only inserts a row into `schema_migrations` — it does not execute the migration SQL.
+6. **Post-repair verification required.** After each batch, verify the repaired versions appear exactly once in `schema_migrations`.
+7. **Stop on any failure.** If any version in a batch fails verification, stop the entire batch and investigate.
+8. **Issue #53 stays open** until all batches complete and final reconciliation is confirmed.
+
+## Excluded Versions
+
+The following versions are **not** in the allowlist and must **never** be repaired through this process:
+
+### Already Completed (ALIGNED_TRACKED)
+- 115, 119, 176, 181, 182, 199, 200, 244
+
+### Not Verifiable Safely
+- 101, 105, 107, 160, 163, 164, 187, 222, 226
+
+### Superseded
+- 122, 130
+
+## Batch Process
+
+For each batch:
+
+### 1. Pre-flight
+```bash
+# Verify allowlist passes CI
+npm run verify:migration-repair-plan
+
+# Verify current schema_migrations count
+# (use read-only query via Management API)
+```
+
+### 2. Execute Repair
+For each version N in the batch:
+```bash
+# Verify checksum first
+sha256sum supabase/migrations/N_*.sql
+# Compare against allowlist checksum
+
+# Execute repair (marks as applied, does NOT run SQL)
+supabase migration repair N --status applied
+```
+
+### 3. Post-repair Verification
+```bash
+# Verify each repaired version appears exactly once
+# Query schema_migrations via Management API (read-only)
+
+# Verify total schema_migrations count increased by batch size
+
+# Verify no unrelated migrations were affected
+```
+
+### 4. Record Results
+- Update `docs/migrations/101-246-production-reconciliation.json` repair_status for each version
+- Add verification evidence to OPS-001 in `docs/engineering-status.json`
+- Update Issue #53 with batch completion details
+- Add CHANGELOG.md entry
+
+## Proposed Batches
+
+### Batch 1 (15 versions)
+102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 120
+
+### Batch 2 (15 versions)
+121, 123, 124, 125, 126, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137
+
+### Batch 3 (15 versions)
+138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152
+
+### Batch 4 (15 versions)
+153, 154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170
+
+### Batch 5 (15 versions)
+171, 172, 173, 174, 175, 177, 178, 179, 180, 183, 184, 185, 186, 188, 189
+
+### Batch 6 (15 versions)
+190, 191, 192, 193, 194, 195, 196, 197, 198, 201, 202, 203, 204, 205, 206
+
+### Batch 7 (15 versions)
+207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221
+
+### Batch 8 (15 versions)
+223, 224, 225, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238
+
+### Batch 9 (7 versions)
+239, 240, 241, 242, 243, 245, 246
+
+## Stop Conditions
+
+Stop the entire repair process if:
+
+1. Any `supabase migration repair` command returns an error
+2. Post-repair verification shows a version appearing more than once
+3. Post-repair verification shows a version not appearing at all
+4. Schema_migrations count does not match expected total
+5. Any unrelated migration row was modified
+6. The allowlist validator (`npm run verify:migration-repair-plan`) fails
+
+## Final Reconciliation
+
+After all 9 batches complete:
+
+1. Verify total schema_migrations count matches expected (all 146 versions from 101-246 plus versions 001-100 and 247+)
+2. Run `supabase migration list` and confirm no "not applied" entries for 101-246
+3. Update `docs/migrations/101-246-production-reconciliation.json` — all 127 candidates should show `repair_status: "completed"`
+4. Close Issue #53
+5. Update OPS-001 milestone to PRODUCTION_VERIFIED

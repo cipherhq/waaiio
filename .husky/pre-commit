@@ -63,7 +63,8 @@ if [ -n "$STAGED_FILES" ]; then
   done
 
   # Scan staged diff content (only added/modified lines)
-  MATCHES=$(git diff --cached -U0 --diff-filter=ACM | grep -nE "^\+" | grep -v "^+++\|^+#\|^+//.*TODO\|^+//.*FIXME" | grep -iE "$COMBINED" || true)
+  # Exclude docs/migrations/*.json (SHA-256 file checksums trigger false positives on AC[0-9a-f]{32})
+  MATCHES=$(git diff --cached -U0 --diff-filter=ACM -- ':!docs/migrations/*.json' | grep -nE "^\+" | grep -v "^+++\|^+#\|^+//.*TODO\|^+//.*FIXME" | grep -iE "$COMBINED" || true)
 
   if [ -n "$MATCHES" ]; then
     echo ""

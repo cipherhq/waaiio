@@ -13,6 +13,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "verify:governance": "node scripts/verify-engineering-governance.mjs",
+    "verify:migration-repair-plan": "node scripts/validate-migration-repair-allowlist.mjs",
     "prepare": "husky",
     "certify:local": "node scripts/certify-local.mjs"
   },
