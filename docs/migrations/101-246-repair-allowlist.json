@@ -66,7 +66,7 @@
     "version": "133",
     "filename": "133_storage_bucket_security.sql",
     "checksum": "5c1bafb5f79c9543ad5f89edef9cfc41b4277d085dfd1eac5f60d4393febe625",
-    "production_evidence_digest": "f886814b4012e4394503f35bc440ee94ed0e693b87164c7074482e3d9dd6489e",
+    "production_evidence_digest": "69d8d502dd0ddbb0fb3477b44c6d1f3794b045b69e2b9a5e6cb9e87ee94cf655",
     "confidence": "HIGH"
   },
   {
@@ -80,7 +80,7 @@
     "version": "135",
     "filename": "135_drop_permissive_storage_policy.sql",
     "checksum": "4e2e4296657022a3c85bd7df81bdec3d063408e051c0d8b89461b95e035e6bba",
-    "production_evidence_digest": "4a69cfa2c6e1e4c8dc74135ea6b7dbfdcdc139131d2672efc4d73c73b45f7bda",
+    "production_evidence_digest": "24e1669c97086915d07ac452c0e1c4dd5340e4c6c1e583e6b3a63e6776033d90",
     "confidence": "HIGH"
   },
   {
@@ -94,14 +94,14 @@
     "version": "137",
     "filename": "137_atomic_booking_slot.sql",
     "checksum": "2ae67a3eb04ea461750216850ad8802a3fb281a2d309089a11bb9d3499dc5fce",
-    "production_evidence_digest": "967a4a82bf1e3f0568929dcb384fab3ab6dc1d4c7b52a95a2dcc1426c22c2c00",
+    "production_evidence_digest": "b7b8ae48605a4cc690b456a23047e97494c293f192b6159156c2514249304439",
     "confidence": "HIGH"
   },
   {
     "version": "138",
     "filename": "138_dashboard_aggregate_rpcs.sql",
     "checksum": "85db896f8b6ea0bd19f31a0b598d995262013ee9037912eb712a0a49f7f63c6b",
-    "production_evidence_digest": "c2cea71a75618866d744719ac5ce5c46a210b95040c7a87ff3cb3e9b73e1237b",
+    "production_evidence_digest": "2e6e17b6b7c567290dadb25cfd096c53d5bc979caf4058f07870dbd84be2472e",
     "confidence": "HIGH"
   }
 ]

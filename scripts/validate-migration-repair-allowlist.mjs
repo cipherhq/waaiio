@@ -755,6 +755,20 @@ for (const { file, data: batch } of allBatches) {
     }
   }
 
+  // Manifest verification_batch must match batch versions
+  if (batch.batch_number >= 2) {
+    const manifestBatchEntries = manifest.filter(e => e.verification_batch === batch.batch_number);
+    const manifestBatchVersionSet = new Set(manifestBatchEntries.map(e => e.version));
+    const batchNotInManifestBatch = [...batchVersionSet].filter(v => !manifestBatchVersionSet.has(v));
+    const manifestBatchNotInBatch = [...manifestBatchVersionSet].filter(v => !batchVersionSet.has(v));
+    if (batchNotInManifestBatch.length > 0 || manifestBatchNotInBatch.length > 0) {
+      fail(`Batch ${batch.batch_number}: version-set mismatch with manifest verification_batch entries`);
+      batchErrors++;
+    } else {
+      pass(`Batch ${batch.batch_number} versions = manifest verification_batch=${batch.batch_number} entries`);
+    }
+  }
+
   // ── Count reconciliation: per-migration object_count === objects.length ──
   if (batch.batch_number >= 2) {
     let countErrors = 0;
@@ -799,6 +813,33 @@ for (const { file, data: batch } of allBatches) {
       fail(`Batch ${batch.batch_number}: total_superseded (${batch.total_superseded}) !== sum of per-migration superseded (${totalSupersededSum})`);
       batchErrors++;
     }
+
+    // Derive per-migration counts from object results and compare against stored counts
+    let derivedCountErrors = 0;
+    for (const m of batch.migrations || []) {
+      const derivedPassed = (m.objects || []).filter(o => o.result === 'pass').length;
+      const derivedFailed = (m.objects || []).filter(o => o.result === 'failed' || o.result === 'fail').length;
+      const derivedAmbiguous = (m.objects || []).filter(o => o.result === 'ambiguous').length;
+      const derivedSuperseded = (m.objects || []).filter(o => o.result === 'superseded').length;
+
+      if (m.passed !== undefined && m.passed !== derivedPassed) {
+        fail(`Batch ${batch.batch_number} version ${m.version}: stored passed=${m.passed} but derived=${derivedPassed}`);
+        derivedCountErrors++; batchErrors++;
+      }
+      if (m.failed !== undefined && m.failed !== derivedFailed) {
+        fail(`Batch ${batch.batch_number} version ${m.version}: stored failed=${m.failed} but derived=${derivedFailed}`);
+        derivedCountErrors++; batchErrors++;
+      }
+      if (m.ambiguous !== undefined && m.ambiguous !== derivedAmbiguous) {
+        fail(`Batch ${batch.batch_number} version ${m.version}: stored ambiguous=${m.ambiguous} but derived=${derivedAmbiguous}`);
+        derivedCountErrors++; batchErrors++;
+      }
+      if (m.superseded !== undefined && m.superseded !== derivedSuperseded) {
+        fail(`Batch ${batch.batch_number} version ${m.version}: stored superseded=${m.superseded} but derived=${derivedSuperseded}`);
+        derivedCountErrors++; batchErrors++;
+      }
+    }
+    if (derivedCountErrors === 0) pass(`Batch ${batch.batch_number} derived per-migration counts match stored counts`);
   }
 
   // ── Batch 2+ evidence enrichment checks: verification_source and query_category ──
@@ -818,7 +859,44 @@ for (const { file, data: batch } of allBatches) {
         }
       }
     }
-    if (enrichErrors === 0) pass(`Batch ${batch.batch_number} all objects have verification_source and query_category`);
+    // Complete object evidence field checks for Batch 2+
+    for (const m of batch.migrations || []) {
+      for (const obj of m.objects || []) {
+        if (!obj.object_type) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object missing object_type`);
+          enrichErrors++; batchErrors++;
+        }
+        if (!obj.object_name) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object missing object_name`);
+          enrichErrors++; batchErrors++;
+        }
+        if (!obj.expected_state) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} missing expected_state`);
+          enrichErrors++; batchErrors++;
+        }
+        if (!obj.verified_state) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} missing verified_state`);
+          enrichErrors++; batchErrors++;
+        }
+        if (!obj.verification_timestamp || !isValidUTCTimestamp(obj.verification_timestamp)) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} has invalid verification_timestamp`);
+          enrichErrors++; batchErrors++;
+        }
+        if (!obj.result) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} missing result`);
+          enrichErrors++; batchErrors++;
+        } else if (obj.result !== 'pass' && obj.result !== 'superseded') {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} has invalid result "${obj.result}" (must be "pass" or "superseded")`);
+          enrichErrors++; batchErrors++;
+        }
+        // For result=pass: verified_state must exactly equal expected_state
+        if (obj.result === 'pass' && obj.verified_state && obj.expected_state && obj.verified_state !== obj.expected_state) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} result=pass but verified_state "${obj.verified_state}" !== expected_state "${obj.expected_state}"`);
+          enrichErrors++; batchErrors++;
+        }
+      }
+    }
+    if (enrichErrors === 0) pass(`Batch ${batch.batch_number} all objects have complete evidence fields`);
   } else {
     // Batch 1: warn only for missing verification_source/query_category
     let batch1Missing = 0;
@@ -865,6 +943,33 @@ for (const { file, data: batch } of allBatches) {
         }
         if (manifestObj.verified_state !== obj.verified_state) {
           fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} verified_state mismatch (batch: ${obj.verified_state}, manifest: ${manifestObj.verified_state})`);
+          crossErrors++;
+          batchErrors++;
+        }
+        if (manifestObj.verification_source !== obj.verification_source) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} verification_source mismatch (batch: ${obj.verification_source}, manifest: ${manifestObj.verification_source})`);
+          crossErrors++;
+          batchErrors++;
+        }
+        if (manifestObj.result !== obj.result) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} result mismatch (batch: ${obj.result}, manifest: ${manifestObj.result})`);
+          crossErrors++;
+          batchErrors++;
+        }
+        if (manifestObj.verified_at !== obj.verification_timestamp) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} timestamp mismatch (batch verification_timestamp: ${obj.verification_timestamp}, manifest verified_at: ${manifestObj.verified_at})`);
+          crossErrors++;
+          batchErrors++;
+        }
+      }
+
+      // Check for manifest objects not in evidence (reverse direction)
+      for (const manifestObj of me.evidence) {
+        const evidenceObj = (m.objects || []).find(o =>
+          o.object_type === manifestObj.object_type && o.object_name === manifestObj.object_name
+        );
+        if (!evidenceObj) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: manifest object ${manifestObj.object_name} (${manifestObj.object_type}) not in evidence`);
           crossErrors++;
           batchErrors++;
         }

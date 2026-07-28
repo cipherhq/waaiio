@@ -287,6 +287,111 @@ function validateManifestCrossMatch(
       if (manifestObj.verified_state !== obj.verified_state) {
         errors.push(`version ${m.version}: object ${obj.object_name} verified_state mismatch`);
       }
+      if (manifestObj.verification_source !== (obj as { verification_source?: string }).verification_source) {
+        errors.push(`version ${m.version}: object ${obj.object_name} verification_source mismatch`);
+      }
+      if (manifestObj.result !== obj.result) {
+        errors.push(`version ${m.version}: object ${obj.object_name} result mismatch`);
+      }
+      if (manifestObj.verified_at !== (obj as { verification_timestamp?: string }).verification_timestamp) {
+        errors.push(`version ${m.version}: object ${obj.object_name} timestamp mismatch`);
+      }
+    }
+
+    // Check reverse: manifest objects not in evidence
+    for (const manifestObj of me.evidence) {
+      const evidenceObj = (m.objects || []).find(o =>
+        (o as { object_type?: string }).object_type === manifestObj.object_type &&
+        o.object_name === manifestObj.object_name
+      );
+      if (!evidenceObj) {
+        errors.push(`version ${m.version}: manifest object ${manifestObj.object_name} not in evidence`);
+      }
+    }
+  }
+  return errors;
+}
+
+/**
+ * Validates Batch 2+ object evidence completeness (all required fields).
+ */
+function validateObjectEvidenceCompleteness(batch: BatchEvidence): string[] {
+  const errors: string[] = [];
+  if (batch.batch_number < 2) return errors;
+  for (const m of batch.migrations || []) {
+    for (const obj of m.objects || []) {
+      if (!(obj as { object_type?: string }).object_type) {
+        errors.push(`version ${m.version}: object missing object_type`);
+      }
+      if (!obj.object_name) {
+        errors.push(`version ${m.version}: object missing object_name`);
+      }
+      if (!(obj as { expected_state?: string }).expected_state) {
+        errors.push(`version ${m.version}: object missing expected_state`);
+      }
+      if (!obj.verified_state) {
+        errors.push(`version ${m.version}: object missing verified_state`);
+      }
+      if (!obj.verification_timestamp || !isValidUTCTimestamp(obj.verification_timestamp)) {
+        errors.push(`version ${m.version}: object has invalid verification_timestamp`);
+      }
+      if (!obj.result) {
+        errors.push(`version ${m.version}: object missing result`);
+      } else if (obj.result !== 'pass' && obj.result !== 'superseded') {
+        errors.push(`version ${m.version}: object has invalid result "${obj.result}"`);
+      }
+      if (obj.result === 'pass' && obj.verified_state && (obj as { expected_state?: string }).expected_state &&
+          obj.verified_state !== (obj as { expected_state?: string }).expected_state) {
+        errors.push(`version ${m.version}: result=pass but verified_state !== expected_state`);
+      }
+    }
+  }
+  return errors;
+}
+
+/**
+ * Validates manifest verification_batch version-set equality for Batch 2+.
+ */
+function validateManifestBatchVersionSet(
+  batch: BatchEvidence,
+  manifest: ManifestEntry[]
+): string[] {
+  const errors: string[] = [];
+  if (batch.batch_number < 2) return errors;
+  const batchVersionSet = new Set(batch.versions || []);
+  const manifestBatchEntries = manifest.filter(e => e.verification_batch === batch.batch_number);
+  const manifestBatchVersionSet = new Set(manifestBatchEntries.map(e => e.version));
+  const batchNotInManifestBatch = [...batchVersionSet].filter(v => !manifestBatchVersionSet.has(v));
+  const manifestBatchNotInBatch = [...manifestBatchVersionSet].filter(v => !batchVersionSet.has(v));
+  if (batchNotInManifestBatch.length > 0 || manifestBatchNotInBatch.length > 0) {
+    errors.push(`version-set mismatch with manifest verification_batch entries`);
+  }
+  return errors;
+}
+
+/**
+ * Derives per-migration counts from object results and compares against stored counts.
+ */
+function validateDerivedCounts(batch: BatchEvidence): string[] {
+  const errors: string[] = [];
+  if (batch.batch_number < 2) return errors;
+  for (const m of batch.migrations || []) {
+    const derivedPassed = (m.objects || []).filter(o => o.result === 'pass').length;
+    const derivedFailed = (m.objects || []).filter(o => o.result === 'failed' || o.result === 'fail').length;
+    const derivedAmbiguous = (m.objects || []).filter(o => o.result === 'ambiguous').length;
+    const derivedSuperseded = (m.objects || []).filter(o => o.result === 'superseded').length;
+
+    if (m.passed !== undefined && m.passed !== derivedPassed) {
+      errors.push(`version ${m.version}: stored passed=${m.passed} but derived=${derivedPassed}`);
+    }
+    if (m.failed !== undefined && m.failed !== derivedFailed) {
+      errors.push(`version ${m.version}: stored failed=${m.failed} but derived=${derivedFailed}`);
+    }
+    if ((m as { ambiguous?: number }).ambiguous !== undefined && (m as { ambiguous?: number }).ambiguous !== derivedAmbiguous) {
+      errors.push(`version ${m.version}: stored ambiguous=${(m as { ambiguous?: number }).ambiguous} but derived=${derivedAmbiguous}`);
+    }
+    if ((m as { superseded?: number }).superseded !== undefined && (m as { superseded?: number }).superseded !== derivedSuperseded) {
+      errors.push(`version ${m.version}: stored superseded=${(m as { superseded?: number }).superseded} but derived=${derivedSuperseded}`);
     }
   }
   return errors;
@@ -1206,6 +1311,18 @@ describe('Real Batch 1 + Batch 2 evidence integration', () => {
     ).length;
     expect(94 + 15 + repairedCandidates).toBe(124);
 
+    // Derived counts match for Batch 2
+    const derivedCountErrors = validateDerivedCounts(batch2);
+    expect(derivedCountErrors).toEqual([]);
+
+    // Object evidence completeness for Batch 2
+    const completenessErrors = validateObjectEvidenceCompleteness(batch2);
+    expect(completenessErrors).toEqual([]);
+
+    // Manifest batch version-set equality for Batch 2
+    const manifestBatchErrors = validateManifestBatchVersionSet(batch2, manifest);
+    expect(manifestBatchErrors).toEqual([]);
+
     // Production evidence digests recompute for all allowlist entries
     for (const al of allowlist) {
       const me = manifest.find(e => e.version === al.version)!;
@@ -1221,5 +1338,219 @@ describe('Real Batch 1 + Batch 2 evidence integration', () => {
       const expected = createHash('sha256').update(canonical).digest('hex');
       expect((al as { production_evidence_digest: string }).production_evidence_digest).toBe(expected);
     }
+  });
+});
+
+describe('Object evidence completeness (Batch 2+)', () => {
+  it('rejects Batch 2+ object with missing result field', () => {
+    const batch = makeBatchEvidence({
+      batch_number: 2,
+      migrations: [{
+        version: '121', checksum: 'a', passed: 1, failed: 0,
+        objects: [{
+          result: '', verified_state: 'exists', object_name: 'test_col', object_type: 'column',
+          expected_state: 'exists', verification_timestamp: '2026-07-28T14:42:57.387751+00:00',
+          verification_source: 'information_schema', query_category: 'information_schema'
+        }]
+      }]
+    });
+    const errors = validateObjectEvidenceCompleteness(batch);
+    expect(errors.some(e => e.includes('missing result'))).toBe(true);
+  });
+
+  it('rejects Batch 2+ object with invalid result (e.g. "fail")', () => {
+    const batch = makeBatchEvidence({
+      batch_number: 2,
+      migrations: [{
+        version: '121', checksum: 'a', passed: 0, failed: 1,
+        objects: [{
+          result: 'fail', verified_state: 'exists', object_name: 'test_col', object_type: 'column',
+          expected_state: 'exists', verification_timestamp: '2026-07-28T14:42:57.387751+00:00',
+          verification_source: 'information_schema', query_category: 'information_schema'
+        }]
+      }]
+    });
+    const errors = validateObjectEvidenceCompleteness(batch);
+    expect(errors.some(e => e.includes('invalid result "fail"'))).toBe(true);
+  });
+});
+
+describe('Manifest batch-set equality (Batch 2+)', () => {
+  it('rejects manifest batch version absent from evidence', () => {
+    const batch = makeBatchEvidence({ batch_number: 2, versions: ['121'] });
+    const manifest: ManifestEntry[] = [
+      makeApprovedEntry({ version: '121', verification_batch: 2 }),
+      makeApprovedEntry({ version: '123', verification_batch: 2 }) // extra in manifest
+    ];
+    const errors = validateManifestBatchVersionSet(batch, manifest);
+    expect(errors.some(e => e.includes('version-set mismatch'))).toBe(true);
+  });
+
+  it('rejects evidence version absent from manifest batch set', () => {
+    const batch = makeBatchEvidence({ batch_number: 2, versions: ['121', '123'] });
+    const manifest: ManifestEntry[] = [
+      makeApprovedEntry({ version: '121', verification_batch: 2 })
+      // 123 missing from manifest verification_batch=2
+    ];
+    const errors = validateManifestBatchVersionSet(batch, manifest);
+    expect(errors.some(e => e.includes('version-set mismatch'))).toBe(true);
+  });
+});
+
+describe('Object-level cross-validation', () => {
+  it('rejects verification_source mismatch between evidence and manifest', () => {
+    const batch = makeBatchEvidence({
+      batch_number: 2, versions: ['121'],
+      migrations: [{
+        version: '121', checksum: 'a', passed: 1, failed: 0,
+        objects: [{
+          result: 'pass', verified_state: 'exists', object_name: 'test_col', object_type: 'column',
+          expected_state: 'exists', verification_source: 'information_schema',
+          verification_timestamp: '2026-07-28T14:42:57.387751+00:00'
+        }]
+      }]
+    });
+    const manifest: ManifestEntry[] = [makeApprovedEntry({
+      version: '121', verification_batch: 2,
+      evidence: [makeValidEvidence({
+        object_type: 'column', object_name: 'test_col',
+        verification_source: 'pg_catalog' // different
+      })]
+    })];
+    const errors = validateManifestCrossMatch(batch, manifest);
+    expect(errors.some(e => e.includes('verification_source mismatch'))).toBe(true);
+  });
+
+  it('rejects timestamp mismatch between evidence and manifest', () => {
+    const batch = makeBatchEvidence({
+      batch_number: 2, versions: ['121'],
+      migrations: [{
+        version: '121', checksum: 'a', passed: 1, failed: 0,
+        objects: [{
+          result: 'pass', verified_state: 'exists', object_name: 'test_col', object_type: 'column',
+          expected_state: 'exists', verification_source: 'information_schema',
+          verification_timestamp: '2026-07-28T14:42:57.387751+00:00'
+        }]
+      }]
+    });
+    const manifest: ManifestEntry[] = [makeApprovedEntry({
+      version: '121', verification_batch: 2,
+      evidence: [makeValidEvidence({
+        object_type: 'column', object_name: 'test_col',
+        verification_source: 'information_schema',
+        verified_at: '2026-07-29T00:00:00.000000+00:00' // different
+      })]
+    })];
+    const errors = validateManifestCrossMatch(batch, manifest);
+    expect(errors.some(e => e.includes('timestamp mismatch'))).toBe(true);
+  });
+
+  it('rejects result mismatch between evidence and manifest', () => {
+    const batch = makeBatchEvidence({
+      batch_number: 2, versions: ['121'],
+      migrations: [{
+        version: '121', checksum: 'a', passed: 1, failed: 0,
+        objects: [{
+          result: 'pass', verified_state: 'exists', object_name: 'test_col', object_type: 'column',
+          expected_state: 'exists', verification_source: 'information_schema',
+          verification_timestamp: '2026-07-28T14:42:57.387751+00:00'
+        }]
+      }]
+    });
+    const manifest: ManifestEntry[] = [makeApprovedEntry({
+      version: '121', verification_batch: 2,
+      evidence: [makeValidEvidence({
+        object_type: 'column', object_name: 'test_col',
+        result: 'superseded' // different
+      })]
+    })];
+    const errors = validateManifestCrossMatch(batch, manifest);
+    expect(errors.some(e => e.includes('result mismatch'))).toBe(true);
+  });
+
+  it('rejects extra manifest evidence object not in durable evidence', () => {
+    const batch = makeBatchEvidence({
+      batch_number: 2, versions: ['121'],
+      migrations: [{
+        version: '121', checksum: 'a', passed: 1, failed: 0,
+        objects: [{
+          result: 'pass', verified_state: 'exists', object_name: 'test_col', object_type: 'column',
+          expected_state: 'exists', verification_source: 'information_schema',
+          verification_timestamp: '2026-07-28T11:57:05.694160+00:00'
+        }]
+      }]
+    });
+    const manifest: ManifestEntry[] = [makeApprovedEntry({
+      version: '121', verification_batch: 2,
+      evidence: [
+        makeValidEvidence({ object_type: 'column', object_name: 'test_col' }),
+        makeValidEvidence({ object_type: 'index', object_name: 'extra_index' }) // not in batch
+      ]
+    })];
+    const errors = validateManifestCrossMatch(batch, manifest);
+    expect(errors.some(e => e.includes('manifest object extra_index') && e.includes('not in evidence'))).toBe(true);
+  });
+
+  it('rejects extra durable evidence object not in manifest', () => {
+    const batch = makeBatchEvidence({
+      batch_number: 2, versions: ['121'],
+      migrations: [{
+        version: '121', checksum: 'a', passed: 2, failed: 0,
+        objects: [
+          {
+            result: 'pass', verified_state: 'exists', object_name: 'test_col', object_type: 'column',
+            expected_state: 'exists', verification_source: 'information_schema',
+            verification_timestamp: '2026-07-28T11:57:05.694160+00:00'
+          },
+          {
+            result: 'pass', verified_state: 'exists', object_name: 'extra_obj', object_type: 'table',
+            expected_state: 'exists', verification_source: 'information_schema',
+            verification_timestamp: '2026-07-28T11:57:05.694160+00:00'
+          }
+        ]
+      }]
+    });
+    const manifest: ManifestEntry[] = [makeApprovedEntry({
+      version: '121', verification_batch: 2,
+      evidence: [makeValidEvidence({ object_type: 'column', object_name: 'test_col' })]
+    })];
+    const errors = validateManifestCrossMatch(batch, manifest);
+    expect(errors.some(e => e.includes('extra_obj') && e.includes('not found in manifest'))).toBe(true);
+  });
+});
+
+describe('Derived count reconciliation', () => {
+  it('rejects stored migration passed count differing from object results', () => {
+    const batch = makeBatchEvidence({
+      batch_number: 2,
+      total_objects_checked: 2, total_passed: 2,
+      migrations: [{
+        version: '121', checksum: 'a', passed: 5, failed: 0, // stored passed=5, but only 2 pass objects
+        objects: [
+          { result: 'pass', verified_state: 'exists' },
+          { result: 'pass', verified_state: 'exists' }
+        ]
+      }]
+    });
+    const errors = validateDerivedCounts(batch);
+    expect(errors.some(e => e.includes('stored passed=5 but derived=2'))).toBe(true);
+  });
+
+  it('rejects stored batch totals differing from derived object results', () => {
+    const batch = makeBatchEvidence({
+      batch_number: 2,
+      total_objects_checked: 3, total_passed: 3,
+      migrations: [
+        {
+          version: '121', checksum: 'a', passed: 2, failed: 0, superseded: 1, // superseded=1 but no superseded objects
+          objects: [
+            { result: 'pass', verified_state: 'exists' },
+            { result: 'pass', verified_state: 'exists' }
+          ]
+        }
+      ]
+    });
+    const errors = validateDerivedCounts(batch);
+    expect(errors.some(e => e.includes('stored superseded=1 but derived=0'))).toBe(true);
   });
 });

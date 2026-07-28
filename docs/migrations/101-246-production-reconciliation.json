@@ -2045,7 +2045,7 @@
         "object_name": "Business owners upload own contracts",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_policies",
+        "verification_source": "storage_policies",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
         "result": "pass"
       },
@@ -2054,7 +2054,7 @@
         "object_name": "Business owners read own contracts",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_policies",
+        "verification_source": "storage_policies",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
         "result": "pass"
       },
@@ -2063,7 +2063,7 @@
         "object_name": "Business owners manage own documents",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_policies",
+        "verification_source": "storage_policies",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
         "result": "pass"
       },
@@ -2072,7 +2072,7 @@
         "object_name": "Service role full access contracts",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_policies",
+        "verification_source": "storage_policies",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
         "result": "pass"
       },
@@ -2081,7 +2081,7 @@
         "object_name": "Service role full access documents",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_policies",
+        "verification_source": "storage_policies",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
         "result": "pass"
       },
@@ -2090,7 +2090,7 @@
         "object_name": "Business owners upload contracts",
         "expected_state": "dropped",
         "verified_state": "dropped",
-        "verification_source": "pg_policies",
+        "verification_source": "storage_policies",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
         "result": "pass"
       },
@@ -2099,7 +2099,7 @@
         "object_name": "Business owners read contracts",
         "expected_state": "dropped",
         "verified_state": "dropped",
-        "verification_source": "pg_policies",
+        "verification_source": "storage_policies",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
         "result": "pass"
       }
@@ -2182,7 +2182,7 @@
         "object_name": "Allow authenticated uploads",
         "expected_state": "dropped",
         "verified_state": "dropped",
-        "verification_source": "pg_policies",
+        "verification_source": "storage_policies",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
         "result": "pass"
       }
@@ -2256,7 +2256,7 @@
         "object_name": "book_slot_atomic_svc",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_proc",
+        "verification_source": "has_function_privilege",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
         "result": "pass"
       },
@@ -2265,7 +2265,7 @@
         "object_name": "book_slot_atomic_exists",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_proc",
+        "verification_source": "has_function_privilege",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
         "result": "pass"
       }
@@ -2320,7 +2320,7 @@
         "object_name": "get_business_revenue_exists",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_proc",
+        "verification_source": "has_function_privilege",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
         "result": "pass"
       },
@@ -2329,7 +2329,7 @@
         "object_name": "get_order_revenue_exists",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_proc",
+        "verification_source": "has_function_privilege",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
         "result": "pass"
       },
@@ -2338,7 +2338,7 @@
         "object_name": "get_outstanding_invoices_exists",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_proc",
+        "verification_source": "has_function_privilege",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
         "result": "pass"
       }
