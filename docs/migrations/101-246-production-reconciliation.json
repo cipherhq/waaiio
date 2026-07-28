@@ -3271,10 +3271,10 @@
         "verification_source": "pg_policies",
         "verified_at": "2026-07-28T19:47:09.267772+00:00",
         "result": "superseded",
-        "replacement_object_name": "Policy dropped; anon access revoked via REVOKE ALL",
+        "replacement_object_name": "public.businesses_public",
         "superseding_migration": "293_fix_production_table_exposure.sql",
-        "rationale": "Migration 293 dropped public_read_active_businesses and revoked all anon access to businesses table for security hardening",
-        "application_behaviour_impact": "Stricter access: anonymous users can no longer read businesses table directly. Application queries use authenticated/service role instead."
+        "rationale": "Migration 293 dropped the permissive public_read_active_businesses policy, revoked direct anonymous access to public.businesses, and created the security-barrier view public.businesses_public containing only approved public fields.",
+        "application_behaviour_impact": "Anonymous public-business reads continue through public.businesses_public. Direct anonymous access to sensitive columns on public.businesses is removed. Authenticated and service-role base-table access remains explicitly granted."
       },
       {
         "object_type": "policy",

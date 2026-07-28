@@ -54,9 +54,10 @@
 
 2. **Migration 149** — policy `public_read_active_businesses ON businesses` (expected: exists)
    - Verified state: superseded_with_stricter_state
+   - Replacement: `public.businesses_public` (security-barrier view)
    - Superseding migration: 293_fix_production_table_exposure.sql
-   - Rationale: Migration 293 dropped the policy and revoked all anon access to businesses table for security hardening.
-   - Impact: Stricter access — anonymous users can no longer read businesses table directly.
+   - Rationale: Migration 293 dropped the permissive public_read_active_businesses policy, revoked direct anonymous access to public.businesses, and created the security-barrier view public.businesses_public containing only approved public fields.
+   - Impact: Anonymous public-business reads continue through public.businesses_public. Direct anonymous access to sensitive columns on public.businesses is removed. Authenticated and service-role base-table access remains explicitly granted.
 
 3. **Migration 149** — trigger `trg_generate_event_slug ON events` (expected: dropped)
    - Verified state: superseded_with_equivalent_state
