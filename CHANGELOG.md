@@ -7,16 +7,21 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-28
 
-### Operations: Structured evidence, path-scoped scanning, hardened validator
-- `docs/migrations/101-246-production-reconciliation.json` — Rebuilt with structured evidence derived from migration SQL files. Each entry now contains an array of typed evidence objects (table, column, index, policy, function, trigger, constraint, etc.) instead of a generic string. 3 entries reclassified from VERIFIED_APPLIED_UNTRACKED to NOT_VERIFIABLE_SAFELY (126, 216, 217) due to lacking concrete durable schema objects. Final counts: 8 ALIGNED_TRACKED, 124 VERIFIED_APPLIED_UNTRACKED, 12 NOT_VERIFIABLE_SAFELY, 2 SUPERSEDED.
-- `docs/migrations/101-246-repair-allowlist.json` — Rebuilt with 124 entries (was 127). SHA-256 evidence digests recomputed from structured evidence via canonical JSON.
-- `docs/migrations/101-246-repair-runbook.md` — Updated batch proposals for 124 entries (9 batches). Fixed final reconciliation: 14 intentionally unrepaired (12 NV + 2 SUPERSEDED). Issue #53 closes only after approved repairs AND intentional exclusions are documented.
-- `scripts/validate-migration-repair-allowlist.mjs` — Hardened: rejects generic string evidence, requires structured evidence objects with object_type/object_name/expected_state/verification_source, derives allowlist count from manifest (not hardcoded), validates evidence structure for all entries.
-- `scripts/filter-secret-scan-false-positives.mjs` — New path-scoped filter. Exempts SHA-256 checksum fields ONLY in docs/migrations/*.json. All other files fully scanned.
-- `.husky/pre-commit` — Secret scanner now pipes through filter-secret-scan-false-positives.mjs for path-scoped exemptions instead of a simple grep filter.
-- `lib/__tests__/secret-scanner-migration-json.test.ts` — Expanded: 18 tests covering regex matching, path scoping, and filter script integration. Verifies exemptions are path-scoped to docs/migrations/*.json only.
-  - **Affects:** Migration repair process, CI pipeline, Issue #53 tracking, pre-commit secret scanning
-  - **Could break:** Nothing — documentation, tooling, and CI only. No migration SQL modified. No production operation occurred.
+### Correction: SQL-derived objects are not production evidence
+- `docs/migrations/101-246-production-reconciliation.json` — 124 candidates reclassified from VERIFIED_APPLIED_UNTRACKED to PENDING_PRODUCTION_REVERIFICATION. SQL-derived expected objects preserved but clearly marked as `evidence_source: "sql_derived"` (not production evidence). `repair_eligible` set to false for all candidates. Final counts: 8 ALIGNED_TRACKED, 124 PENDING_PRODUCTION_REVERIFICATION, 12 NOT_VERIFIABLE_SAFELY, 2 SUPERSEDED.
+- `docs/migrations/101-246-repair-allowlist.json` — Emptied to `[]`. No repairs approved until read-only production verification.
+- `docs/migrations/101-246-verification-candidates.json` — New file: 124 candidates with expected-object digests for verification inventory.
+- `docs/migrations/101-246-repair-runbook.md` — Separated into two gates: (1) read-only production verification, (2) repair after evidence review. No candidate presented as repair-ready.
+- `scripts/validate-migration-repair-allowlist.mjs` — Rewritten: enforces approved allowlist = 0 until production verification; validates PENDING entries have `evidence_source: "sql_derived"` and `repair_eligible: false`.
+  - **Affects:** Migration repair process, Issue #53 tracking
+  - **Could break:** Nothing — framework and tooling only. No migration SQL modified. No production operation occurred.
+
+### Operations: Structured evidence extraction and path-scoped scanning
+- `scripts/filter-secret-scan-false-positives.mjs` — Path-scoped filter. Exempts SHA-256 checksum fields ONLY in docs/migrations/*.json. All other files fully scanned.
+- `.husky/pre-commit` — Secret scanner uses filter-secret-scan-false-positives.mjs for path-scoped exemptions.
+- `lib/__tests__/secret-scanner-migration-json.test.ts` — Integration tests for path-scoped secret-scanner exemptions.
+  - **Affects:** Pre-commit secret scanning
+  - **Could break:** Nothing — tooling only.
 
 ### Operations: Migration 297 production verification and Migration 115 completion
 - `docs/MIGRATION_REGISTRY.md` — Migration 297 status updated to production-verified (#63). Migration 115 status updated to fully satisfied and individually recorded.

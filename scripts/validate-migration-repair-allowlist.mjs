@@ -1,16 +1,15 @@
 #!/usr/bin/env node
 /**
- * Validates the migration repair allowlist against the reconciliation manifest
- * and repository migration files.
+ * Validates the migration reconciliation manifest, repair allowlist,
+ * and verification candidates against repository migration files.
  *
  * Key invariants:
  * - Manifest has exactly 146 entries (one per version 101-246)
- * - Evidence is an array of structured objects (not a generic string)
- * - Each evidence object has object_type, object_name, expected_state, verification_source
- * - Repair-eligible entries must have concrete object-level evidence
- * - Allowlist count equals the eligible pending set (derived, not hardcoded)
- * - Exclusions are derived from manifest classifications, not hardcoded version lists
- * - Evidence digests are recomputed from canonical JSON
+ * - SQL-derived expected objects are NOT production evidence
+ * - No candidate may enter the repair allowlist without production_verified evidence_source
+ * - The approved repair allowlist must equal the set of manifest entries with
+ *   repair_eligible=true and repair_status=approved_for_repair
+ * - Verification candidates are pending production re-verification
  *
  * Does not connect to Supabase or any external service.
  */
@@ -20,19 +19,15 @@ import { resolve } from 'path';
 
 const ALLOWLIST_PATH = resolve('docs/migrations/101-246-repair-allowlist.json');
 const MANIFEST_PATH = resolve('docs/migrations/101-246-production-reconciliation.json');
+const CANDIDATES_PATH = resolve('docs/migrations/101-246-verification-candidates.json');
 const MIGRATIONS_DIR = resolve('supabase/migrations');
 
 const VALID_CLASSIFICATIONS = new Set([
   'ALIGNED_TRACKED',
   'VERIFIED_APPLIED_UNTRACKED',
+  'PENDING_PRODUCTION_REVERIFICATION',
   'NOT_VERIFIABLE_SAFELY',
   'SUPERSEDED_WITH_EQUIVALENT_STATE'
-]);
-
-const VALID_EVIDENCE_TYPES = new Set([
-  'table', 'column', 'column_alter', 'column_rename', 'index', 'policy',
-  'function', 'function_config', 'trigger', 'enum', 'enum_value', 'rls',
-  'privilege', 'constraint', 'publication', 'completion_note'
 ]);
 
 const EXPECTED_MANIFEST_COUNT = 146;
@@ -49,25 +44,18 @@ function pass(msg) {
   console.log(`  PASS: ${msg}`);
 }
 
-function warn(msg) {
-  console.warn(`  WARN: ${msg}`);
-  warnings++;
-}
-
-console.log('=== Migration Repair Allowlist Validation ===\n');
+console.log('=== Migration Reconciliation Validation ===\n');
 
 // ── Check files exist ──
-if (!existsSync(ALLOWLIST_PATH)) {
-  fail('Allowlist file not found: ' + ALLOWLIST_PATH);
-  process.exit(1);
-}
-if (!existsSync(MANIFEST_PATH)) {
-  fail('Manifest file not found: ' + MANIFEST_PATH);
-  process.exit(1);
+for (const [name, path] of [['Allowlist', ALLOWLIST_PATH], ['Manifest', MANIFEST_PATH], ['Candidates', CANDIDATES_PATH]]) {
+  if (!existsSync(path)) {
+    fail(`${name} file not found: ${path}`);
+    process.exit(1);
+  }
 }
 
 // ── Parse JSON ──
-let allowlist, manifest;
+let allowlist, manifest, candidates;
 try {
   allowlist = JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf-8'));
   pass('Allowlist is valid JSON');
@@ -82,13 +70,11 @@ try {
   fail('Manifest is invalid JSON: ' + e.message);
   process.exit(1);
 }
-
-if (!Array.isArray(allowlist)) {
-  fail('Allowlist must be an array');
-  process.exit(1);
-}
-if (!Array.isArray(manifest)) {
-  fail('Manifest must be an array');
+try {
+  candidates = JSON.parse(readFileSync(CANDIDATES_PATH, 'utf-8'));
+  pass('Candidates is valid JSON');
+} catch (e) {
+  fail('Candidates is invalid JSON: ' + e.message);
   process.exit(1);
 }
 
@@ -100,344 +86,209 @@ const migrationFiles = readdirSync(MIGRATIONS_DIR).filter(f => f.endsWith('.sql'
 // ══════════════════════════════════════════════════════════════
 console.log('\n--- Manifest Checks ---\n');
 
-// Exactly 146 entries
 if (manifest.length !== EXPECTED_MANIFEST_COUNT) {
   fail(`Manifest has ${manifest.length} entries, expected ${EXPECTED_MANIFEST_COUNT}`);
 } else {
   pass(`Manifest has exactly ${EXPECTED_MANIFEST_COUNT} entries`);
 }
 
-// One entry per version 101-246
+// One entry per version 101-246, unique, sorted
 const manifestVersions = manifest.map(e => e.version);
 const expectedVersions = [];
 for (let i = 101; i <= 246; i++) expectedVersions.push(String(i));
 const missingVersions = expectedVersions.filter(v => !manifestVersions.includes(v));
-const extraVersions = manifestVersions.filter(v => !expectedVersions.includes(v));
 if (missingVersions.length > 0) {
-  fail(`Manifest missing versions: ${missingVersions.join(', ')}`);
+  fail(`Missing versions: ${missingVersions.join(', ')}`);
 } else {
-  pass('Manifest covers all versions 101-246');
-}
-if (extraVersions.length > 0) {
-  fail(`Manifest has unexpected versions: ${extraVersions.join(', ')}`);
+  pass('All versions 101-246 present');
 }
 
-// Unique versions
-const manifestUniqueVersions = new Set(manifestVersions);
-if (manifestUniqueVersions.size !== manifestVersions.length) {
-  fail(`Manifest has duplicate versions: ${manifestVersions.length} entries but ${manifestUniqueVersions.size} unique`);
+const uniqueSet = new Set(manifestVersions);
+if (uniqueSet.size !== manifestVersions.length) {
+  fail('Duplicate versions');
 } else {
-  pass('Manifest has no duplicate versions');
+  pass('No duplicate versions');
 }
 
-// Sorted
-const manifestSorted = [...manifestVersions].sort((a, b) => parseInt(a) - parseInt(b));
-const manifestIsSorted = manifestVersions.every((v, i) => v === manifestSorted[i]);
-if (!manifestIsSorted) {
-  fail('Manifest versions are not numerically sorted');
+const sorted = [...manifestVersions].sort((a, b) => parseInt(a) - parseInt(b));
+if (!manifestVersions.every((v, i) => v === sorted[i])) {
+  fail('Versions not sorted');
 } else {
-  pass('Manifest versions are numerically sorted');
+  pass('Versions sorted');
 }
 
-// Valid classifications only
-const invalidClassifications = manifest.filter(e => !VALID_CLASSIFICATIONS.has(e.current_classification));
-if (invalidClassifications.length > 0) {
-  fail(`Manifest has invalid classifications: ${invalidClassifications.map(e => `${e.version}=${e.current_classification}`).join(', ')}`);
+// Valid classifications
+const invalidClass = manifest.filter(e => !VALID_CLASSIFICATIONS.has(e.current_classification));
+if (invalidClass.length > 0) {
+  fail(`Invalid classifications: ${invalidClass.map(e => `${e.version}=${e.current_classification}`).join(', ')}`);
 } else {
-  pass('All manifest classifications are valid');
+  pass('All classifications valid');
 }
 
-// Every filename matches repository
-let filenameErrors = 0;
+// Filenames and checksums match repository
+let fileErrors = 0;
 for (const entry of manifest) {
   const repoFile = migrationFiles.find(f => f.startsWith(entry.version + '_'));
-  if (!repoFile) {
-    fail(`Manifest version ${entry.version}: no matching migration file in repository`);
-    filenameErrors++;
-  } else if (entry.filename !== repoFile) {
-    fail(`Manifest version ${entry.version}: filename mismatch. Manifest: ${entry.filename}, Repo: ${repoFile}`);
-    filenameErrors++;
+  if (!repoFile || entry.filename !== repoFile) {
+    fail(`Version ${entry.version}: filename mismatch`);
+    fileErrors++;
+    continue;
   }
-}
-if (filenameErrors === 0) {
-  pass('All manifest filenames match repository');
-}
-
-// Every checksum matches repository file
-let checksumErrors = 0;
-for (const entry of manifest) {
-  const filePath = resolve(MIGRATIONS_DIR, entry.filename);
-  if (!existsSync(filePath)) continue;
-  const fileContent = readFileSync(filePath, 'utf-8');
-  const sha256 = createHash('sha256').update(fileContent).digest('hex');
+  const content = readFileSync(resolve(MIGRATIONS_DIR, repoFile), 'utf-8');
+  const sha256 = createHash('sha256').update(content).digest('hex');
   if (entry.checksum !== sha256) {
-    fail(`Manifest version ${entry.version}: checksum mismatch. Manifest: ${entry.checksum.slice(0,12)}..., File: ${sha256.slice(0,12)}...`);
-    checksumErrors++;
+    fail(`Version ${entry.version}: checksum mismatch`);
+    fileErrors++;
   }
 }
-if (checksumErrors === 0) {
-  pass('All manifest checksums match repository files');
-}
+if (fileErrors === 0) pass('All filenames and checksums match repository');
 
-// ── Evidence structure checks ──
-console.log('\n--- Evidence Structure Checks ---\n');
+// Classification counts
+const counts = {};
+manifest.forEach(e => { counts[e.current_classification] = (counts[e.current_classification] || 0) + 1; });
 
-let evidenceStructureErrors = 0;
-for (const entry of manifest) {
-  // Evidence must be an array
-  if (!Array.isArray(entry.evidence)) {
-    fail(`Manifest version ${entry.version}: evidence is not an array (got ${typeof entry.evidence})`);
-    evidenceStructureErrors++;
-    continue;
-  }
+const alignedCount = counts['ALIGNED_TRACKED'] || 0;
+const pendingCount = counts['PENDING_PRODUCTION_REVERIFICATION'] || 0;
+const nvCount = counts['NOT_VERIFIABLE_SAFELY'] || 0;
+const supersededCount = counts['SUPERSEDED_WITH_EQUIVALENT_STATE'] || 0;
+const untrackedCount = counts['VERIFIED_APPLIED_UNTRACKED'] || 0;
 
-  // Each evidence object must have required fields
-  for (let i = 0; i < entry.evidence.length; i++) {
-    const ev = entry.evidence[i];
-    if (!ev.object_type || !ev.object_name || !ev.expected_state || !ev.verification_source) {
-      fail(`Manifest version ${entry.version}: evidence[${i}] missing required fields (object_type, object_name, expected_state, verification_source)`);
-      evidenceStructureErrors++;
-    }
-    if (ev.object_type && !VALID_EVIDENCE_TYPES.has(ev.object_type)) {
-      fail(`Manifest version ${entry.version}: evidence[${i}] has unknown object_type "${ev.object_type}"`);
-      evidenceStructureErrors++;
-    }
-  }
+if (alignedCount !== 8) fail(`ALIGNED_TRACKED: ${alignedCount}, expected 8`);
+else pass(`ALIGNED_TRACKED: ${alignedCount}`);
 
-  // Reject generic placeholder evidence strings masquerading as objects
-  for (const ev of entry.evidence) {
-    if (typeof ev === 'string') {
-      fail(`Manifest version ${entry.version}: evidence contains a string instead of structured object`);
-      evidenceStructureErrors++;
+if (pendingCount !== 124) fail(`PENDING_PRODUCTION_REVERIFICATION: ${pendingCount}, expected 124`);
+else pass(`PENDING_PRODUCTION_REVERIFICATION: ${pendingCount}`);
+
+if (nvCount !== 12) fail(`NOT_VERIFIABLE_SAFELY: ${nvCount}, expected 12`);
+else pass(`NOT_VERIFIABLE_SAFELY: ${nvCount}`);
+
+if (supersededCount !== 2) fail(`SUPERSEDED: ${supersededCount}, expected 2`);
+else pass(`SUPERSEDED: ${supersededCount}`);
+
+// No repair-eligible entries without production-verified evidence
+const repairEligible = manifest.filter(e => e.repair_eligible);
+if (repairEligible.length > 0) {
+  for (const e of repairEligible) {
+    if (e.evidence_source !== 'production_verified') {
+      fail(`Version ${e.version}: repair_eligible=true but evidence_source=${e.evidence_source} (must be production_verified)`);
     }
   }
-}
-if (evidenceStructureErrors === 0) {
-  pass('All manifest evidence entries have valid structure');
-}
-
-// Repair-eligible entries must have concrete object-level evidence (not just completion_notes)
-const repairEligible = manifest.filter(e => e.repair_eligible && e.repair_status === 'pending');
-let concreteEvidenceErrors = 0;
-for (const entry of repairEligible) {
-  if (!Array.isArray(entry.evidence)) {
-    fail(`Manifest version ${entry.version}: repair-eligible entry has non-array evidence`);
-    concreteEvidenceErrors++;
-    continue;
-  }
-  const concreteEvidence = entry.evidence.filter(ev => ev.object_type !== 'completion_note');
-  if (concreteEvidence.length === 0) {
-    fail(`Manifest version ${entry.version}: repair-eligible entry has no concrete object-level evidence`);
-    concreteEvidenceErrors++;
-  }
-}
-if (concreteEvidenceErrors === 0) {
-  pass(`All ${repairEligible.length} repair-eligible entries have concrete object-level evidence`);
+} else {
+  pass('No repair-eligible entries (correct: production verification required first)');
 }
 
-// Completed entries have non-contradictory evidence
+// Pending verification entries must have evidence_source=sql_derived and repair_eligible=false
+const pendingEntries = manifest.filter(e => e.current_classification === 'PENDING_PRODUCTION_REVERIFICATION');
+let pendingErrors = 0;
+for (const e of pendingEntries) {
+  if (e.repair_eligible !== false) {
+    fail(`Version ${e.version}: PENDING entry has repair_eligible=true`);
+    pendingErrors++;
+  }
+  if (e.evidence_source !== 'sql_derived') {
+    fail(`Version ${e.version}: PENDING entry has evidence_source=${e.evidence_source}, expected sql_derived`);
+    pendingErrors++;
+  }
+  if (e.confidence !== 'UNCONFIRMED') {
+    fail(`Version ${e.version}: PENDING entry has confidence=${e.confidence}, expected UNCONFIRMED`);
+    pendingErrors++;
+  }
+}
+if (pendingErrors === 0) pass(`All ${pendingEntries.length} PENDING entries correctly configured`);
+
+// Completed entries have production_verified evidence
 const completedEntries = manifest.filter(e => e.repair_status === 'completed');
-let contradictionErrors = 0;
-for (const entry of completedEntries) {
-  // Must have a completion_note in evidence
-  const hasNote = entry.evidence.some(ev => ev.object_type === 'completion_note');
-  if (!hasNote) {
-    fail(`Manifest version ${entry.version}: completed entry has no completion_note in evidence`);
-    contradictionErrors++;
+let completedErrors = 0;
+for (const e of completedEntries) {
+  if (e.evidence_source !== 'production_verified') {
+    fail(`Version ${e.version}: completed but evidence_source=${e.evidence_source}`);
+    completedErrors++;
   }
 }
-if (contradictionErrors === 0) {
-  pass(`All ${completedEntries.length} completed entries have completion notes`);
-}
+if (completedErrors === 0) pass(`All ${completedEntries.length} completed entries have production-verified evidence`);
 
 // ══════════════════════════════════════════════════════════════
 // ALLOWLIST CHECKS
 // ══════════════════════════════════════════════════════════════
 console.log('\n--- Allowlist Checks ---\n');
 
-// Build manifest lookup
+// Approved allowlist must equal manifest entries with repair_eligible=true AND repair_status=approved_for_repair
+const approvedInManifest = manifest.filter(e => e.repair_eligible && e.repair_status === 'approved_for_repair');
+if (allowlist.length !== approvedInManifest.length) {
+  if (allowlist.length === 0 && approvedInManifest.length === 0) {
+    pass('Approved repair allowlist is empty (correct: no production verification completed yet)');
+  } else {
+    fail(`Allowlist has ${allowlist.length} entries, manifest has ${approvedInManifest.length} approved entries`);
+  }
+} else {
+  pass(`Allowlist matches manifest approved entries: ${allowlist.length}`);
+}
+
+// ══════════════════════════════════════════════════════════════
+// CANDIDATE CHECKS
+// ══════════════════════════════════════════════════════════════
+console.log('\n--- Verification Candidate Checks ---\n');
+
+if (candidates.length !== pendingCount) {
+  fail(`Candidates has ${candidates.length} entries, expected ${pendingCount} (PENDING count)`);
+} else {
+  pass(`Candidates count matches PENDING count: ${candidates.length}`);
+}
+
+// Candidates sorted and unique
+const candVersions = candidates.map(e => e.version);
+const candUnique = new Set(candVersions);
+if (candUnique.size !== candVersions.length) fail('Candidate duplicate versions');
+else pass('Candidate versions unique');
+
+const candSorted = [...candVersions].sort((a, b) => parseInt(a) - parseInt(b));
+if (!candVersions.every((v, i) => v === candSorted[i])) fail('Candidates not sorted');
+else pass('Candidates sorted');
+
+// Each candidate's checksum matches repository
+let candErrors = 0;
 const manifestByVersion = {};
 manifest.forEach(e => { manifestByVersion[e.version] = e; });
 
-// Unique versions
-const allowlistVersions = allowlist.map(e => e.version);
-const allowlistUnique = new Set(allowlistVersions);
-if (allowlistUnique.size !== allowlistVersions.length) {
-  fail('Allowlist has duplicate versions');
-} else {
-  pass(`Allowlist has no duplicate versions (${allowlistVersions.length} entries)`);
-}
+for (const entry of candidates) {
+  const repoFile = migrationFiles.find(f => f.startsWith(entry.version + '_'));
+  if (!repoFile) { fail(`Candidate ${entry.version}: no repo file`); candErrors++; continue; }
+  const content = readFileSync(resolve(MIGRATIONS_DIR, repoFile), 'utf-8');
+  const sha256 = createHash('sha256').update(content).digest('hex');
+  if (entry.checksum !== sha256) { fail(`Candidate ${entry.version}: checksum mismatch`); candErrors++; }
 
-// Sorted
-const allowlistSorted = [...allowlistVersions].sort((a, b) => parseInt(a) - parseInt(b));
-const allowlistIsSorted = allowlistVersions.every((v, i) => v === allowlistSorted[i]);
-if (!allowlistIsSorted) {
-  fail('Allowlist versions are not numerically sorted');
-} else {
-  pass('Allowlist versions are numerically sorted');
-}
-
-// Derive expected allowlist count from manifest (not hardcoded)
-const manifestEligiblePending = manifest
-  .filter(e => e.current_classification === 'VERIFIED_APPLIED_UNTRACKED' && e.repair_eligible && e.repair_status === 'pending')
-  .map(e => e.version)
-  .sort((a, b) => parseInt(a) - parseInt(b));
-
-if (allowlist.length !== manifestEligiblePending.length) {
-  fail(`Allowlist has ${allowlist.length} entries, expected ${manifestEligiblePending.length} (derived from manifest eligible pending)`);
-} else {
-  pass(`Allowlist has exactly ${manifestEligiblePending.length} entries (derived from manifest)`);
-}
-
-// Validate each allowlist entry
-let allowlistEntryErrors = 0;
-for (const entry of allowlist) {
-  const ver = entry.version;
-
-  // Filename matches repository
-  const repoFile = migrationFiles.find(f => f.startsWith(ver + '_'));
-  if (!repoFile) {
-    fail(`Allowlist version ${ver}: no matching migration file in repository`);
-    allowlistEntryErrors++;
-    continue;
-  }
-  if (entry.filename !== repoFile) {
-    fail(`Allowlist version ${ver}: filename mismatch`);
-    allowlistEntryErrors++;
-  }
-
-  // Checksum matches repository file
-  const filePath = resolve(MIGRATIONS_DIR, repoFile);
-  const fileContent = readFileSync(filePath, 'utf-8');
-  const sha256 = createHash('sha256').update(fileContent).digest('hex');
-  if (entry.checksum !== sha256) {
-    fail(`Allowlist version ${ver}: checksum mismatch`);
-    allowlistEntryErrors++;
-  }
-
-  // Manifest entry exists
-  const manifestEntry = manifestByVersion[ver];
-  if (!manifestEntry) {
-    fail(`Allowlist version ${ver}: not found in manifest`);
-    allowlistEntryErrors++;
-    continue;
-  }
-
-  // current_classification is exactly VERIFIED_APPLIED_UNTRACKED
-  if (manifestEntry.current_classification !== 'VERIFIED_APPLIED_UNTRACKED') {
-    fail(`Allowlist version ${ver}: manifest classification is ${manifestEntry.current_classification}, expected VERIFIED_APPLIED_UNTRACKED`);
-    allowlistEntryErrors++;
-  }
-
-  // remote_tracked is false
-  if (manifestEntry.remote_tracked !== false) {
-    fail(`Allowlist version ${ver}: manifest remote_tracked is ${manifestEntry.remote_tracked}, expected false`);
-    allowlistEntryErrors++;
-  }
-
-  // repair_eligible is true
-  if (manifestEntry.repair_eligible !== true) {
-    fail(`Allowlist version ${ver}: manifest repair_eligible is ${manifestEntry.repair_eligible}, expected true`);
-    allowlistEntryErrors++;
-  }
-
-  // repair_status is pending
-  if (manifestEntry.repair_status !== 'pending') {
-    fail(`Allowlist version ${ver}: manifest repair_status is ${manifestEntry.repair_status}, expected pending`);
-    allowlistEntryErrors++;
-  }
-
-  // confidence is HIGH
-  if (entry.confidence !== 'HIGH') {
-    fail(`Allowlist version ${ver}: confidence is ${entry.confidence}, expected HIGH`);
-    allowlistEntryErrors++;
-  }
-
-  // evidence_digest recomputes correctly from canonical JSON
-  const canonical = JSON.stringify({
-    version: manifestEntry.version,
-    filename: manifestEntry.filename,
-    checksum: manifestEntry.checksum,
-    current_classification: manifestEntry.current_classification,
-    remote_tracked: manifestEntry.remote_tracked,
-    repair_eligible: manifestEntry.repair_eligible,
-    evidence: manifestEntry.evidence,
-    missing_effects: manifestEntry.missing_effects,
-    superseding_migration: manifestEntry.superseding_migration
-  });
-  const expectedDigest = createHash('sha256').update(canonical).digest('hex');
-  if (entry.evidence_digest !== expectedDigest) {
-    fail(`Allowlist version ${ver}: evidence_digest mismatch. Got: ${entry.evidence_digest.slice(0,12)}..., Expected: ${expectedDigest.slice(0,12)}...`);
-    allowlistEntryErrors++;
+  // Verify digest recomputes
+  const me = manifestByVersion[entry.version];
+  if (me) {
+    const canonical = JSON.stringify({
+      version: me.version,
+      filename: me.filename,
+      checksum: me.checksum,
+      evidence: me.evidence
+    });
+    const expectedDigest = createHash('sha256').update(canonical).digest('hex');
+    if (entry.expected_object_digest !== expectedDigest) {
+      fail(`Candidate ${entry.version}: digest mismatch`);
+      candErrors++;
+    }
   }
 }
-
-if (allowlistEntryErrors === 0) {
-  pass(`All ${allowlist.length} allowlist entries validated against manifest and repository`);
-}
-
-// Allowlist equals the complete set of eligible pending manifest entries
-const allowlistVersionsSorted = [...allowlistVersions].sort((a, b) => parseInt(a) - parseInt(b));
-const manifestNotInAllowlist = manifestEligiblePending.filter(v => !allowlistUnique.has(v));
-const allowlistNotInManifest = allowlistVersionsSorted.filter(v => !new Set(manifestEligiblePending).has(v));
-
-if (manifestNotInAllowlist.length > 0) {
-  fail(`Manifest eligible entries missing from allowlist: ${manifestNotInAllowlist.join(', ')}`);
-}
-if (allowlistNotInManifest.length > 0) {
-  fail(`Allowlist entries not eligible in manifest: ${allowlistNotInManifest.join(', ')}`);
-}
-if (manifestNotInAllowlist.length === 0 && allowlistNotInManifest.length === 0) {
-  pass('Allowlist is the complete set of eligible pending manifest entries');
-}
-
-// ══════════════════════════════════════════════════════════════
-// EXCLUSION CHECKS (derived from manifest, not hardcoded)
-// ══════════════════════════════════════════════════════════════
-console.log('\n--- Exclusion Checks ---\n');
-
-const allowlistVersionSet = new Set(allowlistVersions);
-
-// NOT_VERIFIABLE_SAFELY entries are not in allowlist
-const nvVersions = manifest.filter(e => e.current_classification === 'NOT_VERIFIABLE_SAFELY').map(e => e.version);
-const nvInAllowlist = nvVersions.filter(v => allowlistVersionSet.has(v));
-if (nvInAllowlist.length > 0) {
-  fail(`NOT_VERIFIABLE_SAFELY versions in allowlist: ${nvInAllowlist.join(', ')}`);
-} else {
-  pass(`All ${nvVersions.length} NOT_VERIFIABLE_SAFELY versions excluded from allowlist`);
-}
-
-// SUPERSEDED entries are not in allowlist
-const supersededVersions = manifest.filter(e => e.current_classification === 'SUPERSEDED_WITH_EQUIVALENT_STATE').map(e => e.version);
-const supersededInAllowlist = supersededVersions.filter(v => allowlistVersionSet.has(v));
-if (supersededInAllowlist.length > 0) {
-  fail(`SUPERSEDED versions in allowlist: ${supersededInAllowlist.join(', ')}`);
-} else {
-  pass(`All ${supersededVersions.length} SUPERSEDED versions excluded from allowlist`);
-}
-
-// ALIGNED_TRACKED entries are not in allowlist
-const alignedVersions = manifest.filter(e => e.current_classification === 'ALIGNED_TRACKED').map(e => e.version);
-const alignedInAllowlist = alignedVersions.filter(v => allowlistVersionSet.has(v));
-if (alignedInAllowlist.length > 0) {
-  fail(`ALIGNED_TRACKED versions in allowlist: ${alignedInAllowlist.join(', ')}`);
-} else {
-  pass(`All ${alignedVersions.length} ALIGNED_TRACKED versions excluded from allowlist`);
-}
+if (candErrors === 0) pass(`All ${candidates.length} candidate checksums and digests verified`);
 
 // ── Summary ──
 console.log('\n=== Summary ===');
 console.log(`  Manifest: ${manifest.length} entries`);
-console.log(`    ALIGNED_TRACKED: ${alignedVersions.length}`);
-console.log(`    VERIFIED_APPLIED_UNTRACKED: ${manifest.filter(e => e.current_classification === 'VERIFIED_APPLIED_UNTRACKED').length}`);
-console.log(`    NOT_VERIFIABLE_SAFELY: ${nvVersions.length}`);
-console.log(`    SUPERSEDED: ${supersededVersions.length}`);
-console.log(`  Allowlist: ${allowlist.length} entries (repair-eligible pending)`);
+console.log(`    ALIGNED_TRACKED: ${alignedCount}`);
+console.log(`    PENDING_PRODUCTION_REVERIFICATION: ${pendingCount}`);
+console.log(`    NOT_VERIFIABLE_SAFELY: ${nvCount}`);
+console.log(`    SUPERSEDED: ${supersededCount}`);
+console.log(`  Approved repair allowlist: ${allowlist.length} (must be 0 until production verification)`);
+console.log(`  Verification candidates: ${candidates.length}`);
 console.log(`  Errors: ${errors}`);
 console.log(`  Warnings: ${warnings}`);
 if (errors > 0) {
-  console.log('\nMigration repair allowlist validation FAILED.');
+  console.log('\nMigration reconciliation validation FAILED.');
   process.exit(1);
 } else {
-  console.log('\nMigration repair allowlist validation PASSED.');
+  console.log('\nMigration reconciliation validation PASSED.');
 }

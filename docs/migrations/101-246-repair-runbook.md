@@ -2,73 +2,100 @@
 
 ## Purpose
 
-This runbook governs the controlled repair of 124 verified-but-untracked migrations (101-246) in the Supabase remote schema_migrations table. Each migration has been individually verified as applied to production via structured durable schema evidence (tables, columns, indexes, policies, functions, triggers, constraints) extracted from the migration SQL files.
+This runbook governs the controlled verification and repair of 124 migration-history candidates (101-246) in the Supabase remote `schema_migrations` table.
+
+**Important:** The 124 candidates have SQL-derived expected objects (tables, columns, indexes, etc.) but have NOT yet been verified against production. No repair may begin until read-only production verification confirms each candidate's expected objects actually exist.
 
 ## Constraints
 
-1. **No blind bulk repair.** Every version must be individually present in the immutable allowlist (`docs/migrations/101-246-repair-allowlist.json`).
-2. **Maximum 15 versions per batch.** Each batch is a single PR and a single production operation.
-3. **Allowlist is immutable.** If a version needs to be added or removed, the allowlist must be regenerated and re-validated through CI before any batch uses it.
-4. **Checksum verification required.** Before repairing any version, verify the local file checksum matches the allowlist checksum.
+1. **No blind bulk repair.** Every version must be individually verified against production before repair.
+2. **Two-step process.** Step 1: read-only production verification. Step 2: migration-history repair. Step 2 requires Step 1.
+3. **Maximum 15 versions per batch.** Each verification or repair batch covers at most 15 versions.
+4. **Checksum verification required.** Before verifying or repairing any version, confirm the local file checksum matches the manifest using `shasum -a 256` or `npm run verify:migration-repair-plan`.
 5. **No SQL execution.** `supabase migration repair` only inserts a row into `schema_migrations` — it does not execute the migration SQL.
-6. **Post-repair verification required.** After each batch, verify the repaired versions appear exactly once in `schema_migrations`.
-7. **Stop on any failure.** If any version in a batch fails verification, stop the entire batch and investigate.
-8. **Issue #53 stays open** until all batches complete, intentional exclusions are documented, and final reconciliation is confirmed.
+6. **No customer data access.** Verification queries metadata catalogs only (information_schema, pg_indexes, pg_proc, pg_policies, pg_trigger, pg_constraint).
+7. **Stop on any failure.** If any version in a batch fails verification or repair, stop the entire batch and investigate.
+8. **Issue #53 stays open** until all approved repairs and intentional exclusions are fully documented.
 
-## Excluded Versions
+## Current State
 
-The following versions are **not** in the allowlist and must **never** be repaired through this process:
+- **8 ALIGNED_TRACKED:** 115, 119, 176, 181, 182, 199, 200, 244
+- **124 PENDING_PRODUCTION_REVERIFICATION:** require read-only verification
+- **12 NOT_VERIFIABLE_SAFELY:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
+- **2 SUPERSEDED:** 122, 130
+- **Approved repair allowlist: 0** (empty until production verification)
 
-### Already Completed (ALIGNED_TRACKED) — 8 versions
-- 115, 119, 176, 181, 182, 199, 200, 244
+## Step 1 — Read-Only Production Verification
 
-### Not Verifiable Safely — 12 versions
-- 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
+For each batch of no more than 15 candidates:
 
-### Superseded — 2 versions
-- 122, 130
-
-## Batch Process
-
-For each batch:
-
-### 1. Pre-flight
+### 1a. Select batch from verification candidates
 ```bash
-# Verify allowlist passes CI
-npm run verify:migration-repair-plan
-
-# Verify current schema_migrations count
-# (use read-only query via Management API)
+# Candidates are listed in docs/migrations/101-246-verification-candidates.json
 ```
 
-### 2. Execute Repair
-For each version N in the batch:
+### 1b. Run read-only verification queries
+For each candidate, query production metadata to confirm every expected object exists:
 ```bash
-# Verify checksum first (macOS-compatible)
+# Example: verify table exists
+# SELECT 1 FROM information_schema.tables WHERE table_name = 'expected_table';
+
+# Example: verify column exists
+# SELECT 1 FROM information_schema.columns WHERE table_name = 'tbl' AND column_name = 'col';
+
+# Example: verify index exists
+# SELECT 1 FROM pg_indexes WHERE indexname = 'expected_index';
+```
+
+Do not read customer record contents. Query only catalog tables.
+
+### 1c. Record evidence
+For each verified object, record:
+- object_type, object_name, verified_state, verification_source, verified_at (UTC)
+
+### 1d. Update manifest
+Update `docs/migrations/101-246-production-reconciliation.json`:
+- Set `evidence_source: "production_verified"`
+- Add production evidence to the evidence array
+- Set `current_classification: "VERIFIED_APPLIED_UNTRACKED"`
+- Set `repair_eligible: true`, `repair_status: "approved_for_repair"`, `confidence: "HIGH"`
+
+### 1e. Commit and review
+Commit evidence as a PR. Review before proceeding to Step 2.
+
+## Step 2 — Production Migration-History Repair
+
+Only after Step 1 evidence is reviewed and merged:
+
+### 2a. Pre-flight
+```bash
+npm run verify:migration-repair-plan
+```
+
+### 2b. Execute repair
+For each approved version N:
+```bash
+# Verify checksum (macOS-compatible)
 shasum -a 256 supabase/migrations/N_*.sql
-# Or use the validator script: npm run verify:migration-repair-plan
 
 # Execute repair (marks as applied, does NOT run SQL)
 npx supabase migration repair --status applied N --linked
 ```
 
-### 3. Post-repair Verification
+### 2c. Post-repair verification
 ```bash
-# Verify each repaired version appears exactly once
-# Query schema_migrations via Management API (read-only)
-
-# Verify total schema_migrations count increased by batch size
-
+# Verify each repaired version appears exactly once in schema_migrations
+# Verify total count increased by batch size
 # Verify no unrelated migrations were affected
 ```
 
-### 4. Record Results
-- Update `docs/migrations/101-246-production-reconciliation.json` repair_status for each version
-- Add verification evidence to OPS-001 in `docs/engineering-status.json`
+### 2d. Record results
+- Update manifest: `repair_status: "completed"`
+- Update OPS-001 in engineering ledgers
 - Update Issue #53 with batch completion details
 - Add CHANGELOG.md entry
 
-## Proposed Batches
+## Proposed Verification Batches
 
 ### Batch 1 (15 versions)
 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 120
@@ -99,26 +126,26 @@ npx supabase migration repair --status applied N --linked
 
 ## Stop Conditions
 
-Stop the entire repair process if:
+Stop the entire process if:
 
-1. Any `supabase migration repair` command returns an error
-2. Post-repair verification shows a version appearing more than once
-3. Post-repair verification shows a version not appearing at all
+1. Any expected object is missing or in an unexpected state during verification
+2. Any `npx supabase migration repair` command returns an error
+3. Post-repair verification shows a version appearing more than once or not at all
 4. Schema_migrations count does not match expected total
 5. Any unrelated migration row was modified
-6. The allowlist validator (`npm run verify:migration-repair-plan`) fails
+6. `npm run verify:migration-repair-plan` fails
 
 ## Final Reconciliation
 
-After all 9 batches complete:
+After all approved batches complete:
 
-1. Verify total schema_migrations count matches expected: currently aligned (8) + repaired (124) + pre-existing tracked (versions 001-100 and 247+) = all tracked
-2. Run `supabase migration list` and confirm no "not applied" entries for versions in the allowlist
-3. Update `docs/migrations/101-246-production-reconciliation.json` — all 124 repair candidates should show `repair_status: "completed"`
-4. Document the 14 intentionally unrepaired versions (12 NOT_VERIFIABLE_SAFELY + 2 SUPERSEDED) with rationale in Issue #53
-5. Issue #53 closes only after: all 124 approved repairs complete AND the 14 intentional exclusions are fully documented
-6. Update OPS-001 milestone to PRODUCTION_VERIFIED
+- **Expected tracked count in range:** 8 (aligned) + number of successfully verified and repaired candidates
+- **Intentionally unrepaired:** 14 versions (12 NOT_VERIFIABLE_SAFELY + 2 SUPERSEDED)
+- The exact 14: 101, 105, 107, 122, 126, 130, 160, 163, 164, 187, 216, 217, 222, 226
+- These versions must not be repaired unless new evidence is approved through a separate review
+- Issue #53 closes only after: all approved repairs complete AND intentional exclusions are documented
+- Update OPS-001 milestone to PRODUCTION_VERIFIED
 
 ## Intentionally Unrepaired
 
-The 12 NOT_VERIFIABLE_SAFELY migrations (101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226) and 2 SUPERSEDED migrations (122, 130) intentionally remain unrepaired. These 14 versions either lack durable schema objects that can be verified from SQL parsing (data-only migrations, COMMENT statements, INSERT/UPDATE-only operations) or their effects have been fully replaced by later migrations. They must not be repaired unless new evidence is approved through a separate review process.
+The 12 NOT_VERIFIABLE_SAFELY migrations (101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226) and 2 SUPERSEDED migrations (122, 130) intentionally remain unrepaired. These 14 versions either lack durable schema objects that can be verified without reading customer data, or their effects have been fully replaced by later migrations. They must not be repaired unless new evidence is approved.
