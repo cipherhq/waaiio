@@ -63,26 +63,26 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 124 | `auto_reply` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 | 123 | `add_assigned_channel_id` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 | 121 | `property_blocked_dates` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
-| 153 | `payment_confirmation_dedup` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
-| 152 | `catalog_sync` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
-| 151 | `llm_classifications_owner_rls` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
-| 150 | `group_bookings_waitlist_conversion` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
-| 149 | `public_event_booking_slugs` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. 2 superseded objects. Repair pending. |
-| 148 | `add_missing_fk_indexes` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
-| 147 | `auto_last_active_on_deactivate` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. 1 superseded object. Repair pending. |
-| 146 | `service_buffer_time` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
-| 145 | `saved_card_pin` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
-| 144 | `rls_fix_permissive_policies` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
-| 143 | `add_paypal_gateway` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
-| 142 | `checkin_checkout_noshow` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
-| 141 | `fix_atomic_booking_enum_casts` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
-| 140 | `fix_atomic_booking_for_update` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
-| 139 | `fix_atomic_booking_type_cast` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
+| 153 | `payment_confirmation_dedup` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 152 | `catalog_sync` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 151 | `llm_classifications_owner_rls` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 150 | `group_bookings_waitlist_conversion` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 149 | `public_event_booking_slugs` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 148 | `add_missing_fk_indexes` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 147 | `auto_last_active_on_deactivate` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 146 | `service_buffer_time` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 145 | `saved_card_pin` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 144 | `rls_fix_permissive_policies` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 143 | `add_paypal_gateway` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 142 | `checkin_checkout_noshow` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 141 | `fix_atomic_booking_enum_casts` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 140 | `fix_atomic_booking_for_update` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 139 | `fix_atomic_booking_type_cast` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 | 102 | `service_availability` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 
 **Batch 1 repair summary:** 15 versions (102-120) now tracked in remote schema_migrations.
 **Batch 2 repair summary:** 15 versions (121-138) now tracked in remote schema_migrations. Remote count 118 -> 133 (+15). 101-246 tracked count 23 -> 38 (+15).
-**Batch 3 verification summary:** 15 versions (139-153) production-verified. 91 checks: 88 passed, 3 superseded, 0 failed. Repair pending. 79 candidates remain for future verification batches.
+**Batch 3 repair summary:** 15 versions (139-153) now tracked in remote schema_migrations. Remote count 133 -> 148 (+15). 101-246 tracked count 38 -> 53 (+15). 79 candidates remain for future verification batches.
 
 **Next available version:** 298
 
