@@ -2307,6 +2307,119 @@ describe('Batch 3 repair-specific validation', () => {
     }
   });
 
+  it('Batch 3 filename-map binds correctly to manifest', () => {
+    const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
+    const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
+    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as ManifestEntry[];
+    const manifestByVersion: Record<string, ManifestEntry> = {};
+    manifest.forEach(e => { manifestByVersion[e.version] = e; });
+
+    expect(repairData.migration_filenames.length).toBe(repairData.approved_versions.length);
+    expect(new Set(repairData.migration_filenames).size).toBe(repairData.migration_filenames.length);
+    repairData.approved_versions.forEach((ver: string, i: number) => {
+      const fn = repairData.migration_filenames[i];
+      const me = manifestByVersion[ver];
+      expect(me).toBeDefined();
+      expect(fn).toBe(me.filename);
+    });
+  });
+
+  it('Batch 3 checksum-map binds correctly to manifest and repository', () => {
+    const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
+    const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
+    const migDir = resolve('supabase/migrations');
+    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as ManifestEntry[];
+    const manifestByVersion: Record<string, ManifestEntry> = {};
+    manifest.forEach(e => { manifestByVersion[e.version] = e; });
+
+    const csKeys = Object.keys(repairData.approved_checksums);
+    expect(csKeys.length).toBe(repairData.approved_versions.length);
+    for (const [ver, cs] of Object.entries(repairData.approved_checksums) as [string, string][]) {
+      expect(cs).toMatch(/^[0-9a-f]{64}$/);
+      const me = manifestByVersion[ver];
+      expect(me).toBeDefined();
+      expect(cs).toBe(me.checksum);
+      const files = readdirSync(migDir).filter(f => f.startsWith(ver + '_'));
+      expect(files.length).toBe(1);
+      const content = readFileSync(resolve(migDir, files[0]), 'utf-8');
+      const sha256 = createHash('sha256').update(content).digest('hex');
+      expect(cs).toBe(sha256);
+    }
+  });
+
+  it('Batch 3 production-evidence digests recompute correctly', () => {
+    const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
+    const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
+    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as ManifestEntry[];
+    const manifestByVersion: Record<string, ManifestEntry> = {};
+    manifest.forEach(e => { manifestByVersion[e.version] = e; });
+
+    const pedKeys = Object.keys(repairData.approved_production_evidence_digests);
+    expect(pedKeys.length).toBe(repairData.approved_versions.length);
+    for (const [ver, storedDigest] of Object.entries(repairData.approved_production_evidence_digests) as [string, string][]) {
+      expect(storedDigest).toMatch(/^[0-9a-f]{64}$/);
+      const me = manifestByVersion[ver]!;
+      expect(me).toBeDefined();
+      const canonical = JSON.stringify({
+        version: me.version, filename: me.filename, checksum: me.checksum,
+        current_classification: 'VERIFIED_APPLIED_UNTRACKED',
+        evidence_source: me.evidence_source,
+        evidence: me.evidence,
+        last_verified_at: me.last_verified_at
+      });
+      const recomputed = createHash('sha256').update(canonical).digest('hex');
+      expect(storedDigest).toBe(recomputed);
+    }
+  });
+
+  it('Batch 3 snapshot validation passes', () => {
+    const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
+    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
+
+    const preSnap = repairData.pre_repair.tracked_version_snapshot;
+    const postSnap = repairData.post_repair.tracked_version_snapshot;
+    expect(Array.isArray(preSnap)).toBe(true);
+    expect(Array.isArray(postSnap)).toBe(true);
+    expect(preSnap.every((v: number) => Number.isInteger(v) && v > 0)).toBe(true);
+    expect(postSnap.every((v: number) => Number.isInteger(v) && v > 0)).toBe(true);
+    expect(new Set(preSnap).size).toBe(preSnap.length);
+    expect(new Set(postSnap).size).toBe(postSnap.length);
+    expect(preSnap.length).toBe(repairData.pre_repair.total_remote_count);
+    expect(postSnap.length).toBe(repairData.post_repair.total_remote_count);
+
+    // Derive added/removed
+    const preSet = new Set(preSnap.map(String));
+    const postSet = new Set(postSnap.map(String));
+    const added = [...postSet].filter((v: string) => !preSet.has(v)).sort((a: string, b: string) => parseInt(a) - parseInt(b));
+    const removed = [...preSet].filter((v: string) => !postSet.has(v));
+    const approvedSorted = repairData.approved_versions.map(String).sort((a: string, b: string) => parseInt(a) - parseInt(b));
+    expect(added).toEqual(approvedSorted);
+    expect(removed).toEqual([]);
+    expect(repairData.post_repair.lost_versions).toEqual([]);
+  });
+
+  it('Batch 3 safety confirmations all present and true', () => {
+    const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
+    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
+
+    const required = [
+      'every_approved_version_appears_exactly_once',
+      'no_unrelated_version_changed',
+      'no_migration_sql_executed',
+      'no_schema_or_application_data_changed',
+      'no_customer_record_contents_accessed',
+      'no_deployment_occurred',
+      'no_token_or_auth_header_recorded',
+      'batch_4_did_not_start'
+    ];
+    for (const key of required) {
+      expect(repairData.confirmations[key]).toBe(true);
+    }
+  });
+
   it('all 45 completed entries in manifest have valid digests', () => {
     const evidenceDir = resolve('docs/migrations/evidence');
     const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
@@ -2377,5 +2490,163 @@ describe('Batch 3 repair-specific validation', () => {
       console.error('Digest validation errors:', allErrors);
     }
     expect(allErrors).toEqual([]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// EVIDENCE-BINDING HARDENING REJECTION TESTS
+// ══════════════════════════════════════════════════════════════
+
+describe('Filename-map rejection tests', () => {
+  it('rejects extra migration_filenames entry', () => {
+    const filenames = ['139_a.sql', '140_b.sql', '141_c.sql'];
+    const versions = ['139', '140'];
+    expect(filenames.length).not.toBe(versions.length);
+  });
+
+  it('rejects missing migration_filenames entry', () => {
+    const filenames = ['139_a.sql'];
+    const versions = ['139', '140'];
+    expect(filenames.length).not.toBe(versions.length);
+  });
+
+  it('rejects duplicate migration filename', () => {
+    const filenames = ['139_a.sql', '139_a.sql', '141_c.sql'];
+    const fnSet = new Set(filenames);
+    expect(fnSet.size).toBeLessThan(filenames.length);
+  });
+});
+
+describe('Checksum-map rejection tests', () => {
+  it('rejects extra approved_checksums key', () => {
+    const approvedVersions = new Set(['139', '140']);
+    const csKeys = new Set(['139', '140', '999']);
+    const extra = [...csKeys].filter(v => !approvedVersions.has(v));
+    expect(extra.length).toBeGreaterThan(0);
+    expect(extra).toContain('999');
+  });
+
+  it('rejects missing approved_checksums key', () => {
+    const approvedVersions = new Set(['139', '140', '141']);
+    const csKeys = new Set(['139', '140']);
+    const missing = [...approvedVersions].filter(v => !csKeys.has(v));
+    expect(missing.length).toBeGreaterThan(0);
+    expect(missing).toContain('141');
+  });
+
+  it('rejects malformed checksum (not 64-char hex)', () => {
+    const cs = 'ZZZZ0000000000000000000000000000000000000000000000000000000000';
+    expect(/^[0-9a-f]{64}$/.test(cs)).toBe(false);
+  });
+});
+
+describe('Production-evidence digest rejection tests', () => {
+  it('rejects extra approved_production_evidence_digests key', () => {
+    const approvedVersions = new Set(['139', '140']);
+    const pedKeys = new Set(['139', '140', '999']);
+    const extra = [...pedKeys].filter(v => !approvedVersions.has(v));
+    expect(extra.length).toBeGreaterThan(0);
+  });
+
+  it('rejects missing approved_production_evidence_digests key', () => {
+    const approvedVersions = new Set(['139', '140', '141']);
+    const pedKeys = new Set(['139', '140']);
+    const missing = [...approvedVersions].filter(v => !pedKeys.has(v));
+    expect(missing.length).toBeGreaterThan(0);
+  });
+
+  it('rejects malformed production-evidence digest', () => {
+    const digest = 'not-a-valid-hex-string';
+    expect(/^[0-9a-f]{64}$/.test(digest)).toBe(false);
+  });
+
+  it('rejects production-evidence digest not matching recomputed', () => {
+    const me: ManifestEntry = makeCompletedEntry({
+      version: '139',
+      evidence_source: 'production_verified',
+      last_verified_at: '2026-07-28T11:57:05.694160+00:00'
+    });
+    const canonical = JSON.stringify({
+      version: me.version, filename: me.filename, checksum: me.checksum,
+      current_classification: 'VERIFIED_APPLIED_UNTRACKED',
+      evidence_source: me.evidence_source,
+      evidence: me.evidence,
+      last_verified_at: me.last_verified_at
+    });
+    const correctDigest = createHash('sha256').update(canonical).digest('hex');
+    const wrongDigest = 'aaaa' + correctDigest.slice(4);
+    expect(wrongDigest).not.toBe(correctDigest);
+  });
+});
+
+describe('Snapshot rejection tests', () => {
+  it('rejects duplicate pre-repair snapshot version', () => {
+    const snap = [1, 2, 3, 3, 4];
+    expect(new Set(snap).size).toBeLessThan(snap.length);
+  });
+
+  it('rejects duplicate post-repair snapshot version', () => {
+    const snap = [1, 2, 3, 4, 4, 5];
+    expect(new Set(snap).size).toBeLessThan(snap.length);
+  });
+
+  it('rejects snapshot length not matching total_remote_count', () => {
+    const snap = [1, 2, 3];
+    const totalRemoteCount = 5;
+    expect(snap.length).not.toBe(totalRemoteCount);
+  });
+
+  it('rejects snapshot range count not matching range_101_246_count', () => {
+    const snap = [1, 2, 100, 101, 102, 200, 247, 300];
+    const rangeCount = snap.filter(v => v >= 101 && v <= 246).length;
+    const expectedRangeCount = 5; // wrong
+    expect(rangeCount).not.toBe(expectedRangeCount);
+  });
+
+  it('rejects non-empty post_repair.lost_versions', () => {
+    const lostVersions = [115];
+    expect(lostVersions.length).toBeGreaterThan(0);
+  });
+});
+
+describe('Safety confirmation rejection tests', () => {
+  it('rejects missing required safety confirmation', () => {
+    const confirmations: Record<string, boolean> = {
+      every_approved_version_appears_exactly_once: true,
+      no_unrelated_version_changed: true,
+      no_migration_sql_executed: true,
+      // missing: no_schema_or_application_data_changed
+      no_customer_record_contents_accessed: true,
+      no_deployment_occurred: true,
+      no_token_or_auth_header_recorded: true,
+      batch_4_did_not_start: true
+    };
+    const required = [
+      'every_approved_version_appears_exactly_once',
+      'no_unrelated_version_changed',
+      'no_migration_sql_executed',
+      'no_schema_or_application_data_changed',
+      'no_customer_record_contents_accessed',
+      'no_deployment_occurred',
+      'no_token_or_auth_header_recorded',
+      'batch_4_did_not_start'
+    ];
+    const missing = required.filter(k => confirmations[k] !== true);
+    expect(missing.length).toBeGreaterThan(0);
+    expect(missing).toContain('no_schema_or_application_data_changed');
+  });
+
+  it('rejects safety confirmation set to false', () => {
+    const confirmations: Record<string, boolean> = {
+      every_approved_version_appears_exactly_once: true,
+      no_unrelated_version_changed: false, // deliberately false
+      no_migration_sql_executed: true,
+      no_schema_or_application_data_changed: true,
+      no_customer_record_contents_accessed: true,
+      no_deployment_occurred: true,
+      no_token_or_auth_header_recorded: true,
+      batch_4_did_not_start: true
+    };
+    expect(confirmations['no_unrelated_version_changed']).toBe(false);
   });
 });

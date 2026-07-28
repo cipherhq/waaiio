@@ -64,5 +64,5 @@ All 30 previously repaired versions remain tracked:
 ## Next Steps
 
 - Issue #53 remains open
-- Repository repair evidence to be recorded through separate PR
+- PR #70 records this repair evidence. Batch 4 remains blocked until PR #70 is independently reviewed and merged.
 - Batch 4 verification pending

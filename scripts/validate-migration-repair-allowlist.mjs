@@ -1110,6 +1110,202 @@ for (const { file, batchNumber, data: repairData } of allRepairBatches) {
   }
   if (repairErrors === 0) pass(`Repair Batch ${batchNumber} 5-way version-set equality`);
 
+  // ── Filename-map binding (Batch 3+ with migration_filenames array) ──
+  if (Array.isArray(repairData.migration_filenames)) {
+    if (repairData.migration_filenames.length !== repairData.approved_versions.length) {
+      fail(`Repair batch ${batchNumber}: migration_filenames length (${repairData.migration_filenames.length}) !== approved_versions length (${repairData.approved_versions.length})`);
+      repairErrors++;
+    }
+    const fnSet = new Set(repairData.migration_filenames);
+    if (fnSet.size !== repairData.migration_filenames.length) {
+      fail(`Repair batch ${batchNumber}: duplicate migration_filenames`);
+      repairErrors++;
+    }
+    // Zip and validate against manifest
+    let fnErrors = 0;
+    repairData.approved_versions.forEach((ver, i) => {
+      const fn = repairData.migration_filenames[i];
+      if (!fn || typeof fn !== 'string' || fn.length === 0) {
+        fail(`Repair batch ${batchNumber} version ${ver}: missing or empty filename at index ${i}`);
+        fnErrors++; repairErrors++;
+        return;
+      }
+      const me = manifestByVersion[String(ver)];
+      if (me && me.filename !== fn) {
+        fail(`Repair batch ${batchNumber} version ${ver}: filename "${fn}" !== manifest "${me.filename}"`);
+        fnErrors++; repairErrors++;
+      }
+    });
+    if (fnErrors === 0) pass(`Repair Batch ${batchNumber} all ${repairData.migration_filenames.length} filenames match manifest`);
+  }
+
+  // ── Checksum-map binding (Batch 3+ with approved_checksums object) ──
+  if (repairData.approved_checksums && typeof repairData.approved_checksums === 'object') {
+    const csKeys = new Set(Object.keys(repairData.approved_checksums));
+    const missing = [...approvedSet].filter(v => !csKeys.has(v));
+    const extra = [...csKeys].filter(v => !approvedSet.has(v));
+    if (missing.length > 0) { fail(`Repair batch ${batchNumber}: approved_checksums missing versions: ${missing.join(',')}`); repairErrors++; }
+    if (extra.length > 0) { fail(`Repair batch ${batchNumber}: approved_checksums has extra versions: ${extra.join(',')}`); repairErrors++; }
+    let csErrors = 0;
+    for (const [ver, cs] of Object.entries(repairData.approved_checksums)) {
+      if (!/^[0-9a-f]{64}$/.test(cs)) {
+        fail(`Repair batch ${batchNumber} version ${ver}: checksum is not valid 64-char lowercase hex SHA-256`);
+        csErrors++; repairErrors++;
+      }
+      const me = manifestByVersion[ver];
+      if (me && me.checksum !== cs) {
+        fail(`Repair batch ${batchNumber} version ${ver}: checksum mismatch with manifest`);
+        csErrors++; repairErrors++;
+      }
+      // Also verify against actual repository file
+      const repoFile = migrationFiles.find(f => f.startsWith(ver + '_'));
+      if (repoFile) {
+        const content = readFileSync(resolve(MIGRATIONS_DIR, repoFile), 'utf-8');
+        const sha256 = createHash('sha256').update(content).digest('hex');
+        if (cs !== sha256) {
+          fail(`Repair batch ${batchNumber} version ${ver}: checksum mismatch with repository file`);
+          csErrors++; repairErrors++;
+        }
+      }
+    }
+    if (csErrors === 0) pass(`Repair Batch ${batchNumber} all checksums valid and match manifest/repository`);
+  }
+
+  // ── Production-evidence digest authorization chain (Batch 3+) ──
+  if (repairData.approved_production_evidence_digests && typeof repairData.approved_production_evidence_digests === 'object') {
+    const pedKeys = new Set(Object.keys(repairData.approved_production_evidence_digests));
+    const pedMissing = [...approvedSet].filter(v => !pedKeys.has(v));
+    const pedExtra = [...pedKeys].filter(v => !approvedSet.has(v));
+    if (pedMissing.length > 0) { fail(`Repair batch ${batchNumber}: approved_production_evidence_digests missing versions: ${pedMissing.join(',')}`); repairErrors++; }
+    if (pedExtra.length > 0) { fail(`Repair batch ${batchNumber}: approved_production_evidence_digests has extra versions: ${pedExtra.join(',')}`); repairErrors++; }
+
+    let pedErrors = 0;
+    for (const [ver, storedDigest] of Object.entries(repairData.approved_production_evidence_digests)) {
+      if (!/^[0-9a-f]{64}$/.test(storedDigest)) {
+        fail(`Repair batch ${batchNumber} version ${ver}: production-evidence digest is not valid 64-char hex`);
+        pedErrors++; repairErrors++;
+        continue;
+      }
+      // Recompute canonical digest from manifest evidence (same method as allowlist creation)
+      const me = manifestByVersion[ver];
+      if (!me) {
+        fail(`Repair batch ${batchNumber} version ${ver}: not found in manifest for digest recomputation`);
+        pedErrors++; repairErrors++;
+        continue;
+      }
+      // Verify the verification batch matches the repair batch
+      if (me.verification_batch !== repairData.batch_number) {
+        fail(`Repair batch ${batchNumber} version ${ver}: verification_batch=${me.verification_batch} !== repair batch ${repairData.batch_number}`);
+        pedErrors++; repairErrors++;
+      }
+      // Recompute using the canonical method with pre-repair classification
+      const canonical = JSON.stringify({
+        version: me.version, filename: me.filename, checksum: me.checksum,
+        current_classification: 'VERIFIED_APPLIED_UNTRACKED',
+        evidence_source: me.evidence_source,
+        evidence: me.evidence,
+        last_verified_at: me.last_verified_at
+      });
+      const recomputedDigest = createHash('sha256').update(canonical).digest('hex');
+      if (storedDigest !== recomputedDigest) {
+        fail(`Repair batch ${batchNumber} version ${ver}: production-evidence digest mismatch (stored: ${storedDigest.slice(0,12)}..., recomputed: ${recomputedDigest.slice(0,12)}...)`);
+        pedErrors++; repairErrors++;
+      }
+    }
+    if (pedErrors === 0) pass(`Repair Batch ${batchNumber} all ${pedKeys.size} production-evidence digests recompute correctly`);
+  }
+
+  // ── Snapshot validation (Batch 3+ with tracked_version_snapshot) ──
+  const approvedSorted = [...approvedSet].sort((a,b) => parseInt(a)-parseInt(b));
+  if (repairData.pre_repair.tracked_version_snapshot && repairData.post_repair.tracked_version_snapshot) {
+    const preSnap = repairData.pre_repair.tracked_version_snapshot;
+    const postSnap = repairData.post_repair.tracked_version_snapshot;
+
+    // Both must be arrays of positive integers with no duplicates
+    for (const [label, snap, expectedTotal, expectedRange] of [
+      ['pre_repair', preSnap, repairData.pre_repair.total_remote_count, repairData.pre_repair.range_101_246_count],
+      ['post_repair', postSnap, repairData.post_repair.total_remote_count, repairData.post_repair.range_101_246_count]
+    ]) {
+      if (!Array.isArray(snap)) {
+        fail(`Repair batch ${batchNumber}: ${label}.tracked_version_snapshot is not an array`);
+        repairErrors++;
+        continue;
+      }
+      if (!snap.every(v => Number.isInteger(v) && v > 0)) {
+        fail(`Repair batch ${batchNumber}: ${label}.tracked_version_snapshot contains non-positive-integer values`);
+        repairErrors++;
+      }
+      if (new Set(snap).size !== snap.length) {
+        fail(`Repair batch ${batchNumber}: ${label}.tracked_version_snapshot contains duplicates`);
+        repairErrors++;
+      }
+      if (snap.length !== expectedTotal) {
+        fail(`Repair batch ${batchNumber}: ${label}.tracked_version_snapshot length (${snap.length}) !== total_remote_count (${expectedTotal})`);
+        repairErrors++;
+      }
+      const rangeCount = snap.filter(v => v >= 101 && v <= 246).length;
+      if (rangeCount !== expectedRange) {
+        fail(`Repair batch ${batchNumber}: ${label} range 101-246 count (${rangeCount}) !== range_101_246_count (${expectedRange})`);
+        repairErrors++;
+      }
+    }
+
+    // Derive added/removed from snapshots
+    const preSet = new Set(preSnap.map(String));
+    const postSet = new Set(postSnap.map(String));
+    const snapAdded = [...postSet].filter(v => !preSet.has(v)).sort((a,b) => parseInt(a)-parseInt(b));
+    const snapRemoved = [...preSet].filter(v => !postSet.has(v));
+
+    if (JSON.stringify(snapAdded) !== JSON.stringify(approvedSorted)) {
+      fail(`Repair batch ${batchNumber}: snapshot-derived added set doesn't match approved_versions`);
+      repairErrors++;
+    }
+    if (snapRemoved.length > 0) {
+      fail(`Repair batch ${batchNumber}: snapshot-derived removed set is non-empty: ${snapRemoved.join(',')}`);
+      repairErrors++;
+    }
+
+    // Cross-validate with explicit fields
+    if (repairData.post_repair.new_versions_added) {
+      const newAdded = repairData.post_repair.new_versions_added.map(String).sort((a,b) => parseInt(a)-parseInt(b));
+      if (JSON.stringify(newAdded) !== JSON.stringify(snapAdded)) {
+        fail(`Repair batch ${batchNumber}: post_repair.new_versions_added doesn't match snapshot-derived added set`);
+        repairErrors++;
+      }
+    }
+    if (repairData.post_repair.lost_versions && repairData.post_repair.lost_versions.length > 0) {
+      fail(`Repair batch ${batchNumber}: post_repair.lost_versions is non-empty`);
+      repairErrors++;
+    }
+
+    pass(`Repair Batch ${batchNumber} snapshot validation passed`);
+  }
+
+  // ── Safety confirmations (Batch 3+) ──
+  if (repairData.batch_number >= 3 && repairData.confirmations) {
+    const requiredConfirmations = [
+      'every_approved_version_appears_exactly_once',
+      'no_unrelated_version_changed',
+      'no_migration_sql_executed',
+      'no_schema_or_application_data_changed',
+      'no_customer_record_contents_accessed',
+      'no_deployment_occurred',
+      'no_token_or_auth_header_recorded'
+    ];
+    // The next-batch confirmation key varies (batch_4_did_not_start, batch_5_did_not_start, etc.)
+    const nextBatch = repairData.batch_number + 1;
+    requiredConfirmations.push(`batch_${nextBatch}_did_not_start`);
+
+    let confErrors = 0;
+    for (const key of requiredConfirmations) {
+      if (repairData.confirmations[key] !== true) {
+        fail(`Repair batch ${batchNumber}: confirmation "${key}" is not true (got: ${repairData.confirmations[key]})`);
+        confErrors++; repairErrors++;
+      }
+    }
+    if (confErrors === 0) pass(`Repair Batch ${batchNumber} all ${requiredConfirmations.length} safety confirmations present and true`);
+  }
+
   // ── 2d. Derive before/after version difference ──
   // Batch 1-2: range_101_246_versions. Batch 3+: tracked_version_snapshot (full, filter to 101-246 range).
   function getVersionsInRange(snapshot) {
@@ -1124,7 +1320,6 @@ for (const { file, batchNumber, data: repairData } of allRepairBatches) {
   const postVersions = new Set((postRangeVersions || []).map(String));
   const derivedAdded = [...postVersions].filter(v => !preVersions.has(v)).sort((a,b) => parseInt(a)-parseInt(b));
   const derivedRemoved = [...preVersions].filter(v => !postVersions.has(v));
-  const approvedSorted = [...approvedSet].sort((a,b) => parseInt(a)-parseInt(b));
 
   // If we have explicit derived sets from the report, cross-validate
   if (repairData.derived_added_version_set) {
