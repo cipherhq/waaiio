@@ -234,12 +234,23 @@ describe('Migration 297: Real PostgreSQL trigger tests', () => {
   // ── Behaviour test ──
 
   it('trigger advances updated_at on UPDATE', () => {
-    // Insert a test row
-    const insertResult = runSQL(
-      `INSERT INTO public.properties (name, updated_at)
-       VALUES ('__m297_test_row__', '2020-01-01T00:00:00Z')
-       RETURNING id;`
-    );
+    // In CI full schema, business_id NOT NULL with FK to businesses — need a valid business
+    let bizId: string | null = null;
+    if (isFullSchema) {
+      const bizResult = runSQL(`SELECT id FROM public.businesses LIMIT 1;`);
+      bizId = bizResult.stdout || null;
+    }
+
+    // Insert a test row with required columns
+    const insertSql = bizId
+      ? `INSERT INTO public.properties (business_id, name, property_type, updated_at)
+         VALUES ('${bizId}', '__m297_test_row__', 'apartment', '2020-01-01T00:00:00Z')
+         RETURNING id;`
+      : `INSERT INTO public.properties (name, updated_at)
+         VALUES ('__m297_test_row__', '2020-01-01T00:00:00Z')
+         RETURNING id;`;
+
+    const insertResult = runSQL(insertSql);
     expect(insertResult.exitCode).toBe(0);
     const testId = insertResult.stdout;
     expect(testId).toBeTruthy();
@@ -317,12 +328,22 @@ describe('Migration 297: Real PostgreSQL trigger tests', () => {
   });
 
   it('trigger behaviour still works after second application', () => {
-    // Insert a test row
-    const insertResult = runSQL(
-      `INSERT INTO public.properties (name, updated_at)
-       VALUES ('__m297_test_row__', '2020-01-01T00:00:00Z')
-       RETURNING id;`
-    );
+    // In CI full schema, need a valid business_id
+    let bizId: string | null = null;
+    if (isFullSchema) {
+      const bizResult = runSQL(`SELECT id FROM public.businesses LIMIT 1;`);
+      bizId = bizResult.stdout || null;
+    }
+
+    const insertSql = bizId
+      ? `INSERT INTO public.properties (business_id, name, property_type, updated_at)
+         VALUES ('${bizId}', '__m297_test_row__', 'apartment', '2020-01-01T00:00:00Z')
+         RETURNING id;`
+      : `INSERT INTO public.properties (name, updated_at)
+         VALUES ('__m297_test_row__', '2020-01-01T00:00:00Z')
+         RETURNING id;`;
+
+    const insertResult = runSQL(insertSql);
     expect(insertResult.exitCode).toBe(0);
     const testId = insertResult.stdout;
 
