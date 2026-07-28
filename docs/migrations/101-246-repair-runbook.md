@@ -44,12 +44,12 @@ npm run verify:migration-repair-plan
 ### 2. Execute Repair
 For each version N in the batch:
 ```bash
-# Verify checksum first
-sha256sum supabase/migrations/N_*.sql
-# Compare against allowlist checksum
+# Verify checksum first (macOS-compatible)
+shasum -a 256 supabase/migrations/N_*.sql
+# Or use the validator script: npm run verify:migration-repair-plan
 
 # Execute repair (marks as applied, does NOT run SQL)
-supabase migration repair N --status applied
+npx supabase migration repair --status applied N --linked
 ```
 
 ### 3. Post-repair Verification
@@ -117,3 +117,7 @@ After all 9 batches complete:
 3. Update `docs/migrations/101-246-production-reconciliation.json` — all 127 candidates should show `repair_status: "completed"`
 4. Close Issue #53
 5. Update OPS-001 milestone to PRODUCTION_VERIFIED
+
+## Intentionally Unrepaired
+
+The 9 NOT_VERIFIABLE_SAFELY migrations (101, 105, 107, 160, 163, 164, 187, 222, 226) and 2 SUPERSEDED migrations (122, 130) intentionally remain unrepaired. These versions lack sufficient durable schema evidence to confirm they were applied, or their effects have been fully replaced by later migrations. They must not be repaired unless new evidence is approved through a separate review process.

@@ -14,15 +14,17 @@ If something breaks, check this log to find what changed and when.
   - **Affects:** Engineering ledgers and Issue #53 tracking only
   - **Could break:** Nothing — documentation only
 
-### Operations: Migration reconciliation repair plan
-- `docs/migrations/101-246-production-reconciliation.json` — Evidence-backed manifest for all 146 migrations in the 101-246 range. Each entry includes original and current classification, repair eligibility, and verification status. 8 aligned/tracked, 127 verified-applied-untracked, 9 not-verifiable-safely, 2 superseded.
-- `docs/migrations/101-246-repair-allowlist.json` — Immutable allowlist of 127 verified-but-untracked migrations eligible for controlled repair. Includes checksums and evidence digests.
-- `docs/migrations/101-246-repair-runbook.md` — Controlled batching runbook with 9 proposed batches (max 15 versions each), stop conditions, and final reconciliation steps.
-- `scripts/validate-migration-repair-allowlist.mjs` — Deterministic validator: checks JSON validity, duplicate/sorted versions, filename/checksum against repository, classification eligibility against manifest, and count agreement.
+### Operations: Migration reconciliation repair plan (corrected)
+- `docs/migrations/101-246-production-reconciliation.json` — Evidence-backed manifest for all 146 migrations in the 101-246 range, rebuilt with real production verification evidence. Each entry includes original and current classification, repair eligibility, and verification status. 8 aligned/tracked, 127 verified-applied-untracked, 9 not-verifiable-safely, 2 superseded.
+- `docs/migrations/101-246-repair-allowlist.json` — Immutable allowlist of 127 verified-but-untracked migrations eligible for controlled repair. Includes checksums and SHA-256 evidence digests (computed from canonical JSON of each manifest entry).
+- `docs/migrations/101-246-repair-runbook.md` — Controlled batching runbook with 9 proposed batches (max 15 versions each), stop conditions, final reconciliation steps, and corrected repair command (`npx supabase migration repair --status applied <VERSION> --linked`). macOS-compatible checksum verification (`shasum -a 256`).
+- `scripts/validate-migration-repair-allowlist.mjs` — Hardened deterministic validator with manifest/allowlist cross-validation: exactly 146 manifest entries covering versions 101-246, valid classifications only, filename/checksum verification, evidence-digest recomputation, exclusion checks for NOT_VERIFIABLE_SAFELY/SUPERSEDED/ALIGNED_TRACKED, and expected count of exactly 127 allowlist entries.
+- `lib/__tests__/secret-scanner-migration-json.test.ts` — Secret-scanner false-positive exemption tests verifying the narrow SHA-256 checksum pattern only exempts "checksum", "local_checksum", and "evidence_digest" keys with 64-char lowercase hex values.
+- `.husky/pre-commit` — Replaced file-level exclusion (`-- ':!docs/migrations/*.json'`) with narrow SHA-256 checksum exemption. All files are now fully scanned; only legitimate checksum/digest values are filtered from matches.
 - `.github/workflows/ci.yml` — CI validation step added for migration repair plan in governance job.
 - `package.json` — Added `verify:migration-repair-plan` npm script.
 - `docs/MIGRATION_REGISTRY.md` — Updated remaining untracked migration counts and repair runbook reference.
-  - **Affects:** Migration repair process, CI pipeline, Issue #53 tracking
+  - **Affects:** Migration repair process, CI pipeline, Issue #53 tracking, pre-commit secret scanning
   - **Could break:** Nothing — documentation, tooling, and CI only. No migration SQL modified. No production operation occurred.
 
 ### Database: Complete Migration 115 properties trigger (Migration 297)
