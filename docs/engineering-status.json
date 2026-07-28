@@ -253,7 +253,7 @@
       "pr_numbers": [56, 58, 59, 62, 63, 65, 67, 68, 69],
       "implementation_sha": null,
       "reviewed_sha": null,
-      "merge_sha": "7bd276ed6f10927827ffffdd8ee39ed294207dae",
+      "merge_sha": "7adcea0d700f5d5e1c4e161f0b8e8bad582e067b",
       "deployed_sha": null,
       "environment": "production",
       "production_verified_at": null,

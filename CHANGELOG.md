@@ -18,7 +18,7 @@ If something breaks, check this log to find what changed and when.
 - `docs/MIGRATION_REGISTRY.md` — 15 Batch 3 versions updated from "verified (repair pending)" to "Batch 3 repaired (tracked)".
 - `docs/engineering-status.json` — OPS-001 updated: Batch 3 repair complete, 45 total repaired, next action = merge evidence PR then begin Batch 4.
   - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
-  - **Could break:** Nothing — tooling and metadata only. No migration SQL executed, no schema change, no deployment, no repair.
+  - **Could break:** Nothing — migration-history metadata repair only; no migration SQL executed, no schema or application-data change, no deployment.
 
 ### Operations: Batch 3 migration production verification recorded (15 versions)
 - `docs/migrations/evidence/batch-03-production-verification.json` — Verification evidence for 15 versions (139-153). 91 object checks: 88 passed, 3 superseded, 0 failed, 0 ambiguous.

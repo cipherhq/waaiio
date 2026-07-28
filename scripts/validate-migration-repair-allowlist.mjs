@@ -1425,8 +1425,32 @@ for (const { file, batchNumber, data: repairData } of allRepairBatches) {
     pass(`Repair Batch ${batchNumber} version snapshot derivation skipped (no range_101_246_versions or tracked_version_snapshot)`);
   }
 
-  // Approved count: Batch 1-2 use approved_count, Batch 3+ derive from approved_versions.length
-  const approvedCount = repairData.approved_count || repairData.approved_versions.length;
+  // approved_count: Batch 1-2 require it explicitly, Batch 3+ derive from approved_versions.length
+  let approvedCount;
+  if (repairData.batch_number <= 2) {
+    // Legacy: approved_count must exist as a positive integer
+    if (!Number.isInteger(repairData.approved_count) || repairData.approved_count <= 0) {
+      fail(`Repair batch ${batchNumber}: approved_count must be a positive integer (got: ${JSON.stringify(repairData.approved_count)})`);
+      repairErrors++;
+      approvedCount = repairData.approved_versions.length; // fallback for continued validation
+    } else if (repairData.approved_count !== repairData.approved_versions.length) {
+      fail(`Repair batch ${batchNumber}: approved_count (${repairData.approved_count}) !== approved_versions.length (${repairData.approved_versions.length})`);
+      repairErrors++;
+      approvedCount = repairData.approved_versions.length;
+    } else {
+      approvedCount = repairData.approved_count;
+    }
+  } else {
+    // Batch 3+: derive from approved_versions.length
+    approvedCount = repairData.approved_versions.length;
+    // If approved_count is present, it must match
+    if (repairData.approved_count !== undefined && repairData.approved_count !== null) {
+      if (!Number.isInteger(repairData.approved_count) || repairData.approved_count !== approvedCount) {
+        fail(`Repair batch ${batchNumber}: approved_count (${repairData.approved_count}) !== approved_versions.length (${approvedCount})`);
+        repairErrors++;
+      }
+    }
+  }
   if (repairData.post_repair.total_remote_count - repairData.pre_repair.total_remote_count !== approvedCount) {
     fail(`Repair batch ${repairData.batch_number}: total count delta mismatch`);
     repairErrors++;
@@ -1613,14 +1637,21 @@ for (const { file, batchNumber, data: repairData } of allRepairBatches) {
     repairErrors++;
   }
 
-  // Verify all approved versions appear exactly once
-  // Batch 1-2: post_repair.all_approved_appear_exactly_once
-  // Batch 3+: confirmations.every_approved_version_appears_exactly_once
-  const allAppearedOnce = repairData.post_repair?.all_approved_appear_exactly_once
-    ?? repairData.confirmations?.every_approved_version_appears_exactly_once;
-  if (allAppearedOnce === false) {
-    fail(`Repair Batch ${batchNumber}: not all approved versions appear exactly once`);
+  // Exactly-once: support both legacy (Batch 1-2) and current (Batch 3+) fields
+  const exactlyOnceFromPostRepair = repairData.post_repair?.all_approved_appear_exactly_once;
+  const exactlyOnceFromConfirmations = repairData.confirmations?.every_approved_version_appears_exactly_once;
+  const hasExactlyOnce = exactlyOnceFromPostRepair !== undefined || exactlyOnceFromConfirmations !== undefined;
+  if (!hasExactlyOnce) {
+    fail(`Repair Batch ${batchNumber}: no exactly-once confirmation found (checked post_repair.all_approved_appear_exactly_once and confirmations.every_approved_version_appears_exactly_once)`);
     repairErrors++;
+  } else {
+    const exactlyOnceValue = exactlyOnceFromPostRepair ?? exactlyOnceFromConfirmations;
+    if (exactlyOnceValue !== true) {
+      fail(`Repair Batch ${batchNumber}: exactly-once confirmation is not boolean true (got: ${JSON.stringify(exactlyOnceValue)})`);
+      repairErrors++;
+    } else {
+      pass(`Repair Batch ${batchNumber} exactly-once confirmation verified`);
+    }
   }
 
   // Verify completed entries are NOT in allowlist

@@ -130,6 +130,44 @@ interface RepairEvidence {
   };
 }
 
+/** Broad repair evidence type covering both legacy (Batch 1-2) and current (Batch 3+) fields */
+interface RepairEvidenceBase {
+  task_identifier?: string;
+  repository_sha: string;
+  linked_project_ref?: string;
+  batch_number?: number;
+  timestamp_utc?: string;
+  repair_timestamp?: string;
+  approved_versions: number[];
+  approved_count?: number;
+  migration_files?: Record<string, { filename: string; checksum: string }>;
+  migration_filenames?: string[];
+  approved_checksums?: Record<string, string>;
+  approved_production_evidence_digests?: Record<string, string>;
+  pre_repair: {
+    total_remote_count: number;
+    range_101_246_count: number;
+    range_101_246_versions?: number[];
+    tracked_version_snapshot?: number[];
+  };
+  repair_results: RepairResult[];
+  post_repair: {
+    total_remote_count: number;
+    range_101_246_count: number;
+    range_101_246_versions?: number[];
+    tracked_version_snapshot?: number[];
+    new_versions_added?: number[];
+    lost_versions?: number[];
+    all_approved_appear_exactly_once?: boolean;
+    pre_existing_versions_intact?: boolean;
+    total_delta?: number;
+    range_delta?: number;
+  };
+  derived_added_version_set?: number[];
+  derived_removed_version_set?: number[];
+  confirmations?: Record<string, boolean>;
+}
+
 /**
  * Validates a single evidence item for an approved entry.
  * Returns an array of error messages (empty = valid).
@@ -1349,7 +1387,7 @@ describe('Real Batch 1 + Batch 2 + Batch 3 evidence integration (post-repair)', 
 
     // No duplicate versions across repair batches
     
-    const repairs: any[] = repairFiles.map(f =>
+    const repairs: RepairEvidenceBase[] = repairFiles.map(f =>
       JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8'))
     );
     const allRepairVersions: string[] = [];
@@ -1735,7 +1773,7 @@ describe('Batch 2 repair-specific validation', () => {
     expect(repairFiles.length).toBe(3);
 
     
-    const repairs: any[] = repairFiles.map(f =>
+    const repairs: RepairEvidenceBase[] = repairFiles.map(f =>
       JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8'))
     );
 
@@ -1757,9 +1795,9 @@ describe('Batch 2 repair-specific validation', () => {
     }
 
     // Batch 1: 103 -> 118, Batch 2: 118 -> 133, Batch 3: 133 -> 148
-    const batch1 = repairs.find((r: { pre_repair: { total_remote_count: number } }) => r.pre_repair.total_remote_count === 103)!;
-    const batch2 = repairs.find((r: { pre_repair: { total_remote_count: number } }) => r.pre_repair.total_remote_count === 118)!;
-    const batch3 = repairs.find((r: { pre_repair: { total_remote_count: number } }) => r.pre_repair.total_remote_count === 133)!;
+    const batch1 = repairs.find(r => r.pre_repair.total_remote_count === 103)!;
+    const batch2 = repairs.find(r => r.pre_repair.total_remote_count === 118)!;
+    const batch3 = repairs.find(r => r.pre_repair.total_remote_count === 133)!;
     expect(batch1).toBeDefined();
     expect(batch2).toBeDefined();
     expect(batch3).toBeDefined();
@@ -2250,7 +2288,7 @@ describe('Batch 3 repair-specific validation', () => {
     const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
     expect(existsSync(repairPath)).toBe(true);
     
-    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
+    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as RepairEvidenceBase;
     expect(repairData.pre_repair.total_remote_count).toBe(133);
     expect(repairData.post_repair.total_remote_count).toBe(148);
     expect(repairData.post_repair.total_remote_count - repairData.pre_repair.total_remote_count).toBe(15);
@@ -2259,7 +2297,7 @@ describe('Batch 3 repair-specific validation', () => {
   it('Batch 3 pre/post range mismatch (38 to 53)', () => {
     const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
     
-    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
+    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as RepairEvidenceBase;
     expect(repairData.pre_repair.range_101_246_count).toBe(38);
     expect(repairData.post_repair.range_101_246_count).toBe(53);
     expect(repairData.post_repair.range_101_246_count - repairData.pre_repair.range_101_246_count).toBe(15);
@@ -2276,7 +2314,7 @@ describe('Batch 3 repair-specific validation', () => {
     const allVersions: string[] = [];
     for (const f of repairFiles) {
       
-      const data = JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8')) as any;
+      const data = JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8')) as RepairEvidenceBase;
       allVersions.push(...data.approved_versions.map(String));
     }
     expect(new Set(allVersions).size).toBe(allVersions.length);
@@ -2284,11 +2322,11 @@ describe('Batch 3 repair-specific validation', () => {
 
     // Batch 1: 103->118, Batch 2: 118->133, Batch 3: 133->148
     
-    const batch1 = JSON.parse(readFileSync(resolve(evidenceDir, repairFiles[0]), 'utf-8')) as any;
-    
-    const batch2 = JSON.parse(readFileSync(resolve(evidenceDir, repairFiles[1]), 'utf-8')) as any;
-    
-    const batch3 = JSON.parse(readFileSync(resolve(evidenceDir, repairFiles[2]), 'utf-8')) as any;
+    const batch1 = JSON.parse(readFileSync(resolve(evidenceDir, repairFiles[0]), 'utf-8')) as RepairEvidenceBase;
+
+    const batch2 = JSON.parse(readFileSync(resolve(evidenceDir, repairFiles[1]), 'utf-8')) as RepairEvidenceBase;
+
+    const batch3 = JSON.parse(readFileSync(resolve(evidenceDir, repairFiles[2]), 'utf-8')) as RepairEvidenceBase;
 
     expect(batch1.pre_repair.total_remote_count).toBe(103);
     expect(batch1.post_repair.total_remote_count).toBe(118);
@@ -2310,7 +2348,7 @@ describe('Batch 3 repair-specific validation', () => {
   it('Batch 3 filename-map binds correctly to manifest', () => {
     const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
     const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
-    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
+    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as RepairEvidenceBase;
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as ManifestEntry[];
     const manifestByVersion: Record<string, ManifestEntry> = {};
     manifest.forEach(e => { manifestByVersion[e.version] = e; });
@@ -2329,7 +2367,7 @@ describe('Batch 3 repair-specific validation', () => {
     const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
     const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
     const migDir = resolve('supabase/migrations');
-    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
+    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as RepairEvidenceBase;
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as ManifestEntry[];
     const manifestByVersion: Record<string, ManifestEntry> = {};
     manifest.forEach(e => { manifestByVersion[e.version] = e; });
@@ -2352,7 +2390,7 @@ describe('Batch 3 repair-specific validation', () => {
   it('Batch 3 production-evidence digests recompute correctly', () => {
     const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
     const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
-    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
+    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as RepairEvidenceBase;
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as ManifestEntry[];
     const manifestByVersion: Record<string, ManifestEntry> = {};
     manifest.forEach(e => { manifestByVersion[e.version] = e; });
@@ -2377,7 +2415,7 @@ describe('Batch 3 repair-specific validation', () => {
 
   it('Batch 3 snapshot validation passes', () => {
     const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
-    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
+    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as RepairEvidenceBase;
 
     const preSnap = repairData.pre_repair.tracked_version_snapshot;
     const postSnap = repairData.post_repair.tracked_version_snapshot;
@@ -2403,7 +2441,7 @@ describe('Batch 3 repair-specific validation', () => {
 
   it('Batch 3 safety confirmations all present and true', () => {
     const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
-    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
+    const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as RepairEvidenceBase;
 
     const required = [
       'every_approved_version_appears_exactly_once',
@@ -2464,7 +2502,7 @@ describe('Batch 3 repair-specific validation', () => {
     const allErrors: string[] = [];
     for (const f of repairFiles) {
       
-      const repair = JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8')) as any;
+      const repair = JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8')) as RepairEvidenceBase;
       const repairTimestamp = repair.timestamp_utc || repair.repair_timestamp;
       const repairResultsByVersion: Record<string, RepairResult> = {};
       repair.repair_results.forEach((r: RepairResult) => { repairResultsByVersion[String(r.version)] = r; });
@@ -2813,29 +2851,25 @@ describe('Batch 3+ required-field schema validation', () => {
 // CLI INTEGRATION TESTS — execute the real validator script
 // ══════════════════════════════════════════════════════════════
 
-describe('Validator CLI integration tests (real script, temporary fixtures)', () => {
+describe('Validator CLI rejection tests (table-driven)', () => {
   const { execSync } = require('child_process');
   const { mkdirSync, cpSync, rmSync, writeFileSync } = require('fs');
   const { join } = require('path');
   const os = require('os');
 
-  // Absolute path to the real validator script
   const VALIDATOR_SCRIPT = resolve('scripts/validate-migration-repair-allowlist.mjs');
-  // Source directories for fixture setup
   const SRC_DOCS_MIGRATIONS = resolve('docs/migrations');
   const SRC_SUPABASE_MIGRATIONS = resolve('supabase/migrations');
 
-  function createTempFixture(): string {
+  function createTestFixture(): string {
     const tmpDir = join(os.tmpdir(), `validator-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
     mkdirSync(join(tmpDir, 'docs', 'migrations', 'evidence'), { recursive: true });
     mkdirSync(join(tmpDir, 'supabase', 'migrations'), { recursive: true });
 
-    // Copy manifest, allowlist, candidates
     cpSync(join(SRC_DOCS_MIGRATIONS, '101-246-production-reconciliation.json'), join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json'));
     cpSync(join(SRC_DOCS_MIGRATIONS, '101-246-repair-allowlist.json'), join(tmpDir, 'docs', 'migrations', '101-246-repair-allowlist.json'));
     cpSync(join(SRC_DOCS_MIGRATIONS, '101-246-verification-candidates.json'), join(tmpDir, 'docs', 'migrations', '101-246-verification-candidates.json'));
 
-    // Copy all evidence files
     const evidenceDir = join(SRC_DOCS_MIGRATIONS, 'evidence');
     if (existsSync(evidenceDir)) {
       for (const f of readdirSync(evidenceDir)) {
@@ -2843,116 +2877,126 @@ describe('Validator CLI integration tests (real script, temporary fixtures)', ()
       }
     }
 
-    // Copy migration SQL files
-    for (const f of readdirSync(SRC_SUPABASE_MIGRATIONS).filter(f => f.endsWith('.sql'))) {
+    for (const f of readdirSync(SRC_SUPABASE_MIGRATIONS).filter((f: string) => f.endsWith('.sql'))) {
       cpSync(join(SRC_SUPABASE_MIGRATIONS, f), join(tmpDir, 'supabase', 'migrations', f));
     }
 
     return tmpDir;
   }
 
-  function runValidator(cwd: string): { exitCode: number; output: string } {
+  function runValidatorInFixture(cwd: string): { exitCode: number; output: string } {
     try {
       const output = execSync(`node "${VALIDATOR_SCRIPT}"`, { cwd, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] });
       return { exitCode: 0, output };
-    } catch (err: any) {
-      return { exitCode: err.status || 1, output: (err.stdout || '') + (err.stderr || '') };
+    } catch (err: unknown) {
+      const e = err as { status?: number; stdout?: string; stderr?: string };
+      return { exitCode: e.status || 1, output: (e.stdout || '') + (e.stderr || '') };
     }
   }
 
-  function cleanup(tmpDir: string) {
+  function cleanupFixture(tmpDir: string) {
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
 
-  // Positive control: unmodified fixtures must pass
+  const cliRejectionCases: Array<{
+    name: string;
+    mutate: (tmpDir: string) => void;
+    expectedDiagnostic: RegExp;
+  }> = [
+    {
+      name: 'missing migration_filenames in Batch 3 repair',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-03-repair.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        delete d.migration_filenames;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /migration_filenames/,
+    },
+    {
+      name: 'missing pre_repair.tracked_version_snapshot',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-03-repair.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        delete d.pre_repair.tracked_version_snapshot;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /tracked_version_snapshot/,
+    },
+    {
+      name: 'missing derived_added_version_set',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-03-repair.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        delete d.derived_added_version_set;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /derived_added_version_set/,
+    },
+    {
+      name: 'missing confirmations object',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-03-repair.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        delete d.confirmations;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /confirmations/,
+    },
+    {
+      name: 'missing repository migration SQL file',
+      mutate: (tmpDir) => {
+        const migDir = join(tmpDir, 'supabase', 'migrations');
+        const f139 = readdirSync(migDir).find((f: string) => f.startsWith('139_'));
+        if (f139) rmSync(join(migDir, f139));
+      },
+      expectedDiagnostic: /139/,
+    },
+    {
+      name: 'legacy approved_count set to 0',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-01-repair.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.approved_count = 0;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /approved_count/,
+    },
+    {
+      name: 'missing legacy exactly-once confirmation',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-01-repair.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        if (d.post_repair) delete d.post_repair.all_approved_appear_exactly_once;
+        if (d.confirmations) delete d.confirmations.every_approved_version_appears_exactly_once;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /exactly-once/i,
+    },
+  ];
+
   it('unmodified fixtures pass the real validator', () => {
-    const tmpDir = createTempFixture();
+    const tmpDir = createTestFixture();
     try {
-      const { exitCode, output } = runValidator(tmpDir);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).toBe(0);
       expect(output).toContain('Migration reconciliation validation PASSED');
     } finally {
-      cleanup(tmpDir);
+      cleanupFixture(tmpDir);
     }
   }, 30000);
 
-  // A. Required map/array section omitted: remove migration_filenames
-  it('rejects Batch 3 repair evidence with migration_filenames removed', () => {
-    const tmpDir = createTempFixture();
-    try {
-      const repairPath = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-03-repair.json');
-      const data = JSON.parse(readFileSync(repairPath, 'utf-8'));
-      delete data.migration_filenames;
-      writeFileSync(repairPath, JSON.stringify(data, null, 2));
-      const { exitCode, output } = runValidator(tmpDir);
-      expect(exitCode).not.toBe(0);
-      expect(output).toContain('migration_filenames');
-    } finally {
-      cleanup(tmpDir);
-    }
-  }, 30000);
-
-  // B. Snapshot section omitted
-  it('rejects Batch 3 repair evidence with pre_repair.tracked_version_snapshot removed', () => {
-    const tmpDir = createTempFixture();
-    try {
-      const repairPath = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-03-repair.json');
-      const data = JSON.parse(readFileSync(repairPath, 'utf-8'));
-      delete data.pre_repair.tracked_version_snapshot;
-      writeFileSync(repairPath, JSON.stringify(data, null, 2));
-      const { exitCode, output } = runValidator(tmpDir);
-      expect(exitCode).not.toBe(0);
-      expect(output).toContain('tracked_version_snapshot');
-    } finally {
-      cleanup(tmpDir);
-    }
-  }, 30000);
-
-  // C. Explicit derived set omitted
-  it('rejects Batch 3 repair evidence with derived_added_version_set removed', () => {
-    const tmpDir = createTempFixture();
-    try {
-      const repairPath = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-03-repair.json');
-      const data = JSON.parse(readFileSync(repairPath, 'utf-8'));
-      delete data.derived_added_version_set;
-      writeFileSync(repairPath, JSON.stringify(data, null, 2));
-      const { exitCode, output } = runValidator(tmpDir);
-      expect(exitCode).not.toBe(0);
-      expect(output).toContain('derived_added_version_set');
-    } finally {
-      cleanup(tmpDir);
-    }
-  }, 30000);
-
-  // D. Complete confirmation object omitted
-  it('rejects Batch 3 repair evidence with confirmations removed', () => {
-    const tmpDir = createTempFixture();
-    try {
-      const repairPath = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-03-repair.json');
-      const data = JSON.parse(readFileSync(repairPath, 'utf-8'));
-      delete data.confirmations;
-      writeFileSync(repairPath, JSON.stringify(data, null, 2));
-      const { exitCode, output } = runValidator(tmpDir);
-      expect(exitCode).not.toBe(0);
-      expect(output).toContain('confirmations');
-    } finally {
-      cleanup(tmpDir);
-    }
-  }, 30000);
-
-  // E. Repository migration-file binding failure: remove the matching migration file
-  it('rejects when a required migration SQL file is missing from repository', () => {
-    const tmpDir = createTempFixture();
-    try {
-      // Remove migration 139's SQL file
-      const migDir = join(tmpDir, 'supabase', 'migrations');
-      const file139 = readdirSync(migDir).find(f => f.startsWith('139_'));
-      if (file139) rmSync(join(migDir, file139));
-      const { exitCode, output } = runValidator(tmpDir);
-      expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/139.*filename mismatch|139.*no.*migration file|139.*checksum mismatch/i);
-    } finally {
-      cleanup(tmpDir);
-    }
-  }, 30000);
+  for (const tc of cliRejectionCases) {
+    it(`rejects: ${tc.name}`, () => {
+      const tmpDir = createTestFixture();
+      try {
+        tc.mutate(tmpDir);
+        const { exitCode, output } = runValidatorInFixture(tmpDir);
+        expect(exitCode).not.toBe(0);
+        expect(output).toMatch(tc.expectedDiagnostic);
+      } finally {
+        cleanupFixture(tmpDir);
+      }
+    }, 30000);
+  }
 });
