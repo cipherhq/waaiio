@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This runbook governs the controlled repair of 127 verified-but-untracked migrations (101-246) in the Supabase remote schema_migrations table. Each migration has been individually verified as applied to production via durable schema evidence but is not tracked in the remote migration history.
+This runbook governs the controlled repair of 124 verified-but-untracked migrations (101-246) in the Supabase remote schema_migrations table. Each migration has been individually verified as applied to production via structured durable schema evidence (tables, columns, indexes, policies, functions, triggers, constraints) extracted from the migration SQL files.
 
 ## Constraints
 
@@ -13,19 +13,19 @@ This runbook governs the controlled repair of 127 verified-but-untracked migrati
 5. **No SQL execution.** `supabase migration repair` only inserts a row into `schema_migrations` — it does not execute the migration SQL.
 6. **Post-repair verification required.** After each batch, verify the repaired versions appear exactly once in `schema_migrations`.
 7. **Stop on any failure.** If any version in a batch fails verification, stop the entire batch and investigate.
-8. **Issue #53 stays open** until all batches complete and final reconciliation is confirmed.
+8. **Issue #53 stays open** until all batches complete, intentional exclusions are documented, and final reconciliation is confirmed.
 
 ## Excluded Versions
 
 The following versions are **not** in the allowlist and must **never** be repaired through this process:
 
-### Already Completed (ALIGNED_TRACKED)
+### Already Completed (ALIGNED_TRACKED) — 8 versions
 - 115, 119, 176, 181, 182, 199, 200, 244
 
-### Not Verifiable Safely
-- 101, 105, 107, 160, 163, 164, 187, 222, 226
+### Not Verifiable Safely — 12 versions
+- 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 
-### Superseded
+### Superseded — 2 versions
 - 122, 130
 
 ## Batch Process
@@ -74,28 +74,28 @@ npx supabase migration repair --status applied N --linked
 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 120
 
 ### Batch 2 (15 versions)
-121, 123, 124, 125, 126, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137
+121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138
 
 ### Batch 3 (15 versions)
-138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152
+139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153
 
 ### Batch 4 (15 versions)
-153, 154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170
+154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170, 171
 
 ### Batch 5 (15 versions)
-171, 172, 173, 174, 175, 177, 178, 179, 180, 183, 184, 185, 186, 188, 189
+172, 173, 174, 175, 177, 178, 179, 180, 183, 184, 185, 186, 188, 189, 190
 
 ### Batch 6 (15 versions)
-190, 191, 192, 193, 194, 195, 196, 197, 198, 201, 202, 203, 204, 205, 206
+191, 192, 193, 194, 195, 196, 197, 198, 201, 202, 203, 204, 205, 206, 207
 
 ### Batch 7 (15 versions)
-207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221
+208, 209, 210, 211, 212, 213, 214, 215, 218, 219, 220, 221, 223, 224, 225
 
 ### Batch 8 (15 versions)
-223, 224, 225, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238
+227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241
 
-### Batch 9 (7 versions)
-239, 240, 241, 242, 243, 245, 246
+### Batch 9 (4 versions)
+242, 243, 245, 246
 
 ## Stop Conditions
 
@@ -112,12 +112,13 @@ Stop the entire repair process if:
 
 After all 9 batches complete:
 
-1. Verify total schema_migrations count matches expected (all 146 versions from 101-246 plus versions 001-100 and 247+)
-2. Run `supabase migration list` and confirm no "not applied" entries for 101-246
-3. Update `docs/migrations/101-246-production-reconciliation.json` — all 127 candidates should show `repair_status: "completed"`
-4. Close Issue #53
-5. Update OPS-001 milestone to PRODUCTION_VERIFIED
+1. Verify total schema_migrations count matches expected: currently aligned (8) + repaired (124) + pre-existing tracked (versions 001-100 and 247+) = all tracked
+2. Run `supabase migration list` and confirm no "not applied" entries for versions in the allowlist
+3. Update `docs/migrations/101-246-production-reconciliation.json` — all 124 repair candidates should show `repair_status: "completed"`
+4. Document the 14 intentionally unrepaired versions (12 NOT_VERIFIABLE_SAFELY + 2 SUPERSEDED) with rationale in Issue #53
+5. Issue #53 closes only after: all 124 approved repairs complete AND the 14 intentional exclusions are fully documented
+6. Update OPS-001 milestone to PRODUCTION_VERIFIED
 
 ## Intentionally Unrepaired
 
-The 9 NOT_VERIFIABLE_SAFELY migrations (101, 105, 107, 160, 163, 164, 187, 222, 226) and 2 SUPERSEDED migrations (122, 130) intentionally remain unrepaired. These versions lack sufficient durable schema evidence to confirm they were applied, or their effects have been fully replaced by later migrations. They must not be repaired unless new evidence is approved through a separate review process.
+The 12 NOT_VERIFIABLE_SAFELY migrations (101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226) and 2 SUPERSEDED migrations (122, 130) intentionally remain unrepaired. These 14 versions either lack durable schema objects that can be verified from SQL parsing (data-only migrations, COMMENT statements, INSERT/UPDATE-only operations) or their effects have been fully replaced by later migrations. They must not be repaired unless new evidence is approved through a separate review process.

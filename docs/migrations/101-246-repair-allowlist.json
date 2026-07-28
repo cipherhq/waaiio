@@ -3,889 +3,868 @@
     "version": "102",
     "filename": "102_service_availability.sql",
     "checksum": "15225e4893722caf2792a337897d4d396b3c71518ba25280d2e3221091e05720",
-    "evidence_digest": "60360964b5c1f8afe8830b2026761a6d16409ae2cb9f2ab5ea437ee2cf498622",
+    "evidence_digest": "9ed6a5c668c346de05fc0a9f53f0e58ce31badb255433541f5a9385d143566f5",
     "confidence": "HIGH"
   },
   {
     "version": "103",
     "filename": "103_service_features.sql",
     "checksum": "0df8ff75391362af4fd965d8e8d599953080e9853ce62932c3685d421cc4e2c6",
-    "evidence_digest": "fc4a5c3262b91a67d9667604b17d7bef1d0b67541924779dffbb78ec417208fc",
+    "evidence_digest": "a0dde74ef6ec2cde0d382cd6f3f216219df9f37f9df783fd6f583f8380cbb20e",
     "confidence": "HIGH"
   },
   {
     "version": "104",
     "filename": "104_event_services_category.sql",
     "checksum": "f2e0537fbf456ce8c1d8f1ce8b893977ef19d96fd9d89a3e5c83e9d5adc387c2",
-    "evidence_digest": "26aacf73f7717b711c4a90b4bdd2603b9d578b68f35246797b4bacc979436551",
+    "evidence_digest": "202ec8dd2bd3059a06fb8e093b2b94678702ad27c13bda28a356154d3076bb50",
     "confidence": "HIGH"
   },
   {
     "version": "106",
     "filename": "106_new_subcategories.sql",
     "checksum": "be27008464c1a757e24fbc6bc464eacee4e0887b47e88692565c5d1ae0434a56",
-    "evidence_digest": "27890387f596493b6519d771c82c74b357c32be23748cf516926c6fcdef55754",
+    "evidence_digest": "96cb4aeb80a23a1d20ef3c87cc47627e0b3e7174c7654e8d19251f805552f8a8",
     "confidence": "HIGH"
   },
   {
     "version": "108",
     "filename": "108_refund_requests.sql",
     "checksum": "88eaa936e0488728022b60c1cbbbf2062c15701c1787e90ef2d3f4cde388ea29",
-    "evidence_digest": "c5a563413a7290892e3ae36ba6536ddfc77d00fd7d05e62c4d891bd299b8824e",
+    "evidence_digest": "52be93311ccd8107bc18ce6cb3494a7a546565c335799f310fd88c07fba4ff99",
     "confidence": "HIGH"
   },
   {
     "version": "109",
     "filename": "109_campaign_donations.sql",
     "checksum": "2c5b90f247da88570330fd0496b4dfc8bd98d60586913194c2cf9c2aef2fd3d5",
-    "evidence_digest": "51036687de85247bdd8f691b542e6bb93d132d32f57353a0b94045ade543d71f",
+    "evidence_digest": "bd41275392c8e1675d59e73ca4a446df97e337538cb20d5b1c71281b33b80276",
     "confidence": "HIGH"
   },
   {
     "version": "110",
     "filename": "110_queue_realtime.sql",
     "checksum": "64c083e496b0f27a94d442cb860bfda1812d9ac9e6d4d5f69c93247b9e2a5700",
-    "evidence_digest": "022e397ad4a69f981332b12871473d8fc30d3fbb7349e45a4bcbadc12a841d7b",
+    "evidence_digest": "c6832f83e769525426941aa8fd2ca266e725c4fd92485cca6712de8bc2c50ac7",
     "confidence": "HIGH"
   },
   {
     "version": "111",
     "filename": "111_feedback_improvements.sql",
     "checksum": "8b4b51dfffea7fdcd9d6cb3cd662a2a14909c69c0bd019f33701fe65a5c9f8e3",
-    "evidence_digest": "a03519f049dc6952771c7c47fb84b59dc97a7a5be9e0362c2b7fe606ce6985f9",
+    "evidence_digest": "56c1e0498fcb802ae5b1e9dd3948eecbbca5b4f03f3e73301f407e23f668b339",
     "confidence": "HIGH"
   },
   {
     "version": "112",
     "filename": "112_campaign_donation_limits.sql",
     "checksum": "1a5121856df073521da2fb513bd33d6b50745e46d48b1510d793e30a324e0f4b",
-    "evidence_digest": "c2478def17a454d37c34226940a2f12615ba9804f774f0f1a2d54a9ee6625326",
+    "evidence_digest": "8be1a4d6211e78c914f901e59e43830c7ed86e318e65080067554f2a76e7456b",
     "confidence": "HIGH"
   },
   {
     "version": "113",
     "filename": "113_add_missing_capability_enum_values.sql",
     "checksum": "25d2463bde977c497aa40f23695a8789b53f37da29e3610243a2df532339a914",
-    "evidence_digest": "97ef1c9e65782f575c042a644111e0fad183b3be703c280f24a6b9e142723586",
+    "evidence_digest": "e815c3d8fbde61da2e77bf4f33f6e4154c352222efe78c85d04913b926ec8a1c",
     "confidence": "HIGH"
   },
   {
     "version": "114",
     "filename": "114_event_ticket_types.sql",
     "checksum": "ee96025c4fcd7806317fe7918bb0f494583a8baa587063cad2a08baf96c92f1c",
-    "evidence_digest": "6671e223544e8009313a0cc2848e4b21d474960d3c51b63078da70f23dab3559",
+    "evidence_digest": "3c4ae1b621e98b125821a5e59d33e245cc4edb0389ede9ea0e45160074f32d89",
     "confidence": "HIGH"
   },
   {
     "version": "116",
     "filename": "116_document_share_improvements.sql",
     "checksum": "3e3d48fbe8eb8551339ba91dfc66ae6ea748cdc6de5eda6fc600bdfab93f725d",
-    "evidence_digest": "ba42930b9bd53caba6395688616435767d2dce698421c7fddc02fdc9bcfcfce6",
+    "evidence_digest": "baf0831bf81551b2dbd6ff06d19f40bdfd2ba33cbed11d705a5f2227128bdc9f",
     "confidence": "HIGH"
   },
   {
     "version": "117",
     "filename": "117_appointments_table.sql",
     "checksum": "3463257958a28c31fdb6e5908cb0f52ea5c75ed88e7e64fc8f3277bcb70214e1",
-    "evidence_digest": "58047be04f8d77f1f394e81ccbcc58037c309be582112870e24509f55bc86477",
+    "evidence_digest": "20b8f1db59b991ded32972def1918e55d77022f58d3c74ecf682e107eb3ca80d",
     "confidence": "HIGH"
   },
   {
     "version": "118",
     "filename": "118_event_self_checkin.sql",
     "checksum": "6a16ccf5d3e2b3cdcffdf5f4baeaa4b2814e5abdbf759e79c6462a4f4695efae",
-    "evidence_digest": "bfef8421b21b6e7a506a53338509ace92eed46af0209e239ce155a1b282d8d07",
+    "evidence_digest": "2d86e06df0c48dcfb534904a7c4ec912915dcbd50dc9582d2b3fdd99447bf3a6",
     "confidence": "HIGH"
   },
   {
     "version": "120",
     "filename": "120_auto_approve.sql",
     "checksum": "dc63025ea1e283db62c771823cb2a7f1b3cced470009226327972fa0f4a56f7e",
-    "evidence_digest": "5c1cd4cbdb3a3a8424b534fac348069c797060d70650b7374681db384ec81886",
+    "evidence_digest": "20d62552ade263f99778c9c81c2a200fb6365263c269f2c44d7a3223c850c2db",
     "confidence": "HIGH"
   },
   {
     "version": "121",
     "filename": "121_property_blocked_dates.sql",
     "checksum": "e1fc3342336a0a159869bf54984cd7164c914263a13286628c533b4850528470",
-    "evidence_digest": "7b910f09049ed19d522cf668e2c308a307c42ba5ab37561b0ff048c07c42ba54",
+    "evidence_digest": "a713b32bc17941b2f49a5b37e1bd594bb7c13df596fab1da761a9655a002e8be",
     "confidence": "HIGH"
   },
   {
     "version": "123",
     "filename": "123_add_assigned_channel_id.sql",
     "checksum": "fcee4c2be32299881217a633c847b5b6512229c16b3eb933c7473ab43f266f01",
-    "evidence_digest": "c489d215703f82156f8ef7b227cd1438220d097cc9afabb9853c3d88ff5046b9",
+    "evidence_digest": "6254bfb5b7d36573b7422275358d867c1ba4de018bae2a2af28e95b0c99f6097",
     "confidence": "HIGH"
   },
   {
     "version": "124",
     "filename": "124_auto_reply.sql",
     "checksum": "c6bf7400e02e3111f240b1bac0ba4d7284650bdcec71de8c37d8a349d3b32ee5",
-    "evidence_digest": "b70b0697c7b1f08f4c2b734f52e3c27dc24c68e04d9abfc07125c30e733dcc8e",
+    "evidence_digest": "f005fdcad6c9d35ac3ed8a6e05ac20141627050c66fd3955ae796affbfa19fcb",
     "confidence": "HIGH"
   },
   {
     "version": "125",
     "filename": "125_membership_tiers.sql",
     "checksum": "89cd6d0211660d77f020c2af21521b6555600eb41f08647074ce201bc416f778",
-    "evidence_digest": "df9a3f3238701dba34a46470068cf88dd4327cafa2bec23541bd45cac8642b4a",
-    "confidence": "HIGH"
-  },
-  {
-    "version": "126",
-    "filename": "126_new_capability_types.sql",
-    "checksum": "57632d76afeb4fc7607fad576442946666cf27407db45af7f85a8388c6d119bf",
-    "evidence_digest": "1f51fd9cddd1719939019d026ce2403531bae64e30c386d6cdd82c2ffaa03de8",
+    "evidence_digest": "56819d1d5da539ea058ee5bfae988dd649e63f6d1d2acc1c1ea70c31687ed155",
     "confidence": "HIGH"
   },
   {
     "version": "127",
     "filename": "127_notification_preferences.sql",
     "checksum": "f5c0defc128381ac515f0ecaa7b5934303cbbfc0048ca2502bbf534fcfc7f671",
-    "evidence_digest": "7a1b377c31d4b7ce96266deb4296b7d31648cbcab00df210bdabbbb4eba32208",
+    "evidence_digest": "bd4da4a23283f2a497259aaeb41c7b954e6b18d1ec080550b6aac979a0f2a16a",
     "confidence": "HIGH"
   },
   {
     "version": "128",
     "filename": "128_platform_fee_refund.sql",
     "checksum": "949d644cf1be958b9af0f51fcccfcc89dda9464403c03f727c554d5f9594a17a",
-    "evidence_digest": "324d2032ae0892bbeb193125d1b8d699c3e47be1daacbd65485f10a70a912f48",
+    "evidence_digest": "de6a3dd3443d88f2d2fabbedb01bb8b9d6ab5b010dacf1806156bcc080f4c1c9",
     "confidence": "HIGH"
   },
   {
     "version": "129",
     "filename": "129_payout_adjustments.sql",
     "checksum": "4f7ea4ae26f123b43b6fafe224807fc41a00c92d3a01cfac40342a0d48fd23b2",
-    "evidence_digest": "bbdaa77195e1b85836a8fb2612be2292c7f77ab9a46acd37abd16b57021e5ccf",
+    "evidence_digest": "ddd798202ac192eea2f0b2fe1585b1d34c84b6258816f180f4e42c540388e695",
     "confidence": "HIGH"
   },
   {
     "version": "131",
     "filename": "131_standalone_invites.sql",
     "checksum": "1d90d5f6eb5b594fad4e77d1df0b86012c0c3c3625b08b93a0f55f2215468c06",
-    "evidence_digest": "48e469c489a21dc9e28667ef81ebabbade7c972057022a49c30bfb67e8644621",
+    "evidence_digest": "9c0c05bc5eb4c6328cabd98270a91557b50eef3fa9926d3a0f2c14e34a269e3c",
     "confidence": "HIGH"
   },
   {
     "version": "132",
     "filename": "132_reservation_checkin_flow.sql",
     "checksum": "9cd74de9a00920932cbfa041bbfb0967fd829fb72544077c18ffe735545d9e8b",
-    "evidence_digest": "2aa2992ff16d60aa065d96b6f2f7558a25a01ca113689906e98c34c9d5d3466d",
+    "evidence_digest": "09f3a2fe4c6886ef1b047f5f5872242d063817595b1e1ad9352e219dbb50d1eb",
     "confidence": "HIGH"
   },
   {
     "version": "133",
     "filename": "133_storage_bucket_security.sql",
     "checksum": "5c1bafb5f79c9543ad5f89edef9cfc41b4277d085dfd1eac5f60d4393febe625",
-    "evidence_digest": "83b725f7d06cb659c768e1609c63cf0e15ac14a95350559431a446e320e8af1a",
+    "evidence_digest": "3231d8f3a77141ffb206e4b9d34fcd9008c4dd4bcbd9f503531a10297ab5f124",
     "confidence": "HIGH"
   },
   {
     "version": "134",
     "filename": "134_add_new_capability_enum_values.sql",
     "checksum": "75488f96639efd7693cc517e5e2cb66a4db529688cec73b68989670c004d6365",
-    "evidence_digest": "e0b95bf451c42ad1cda18626dd0e85beb2e853cd95aae5398df5fc7c816ccb0a",
+    "evidence_digest": "db4a28c098fdab67e1f7163724855f016da3b417ab2577d6035121032183d49b",
     "confidence": "HIGH"
   },
   {
     "version": "135",
     "filename": "135_drop_permissive_storage_policy.sql",
     "checksum": "4e2e4296657022a3c85bd7df81bdec3d063408e051c0d8b89461b95e035e6bba",
-    "evidence_digest": "04783cb73ee85d9a5b40d886c35d19a6222db47ee35838a3cca244db204be295",
+    "evidence_digest": "a717a0fe598164638cb5cfbbd6cfc40a08bb313b94f684e6e9cee27bfb79c6c7",
     "confidence": "HIGH"
   },
   {
     "version": "136",
     "filename": "136_fix_session_race_and_booking_race.sql",
     "checksum": "07d3689c91f1dac5dfa024157ea57f2c41d448a156a3317b669b07fc064fef1e",
-    "evidence_digest": "cc07e06f17a58db83ff3ead1870bb03bc4590a7fb0e0684ecccf68b45a3b3a46",
+    "evidence_digest": "e486aa59feac4043d3deadd6259e7abcf5fda878463e6309f01ed828446f7eb0",
     "confidence": "HIGH"
   },
   {
     "version": "137",
     "filename": "137_atomic_booking_slot.sql",
     "checksum": "2ae67a3eb04ea461750216850ad8802a3fb281a2d309089a11bb9d3499dc5fce",
-    "evidence_digest": "424724e93baae34e603fad9348787eca0d299d415f12a340cff0f46500b67b41",
+    "evidence_digest": "3930eef48afe8125c3b8a38e51eac4c60bc46ac3e6f7ff217c3fcdff9a743fe4",
     "confidence": "HIGH"
   },
   {
     "version": "138",
     "filename": "138_dashboard_aggregate_rpcs.sql",
     "checksum": "85db896f8b6ea0bd19f31a0b598d995262013ee9037912eb712a0a49f7f63c6b",
-    "evidence_digest": "04b79a19b762fa4325d7ddd0834836b32969e44a772610699f56d0cf28cd1eaf",
+    "evidence_digest": "b6a03dd83a264d6226422f323c09341761de195028c4a32fc1a1ba0835df4e6d",
     "confidence": "HIGH"
   },
   {
     "version": "139",
     "filename": "139_fix_atomic_booking_type_cast.sql",
     "checksum": "0970f4a6a987d8b8d6a09d4d3d580ff96771c3c2a6ea6edb67efa98fe18038d0",
-    "evidence_digest": "7f59d1bfee12d0fe5b865dcdcd0d3bea1923bb237fa2d345daeab1b1c9ff43df",
+    "evidence_digest": "10e1e65e8d1eeaad29fbd4d1e5a9394f9ba668c5fd0fed0a27e5f4151e88900c",
     "confidence": "HIGH"
   },
   {
     "version": "140",
     "filename": "140_fix_atomic_booking_for_update.sql",
     "checksum": "7424adc167d1c7a7a4473b6665c809744715eae9b16324e6f80df997d1f04a8a",
-    "evidence_digest": "e5d335dce8616f540084aa4306109faeebfa49838fe5fec110988ccd05685a48",
+    "evidence_digest": "357908aa7e47f70e2ad0fbe2c4f9170cf58849e2ca09cf812341c96c90e689b8",
     "confidence": "HIGH"
   },
   {
     "version": "141",
     "filename": "141_fix_atomic_booking_enum_casts.sql",
     "checksum": "e4a7fdc58550bfff51ec217578b7cc66148a7dd70833803941f740f735909efa",
-    "evidence_digest": "417cf090cddeb3b117662642ed1a90f6b401d0ca01de8ad70574a7f92d878fc1",
+    "evidence_digest": "4055c841988aefd9f5a006f2a62ee5f98979d2b507cff045592c9ab322d788ab",
     "confidence": "HIGH"
   },
   {
     "version": "142",
     "filename": "142_checkin_checkout_noshow.sql",
     "checksum": "6fa794ab471bdb61ca9b1f27681ccf53537b16d6db32d055160ed160fb5d5e0a",
-    "evidence_digest": "4e5e5235a76ff093dff52bc74b7c8803b3adac9cc2dd14fcb165e760353dbf42",
+    "evidence_digest": "e4c58b82f83be3fc6c5d6f2bfec6185f9e37fa7441e47b367d31100001e796fb",
     "confidence": "HIGH"
   },
   {
     "version": "143",
     "filename": "143_add_paypal_gateway.sql",
     "checksum": "ebfb89e65d8ea5d65252cd0223374f56b15d43f7cfb69113cd20707fcf5d31b8",
-    "evidence_digest": "2f80c0d76d49ffb361babbf6a16606d7d4b650b2ed09790ba18d0a3f854d6db6",
+    "evidence_digest": "37a216cde18c4e1cea70057ceec3e6c650edf6848e8ab3def09b3c6ede0932f8",
     "confidence": "HIGH"
   },
   {
     "version": "144",
     "filename": "144_rls_fix_permissive_policies.sql",
     "checksum": "d7033e58fa7d7599ea1ade81d2e184f64c7ea06df7357ad7aa4de9c2399a2238",
-    "evidence_digest": "bf02e316d1ee15097e0c413412aee707e84c7d29cc07d4bf19babfac7d4a05df",
+    "evidence_digest": "c982f8f1155b70c4f5111b25a556359dc4d5817614546a25ed965bbd64400420",
     "confidence": "HIGH"
   },
   {
     "version": "145",
     "filename": "145_saved_card_pin.sql",
     "checksum": "a0f98eca299b8b83d655b3e010fbf3a045590430b4626fdfcb7352c86f9fd3ea",
-    "evidence_digest": "1b8ce414d96c113a9fa9fe5330081718bb66ff36d133aed92a201548187c606f",
+    "evidence_digest": "2a9cc73dca9c8c90771d2564d677d1b3be9a0dbbb7155c5be2db389f1ea4d1d9",
     "confidence": "HIGH"
   },
   {
     "version": "146",
     "filename": "146_service_buffer_time.sql",
     "checksum": "4dfc50fdbc4c69201540e08a4c131004413f81e5a1f9e6f57fa23b1f3ea1de72",
-    "evidence_digest": "40577b46ecd0311c06ee15c419de91766e6b47470b0b4952e00b9a7643df981e",
+    "evidence_digest": "d0ec0f5809cf0a2f56774b26a533c6949fd755273d651d1cc428f9bf55b447f9",
     "confidence": "HIGH"
   },
   {
     "version": "147",
     "filename": "147_auto_last_active_on_deactivate.sql",
     "checksum": "120f42d0c7b8320dce800cc02162d43602f2d26a3c799fe640c6ebc4cdb1dd80",
-    "evidence_digest": "b3858e56639cd747c11e592edc3fad1e81f23236d4731bdb735b8d18e85a35a9",
+    "evidence_digest": "d9e3dabbe876adf0075079fe60fe58f07f0bc375391dc5c56479180d5bceb3ec",
     "confidence": "HIGH"
   },
   {
     "version": "148",
     "filename": "148_add_missing_fk_indexes.sql",
     "checksum": "d0c684fa5cb8e391e4333b3e61847fc0191e4ed38ed73446f0cf5c0183e6c8f3",
-    "evidence_digest": "b3cbe9e4e27f4d5fedb37bb5caaf3e542ad26c34e0dc9ba6a06323759aa44980",
+    "evidence_digest": "fd2a5420d2be1df2ef48bed5e69a1bcebd48450d5eedf3af5eba9d7ef50aa8ac",
     "confidence": "HIGH"
   },
   {
     "version": "149",
     "filename": "149_public_event_booking_slugs.sql",
     "checksum": "2d6020f6d4ded0e9b7757cab455976dc6cf6280684ecc5f427edc474b4a99ba6",
-    "evidence_digest": "c9c009f04a6c3cc5864fe160bef6a2c30e1862bdcd2550d93ba703a8b4fc33f7",
+    "evidence_digest": "1da3d8753be2a7732d242cc63db10f8dd5c1668d76a89d8b49273bba91bf7e40",
     "confidence": "HIGH"
   },
   {
     "version": "150",
     "filename": "150_group_bookings_waitlist_conversion.sql",
     "checksum": "67ef7affd6e3b19fd37e9287fc89217871bdb56125a8633d971821a49fe70eff",
-    "evidence_digest": "9a7ae984e728e75326b289b97d6378061b7b583911e29426a7c93c289742734f",
+    "evidence_digest": "b644fe81f2dbb156dccd1f8d838387dbd327594867ad3d04e3123d35a8a2095d",
     "confidence": "HIGH"
   },
   {
     "version": "151",
     "filename": "151_llm_classifications_owner_rls.sql",
     "checksum": "43450127a84d3adbaaccde03bd4832dc77b76a847c3031330236dd496d57e065",
-    "evidence_digest": "c3b165bbd495ad1502771bb23e5d75058b5ca1a41a1da46350c04a2afd9cb9c0",
+    "evidence_digest": "db5709a3d5cb56cd218e358c9c35e96e8f5fddc4b2e6e23fba4aa0e7cdf534d2",
     "confidence": "HIGH"
   },
   {
     "version": "152",
     "filename": "152_catalog_sync.sql",
     "checksum": "62f0393defda7ebb3f5f65da3bfcfbf9f368f6c3327a07e8b16df8b4d8368100",
-    "evidence_digest": "e5a778cff5ffb40243d914ece783205660e12f08048514973ae3525dfff2dc6c",
+    "evidence_digest": "7f4817a8f2384bfa76249ddef360cef027730e81a58396b9715df8db4360d1bf",
     "confidence": "HIGH"
   },
   {
     "version": "153",
     "filename": "153_payment_confirmation_dedup.sql",
     "checksum": "b2af98ffece645c9d67be80afc6e0f06bad40c80f0e84a71f4d5dc01ffaf3cbb",
-    "evidence_digest": "78726b2e85fee14faa95cc89b4be2cfc5199e85294cc7b4dd1362fc5f009226e",
+    "evidence_digest": "2ba5c2ab84cb6a259096f7e858f9841d0a2cd5659ac84e6cdd56039b1c30352d",
     "confidence": "HIGH"
   },
   {
     "version": "154",
     "filename": "154_service_packages.sql",
     "checksum": "99b5ac5d7d9f4dd557c1c333aa6d94de1e1d8ae2d6b9d2bf958e692b3d4a903b",
-    "evidence_digest": "ca2ad896f5d43b912e08eb862fb61dc165064e28df1957b8e08572d8c6f64428",
+    "evidence_digest": "2d1f251d980b0bf2aab57587a3006037d9f46644575960adfdee7e97dcae8cd1",
     "confidence": "HIGH"
   },
   {
     "version": "155",
     "filename": "155_class_booking_multi_location.sql",
     "checksum": "564f80df7c4f6366cf7683b2ca4272c342d12b44163fbf549c51af4b451c1eba",
-    "evidence_digest": "3960ec462bcdb9dee1b0058caaf6115afb7f1ea6eae29ac071306dca045b7b34",
+    "evidence_digest": "f77d343c4c4d6226aaf5ea7377ba5bbec1e161ea9d3e88e231a893b33a93e4a8",
     "confidence": "HIGH"
   },
   {
     "version": "156",
     "filename": "156_atomic_form_response_count.sql",
     "checksum": "717cfc4b4446a5da3855f440735181df69e7e48f40f36a2c8817d4fa4b7ce292",
-    "evidence_digest": "96de3016fad63ea4ccf309434f610eaa78b40438984008ce5c6c97a8b2fbb762",
+    "evidence_digest": "ce43847a4f979499eabe8b6873f2ef0800eb8a788280f14386db2aac50231275",
     "confidence": "HIGH"
   },
   {
     "version": "157",
     "filename": "157_atomic_loyalty_points_redemption.sql",
     "checksum": "739eac917bde2d9d7bc75594fd1ab72e00d5b0bcd6f8c5af8902929086fa974c",
-    "evidence_digest": "0d41d1a4b2bc92990596eed9ce525b67d2df39daec1f88e02c956f6a42e8442b",
+    "evidence_digest": "db970cd16c2210f0b9f0357d1cdc7c969c386699b31ae28aa600005eb078185f",
     "confidence": "HIGH"
   },
   {
     "version": "158",
     "filename": "158_platform_fee_dedup_and_campaign_atomic.sql",
     "checksum": "259000cae546dce106ffdcb20bf59075df48061d4801624bdae1ef14fbf98c40",
-    "evidence_digest": "b95d4f5fc54bd11a8cbb8acfa41dd8d674f19381b1ac55a10803c875466f531c",
+    "evidence_digest": "2557944bb12fc7a986166ab94504d9bad66773cd7da81d3ffb33a19842072516",
     "confidence": "HIGH"
   },
   {
     "version": "159",
     "filename": "159_payout_dedup_constraint.sql",
     "checksum": "e9fc375a8e18aee5ade2689d7ab1b07785504d3871d1acec446b1d7311f90757",
-    "evidence_digest": "18a72fed3c9ae50815783292309e9df4dce0e21504b9c4f0eb5bb8530407df92",
+    "evidence_digest": "39744f74c0ee6d24bea5b87b729549c03803bdeaf69bd78e5b4947828609d16c",
     "confidence": "HIGH"
   },
   {
     "version": "161",
     "filename": "161_admin_roles_finance_operations.sql",
     "checksum": "a5dc18e09487487dd93fe54d14d9d699009084f9e1c30490f1ee2dbc7ac09801",
-    "evidence_digest": "37f4d0e531818d0bbc1c3f94281ed3f7f8614dba8a28d3e4427ea428fc95559c",
+    "evidence_digest": "a710cfe76ac5b4b4bed597c06ba063e02ba2405d8f3e5351902ee928435ee650",
     "confidence": "HIGH"
   },
   {
     "version": "162",
     "filename": "162_pre_booking_questions_and_followup.sql",
     "checksum": "7015e13add3b61414b3ed93c5c53b2ec535f2d0779e68e7e88be325177b520aa",
-    "evidence_digest": "a07fa25896e55b8bc106dbc52f561c2d97f2fb96d192ac8319381933b2feb506",
+    "evidence_digest": "99d49d541714c4bdc97f834f0b0b2b13572268bfd2f31627de17da5a7cce26b0",
     "confidence": "HIGH"
   },
   {
     "version": "165",
     "filename": "165_auto_customer_profile.sql",
     "checksum": "b4f6b802febf13da42de1bc984fc5ef4d5b6f85cd3b2f4e7be1db9a235bf5bf5",
-    "evidence_digest": "659d65c4c023b322f7b896658629382b7c82d1424444850e4de252a03ef4dc80",
+    "evidence_digest": "63a7a12c7b4eca272c3794a8401aa1f9e7ab1bf2ec976fcb82ec768eb0f59916",
     "confidence": "HIGH"
   },
   {
     "version": "166",
     "filename": "166_fix_appointment_booking.sql",
     "checksum": "ddf3b1d855fcdb8f3fd999727fc2687aa144973b27ce211825e6ac8e64452fdf",
-    "evidence_digest": "c93df18152cd5e14f4d450130001ab3f26fc9711a7940ad167be23bce821a457",
+    "evidence_digest": "23a377817a88ce4fcad035492f03bc3b5feb540e0414f164947afa9ce49663b0",
     "confidence": "HIGH"
   },
   {
     "version": "167",
     "filename": "167_order_payment_fixes.sql",
     "checksum": "ad766ed7e38e2d41855fbb60538d9cc0d13594d1ef1076e87c5a13956cf5c8ea",
-    "evidence_digest": "889d8e91a4f8dabae7803fabbadacfc1fc52e7093b302821c87d9034d0ace956",
+    "evidence_digest": "bf70ed2f87147d466bcf907d5f1c3aceb64ef674fe92702f6681840ae78b529a",
     "confidence": "HIGH"
   },
   {
     "version": "168",
     "filename": "168_multi_agent_chat.sql",
     "checksum": "f70876f23866eccfe10437005c2c274ebabe18c7edd2ca81aafb95bd76fab4e3",
-    "evidence_digest": "cc33018f2977e71f09be6183274bc395dc9a9115d8d9d500774b34736237ee5c",
+    "evidence_digest": "55a8e958dee4b9c1d22e207a0d40c9bde0889f1d3cd2276d2e8c6b901e31b57f",
     "confidence": "HIGH"
   },
   {
     "version": "169",
     "filename": "169_scheduled_broadcasts.sql",
     "checksum": "4bfa23534ffa93c4df495b3a49d743940cdf69f49400fe0bfb773eac20dce2f7",
-    "evidence_digest": "185f4aedb135d6d28f65c51c1c0e0dd8797b608d3ea5ea51ad94104ae4801844",
+    "evidence_digest": "ae35e2ebc782d0eec8f6b92a6143d913912ea2f364c0f99188f3f297a08431e6",
     "confidence": "HIGH"
   },
   {
     "version": "170",
     "filename": "170_subscription_expired_status.sql",
     "checksum": "6705ee553032de632888f9a2bed2b2f73e752da2f313b960c70ed6d8543cc6c0",
-    "evidence_digest": "d7ce1384bcd7b6e49ddd1c450bc5aa7c9fa39fb50a6cbaff69d8a473c46a8a1d",
+    "evidence_digest": "2b7e4269e19d2714f43d34f8fd5f85005861ef1a314bfd5c5e6b4007c6da4c59",
     "confidence": "HIGH"
   },
   {
     "version": "171",
     "filename": "171_subscription_payments.sql",
     "checksum": "0e408b7bb01d815ab95b7c1cabfbe872d30e144c3a7554aca46e5bc6e4b621b8",
-    "evidence_digest": "103fc061e1b20914f67bd129452e7e61be852f564ab197ff66eb215ff3b6502c",
+    "evidence_digest": "838e6fe86c4cb0d9c83b2cbfc9ba5336e67216a1b43410c11592c188134a09d7",
     "confidence": "HIGH"
   },
   {
     "version": "172",
     "filename": "172_recurring_billing.sql",
     "checksum": "667e071f5e6af1ba6ba25eb7f40b24823a456b1676a0939458eb10fe2c77d927",
-    "evidence_digest": "2b831083e8e57f1566e17801c03d995306106a1a1943f811a295bd2b224fb986",
+    "evidence_digest": "f038f068079eddbb26af1dfd2f3a53a790e1bd7d09313bb89f158d56934a1e35",
     "confidence": "HIGH"
   },
   {
     "version": "173",
     "filename": "173_restore_stock_rpc.sql",
     "checksum": "ba93897303a12d06c03d221b3fe62c02e613f38f524679ac7ad10fee7d6a3579",
-    "evidence_digest": "9abef4ebd3e6f4c88cfda84e6e6ef94977778403a87a16e5a04e8125e233e17a",
+    "evidence_digest": "810f212915ab62528d3e0b94289f46306fd31ff2c98639db8f413726731f8ec3",
     "confidence": "HIGH"
   },
   {
     "version": "174",
     "filename": "174_contract_references.sql",
     "checksum": "591c490498a065d904f4a819a649262993142df1626b43e30224f4b400616b22",
-    "evidence_digest": "9b28f9028d45f11cd196508e9da3c90741e44a0830e479a141fae2b1344c1b2e",
+    "evidence_digest": "2dc1d92e76226bc2b0dd4dbf8c714260e6de0d7c2224fe68143e19bb679b50ed",
     "confidence": "HIGH"
   },
   {
     "version": "175",
     "filename": "175_public_property_read.sql",
     "checksum": "04b5d050dffbfc68ffd98ffb1c6e9da6b04a298be19df9d5ba38feeaddf65fef",
-    "evidence_digest": "ce9c7b51ca27168f9a30bafb0811e163e2698a0bb6e8c9c216d6240436d071d3",
+    "evidence_digest": "50284966567428371adb24aeffb6205b8526f71aecba9de36d628a2141269f28",
     "confidence": "HIGH"
   },
   {
     "version": "177",
     "filename": "177_add_missing_capability_types.sql",
     "checksum": "d6c1f57ad7db3c81f7dca50acc5cc0a83841a2808b0857cdf1489f003fc11139",
-    "evidence_digest": "d6ece2a1782eba77d048d20dd8e3d0c41b1b3e974b48005f1536ccd63ad3beb7",
+    "evidence_digest": "0552366cbebcab68276aa4951b716090855f96e0c2e541c855994895b0324f9e",
     "confidence": "HIGH"
   },
   {
     "version": "178",
     "filename": "178_capability_sort_order.sql",
     "checksum": "8278eb0deadaecf1a458e60a30819767b02b94e320608fb8ec9077edd7aa15f7",
-    "evidence_digest": "36d0e593fa2f23f820f4c0deb709d516f54a67002c132253bae86271d8614e0a",
+    "evidence_digest": "5f719668bbb115bfa0abe093b0a6f70a7222a0983559ef7cd19250cfed1dd696",
     "confidence": "HIGH"
   },
   {
     "version": "179",
     "filename": "179_capability_custom_label.sql",
     "checksum": "cb4aa8ab67001e653821f0673dc0f66decce5afd1b575ae56a824cb32912dbf9",
-    "evidence_digest": "56863ab66d3a4cae1cf96693b2163cfce7dd204dbdcacc05a9d3ba137804cf6b",
+    "evidence_digest": "d81cd48dd633e30b67412a70ca62d32c474c7b8d10b3d1df10c15bb3c784da95",
     "confidence": "HIGH"
   },
   {
     "version": "180",
     "filename": "180_api_keys_external_booking.sql",
     "checksum": "27fe71fd4fd0cfb12b97f8f4bd7322720a6de9b91ffa826aeba21afb8b036408",
-    "evidence_digest": "d40245626c6d823f27a4594be85f41cb1a24817ec48dfa2c91e09689a7d89730",
+    "evidence_digest": "7892cf6868fa50739cde019802eed1e25d8f01ae197a0638bd7d451f25ed7111",
     "confidence": "HIGH"
   },
   {
     "version": "183",
     "filename": "183_check_constraints_and_cascade_fixes.sql",
     "checksum": "b394ff2190cd0d82cf1241ad36c4ce5ab5d226b2683e2f7cb7d156c3f980c2e5",
-    "evidence_digest": "a5cf17553978ba2f0aca338b8ac106110f9b6ac0773a538f7d7f814883fc7884",
+    "evidence_digest": "49360da936e657ac3b1ab96641d99b2755eb31a661daa4596d2051b776ccf0ee",
     "confidence": "HIGH"
   },
   {
     "version": "184",
     "filename": "184_campaign_soft_delete.sql",
     "checksum": "aa68afe1e7040b656dbb461bcc6c9cb917511f3ba48a6faafe8a9c4eb291bf0c",
-    "evidence_digest": "039f6bf7a76140f0c8e7368ed9dbadc9fb46179a0360b70d8093ad3006c30244",
+    "evidence_digest": "9445bdf6a45f0bfecadf4b07b43c4e56103279a5b31b6cd22ae9c8bbde8190e2",
     "confidence": "HIGH"
   },
   {
     "version": "185",
     "filename": "185_add_dashboard_booking_channel.sql",
     "checksum": "eb5d1797082624e3b00a8009e1516ddfa47bb5b8c65f177c7794b2597629bfc1",
-    "evidence_digest": "0aae488d2d51326ca2ab4b0d0ada356a9a3e899fead5355738860aa537d8f64c",
+    "evidence_digest": "f081ae75bee5b61d920766644892e5357404e1ebf762fdb36c971ac9ddd68c86",
     "confidence": "HIGH"
   },
   {
     "version": "186",
     "filename": "186_waivers.sql",
     "checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
-    "evidence_digest": "5b5901a1e60df03bb90a9b59b6ad6db5f26c7688426acad3e4bdc8eebd11019f",
+    "evidence_digest": "6f2ccbef25d1c33d06dbe790829b648d593bb0964ffee457511d7940c8ee5350",
     "confidence": "HIGH"
   },
   {
     "version": "188",
     "filename": "188_waiver_template_pdf_url.sql",
     "checksum": "c5a4c9316d509ae59bed4532f982fb11f2aef8bf78434d6221312357c6ffc512",
-    "evidence_digest": "b8fb898c3150fac16b04caacf283a5f8d954398cf4d841334a468b79ad1ad02c",
+    "evidence_digest": "a741f0a2b450fcd57ca51c9b207e6debb95d1248d9bd27a1b8afb61e1c716fe1",
     "confidence": "HIGH"
   },
   {
     "version": "189",
     "filename": "189_waiver_access_token.sql",
     "checksum": "691cca513115647777b0e36d916d1cb603e336c0a0918485a98688bb7002e0a5",
-    "evidence_digest": "7d768be410cefee0cfc31caaecf12a5b7c98f3ab56b4c7d496e61821427cb2da",
+    "evidence_digest": "1742693c5e3a95a3b30ee462ad3bf8e8ba6721e364b58a2e4c4f0b543b4226e4",
     "confidence": "HIGH"
   },
   {
     "version": "190",
     "filename": "190_gateway_fees_and_custom_overrides.sql",
     "checksum": "cd2d5b7f3d4b3d25966415f8556d461e2304ef31a42695dd2c6e82714e126a46",
-    "evidence_digest": "b4adf530526422ca653ece790ddb2bb46a2fb7b3e4d16b73392bc9a2e8f80e3c",
+    "evidence_digest": "a3cf0a3426aff5dabae747ccdd7fb60bb49da36301f6925cf5142c47db0a9402",
     "confidence": "HIGH"
   },
   {
     "version": "191",
     "filename": "191_scan_to_pay.sql",
     "checksum": "fa2dff768dc89faf148a8e503edc24d49bcc39a1351ee5b828dfc81113574728",
-    "evidence_digest": "53050b858673c8a1001e4ace73cdc30614ce3d435cdf7a35ff0b01a6cb571f6f",
+    "evidence_digest": "0c69ccf779baf72c80faa641f884b56739337b859cee3092f277fe4f94c6d8d8",
     "confidence": "HIGH"
   },
   {
     "version": "192",
     "filename": "192_secure_revenue_rpcs.sql",
     "checksum": "7ceed48188d673cdca26990ee74c4dcd62d95523270f1869db63ab1e6c693d0b",
-    "evidence_digest": "f000bb8e8e0d765e1167c7e678751f094a84c2d2629fd1f2ad3036c4bf0748d5",
+    "evidence_digest": "bbcc7eed8d0f33338f83602720fd13ae73efaacf249be0906292151882d8f538",
     "confidence": "HIGH"
   },
   {
     "version": "193",
     "filename": "193_fix_search_path.sql",
     "checksum": "f88abd11424c6d0cf567886d26457fae31306e782aed64e0bba4f3bf3b4b587a",
-    "evidence_digest": "b30860d11f9620b026e824bc08019488a74e208032dbb151c9ccb4efc7d4c56a",
+    "evidence_digest": "f1e03ce669a39486fa441b9fcbce5cec34112d2edd00ba74c3c10eaf4c57f78e",
     "confidence": "HIGH"
   },
   {
     "version": "194",
     "filename": "194_blocked_phones_table.sql",
     "checksum": "c29b8b201e5a2121c3f8ab2d8126e2a4b7c014db00a0ad25dedb0ca1b130f83a",
-    "evidence_digest": "4e3228f35f77fd3cfdde349690e3958756c53d34ac04cbf553d286bc80e1efc9",
+    "evidence_digest": "237cfaf83c54a18e303a078c07c19fff807fe1f3547bb5524e34e7ef94dae453",
     "confidence": "HIGH"
   },
   {
     "version": "195",
     "filename": "195_pay_link_limits.sql",
     "checksum": "af190a4ca2f7b8139edd8630bb235b761ec0062bf9ba38175b78426f96639e15",
-    "evidence_digest": "745aa21adaba4598b03d48b6910f75a602f4bf3235f8f912faab03b877424d3c",
+    "evidence_digest": "64601178ec9b96b423dc84557b1d7402a462a75afaeb12480d07adc53ac22df6",
     "confidence": "HIGH"
   },
   {
     "version": "196",
     "filename": "196_waiver_capability_enum.sql",
     "checksum": "b32711f840aa3f31ca833b74fe2ade746e950c4178fc70156ec5d47293ca563f",
-    "evidence_digest": "ca35fe00d2af19795c8d4a8df84855130054d146862b87d68b12aa89c174e289",
+    "evidence_digest": "d4a86f68874015dd2d7be961af2490091aeb38a4ac7fffc6f36d001a4cfe1466",
     "confidence": "HIGH"
   },
   {
     "version": "197",
     "filename": "197_event_refund_policy.sql",
     "checksum": "3c11be96bebdcbd705aa4ee670636f1ae3ed6b06b044392c3b9b0b9d2724d65a",
-    "evidence_digest": "e8616df80c29b22dace335b8dd7545bb5cd3b3de6f77c3a69866f4d9319b58b2",
+    "evidence_digest": "45614c794c7ba5f4a3812db95112f4d46663b3e55f6689c9c8930d07551cf8cb",
     "confidence": "HIGH"
   },
   {
     "version": "198",
     "filename": "198_party_custom_responses.sql",
     "checksum": "d69eaba79cb470109b30cc2fe273498a8e347f84871a00793d661cebe6bc45e8",
-    "evidence_digest": "b2b391f023ef27f455fb4bde66e5df88dc3c8678dd936e65f530774b177b909b",
+    "evidence_digest": "730fb3cfd766e9d9e6f12331f848fed60627d72a4261da778f1bcb96e97a978d",
     "confidence": "HIGH"
   },
   {
     "version": "201",
     "filename": "201_session_security.sql",
     "checksum": "25f0c730eb49c976567b074ccbdf2d74866fa51a31b9cf7f67cf2947845ab80a",
-    "evidence_digest": "e6a5891e08d0b9e27fe83781eb86f4ada8404f4d306aa9788d2abf7734b063ea",
+    "evidence_digest": "633e4458d52e457f75ddbce405c02d83177b8aed108c9c2aa926cfc093063101",
     "confidence": "HIGH"
   },
   {
     "version": "202",
     "filename": "202_balance_reminder_settings.sql",
     "checksum": "5237fe1e126d9b1688c5ab9e4b3455a9851313b1a917f6167d647ebe5bba9c73",
-    "evidence_digest": "11ecdde78f7d4777a87eaa534b8ca1ff01ac3173e6bb01c3327cf1000f879351",
+    "evidence_digest": "ffe29a65d68257b0727ead53d73b01c1c78305d0c56336d8f8b0141eaaa32fdd",
     "confidence": "HIGH"
   },
   {
     "version": "203",
     "filename": "203_keyword_campaigns.sql",
     "checksum": "5956c2108e200ef1315fdbe17c29f906fd9fafa97ef233aecd67fe517903bb60",
-    "evidence_digest": "8985bd27ad8672c47ec88d3bf0752ae599cee59366c42b14dea328cbb0675876",
+    "evidence_digest": "5e24569fd59a9e72e4f6fd18831b94a3f43ac88dbdad99f9a16b46360e5a5fb6",
     "confidence": "HIGH"
   },
   {
     "version": "204",
     "filename": "204_party_enhancements.sql",
     "checksum": "0d6dd565d6421185d39f68a593db53a42fcb97e62eac4e79996cab7200fa06d9",
-    "evidence_digest": "82363ca1478e522ff4d072cfd37af92ccfb918d81e057e6feaf4b3e8ee1ea130",
+    "evidence_digest": "3631e9dd24375da66b21e658ad24cb4b8633614c876cdd125d219398e74f3f6f",
     "confidence": "HIGH"
   },
   {
     "version": "205",
     "filename": "205_resellers.sql",
     "checksum": "57d7ba74df220da2168c3e777edf05e520aaaec22c9a334f9523e26e1f556c5c",
-    "evidence_digest": "ed3fe42d8dddc0f9c1f1d3a1c62c92ec1da952ae866449aae8af2d33c8d147a3",
+    "evidence_digest": "2d8878be9d74d4768e0b2d50816453edd7b9cd8dd815d9a288f390965bd48269",
     "confidence": "HIGH"
   },
   {
     "version": "206",
     "filename": "206_demo_requests.sql",
     "checksum": "c98a3390fc9ccece2589e53a1d61ca871685a2ad97ce039373c6dbf0e9912c08",
-    "evidence_digest": "94a0df3cc4684cb5702bef67cde6487c4d1c7908bf9a3774af783e54ca9b75f1",
+    "evidence_digest": "c92c13dbf0c7ed32baf6f8cd9cf7c3c2abe1eba5cbc5bb7c1ec5836bbb10d35a",
     "confidence": "HIGH"
   },
   {
     "version": "207",
     "filename": "207_reseller_full.sql",
     "checksum": "c6db6671e65dfdd34ba9a7d39286f65f94ba34d289c236909413dfeb24ce8240",
-    "evidence_digest": "14e5917d63f3545a3645e5b2ae464aefa9335ceb8aff0de8162f72a2bdb6e37c",
+    "evidence_digest": "d09f345e9721accd54981fdfad7204fde1cccbc17d8bdede4c71b159324a69c0",
     "confidence": "HIGH"
   },
   {
     "version": "208",
     "filename": "208_payment_channels.sql",
     "checksum": "4e0a153e84f1c3f43ce3ae7f4b3927e07f81caae9a03d4333e7747a8699c9d7a",
-    "evidence_digest": "6921ff748d815cad2dee5b3a77cf01f6d5df3a9080cfc03d0803386c442f88e5",
+    "evidence_digest": "7abd3e02e42d8e03391c2bc01bc9a38ed69718e61a061064a9c943c831309f91",
     "confidence": "HIGH"
   },
   {
     "version": "209",
     "filename": "209_direct_bank_transfer.sql",
     "checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
-    "evidence_digest": "3db2188b42b5a76c9b9a68681ba057e22a298b064456b7dbc8175f0cb5cb4b9e",
+    "evidence_digest": "a7a6365abc22c9c54666518d314faa78653131f337a0287cdf5eb75c1790bf19",
     "confidence": "HIGH"
   },
   {
     "version": "210",
     "filename": "210_receipt_ocr.sql",
     "checksum": "62621ccf1143140e8b5f1731365a64ef2447fd0188c55121e033864ba87ad485",
-    "evidence_digest": "051c455201469520eba25d9c20b39e5ed2ba33dcf4329019c1f7ad6bb9f37796",
+    "evidence_digest": "040394a607eeaf1056f245eb39eda68c3cad0806cb62cf38a9f57628aab8aa93",
     "confidence": "HIGH"
   },
   {
     "version": "211",
     "filename": "211_ocr_result_and_admin_rls.sql",
     "checksum": "e8768841083c21bb684c24d075d3f24e1611f8a5112c5ecef97e0a7a4d426154",
-    "evidence_digest": "78257cab28acd21b9b14d287f65dffb861b6c0c51dbad04b9b244e969a2cc4d7",
+    "evidence_digest": "daa367ec1e6c315bff97e6a5dcb6e26cb67f0f197bfabdde7154e8ecc0678ca1",
     "confidence": "HIGH"
   },
   {
     "version": "212",
     "filename": "212_platform_fee_invoices.sql",
     "checksum": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
-    "evidence_digest": "954540be794b98a85c4c9c5f1d9435c5f30097e7a7fcfc56e127d93982e62823",
+    "evidence_digest": "d7093e520ca712cee72612b5918bf0c3966a3213488296138e1260c8f99061e5",
     "confidence": "HIGH"
   },
   {
     "version": "213",
     "filename": "213_pending_transfers_campaign_id.sql",
     "checksum": "2d1781182a47451bf8db666317f7dc4d3e7bacbf106ea380a0044d9f2997ac94",
-    "evidence_digest": "d8ec5cbb4748947eb457ddd33e45d39b3bafa2db95b5a90ae093c295393ca990",
+    "evidence_digest": "090830f0294461cd719c43b15bae3bcf017b294df73cbfba0901a403fd6e54b6",
     "confidence": "HIGH"
   },
   {
     "version": "214",
     "filename": "214_security_rls_fix.sql",
     "checksum": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
-    "evidence_digest": "2d0f3d9fb12b5e634bd96aa3eea9873d4b7b1e2207963c9d5506db327ffb145e",
+    "evidence_digest": "39f832b8743579334a28b04e8d6a89660f9657dd5c29fe1626fd20942ad36553",
     "confidence": "HIGH"
   },
   {
     "version": "215",
     "filename": "215_annual_billing.sql",
     "checksum": "adaa51580c8f1da2286202db8927c7b692a49a46b6abed46d5ea69e0d5fb5ca6",
-    "evidence_digest": "225d620bc42c3effb90c4e04b326f3063da8ba18573644aa7ee2c036eac2d705",
-    "confidence": "HIGH"
-  },
-  {
-    "version": "216",
-    "filename": "216_annual_discount_setting.sql",
-    "checksum": "9a5bcaac81e73aafe25c12ea4d34266012625add233a269317a9117f42f8f184",
-    "evidence_digest": "c7f7815c4627cae852ea12dabc6453f290d6c6a673ac0fa062d5655058fc6a9b",
-    "confidence": "HIGH"
-  },
-  {
-    "version": "217",
-    "filename": "217_configurable_settings.sql",
-    "checksum": "a19c597e635f32b8e8e9a9989186d03576eaddd4d620012e08b23dff0b06e6e6",
-    "evidence_digest": "98df502e8cb5e45ff64beba4f285ac392fc96032b77167e6a86e2221c70740e9",
+    "evidence_digest": "3969641bc0fcd0dfe6869bf15bff590884b32edf5460a19050d56c0e66379495",
     "confidence": "HIGH"
   },
   {
     "version": "218",
     "filename": "218_resellers_admin_rls.sql",
     "checksum": "34cab4cb057fe106b780c6df4e12968ba80fbf332d110d6859daea937a20981a",
-    "evidence_digest": "37a5f4b2b2090fee0fac8faff00f29ca2d99d51b26924ef91af162f6a8d967da",
+    "evidence_digest": "0e9818f938b55b59fbd0172cba59934e0d053ff7b22267bbf7b177ae5224ff74",
     "confidence": "HIGH"
   },
   {
     "version": "219",
     "filename": "219_admin_rls_missing_tables.sql",
     "checksum": "7fb8e37f7e052a015a44454a692ceb09dccd55a6755179aaa6f7325bcfea6cb7",
-    "evidence_digest": "aad1e07213c23391b4cb28385a6cc5cb3b029c47c71bc683667d0e21d9da9bd8",
+    "evidence_digest": "34936243457f761ea045b4ca409c3fb4b21d058af9abf64fb94f578117a323d5",
     "confidence": "HIGH"
   },
   {
     "version": "220",
     "filename": "220_profiles_admin_insert.sql",
     "checksum": "38bc5ab211329a3adb0fd0dcf70be7289c3aaff288cc8d07a9793b759fa56092",
-    "evidence_digest": "1a1b6326a16e6640a61a59385fa2d4fda271b16711d88cfce74f40129df63070",
+    "evidence_digest": "e44d6965c538ec5bc17c9d970f3c79c8e5f58a9b561db431452bb09b7101d2e0",
     "confidence": "HIGH"
   },
   {
     "version": "221",
     "filename": "221_admin_permissions.sql",
     "checksum": "c187d35905bbe889863da7bf9deed3fdba653b406d92358f3f13b255f9715848",
-    "evidence_digest": "e90b90f44952d53dc9fb2facb4b971cdea9790cc7d93526f99995b3c88827491",
+    "evidence_digest": "2fe9e3ff106cef9086a03d7b982f24fa29d944c587f103cc628f665a0dbce67a",
     "confidence": "HIGH"
   },
   {
     "version": "223",
     "filename": "223_security_fix_exposed_tables.sql",
     "checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
-    "evidence_digest": "5ab21a1380eea2c4aeb1d61a222a26fa337229849bfc6f06262c7bcd5d627ad1",
+    "evidence_digest": "563b63d4251e743374e6641e11feb172f5c190ca3f178db384b3e8d5e0a5a8e3",
     "confidence": "HIGH"
   },
   {
     "version": "224",
     "filename": "224_event_tickets_reminder_sent.sql",
     "checksum": "f7b3c641978afe2ad35f6dd683a6db84b4c44f3fcb3f204d594b769df777ace5",
-    "evidence_digest": "b1d05c8fbadf4a7e544b9cd7941421c1502762f8967d88c728d9c5b32ff9cfb4",
+    "evidence_digest": "62ad76cda75dca9d6345ed186f59aace757cbfcc6539d6b6e3c6c92f0b976015",
     "confidence": "HIGH"
   },
   {
     "version": "225",
     "filename": "225_flow_dropoff_analytics.sql",
     "checksum": "0cf4b014929fa2e67b2a1c59bfe01a56d25c8f54f7b510800980adb1829fa3de",
-    "evidence_digest": "7ceb3625bc2751abad5f41ff0f9f79fb17efeafb65c3d3a5d30f7cfd9343ca5a",
+    "evidence_digest": "2a7354641a34a0b3f34f9958290d6c1bea1e063a18a7f3ccce549e63bd9a36e4",
     "confidence": "HIGH"
   },
   {
     "version": "227",
     "filename": "227_customer_ltv_tier.sql",
     "checksum": "c9d46af9a8077937475a3f54f419e4765355379e8bead3fff768a3ab48db1e89",
-    "evidence_digest": "a4a0cb0fe82efca41f56f5cc46672f3d3fc5c7431c6949bee21f574fda87f052",
+    "evidence_digest": "fe8654da6d23c5a8f42f8f6f4e8dac6c6d9265ce2efa2855c142f59591a4d310",
     "confidence": "HIGH"
   },
   {
     "version": "228",
     "filename": "228_add_pending_subscription_status.sql",
     "checksum": "d20104099900339f20057ac38c710b0f17c4f707f243d8cfaa563b2695d11939",
-    "evidence_digest": "289ff0dd615cd5dc7de9631239462e07e12299ae5d69d70486c404099d10e097",
+    "evidence_digest": "3751ab26cd2e0117833749f57746b4b805188bae93d31491252e556b4d67e5dd",
     "confidence": "HIGH"
   },
   {
     "version": "229",
     "filename": "229_attendance_log.sql",
     "checksum": "0eab50ca0d21788f63818b981a5d58bb2287a44dc2e37a8e15d90b56fbcd3d29",
-    "evidence_digest": "ffdf6820fd90e8ecf935568d68c958c67d9ffa4b4a2f8c5e5c1cc0eb447e3b6b",
+    "evidence_digest": "b4a373c86ba2c24a95c1d1356be32ee0a72bd471414381782a0adffa9e573b64",
     "confidence": "HIGH"
   },
   {
     "version": "230",
     "filename": "230_attendance_rls_hardening.sql",
     "checksum": "61d477bf4e09ac0f72e3003e0e7ab08ac7c2ccaa44dad6728aa40bebf0c880a7",
-    "evidence_digest": "557a58a0904caa7370785a578804b7a0e17a7269b53ddeda6e630567a766bec8",
+    "evidence_digest": "22d94214620c9513233860451c83fc1f96124e68a1387429e227972b38faa807",
     "confidence": "HIGH"
   },
   {
     "version": "231",
     "filename": "231_atomic_catalog_order.sql",
     "checksum": "d9b84ba7d8f69a472465106eccc7e94c4db984e88a5a4936c393dd8d3ac3d2c2",
-    "evidence_digest": "82cba076cb0fc1e435e4f83d714f4f8a33da13862d12fcc9638d214270a6d7a0",
+    "evidence_digest": "c1b41ec36cafdbe9c2caa04a0ebab8e7845793fb588e722838a4f3bfd3c1b505",
     "confidence": "HIGH"
   },
   {
     "version": "232",
     "filename": "232_webhook_event_state_machine.sql",
     "checksum": "df8b6b626301eceb40d6340f7beb9b82704f774ef8dea31eb516b849209ea5d9",
-    "evidence_digest": "9aefc600b1e749e57a8413d562530a12ee919a4112c662b313099ebfd7bcdf1a",
+    "evidence_digest": "9fb934e36b15cfaed30eb83e4775ca6b484567f02ca6f1a540cc93c54aa7ae08",
     "confidence": "HIGH"
   },
   {
     "version": "233",
     "filename": "233_atomic_recurring_charge.sql",
     "checksum": "12421515136eeb3f1a0679699650155d8fed14d8fbce1b7097bf3a634833f80b",
-    "evidence_digest": "743a09a732e8bf33ed5ecaf8228e7c6af0bda3f12646a8cb7ed18e425146e722",
+    "evidence_digest": "2e088015a8c42d833f95be02bb10d2059a62df0bab8fa5d52d47e8bace6a083e",
     "confidence": "HIGH"
   },
   {
     "version": "234",
     "filename": "234_revoke_catalog_order_public.sql",
     "checksum": "08c2ce67f3512af81e46230259b9c1d0c45eae2df8363ee8e8fbd6045ab0ee83",
-    "evidence_digest": "9015a6ebb06dc7c6191d1cf1b88dc48a6791ce6b537519bdff886b5178fa8173",
+    "evidence_digest": "b92b0f3fc12029ce0abef810087214610e5dfc9236e53ec01ba43bdb4995bcc9",
     "confidence": "HIGH"
   },
   {
     "version": "235",
     "filename": "235_catalog_order_quantity_validation.sql",
     "checksum": "53f59de87553e701fc11af6b1b6c7b97961cb7c20f696a5324c5e34b26a7305b",
-    "evidence_digest": "5d9a8eba7229640a645e4284b8353677b703bfdcf8278c7fb41475041b242d59",
+    "evidence_digest": "54e9b00f54880ae506d5f3107c48d4fe165bd6143e1244e50a438b5d63296548",
     "confidence": "HIGH"
   },
   {
     "version": "236",
     "filename": "236_session_versioning.sql",
     "checksum": "cbfbdaf42f9ad610bcbad18cebe291ff82d33f8789e65363ae5fe463a0929dd2",
-    "evidence_digest": "3a5cca5dd550ff70dfa8c14ccd910ab1dd13814fd6cc81966a2e46b749e791c8",
+    "evidence_digest": "082aa3a8d737533a65876728f65e2c4a441ce855e94626d64e955974185d7812",
     "confidence": "HIGH"
   },
   {
     "version": "237",
     "filename": "237_opt_out_suppression.sql",
     "checksum": "4fc9f9e4afd5edc10f91602bc4b02c61a00e3bdd0564b3bf6b1e44848596deef",
-    "evidence_digest": "77172419ed368cbf6b61a8a85619c569e83f9ba6cc791bfd444031d34ebe1aeb",
+    "evidence_digest": "8b0c779bcfc1d86767a03faf294b228442d99aacdbf1c26a4908e9f654f80e56",
     "confidence": "HIGH"
   },
   {
     "version": "238",
     "filename": "238_remove_gupshup.sql",
     "checksum": "f3c084016ed17f75aa8d220420fc30c3fcea46ed3ca5bb77a271d371051ed8b6",
-    "evidence_digest": "4332250303325590fdca998f10beae8d2ba6bdbe0f9b80f39346bda03927cdf7",
+    "evidence_digest": "ccceb7d8e50a98edbac6f57d97b5b09a833b045f0a38d5f09e8a0bca27627933",
     "confidence": "HIGH"
   },
   {
     "version": "239",
     "filename": "239_ai_conversation_config.sql",
     "checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
-    "evidence_digest": "285d87c99557abf891f471d9bfba44711c60093aab5a1ecd39c874be3cf4f7c4",
+    "evidence_digest": "75eb382b47ad276e49d48498cf3cd6cb15e76abd998feee41bc5b5607483d466",
     "confidence": "HIGH"
   },
   {
     "version": "240",
     "filename": "240_ai_classification_log_owner_rls.sql",
     "checksum": "dbd605ad4e773f4fae74c47e6127d2b1ab4be82cb3783d61ac35eab7f0435a94",
-    "evidence_digest": "cb5f27ac15c60bab8e668275482418dbf3ca4a8f839fd51d5f0d40efb5744e0f",
+    "evidence_digest": "c73eff4706429c995b2cf7d1b3fc22f116107ffae031b484009ad5ac6ba8d1a5",
     "confidence": "HIGH"
   },
   {
     "version": "241",
     "filename": "241_growth_engine.sql",
     "checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
-    "evidence_digest": "b1153b54f01f442e02a1b4801ca22e38f233c15bf079d7ddf6852fbf9ba80eb4",
+    "evidence_digest": "c6af630d92cba68f64dbb85c39ef20e80dc720b6a840b4001a6da5f6f3e3bea1",
     "confidence": "HIGH"
   },
   {
     "version": "242",
     "filename": "242_growth_credit_atomic.sql",
     "checksum": "578661c4ec55021f1856706194e3df010e8d22f04f06f0eb491148719f218e0f",
-    "evidence_digest": "94e1a139b1b7c6f98426196d63612aba544299c74975b4ba2794a1b8be9f8a26",
+    "evidence_digest": "92e876355c88d72eb6c406161bbba9467c270c9902fab8b95751176b675a7938",
     "confidence": "HIGH"
   },
   {
     "version": "243",
     "filename": "243_growth_credit_hardening.sql",
     "checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-    "evidence_digest": "136a69248dc8a06d0314fa213a1008ec2b87e6bc91af350663a5dd5a8ff97202",
+    "evidence_digest": "c2e5dc71293dbb4e39498f461fd6beaa1a49fae546e2d701eba8013a7b5c1412",
     "confidence": "HIGH"
   },
   {
     "version": "245",
     "filename": "245_fix_book_slot_atomic_overloads.sql",
     "checksum": "20172654b4897937f1d297850f148ac8760902cf32fe2f56164c82f66f782ac9",
-    "evidence_digest": "1cc4f019daeecfe4b6fd055d017edc6515536cbe7949050e9744b1b391f695a0",
+    "evidence_digest": "2c7e53b0e018c39aa10c3ab0f1b5c67f7343f8c06b1416a5f75bdb02bd8b100b",
     "confidence": "HIGH"
   },
   {
     "version": "246",
     "filename": "246_phone_otp_challenges.sql",
     "checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-    "evidence_digest": "0a2d16eeef96d087b72f143de5e0219af9feb41cce018c4fad16d5d1988b6f54",
+    "evidence_digest": "5ace85d081c3a750383a06b56f502cbaf2a7f86f7a531d6c26f18513e5139d22",
     "confidence": "HIGH"
   }
 ]
