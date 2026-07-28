@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
-  "last_reconciled_main_sha": "42dca86f42c4e5f0329a7cc8e4b9d436d9098a3c",
-  "last_reconciled_at": "2026-07-27T21:30:46Z",
+  "last_reconciled_main_sha": "ae53720569d9b7c6bf2bf520d5283665e918c35b",
+  "last_reconciled_at": "2026-07-28T01:44:50Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -250,10 +250,10 @@
       "stage": "IN_PROGRESS",
       "owner": "claude",
       "issue_numbers": [53],
-      "pr_numbers": [56, 58, 59],
+      "pr_numbers": [56, 58, 59, 62],
       "implementation_sha": null,
       "reviewed_sha": null,
-      "merge_sha": "42dca86f42c4e5f0329a7cc8e4b9d436d9098a3c",
+      "merge_sha": "ae53720569d9b7c6bf2bf520d5283665e918c35b",
       "deployed_sha": null,
       "environment": "production",
       "production_verified_at": null,
@@ -274,13 +274,21 @@
         "Migration 200 (partner_events_api) production verification complete — api_key_id nullable UUID with FK to api_keys(id) ON DELETE SET NULL",
         "Partial B-tree index on events.api_key_id verified",
         "Event count remained 14; existing events api_key_id remain NULL",
-        "PR #59 merged as 42dca86f42c4e5f0329a7cc8e4b9d436d9098a3c"
+        "PR #59 merged as 42dca86f42c4e5f0329a7cc8e4b9d436d9098a3c",
+        "Migration 244 production-verified 2026-07-27: payment_source column, process_recurring_charge RPC update, backfill present",
+        "Migration 295 applied to production and verified: process_recurring_charge permission gap fixed",
+        "Migration 296 applied to production and verified: 7 SECURITY DEFINER RPCs restricted to service_role only",
+        "PR #62 merged as ae53720569d9b7c6bf2bf520d5283665e918c35b",
+        "Migrations 176, 181, 182 individually verified and recorded 2026-07-28",
+        "Migration 115 remains partial — only properties_updated_at trigger missing (11 of 12 durable effects present)",
+        "Migration 297 (complete_migration_115_trigger) created to supply the missing trigger"
       ],
       "blockers": [
-        "Migration 244 not applied to production — requires individual preflight"
+        "Migration 115 partially applied — properties_updated_at trigger missing (Migration 297 pending review)",
+        "127 migration repair candidates remain untouched"
       ],
-      "next_action": "Migration 244 read-only preflight",
-      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migration 119, 294, 199, and 200 production verification complete. Migration 244 remains the only confirmed unresolved migration. Bulk repair of migrations 101-246 remains prohibited. Each remaining migration requires individual assessment before application or repair."
+      "next_action": "Review, merge and production-verify Migration 297",
+      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migrations 119, 199, 200, 244, 294, 295, 296 production-verified. Migrations 176, 181, 182 individually verified and recorded. Migration 115 remains partial (only trigger missing) — Migration 297 created as forward fix. 127 migration repair candidates remain untouched. Bulk repair of migrations 101-246 remains prohibited."
     }
   ]
 }

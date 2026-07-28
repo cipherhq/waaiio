@@ -16,7 +16,8 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 | Version | Name | Status | PR | Notes |
 |---------|------|--------|----|-------|
-| 296 | `restrict_sensitive_rpc_execution` | Pending review | — | Forward fix: revokes pre-existing direct anon/authenticated EXECUTE grants on 7 SECURITY DEFINER RPCs (book_slot_atomic, restore_stock, restore_variant_stock, restore_tickets_sold, redeem_loyalty_points, increment_campaign_donation, upsert_customer_profile). All confirmed service-role-only via application caller audit. |
+| 297 | `complete_migration_115_trigger` | Pending review | — | Forward fix: creates missing properties_updated_at trigger on public.properties, completing Migration 115's schema intent. Uses existing update_updated_at() function. Idempotent. No data backfill required. |
+| 296 | `restrict_sensitive_rpc_execution` | Applied to production (verified) | #62 | Forward fix: revokes pre-existing direct anon/authenticated EXECUTE grants on 7 SECURITY DEFINER RPCs (book_slot_atomic, restore_stock, restore_variant_stock, restore_tickets_sold, redeem_loyalty_points, increment_campaign_donation, upsert_customer_profile). All confirmed service-role-only via application caller audit. |
 | 295 | `restrict_recurring_charge_rpc_execute` | Applied to production (verified) | #61 | Forward fix: revokes pre-existing direct anon/authenticated EXECUTE grants on process_recurring_charge that survived Migration 244's REVOKE FROM PUBLIC |
 | 294 | `complete_migration_119_index` | Applied to production (verified) | #56 | Completes missing idx_form_responses_business from Migration 119 |
 | 293 | `fix_production_table_exposure` | Applied to production (verified) | #54 | Security remediation — production-verified per PR #55 |
@@ -28,9 +29,13 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 244 | `payment_source_classification` | Applied to production (verified) | — | Production-verified 2026-07-27. payment_source column, process_recurring_charge RPC update, backfill. Permission gap fixed by Migration 295. |
 | 200 | `partner_events_api` | Applied to production (verified) | — | Production-verified 2026-07-27. api_key_id nullable UUID with FK to api_keys(id) ON DELETE SET NULL; partial B-tree index exists; event count remained 14; existing events remain NULL. |
 | 199 | `campaign_donation_toggles` | Applied to production (verified) | #58 | Adds allow_after_end_date and allow_after_goal_met BOOLEAN columns to campaigns. Production-verified 2026-07-27. |
+| 182 | `recurring_bookings` | Individually verified and recorded | — | Recurring bookings schema verified present in production. Individually recorded 2026-07-28. |
+| 181 | `recurring_charge_rpc` | Individually verified and recorded | — | process_recurring_charge RPC verified present in production. Individually recorded 2026-07-28. |
+| 176 | `api_keys` | Individually verified and recorded | — | API keys table verified present in production. Individually recorded 2026-07-28. |
 | 119 | `forms` | Applied (completed by Migration 294) | #56 | All statements satisfied: tables, policies, indexes exist. Final missing index supplied by Migration 294. Individually recorded as applied. |
+| 115 | `properties` | Partially applied (trigger missing) | — | 11 of 12 durable schema effects present. Only properties_updated_at trigger missing. Will be completed by Migration 297. |
 
-**Next available version:** 297
+**Next available version:** 298
 
 ## Reservation Process
 
@@ -99,5 +104,7 @@ Per Issue #53 preflight findings:
 - Migration 119 is now fully satisfied and individually recorded as applied (completed by Migration 294)
 - Migration 199 is production-verified (PR #58)
 - Migration 200 is production-verified (2026-07-27)
-- Migration 244 is not applied to production
+- Migration 244 is production-verified (2026-07-27)
+- Migrations 176, 181, 182 individually verified and recorded (2026-07-28)
+- Migration 115 partially applied (trigger missing, to be completed by Migration 297)
 - Any repair must be individually assessed and approved
