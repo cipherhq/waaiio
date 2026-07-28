@@ -1413,7 +1413,7 @@
       {
         "object_type": "rls",
         "object_name": "property_blocked_dates",
-        "expected_state": "exists",
+        "expected_state": "enabled",
         "verified_state": "enabled",
         "verification_source": "pg_class",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
@@ -1595,7 +1595,7 @@
       {
         "object_type": "rls",
         "object_name": "membership_tiers",
-        "expected_state": "exists",
+        "expected_state": "enabled",
         "verified_state": "enabled",
         "verification_source": "pg_class",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
@@ -1768,7 +1768,7 @@
       {
         "object_type": "rls",
         "object_name": "payout_adjustments",
-        "expected_state": "exists",
+        "expected_state": "enabled",
         "verified_state": "enabled",
         "verification_source": "pg_class",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",
@@ -1951,7 +1951,7 @@
       {
         "object_type": "rls",
         "object_name": "parties",
-        "expected_state": "exists",
+        "expected_state": "enabled",
         "verified_state": "enabled",
         "verification_source": "pg_class",
         "verified_at": "2026-07-28T14:42:57.387751+00:00",

@@ -56,7 +56,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         },
         {
           "object_type": "index",
@@ -64,7 +66,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_indexes",
+          "query_category": "pg_indexes"
         },
         {
           "object_type": "policy",
@@ -72,7 +76,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_policies",
+          "query_category": "pg_policies"
         },
         {
           "object_type": "policy",
@@ -80,19 +86,26 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_policies",
+          "query_category": "pg_policies"
         },
         {
           "object_type": "rls",
           "object_name": "property_blocked_dates",
-          "expected_state": "exists",
+          "expected_state": "enabled",
           "verified_state": "enabled",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_class",
+          "query_category": "pg_class"
         }
       ],
       "passed": 5,
-      "failed": 0
+      "failed": 0,
+      "object_count": 5,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "123",
@@ -106,7 +119,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         },
         {
           "object_type": "index",
@@ -114,7 +129,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_indexes",
+          "query_category": "pg_indexes"
         },
         {
           "object_type": "constraint",
@@ -122,7 +139,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_constraint",
+          "query_category": "pg_constraint"
         },
         {
           "object_type": "constraint",
@@ -130,11 +149,16 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_constraint",
+          "query_category": "pg_constraint"
         }
       ],
       "passed": 4,
-      "failed": 0
+      "failed": 0,
+      "object_count": 4,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "124",
@@ -148,11 +172,16 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         }
       ],
       "passed": 1,
-      "failed": 0
+      "failed": 0,
+      "object_count": 1,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "125",
@@ -166,7 +195,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         },
         {
           "object_type": "column",
@@ -174,7 +205,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         },
         {
           "object_type": "index",
@@ -182,7 +215,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_indexes",
+          "query_category": "pg_indexes"
         },
         {
           "object_type": "index",
@@ -190,7 +225,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_indexes",
+          "query_category": "pg_indexes"
         },
         {
           "object_type": "policy",
@@ -198,19 +235,26 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_policies",
+          "query_category": "pg_policies"
         },
         {
           "object_type": "rls",
           "object_name": "membership_tiers",
-          "expected_state": "exists",
+          "expected_state": "enabled",
           "verified_state": "enabled",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_class",
+          "query_category": "pg_class"
         }
       ],
       "passed": 6,
-      "failed": 0
+      "failed": 0,
+      "object_count": 6,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "127",
@@ -224,11 +268,16 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         }
       ],
       "passed": 1,
-      "failed": 0
+      "failed": 0,
+      "object_count": 1,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "128",
@@ -242,7 +291,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         },
         {
           "object_type": "column",
@@ -250,7 +301,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         },
         {
           "object_type": "index",
@@ -258,11 +311,16 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_indexes",
+          "query_category": "pg_indexes"
         }
       ],
       "passed": 3,
-      "failed": 0
+      "failed": 0,
+      "object_count": 3,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "129",
@@ -276,7 +334,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         },
         {
           "object_type": "index",
@@ -284,7 +344,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_indexes",
+          "query_category": "pg_indexes"
         },
         {
           "object_type": "index",
@@ -292,7 +354,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_indexes",
+          "query_category": "pg_indexes"
         },
         {
           "object_type": "index",
@@ -300,7 +364,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_indexes",
+          "query_category": "pg_indexes"
         },
         {
           "object_type": "policy",
@@ -308,7 +374,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_policies",
+          "query_category": "pg_policies"
         },
         {
           "object_type": "policy",
@@ -316,19 +384,26 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_policies",
+          "query_category": "pg_policies"
         },
         {
           "object_type": "rls",
           "object_name": "payout_adjustments",
-          "expected_state": "exists",
+          "expected_state": "enabled",
           "verified_state": "enabled",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_class",
+          "query_category": "pg_class"
         }
       ],
       "passed": 7,
-      "failed": 0
+      "failed": 0,
+      "object_count": 7,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "131",
@@ -342,7 +417,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         },
         {
           "object_type": "column",
@@ -350,7 +427,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         },
         {
           "object_type": "column_alter",
@@ -358,7 +437,9 @@
           "expected_state": "nullable",
           "verified_state": "nullable",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         },
         {
           "object_type": "index",
@@ -366,7 +447,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_indexes",
+          "query_category": "pg_indexes"
         },
         {
           "object_type": "index",
@@ -374,7 +457,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_indexes",
+          "query_category": "pg_indexes"
         },
         {
           "object_type": "index",
@@ -382,7 +467,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_indexes",
+          "query_category": "pg_indexes"
         },
         {
           "object_type": "policy",
@@ -390,19 +477,26 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_policies",
+          "query_category": "pg_policies"
         },
         {
           "object_type": "rls",
           "object_name": "parties",
-          "expected_state": "exists",
+          "expected_state": "enabled",
           "verified_state": "enabled",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_class",
+          "query_category": "pg_class"
         }
       ],
       "passed": 8,
-      "failed": 0
+      "failed": 0,
+      "object_count": 8,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "132",
@@ -416,7 +510,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         },
         {
           "object_type": "column",
@@ -424,7 +520,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "information_schema",
+          "query_category": "information_schema"
         },
         {
           "object_type": "enum_value",
@@ -432,7 +530,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_enum",
+          "query_category": "pg_enum"
         },
         {
           "object_type": "enum_value",
@@ -440,7 +540,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_enum",
+          "query_category": "pg_enum"
         },
         {
           "object_type": "enum_value",
@@ -448,11 +550,16 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_enum",
+          "query_category": "pg_enum"
         }
       ],
       "passed": 5,
-      "failed": 0
+      "failed": 0,
+      "object_count": 5,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "133",
@@ -466,7 +573,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "storage_policies",
+          "query_category": "storage_policies"
         },
         {
           "object_type": "storage_policy",
@@ -474,7 +583,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "storage_policies",
+          "query_category": "storage_policies"
         },
         {
           "object_type": "storage_policy",
@@ -482,7 +593,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "storage_policies",
+          "query_category": "storage_policies"
         },
         {
           "object_type": "storage_policy",
@@ -490,7 +603,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "storage_policies",
+          "query_category": "storage_policies"
         },
         {
           "object_type": "storage_policy",
@@ -498,7 +613,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "storage_policies",
+          "query_category": "storage_policies"
         },
         {
           "object_type": "dropped_storage_policy",
@@ -506,7 +623,9 @@
           "expected_state": "dropped",
           "verified_state": "dropped",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "storage_policies",
+          "query_category": "storage_policies"
         },
         {
           "object_type": "dropped_storage_policy",
@@ -514,11 +633,16 @@
           "expected_state": "dropped",
           "verified_state": "dropped",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "storage_policies",
+          "query_category": "storage_policies"
         }
       ],
       "passed": 7,
-      "failed": 0
+      "failed": 0,
+      "object_count": 7,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "134",
@@ -532,7 +656,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_enum",
+          "query_category": "pg_enum"
         },
         {
           "object_type": "enum_value",
@@ -540,7 +666,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_enum",
+          "query_category": "pg_enum"
         },
         {
           "object_type": "enum_value",
@@ -548,7 +676,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_enum",
+          "query_category": "pg_enum"
         },
         {
           "object_type": "enum_value",
@@ -556,11 +686,16 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_enum",
+          "query_category": "pg_enum"
         }
       ],
       "passed": 4,
-      "failed": 0
+      "failed": 0,
+      "object_count": 4,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "135",
@@ -574,11 +709,16 @@
           "expected_state": "dropped",
           "verified_state": "dropped",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "storage_policies",
+          "query_category": "storage_policies"
         }
       ],
       "passed": 1,
-      "failed": 0
+      "failed": 0,
+      "object_count": 1,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "136",
@@ -592,7 +732,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_indexes",
+          "query_category": "pg_indexes"
         },
         {
           "object_type": "index",
@@ -600,11 +742,16 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_indexes",
+          "query_category": "pg_indexes"
         }
       ],
       "passed": 2,
-      "failed": 0
+      "failed": 0,
+      "object_count": 2,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "137",
@@ -618,7 +765,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_proc",
+          "query_category": "pg_proc"
         },
         {
           "object_type": "privilege",
@@ -626,7 +775,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "has_function_privilege",
+          "query_category": "has_function_privilege"
         },
         {
           "object_type": "privilege",
@@ -634,11 +785,16 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "has_function_privilege",
+          "query_category": "has_function_privilege"
         }
       ],
       "passed": 3,
-      "failed": 0
+      "failed": 0,
+      "object_count": 3,
+      "ambiguous": 0,
+      "superseded": 0
     },
     {
       "version": "138",
@@ -652,7 +808,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_proc",
+          "query_category": "pg_proc"
         },
         {
           "object_type": "function",
@@ -660,7 +818,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_proc",
+          "query_category": "pg_proc"
         },
         {
           "object_type": "function",
@@ -668,7 +828,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "pg_proc",
+          "query_category": "pg_proc"
         },
         {
           "object_type": "privilege",
@@ -676,7 +838,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "has_function_privilege",
+          "query_category": "has_function_privilege"
         },
         {
           "object_type": "privilege",
@@ -684,7 +848,9 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "has_function_privilege",
+          "query_category": "has_function_privilege"
         },
         {
           "object_type": "privilege",
@@ -692,11 +858,16 @@
           "expected_state": "exists",
           "verified_state": "exists",
           "result": "pass",
-          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00"
+          "verification_timestamp": "2026-07-28T14:42:57.387751+00:00",
+          "verification_source": "has_function_privilege",
+          "query_category": "has_function_privilege"
         }
       ],
       "passed": 6,
-      "failed": 0
+      "failed": 0,
+      "object_count": 6,
+      "ambiguous": 0,
+      "superseded": 0
     }
   ],
   "failed_objects": [],
@@ -707,5 +878,7 @@
   "no_customer_data_accessed": true,
   "no_deployment": true,
   "no_token_exposed": true,
-  "batch_3_not_started": true
+  "batch_3_not_started": true,
+  "total_ambiguous": 0,
+  "total_superseded": 0
 }

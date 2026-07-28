@@ -7,6 +7,8 @@
 **Total object checks:** 63
 **Passed:** 63
 **Failed:** 0
+**Ambiguous:** 0
+**Superseded:** 0
 
 ## Classifications
 

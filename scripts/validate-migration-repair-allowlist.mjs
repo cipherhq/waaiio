@@ -47,9 +47,6 @@ const VALID_SUPERSEDED_STATES = new Set([
   'superseded_with_stricter_state'
 ]);
 
-// States that satisfy "exists" — e.g., RLS "enabled" satisfies expected_state "exists"
-const STATES_SATISFYING_EXISTS = new Set(['exists', 'enabled', 'nullable', 'dropped']);
-
 const EXPECTED_MANIFEST_COUNT = 146;
 const EXPECTED_ALIGNED = 23;
 const EXPECTED_VERIFIED = 15;
@@ -276,9 +273,8 @@ for (const e of approvedInManifest) {
             approvedErrors++;
           }
         } else {
-          // Accept verified_state that satisfies expected_state (e.g., "enabled" satisfies "exists" for RLS)
-          const stateMatch = ev.verified_state === ev.expected_state ||
-            (ev.expected_state === 'exists' && STATES_SATISFYING_EXISTS.has(ev.verified_state));
+          // Default: verified_state must exactly equal expected_state
+          const stateMatch = ev.verified_state === ev.expected_state;
           if (!stateMatch) {
             fail(`Version ${e.version}: evidence for ${ev.object_name} has verified_state "${ev.verified_state}" but expected_state "${ev.expected_state}"`);
             approvedErrors++;
@@ -637,11 +633,16 @@ for (const { file, data: batch } of allBatches) {
     if (classErrors === 0) pass(`Batch ${batch.batch_number} all classifications = VERIFIED_APPLIED_UNTRACKED`);
   }
 
-  // Checksums match repository
+  // Checksums match repository — missing files are a failure
   let checksumErrors = 0;
   for (const m of batch.migrations || []) {
     const repoFile = migrationFiles.find(f => f.startsWith(m.version + '_'));
-    if (!repoFile) { continue; }
+    if (!repoFile) {
+      fail(`Batch ${batch.batch_number} version ${m.version}: repository migration file missing`);
+      checksumErrors++;
+      batchErrors++;
+      continue;
+    }
     const content = readFileSync(resolve(MIGRATIONS_DIR, repoFile), 'utf-8');
     const sha256 = createHash('sha256').update(content).digest('hex');
     if (m.checksum !== sha256) {
@@ -727,6 +728,149 @@ for (const { file, data: batch } of allBatches) {
     else pass('Batch 2 total_objects_checked = 63');
     if (batch.total_passed !== 63) fail(`Batch 2 total_passed: ${batch.total_passed}, expected 63`);
     else pass('Batch 2 total_passed = 63');
+  }
+
+  // ── Version-set equality: batch.versions must equal set of migration versions AND classification keys ──
+  const migrationVersionSet = new Set((batch.migrations || []).map(m => m.version));
+  const classificationVersionSet = batch.classifications ? new Set(Object.keys(batch.classifications)) : new Set();
+  const batchVersionSet = new Set(batch.versions || []);
+
+  const versionsNotInMigrations = [...batchVersionSet].filter(v => !migrationVersionSet.has(v));
+  const migrationsNotInVersions = [...migrationVersionSet].filter(v => !batchVersionSet.has(v));
+  if (versionsNotInMigrations.length > 0 || migrationsNotInVersions.length > 0) {
+    fail(`Batch ${batch.batch_number}: versions array and migrations array mismatch (missing from migrations: ${versionsNotInMigrations.join(',') || 'none'}, extra in migrations: ${migrationsNotInVersions.join(',') || 'none'})`);
+    batchErrors++;
+  } else {
+    pass(`Batch ${batch.batch_number} versions = migrations version set`);
+  }
+
+  if (batch.classifications) {
+    const versionsNotInClassifications = [...batchVersionSet].filter(v => !classificationVersionSet.has(v));
+    const classificationsNotInVersions = [...classificationVersionSet].filter(v => !batchVersionSet.has(v));
+    if (versionsNotInClassifications.length > 0 || classificationsNotInVersions.length > 0) {
+      fail(`Batch ${batch.batch_number}: versions array and classifications keys mismatch`);
+      batchErrors++;
+    } else {
+      pass(`Batch ${batch.batch_number} versions = classifications key set`);
+    }
+  }
+
+  // ── Count reconciliation: per-migration object_count === objects.length ──
+  if (batch.batch_number >= 2) {
+    let countErrors = 0;
+    let totalObjectSum = 0;
+    let totalPassedSum = 0;
+    let totalFailedSum = 0;
+    let totalAmbiguousSum = 0;
+    let totalSupersededSum = 0;
+
+    for (const m of batch.migrations || []) {
+      const actualLen = (m.objects || []).length;
+      totalObjectSum += actualLen;
+      totalPassedSum += (m.passed || 0);
+      totalFailedSum += (m.failed || 0);
+      totalSupersededSum += (m.superseded || 0);
+      totalAmbiguousSum += (m.ambiguous || 0);
+
+      if (m.object_count !== undefined && m.object_count !== actualLen) {
+        fail(`Batch ${batch.batch_number} version ${m.version}: object_count=${m.object_count} but objects.length=${actualLen}`);
+        countErrors++;
+        batchErrors++;
+      }
+    }
+
+    if (totalObjectSum !== batch.total_objects_checked) {
+      fail(`Batch ${batch.batch_number}: sum of per-migration objects (${totalObjectSum}) !== total_objects_checked (${batch.total_objects_checked})`);
+      batchErrors++;
+    } else {
+      pass(`Batch ${batch.batch_number} per-migration object sums match totals`);
+    }
+
+    if (countErrors === 0 && (batch.migrations || []).some(m => m.object_count !== undefined)) {
+      pass(`Batch ${batch.batch_number} all per-migration object_count values match`);
+    }
+
+    // Global totals
+    if (batch.total_ambiguous !== undefined && batch.total_ambiguous !== totalAmbiguousSum) {
+      fail(`Batch ${batch.batch_number}: total_ambiguous (${batch.total_ambiguous}) !== sum of per-migration ambiguous (${totalAmbiguousSum})`);
+      batchErrors++;
+    }
+    if (batch.total_superseded !== undefined && (batch.total_superseded || 0) !== totalSupersededSum) {
+      fail(`Batch ${batch.batch_number}: total_superseded (${batch.total_superseded}) !== sum of per-migration superseded (${totalSupersededSum})`);
+      batchErrors++;
+    }
+  }
+
+  // ── Batch 2+ evidence enrichment checks: verification_source and query_category ──
+  if (batch.batch_number >= 2) {
+    let enrichErrors = 0;
+    for (const m of batch.migrations || []) {
+      for (const obj of m.objects || []) {
+        if (!obj.verification_source) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} missing verification_source`);
+          enrichErrors++;
+          batchErrors++;
+        }
+        if (!obj.query_category) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} missing query_category`);
+          enrichErrors++;
+          batchErrors++;
+        }
+      }
+    }
+    if (enrichErrors === 0) pass(`Batch ${batch.batch_number} all objects have verification_source and query_category`);
+  } else {
+    // Batch 1: warn only for missing verification_source/query_category
+    let batch1Missing = 0;
+    for (const m of batch.migrations || []) {
+      for (const obj of m.objects || []) {
+        if (!obj.verification_source) batch1Missing++;
+        if (!obj.query_category) batch1Missing++;
+      }
+    }
+    if (batch1Missing > 0) {
+      warn(`Batch ${batch.batch_number}: ${batch1Missing} objects missing verification_source/query_category (pre-requirement batch)`);
+    }
+  }
+
+  // ── Manifest cross-validation for Batch 2+ ──
+  if (batch.batch_number >= 2) {
+    let crossErrors = 0;
+    for (const m of batch.migrations || []) {
+      const me = manifestByVersion[m.version];
+      if (!me) continue;
+
+      // Require verification_batch on approved manifest entries
+      if (me.verification_batch === undefined) {
+        fail(`Batch ${batch.batch_number} version ${m.version}: manifest entry missing verification_batch field`);
+        crossErrors++;
+        batchErrors++;
+      }
+
+      if (!Array.isArray(me.evidence)) continue;
+      for (const obj of m.objects || []) {
+        const manifestObj = me.evidence.find(ev =>
+          ev.object_type === obj.object_type && ev.object_name === obj.object_name
+        );
+        if (!manifestObj) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} (${obj.object_type}) not found in manifest evidence`);
+          crossErrors++;
+          batchErrors++;
+          continue;
+        }
+        if (manifestObj.expected_state !== obj.expected_state) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} expected_state mismatch (batch: ${obj.expected_state}, manifest: ${manifestObj.expected_state})`);
+          crossErrors++;
+          batchErrors++;
+        }
+        if (manifestObj.verified_state !== obj.verified_state) {
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} verified_state mismatch (batch: ${obj.verified_state}, manifest: ${manifestObj.verified_state})`);
+          crossErrors++;
+          batchErrors++;
+        }
+      }
+    }
+    if (crossErrors === 0) pass(`Batch ${batch.batch_number} manifest cross-validation passed`);
   }
 
   if (batchErrors === 0) pass(`Batch ${batch.batch_number} cross-validation passed`);

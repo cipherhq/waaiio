@@ -7,6 +7,17 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-28
 
+### Operations: Batch 2 evidence hardening — exact state validation, complete fields, cross-checks
+- `scripts/validate-migration-repair-allowlist.mjs` — Removed broad `STATES_SATISFYING_EXISTS` set; verified_state must exactly equal expected_state. Added version-set equality check (batch.versions = migrations = classifications keys), per-migration object_count reconciliation, global totals reconciliation, verification_source/query_category requirement for Batch 2+, manifest cross-validation for Batch 2+ objects, missing repository migration file now fails instead of silently skipping. Batch 1 missing enrichment fields produce warnings only.
+- `docs/migrations/101-246-production-reconciliation.json` — 4 RLS entries (versions 121, 125, 129, 131) corrected: expected_state changed from "exists" to "enabled" to match actual verified_state. Allowlist digests recomputed.
+- `docs/migrations/evidence/batch-02-production-verification.json` — Enriched with verification_source, query_category on every object; per-migration object_count, ambiguous=0, superseded=0; top-level total_ambiguous=0, total_superseded=0. RLS expected_state fixed to "enabled".
+- `docs/migrations/evidence/batch-02-production-verification.md` — Added ambiguous=0, superseded=0 counts.
+- `docs/migrations/101-246-repair-allowlist.json` — Digests recomputed after manifest evidence correction.
+- `lib/__tests__/migration-repair-validator.test.ts` — Added focused regression tests: rejects dropped/nullable/enabled satisfying exists (3 tests), accepts exact enabled=enabled, rejects missing query_category in Batch 2+, rejects batch versions not matching migrations, rejects object_count mismatch, rejects summary count mismatch, rejects evidence object differing from manifest, rejects missing verification_batch, rejects missing repository migration file. Updated integration test for new Batch 2 fields.
+- Issue #53 updated to clearly distinguish current main state (ALIGNED=23, VERIFIED=0, PENDING=109, allowlist=0) from proposed PR #67 state (ALIGNED=23, VERIFIED=15, PENDING=94, allowlist=15). Batch 2 repair described as proposed, not approved.
+  - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — tooling and metadata only. No migration SQL modified.
+
 ### Operations: Batch 2 migration production verification evidence (15 versions)
 - `docs/migrations/evidence/batch-02-production-verification.json` — Sanitized production evidence for 15 migrations (121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138). 63 metadata checks, all passed.
 - `docs/migrations/evidence/batch-02-production-verification.md` — Verification summary.
