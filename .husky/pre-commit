@@ -62,8 +62,11 @@ if [ -n "$STAGED_FILES" ]; then
     fi
   done
 
-  # Scan staged diff content (only added/modified lines)
-  MATCHES=$(git diff --cached -U0 --diff-filter=ACM | grep -nE "^\+" | grep -v "^+++\|^+#\|^+//.*TODO\|^+//.*FIXME" | grep -iE "$COMBINED" || true)
+  # Scan staged diff content for secrets, with path-scoped exemptions.
+  # The filter script exempts SHA-256 checksum fields ONLY in docs/migrations/*.json.
+  # All other files are fully scanned with no exemptions.
+  FULL_DIFF=$(git diff --cached -U0 --diff-filter=ACM)
+  MATCHES=$(echo "$FULL_DIFF" | node scripts/filter-secret-scan-false-positives.mjs "$COMBINED" || true)
 
   if [ -n "$MATCHES" ]; then
     echo ""

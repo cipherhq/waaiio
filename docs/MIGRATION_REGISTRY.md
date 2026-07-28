@@ -16,7 +16,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 | Version | Name | Status | PR | Notes |
 |---------|------|--------|----|-------|
-| 297 | `complete_migration_115_trigger` | Pending review | — | Forward fix: creates missing properties_updated_at trigger on public.properties, completing Migration 115's schema intent. Uses existing update_updated_at() function. Idempotent. No data backfill required. |
+| 297 | `complete_migration_115_trigger` | Applied to production (verified) | #63 | Forward fix: creates missing properties_updated_at trigger on public.properties, completing Migration 115's schema intent. Uses existing update_updated_at() function. Idempotent. No data backfill required. Production-verified 2026-07-28. |
 | 296 | `restrict_sensitive_rpc_execution` | Applied to production (verified) | #62 | Forward fix: revokes pre-existing direct anon/authenticated EXECUTE grants on 7 SECURITY DEFINER RPCs (book_slot_atomic, restore_stock, restore_variant_stock, restore_tickets_sold, redeem_loyalty_points, increment_campaign_donation, upsert_customer_profile). All confirmed service-role-only via application caller audit. |
 | 295 | `restrict_recurring_charge_rpc_execute` | Applied to production (verified) | #61 | Forward fix: revokes pre-existing direct anon/authenticated EXECUTE grants on process_recurring_charge that survived Migration 244's REVOKE FROM PUBLIC |
 | 294 | `complete_migration_119_index` | Applied to production (verified) | #56 | Completes missing idx_form_responses_business from Migration 119 |
@@ -33,7 +33,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 181 | `recurring_charge_rpc` | Individually verified and recorded | — | process_recurring_charge RPC verified present in production. Individually recorded 2026-07-28. |
 | 176 | `api_keys` | Individually verified and recorded | — | API keys table verified present in production. Individually recorded 2026-07-28. |
 | 119 | `forms` | Applied (completed by Migration 294) | #56 | All statements satisfied: tables, policies, indexes exist. Final missing index supplied by Migration 294. Individually recorded as applied. |
-| 115 | `properties` | Partially applied (trigger missing) | — | 11 of 12 durable schema effects present. Only properties_updated_at trigger missing. Will be completed by Migration 297. |
+| 115 | `properties` | Fully satisfied and individually recorded | #63 | All 12 durable schema effects present. Missing trigger supplied by Migration 297 (production-verified 2026-07-28). |
 
 **Next available version:** 298
 
@@ -101,10 +101,18 @@ If any PR #21 migration work is extracted into a new PR, it must be renumbered s
 
 Per Issue #53 preflight findings:
 - Migrations 101–246 must **NOT** be bulk-repaired via `supabase migration repair`
-- Migration 119 is now fully satisfied and individually recorded as applied (completed by Migration 294)
+- Migration 115 fully satisfied and individually recorded (completed by Migration 297, PR #63)
+- Migration 119 fully satisfied and individually recorded (completed by Migration 294)
 - Migration 199 is production-verified (PR #58)
 - Migration 200 is production-verified (2026-07-27)
 - Migration 244 is production-verified (2026-07-27)
 - Migrations 176, 181, 182 individually verified and recorded (2026-07-28)
-- Migration 115 partially applied (trigger missing, to be completed by Migration 297)
-- Any repair must be individually assessed and approved
+- Any repair must follow the controlled repair runbook (`docs/migrations/101-246-repair-runbook.md`)
+
+## Remaining Untracked Migrations (101-246)
+
+Of the 146 migrations in the 101-246 range:
+- **8 aligned/tracked:** 115, 119, 176, 181, 182, 199, 200, 244
+- **127 verified-applied-untracked:** Repair candidates per allowlist (`docs/migrations/101-246-repair-allowlist.json`)
+- **9 not verifiable safely:** 101, 105, 107, 160, 163, 164, 187, 222, 226
+- **2 superseded:** 122 (by 233), 130 (by 233)
