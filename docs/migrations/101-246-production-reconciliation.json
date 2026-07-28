@@ -23,8 +23,8 @@
     "filename": "102_service_availability.sql",
     "checksum": "15225e4893722caf2792a337897d4d396b3c71518ba25280d2e3221091e05720",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "column",
@@ -77,20 +77,24 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "a5777b7dcc1923cda13c0bbd54bc2900739ad6a9fe578a8926c3434cca01fc2b"
   },
   {
     "version": "103",
     "filename": "103_service_features.sql",
     "checksum": "0df8ff75391362af4fd965d8e8d599953080e9853ce62932c3685d421cc4e2c6",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "table",
@@ -243,20 +247,24 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "1907cccefce87ba638d6949a05af2b6233c32016adcee67cad413d91b777a608"
   },
   {
     "version": "104",
     "filename": "104_event_services_category.sql",
     "checksum": "f2e0537fbf456ce8c1d8f1ce8b893977ef19d96fd9d89a3e5c83e9d5adc387c2",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "enum_value",
@@ -269,12 +277,16 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "302b651557e81e10899ea3df55a7f7849ab9604462efd1eef63556c6b8f7e6cc"
   },
   {
     "version": "105",
@@ -307,8 +319,8 @@
     "filename": "106_new_subcategories.sql",
     "checksum": "be27008464c1a757e24fbc6bc464eacee4e0887b47e88692565c5d1ae0434a56",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "enum_value",
@@ -457,12 +469,16 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "ae8d5f712d6ac4a7677195a2e633ef34d17cd2f580b6999e87a003a3236ea2ba"
   },
   {
     "version": "107",
@@ -495,8 +511,8 @@
     "filename": "108_refund_requests.sql",
     "checksum": "88eaa936e0488728022b60c1cbbbf2062c15701c1787e90ef2d3f4cde388ea29",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "table",
@@ -549,20 +565,24 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "0455d9cc224a12f5e6c1c09d6d92bd5c1bdc85d17231e8a69bafcfef5eccf705"
   },
   {
     "version": "109",
     "filename": "109_campaign_donations.sql",
     "checksum": "2c5b90f247da88570330fd0496b4dfc8bd98d60586913194c2cf9c2aef2fd3d5",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "table",
@@ -623,20 +643,24 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "70ade7c56a4219fff37f59a3babbc54dc503e570e9197f964feaa82753774fbd"
   },
   {
     "version": "110",
     "filename": "110_queue_realtime.sql",
     "checksum": "64c083e496b0f27a94d442cb860bfda1812d9ac9e6d4d5f69c93247b9e2a5700",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "publication",
@@ -649,20 +673,24 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "41d3661186998399ecf97a4f987ebe18e80e2ccd4f8c797ae96978b9641e97e1"
   },
   {
     "version": "111",
     "filename": "111_feedback_improvements.sql",
     "checksum": "8b4b51dfffea7fdcd9d6cb3cd662a2a14909c69c0bd019f33701fe65a5c9f8e3",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "column",
@@ -699,20 +727,24 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "d5d2e28c799451e4c884a65b7002a359c422b9103fe81f52f6180d052434413f"
   },
   {
     "version": "112",
     "filename": "112_campaign_donation_limits.sql",
     "checksum": "1a5121856df073521da2fb513bd33d6b50745e46d48b1510d793e30a324e0f4b",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "column",
@@ -733,20 +765,24 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "e547ac872c7b9388b6a25880aea0a60407c30b66dda8ad5f08eff4fe65955b3e"
   },
   {
     "version": "113",
     "filename": "113_add_missing_capability_enum_values.sql",
     "checksum": "25d2463bde977c497aa40f23695a8789b53f37da29e3610243a2df532339a914",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "enum_value",
@@ -775,20 +811,24 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "a4a738967c36254ade55ddbebd514f88a8a61d9138fadb63d799effce2e99118"
   },
   {
     "version": "114",
     "filename": "114_event_ticket_types.sql",
     "checksum": "ee96025c4fcd7806317fe7918bb0f494583a8baa587063cad2a08baf96c92f1c",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "table",
@@ -865,12 +905,16 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "0284d87d0e0cca087be3baa0e940a679668f291fb63e7d7a22aa851b9e192c9f"
   },
   {
     "version": "115",
@@ -967,8 +1011,8 @@
     "filename": "116_document_share_improvements.sql",
     "checksum": "3e3d48fbe8eb8551339ba91dfc66ae6ea748cdc6de5eda6fc600bdfab93f725d",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "column",
@@ -1013,20 +1057,24 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "aa6f3a4c0d7d41ea8364216199448b01c6dbfd120201a18ba8d4fbe2e9252929"
   },
   {
     "version": "117",
     "filename": "117_appointments_table.sql",
     "checksum": "3463257958a28c31fdb6e5908cb0f52ea5c75ed88e7e64fc8f3277bcb70214e1",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "table",
@@ -1119,20 +1167,24 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "ceb32a57c85cf11ca3eab1c63a11c304b6fe934165568f00b664084248161c98"
   },
   {
     "version": "118",
     "filename": "118_event_self_checkin.sql",
     "checksum": "6a16ccf5d3e2b3cdcffdf5f4baeaa4b2814e5abdbf759e79c6462a4f4695efae",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "column",
@@ -1145,12 +1197,16 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "e8a70be0996dc1c060a5400033b446b5304db064bcd71d44c46b0c37d2c46188"
   },
   {
     "version": "119",
@@ -1277,8 +1333,8 @@
     "filename": "120_auto_approve.sql",
     "checksum": "dc63025ea1e283db62c771823cb2a7f1b3cced470009226327972fa0f4a56f7e",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "remote_tracked": false,
+    "current_classification": "ALIGNED_TRACKED",
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "column",
@@ -1299,12 +1355,16 @@
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": true,
-    "repair_status": "approved_for_repair",
+    "repair_eligible": false,
+    "repair_status": "completed",
     "confidence": "HIGH",
-    "recommended_action": "repair_after_evidence_pr_merge",
+    "recommended_action": "none",
     "last_verified_at": "2026-07-28T11:57:05.694160+00:00",
-    "evidence_source": "production_verified"
+    "evidence_source": "production_verified",
+    "repair_batch": 1,
+    "repaired_at": "2026-07-28T13:21:43.345538+00:00",
+    "repair_evidence_path": "docs/migrations/evidence/batch-01-repair.json",
+    "repair_evidence_digest": "5a81def17a8143b6f97ba842e8bec124dd0a203ab34d648502ca8712a148f571"
   },
   {
     "version": "121",

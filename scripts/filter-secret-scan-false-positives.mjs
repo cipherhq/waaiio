@@ -21,7 +21,7 @@ if (!combinedPattern) {
 }
 
 const secretRegex = new RegExp(combinedPattern, 'i');
-const exemptKeyRegex = /^\+\s*"(checksum|local_checksum|evidence_digest|production_evidence_digest)"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$/;
+const exemptKeyRegex = /^\+\s*"(checksum|local_checksum|evidence_digest|production_evidence_digest|repair_evidence_digest)"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$/;
 const migrationJsonPath = /^docs\/migrations\/(evidence\/)?[^/]+\.json$/;
 
 let currentFile = '';

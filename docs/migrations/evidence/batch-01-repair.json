@@ -1,0 +1,270 @@
+{
+  "task": "Batch 1 migration-history repair",
+  "repository_sha": "1501eb825ff8c5d5a94373b6daa8166a471be48f",
+  "linked_project_ref": "cxcmiqotkowhxinjbytg",
+  "timestamp_utc": "2026-07-28T13:21:43.345538+00:00",
+  "approved_versions": [
+    102,
+    103,
+    104,
+    106,
+    108,
+    109,
+    110,
+    111,
+    112,
+    113,
+    114,
+    116,
+    117,
+    118,
+    120
+  ],
+  "approved_count": 15,
+  "migration_files": {
+    "102": {
+      "filename": "102_service_availability.sql",
+      "checksum": "15225e4893722caf2792a337897d4d396b3c71518ba25280d2e3221091e05720"
+    },
+    "103": {
+      "filename": "103_service_features.sql",
+      "checksum": "0df8ff75391362af4fd965d8e8d599953080e9853ce62932c3685d421cc4e2c6"
+    },
+    "104": {
+      "filename": "104_event_services_category.sql",
+      "checksum": "f2e0537fbf456ce8c1d8f1ce8b893977ef19d96fd9d89a3e5c83e9d5adc387c2"
+    },
+    "106": {
+      "filename": "106_new_subcategories.sql",
+      "checksum": "be27008464c1a757e24fbc6bc464eacee4e0887b47e88692565c5d1ae0434a56"
+    },
+    "108": {
+      "filename": "108_refund_requests.sql",
+      "checksum": "88eaa936e0488728022b60c1cbbbf2062c15701c1787e90ef2d3f4cde388ea29"
+    },
+    "109": {
+      "filename": "109_campaign_donations.sql",
+      "checksum": "2c5b90f247da88570330fd0496b4dfc8bd98d60586913194c2cf9c2aef2fd3d5"
+    },
+    "110": {
+      "filename": "110_queue_realtime.sql",
+      "checksum": "64c083e496b0f27a94d442cb860bfda1812d9ac9e6d4d5f69c93247b9e2a5700"
+    },
+    "111": {
+      "filename": "111_feedback_improvements.sql",
+      "checksum": "8b4b51dfffea7fdcd9d6cb3cd662a2a14909c69c0bd019f33701fe65a5c9f8e3"
+    },
+    "112": {
+      "filename": "112_campaign_donation_limits.sql",
+      "checksum": "1a5121856df073521da2fb513bd33d6b50745e46d48b1510d793e30a324e0f4b"
+    },
+    "113": {
+      "filename": "113_add_missing_capability_enum_values.sql",
+      "checksum": "25d2463bde977c497aa40f23695a8789b53f37da29e3610243a2df532339a914"
+    },
+    "114": {
+      "filename": "114_event_ticket_types.sql",
+      "checksum": "ee96025c4fcd7806317fe7918bb0f494583a8baa587063cad2a08baf96c92f1c"
+    },
+    "116": {
+      "filename": "116_document_share_improvements.sql",
+      "checksum": "3e3d48fbe8eb8551339ba91dfc66ae6ea748cdc6de5eda6fc600bdfab93f725d"
+    },
+    "117": {
+      "filename": "117_appointments_table.sql",
+      "checksum": "3463257958a28c31fdb6e5908cb0f52ea5c75ed88e7e64fc8f3277bcb70214e1"
+    },
+    "118": {
+      "filename": "118_event_self_checkin.sql",
+      "checksum": "6a16ccf5d3e2b3cdcffdf5f4baeaa4b2814e5abdbf759e79c6462a4f4695efae"
+    },
+    "120": {
+      "filename": "120_auto_approve.sql",
+      "checksum": "dc63025ea1e283db62c771823cb2a7f1b3cced470009226327972fa0f4a56f7e"
+    }
+  },
+  "pre_repair": {
+    "total_remote_count": 103,
+    "range_101_246_count": 8,
+    "range_101_246_versions": [
+      115,
+      119,
+      176,
+      181,
+      182,
+      199,
+      200,
+      244
+    ]
+  },
+  "repair_results": [
+    {
+      "version": 102,
+      "exit_status": 0,
+      "post_total": 104,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 103,
+      "exit_status": 0,
+      "post_total": 105,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 104,
+      "exit_status": 0,
+      "post_total": 106,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 106,
+      "exit_status": 0,
+      "post_total": 107,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 108,
+      "exit_status": 0,
+      "post_total": 108,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 109,
+      "exit_status": 0,
+      "post_total": 109,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 110,
+      "exit_status": 0,
+      "post_total": 110,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 111,
+      "exit_status": 0,
+      "post_total": 111,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 112,
+      "exit_status": 0,
+      "post_total": 112,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 113,
+      "exit_status": 0,
+      "post_total": 113,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 114,
+      "exit_status": 0,
+      "post_total": 114,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 116,
+      "exit_status": 0,
+      "post_total": 115,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 117,
+      "exit_status": 0,
+      "post_total": 116,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 118,
+      "exit_status": 0,
+      "post_total": 117,
+      "version_tracked": true,
+      "delta": 1
+    },
+    {
+      "version": 120,
+      "exit_status": 0,
+      "post_total": 118,
+      "version_tracked": true,
+      "delta": 1
+    }
+  ],
+  "post_repair": {
+    "total_remote_count": 118,
+    "range_101_246_count": 23,
+    "range_101_246_versions": [
+      102,
+      103,
+      104,
+      106,
+      108,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      118,
+      119,
+      120,
+      176,
+      181,
+      182,
+      199,
+      200,
+      244
+    ],
+    "new_versions_added": [
+      102,
+      103,
+      104,
+      106,
+      108,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      116,
+      117,
+      118,
+      120
+    ],
+    "pre_existing_versions_intact": true,
+    "all_approved_appear_exactly_once": true,
+    "total_delta": 15,
+    "range_delta": 15
+  },
+  "confirmations": {
+    "no_migration_sql_executed": true,
+    "no_schema_modified": true,
+    "no_application_data_changed": true,
+    "no_customer_records_accessed": true,
+    "no_deployment_occurred": true,
+    "no_repository_files_modified": true,
+    "no_token_value_recorded": true,
+    "no_unrelated_version_changed": true,
+    "batch_2_not_started": true,
+    "repository_validator_passed": true,
+    "governance_validator_passed": true
+  }
+}

@@ -32,8 +32,25 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 182 | `recurring_bookings` | Individually verified and recorded | — | Recurring bookings schema verified present in production. Individually recorded 2026-07-28. |
 | 181 | `recurring_charge_rpc` | Individually verified and recorded | — | process_recurring_charge RPC verified present in production. Individually recorded 2026-07-28. |
 | 176 | `api_keys` | Individually verified and recorded | — | API keys table verified present in production. Individually recorded 2026-07-28. |
+| 120 | `auto_approve` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 | 119 | `forms` | Applied (completed by Migration 294) | #56 | All statements satisfied: tables, policies, indexes exist. Final missing index supplied by Migration 294. Individually recorded as applied. |
+| 118 | `event_self_checkin` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 117 | `appointments_table` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 116 | `document_share_improvements` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 | 115 | `properties` | Fully satisfied and individually recorded | #63 | All 12 durable schema effects present. Missing trigger supplied by Migration 297 (production-verified 2026-07-28). |
+| 114 | `event_ticket_types` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 113 | `add_missing_capability_enum_values` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 112 | `campaign_donation_limits` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 111 | `feedback_improvements` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 110 | `queue_realtime` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 109 | `campaign_donations` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 108 | `refund_requests` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 106 | `new_subcategories` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 104 | `event_services_category` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 103 | `service_features` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 102 | `service_availability` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+
+**Batch 1 repair summary:** 15 versions (102-120) now tracked in remote schema_migrations. 109 candidates remain for future verification batches.
 
 **Next available version:** 298
 

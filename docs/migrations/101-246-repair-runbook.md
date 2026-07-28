@@ -19,25 +19,29 @@ This runbook governs the controlled verification and repair of 124 migration-his
 
 ## Current State
 
-- **8 ALIGNED_TRACKED:** 115, 119, 176, 181, 182, 199, 200, 244
-- **15 VERIFIED_APPLIED_UNTRACKED:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 120 (Batch 1 verified)
+- **23 ALIGNED_TRACKED:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 176, 181, 182, 199, 200, 244
+- **0 VERIFIED_APPLIED_UNTRACKED**
 - **109 PENDING_PRODUCTION_REVERIFICATION:** require read-only verification
 - **12 NOT_VERIFIABLE_SAFELY:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 SUPERSEDED:** 122, 130
-- **Approved repair allowlist: 15** (Batch 1 verified, pending evidence PR merge)
+- **Active repair allowlist: 0**
 
 ## Batch Status
 
-### Batch 1 — Verification: COMPLETE | Repair: BLOCKED (pending evidence PR merge)
+### Batch 1 — Verification: COMPLETE | Repair: COMPLETE
 - **Versions:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 120
 - **Object checks:** 94 (93 passed, 1 superseded)
 - **Supersession:** Migration 103 `service_addons_select` policy replaced by `service_addons_owner_read` (Migration 144, security tightening). No application behaviour impact.
-- **Evidence:** `docs/migrations/evidence/batch-01-production-verification.json`
-- **Repair may not proceed** until the evidence PR is merged and reviewed.
+- **Verification evidence:** `docs/migrations/evidence/batch-01-production-verification.json`
+- **Repair evidence:** `docs/migrations/evidence/batch-01-repair.json`
+- **Remote count:** 103 -> 118 (+15)
+- **101-246 tracked count:** 8 -> 23 (+15)
+- All 15 versions appear exactly once in remote schema_migrations
+- No migration SQL executed. No schema or data change. No deployment.
 
 ### Batches 2-9 — Verification: NOT STARTED
-- 109 candidates remain across Batches 2-9
-- Verification will proceed after Batch 1 repair completes
+- 109 candidates remain across 8 batches
+- Verification will proceed after Batch 1 repair evidence PR is reviewed and merged
 
 ## Step 1 — Read-Only Production Verification
 
