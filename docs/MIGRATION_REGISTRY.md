@@ -63,10 +63,26 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 124 | `auto_reply` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 | 123 | `add_assigned_channel_id` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 | 121 | `property_blocked_dates` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 153 | `payment_confirmation_dedup` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
+| 152 | `catalog_sync` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
+| 151 | `llm_classifications_owner_rls` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
+| 150 | `group_bookings_waitlist_conversion` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
+| 149 | `public_event_booking_slugs` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. 2 superseded objects. Repair pending. |
+| 148 | `add_missing_fk_indexes` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
+| 147 | `auto_last_active_on_deactivate` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. 1 superseded object. Repair pending. |
+| 146 | `service_buffer_time` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
+| 145 | `saved_card_pin` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
+| 144 | `rls_fix_permissive_policies` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
+| 143 | `add_paypal_gateway` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
+| 142 | `checkin_checkout_noshow` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
+| 141 | `fix_atomic_booking_enum_casts` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
+| 140 | `fix_atomic_booking_for_update` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
+| 139 | `fix_atomic_booking_type_cast` | Batch 3 verified (repair pending) | — | Production-verified 2026-07-28. Repair pending. |
 | 102 | `service_availability` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 
 **Batch 1 repair summary:** 15 versions (102-120) now tracked in remote schema_migrations.
-**Batch 2 repair summary:** 15 versions (121-138) now tracked in remote schema_migrations. Remote count 118 -> 133 (+15). 101-246 tracked count 23 -> 38 (+15). 94 candidates remain for future verification batches.
+**Batch 2 repair summary:** 15 versions (121-138) now tracked in remote schema_migrations. Remote count 118 -> 133 (+15). 101-246 tracked count 23 -> 38 (+15).
+**Batch 3 verification summary:** 15 versions (139-153) production-verified. 91 checks: 88 passed, 3 superseded, 0 failed. Repair pending. 79 candidates remain for future verification batches.
 
 **Next available version:** 298
 
@@ -146,7 +162,7 @@ Per Issue #53 preflight findings:
 
 Of the 146 migrations in the 101-246 range:
 - **38 aligned/tracked:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138, 176, 181, 182, 199, 200, 244
-- **0 verified and pending repair:** (all verified batches now repaired)
-- **94 remaining candidates pending verification:** Batches 3-9 per verification candidates (`docs/migrations/101-246-verification-candidates.json`)
+- **15 verified and pending repair:** 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153 (Batch 3)
+- **79 remaining candidates pending verification:** Batches 4-9 per verification candidates (`docs/migrations/101-246-verification-candidates.json`)
 - **12 not verifiable safely:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 superseded:** 122 (by 233), 130 (by 233)

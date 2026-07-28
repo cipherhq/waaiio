@@ -6,11 +6,11 @@
  * Progressive invariants (multi-batch aware):
  * - Manifest has exactly 146 entries (one per version 101-246)
  * - ALIGNED_TRACKED = 38 (8 original + 15 Batch 1 repaired + 15 Batch 2 repaired)
- * - VERIFIED_APPLIED_UNTRACKED = 0 (all verified batches now repaired)
- * - PENDING_PRODUCTION_REVERIFICATION = 94
+ * - VERIFIED_APPLIED_UNTRACKED = 15 (Batch 3 verified, repair pending)
+ * - PENDING_PRODUCTION_REVERIFICATION = 79
  * - NOT_VERIFIABLE_SAFELY = 12, SUPERSEDED = 2
- * - Active repair allowlist = 0 (cleared after Batch 2 repair)
- * - Verification candidates = 94 (exact PENDING set)
+ * - Active repair allowlist = 15 (Batch 3 approved, repair pending)
+ * - Verification candidates = 79 (exact PENDING set)
  * - The 124-candidate cohort: PENDING + VERIFIED + repaired candidates = 124
  * - Completed repair entries cross-validate against batch evidence
  * - All verification batch evidence files are discovered and validated
@@ -48,8 +48,8 @@ const VALID_SUPERSEDED_STATES = new Set([
 
 const EXPECTED_MANIFEST_COUNT = 146;
 const EXPECTED_ALIGNED = 38;
-const EXPECTED_VERIFIED = 0;
-const EXPECTED_PENDING = 94;
+const EXPECTED_VERIFIED = 15;
+const EXPECTED_PENDING = 79;
 const EXPECTED_NV = 12;
 const EXPECTED_SUPERSEDED = 2;
 const EXPECTED_CANDIDATE_COHORT = 124; // PENDING + VERIFIED + repaired candidates = 124
@@ -729,6 +729,15 @@ for (const { file, data: batch } of allBatches) {
     else pass('Batch 2 total_passed = 63');
   }
 
+  if (batch.batch_number === 3) {
+    if (batch.total_objects_checked !== 91) fail(`Batch 3 total_objects_checked: ${batch.total_objects_checked}, expected 91`);
+    else pass('Batch 3 total_objects_checked = 91');
+    if (batch.total_passed !== 88) fail(`Batch 3 total_passed: ${batch.total_passed}, expected 88`);
+    else pass('Batch 3 total_passed = 88');
+    if ((batch.total_superseded || 0) !== 3) fail(`Batch 3 total_superseded: ${batch.total_superseded}, expected 3`);
+    else pass('Batch 3 total_superseded = 3');
+  }
+
   // ── Version-set equality: batch.versions must equal set of migration versions AND classification keys ──
   const migrationVersionSet = new Set((batch.migrations || []).map(m => m.version));
   const classificationVersionSet = batch.classifications ? new Set(Object.keys(batch.classifications)) : new Set();
@@ -926,19 +935,16 @@ for (const { file, data: batch } of allBatches) {
 
       if (!Array.isArray(me.evidence)) continue;
       for (const obj of m.objects || []) {
+        // Match by object_type + object_name + expected_state to handle cases where
+        // the same object appears twice in a migration (e.g., DROP then CREATE)
         const manifestObj = me.evidence.find(ev =>
-          ev.object_type === obj.object_type && ev.object_name === obj.object_name
+          ev.object_type === obj.object_type && ev.object_name === obj.object_name && ev.expected_state === obj.expected_state
         );
         if (!manifestObj) {
-          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} (${obj.object_type}) not found in manifest evidence`);
+          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} (${obj.object_type}, expected_state=${obj.expected_state}) not found in manifest evidence`);
           crossErrors++;
           batchErrors++;
           continue;
-        }
-        if (manifestObj.expected_state !== obj.expected_state) {
-          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} expected_state mismatch (batch: ${obj.expected_state}, manifest: ${manifestObj.expected_state})`);
-          crossErrors++;
-          batchErrors++;
         }
         if (manifestObj.verified_state !== obj.verified_state) {
           fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} verified_state mismatch (batch: ${obj.verified_state}, manifest: ${manifestObj.verified_state})`);
@@ -965,10 +971,10 @@ for (const { file, data: batch } of allBatches) {
       // Check for manifest objects not in evidence (reverse direction)
       for (const manifestObj of me.evidence) {
         const evidenceObj = (m.objects || []).find(o =>
-          o.object_type === manifestObj.object_type && o.object_name === manifestObj.object_name
+          o.object_type === manifestObj.object_type && o.object_name === manifestObj.object_name && o.expected_state === manifestObj.expected_state
         );
         if (!evidenceObj) {
-          fail(`Batch ${batch.batch_number} version ${m.version}: manifest object ${manifestObj.object_name} (${manifestObj.object_type}) not in evidence`);
+          fail(`Batch ${batch.batch_number} version ${m.version}: manifest object ${manifestObj.object_name} (${manifestObj.object_type}, expected_state=${manifestObj.expected_state}) not in evidence`);
           crossErrors++;
           batchErrors++;
         }
