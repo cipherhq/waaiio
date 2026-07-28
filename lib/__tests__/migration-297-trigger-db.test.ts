@@ -260,40 +260,40 @@ describe('Migration 297: Real PostgreSQL trigger tests', () => {
   // ── Behaviour test ──
 
   it('trigger advances updated_at on UPDATE', () => {
-    // Insert a test row with required columns
+    const TEST_PROP_ID = 'a2970001-0001-0001-0001-000000000001';
+
+    // Insert a test row with required columns using a fixed ID
     const insertSql = isFullSchema
-      ? `INSERT INTO public.properties (business_id, name, property_type, updated_at)
-         VALUES ('${testBizId}', '__m297_test_row__', 'apartment', '2020-01-01T00:00:00Z')
-         RETURNING id;`
-      : `INSERT INTO public.properties (name, updated_at)
-         VALUES ('__m297_test_row__', '2020-01-01T00:00:00Z')
-         RETURNING id;`;
+      ? `INSERT INTO public.properties (id, business_id, name, property_type, updated_at)
+         VALUES ('${TEST_PROP_ID}', '${testBizId}', '__m297_test_row__', 'apartment', '2020-01-01T00:00:00Z')
+         ON CONFLICT DO NOTHING;`
+      : `INSERT INTO public.properties (id, name, updated_at)
+         VALUES ('${TEST_PROP_ID}', '__m297_test_row__', '2020-01-01T00:00:00Z')
+         ON CONFLICT DO NOTHING;`;
 
     const insertResult = runSQL(insertSql);
     expect(insertResult.exitCode).toBe(0);
-    const testId = insertResult.stdout;
-    expect(testId).toBeTruthy();
 
     // Record the initial updated_at
     const beforeUpdate = runSQL(
-      `SELECT updated_at FROM public.properties WHERE id = '${testId}';`
+      `SELECT updated_at FROM public.properties WHERE id = '${TEST_PROP_ID}';`
     );
     expect(beforeUpdate.stdout).toContain('2020');
 
     // Update a field
     const updateResult = runSQL(
-      `UPDATE public.properties SET name = '__m297_test_row_updated__' WHERE id = '${testId}';`
+      `UPDATE public.properties SET name = '__m297_test_row_updated__' WHERE id = '${TEST_PROP_ID}';`
     );
     expect(updateResult.exitCode).toBe(0);
 
     // Verify updated_at changed
     const afterUpdate = runSQL(
-      `SELECT updated_at > '2020-01-02T00:00:00Z'::timestamptz FROM public.properties WHERE id = '${testId}';`
+      `SELECT updated_at > '2020-01-02T00:00:00Z'::timestamptz FROM public.properties WHERE id = '${TEST_PROP_ID}';`
     );
     expect(afterUpdate.stdout).toBe('t');
 
     // Clean up
-    runSQL(`DELETE FROM public.properties WHERE id = '${testId}';`);
+    runSQL(`DELETE FROM public.properties WHERE id = '${TEST_PROP_ID}';`);
   });
 
   // ── Unchanged state ──
@@ -347,29 +347,30 @@ describe('Migration 297: Real PostgreSQL trigger tests', () => {
   });
 
   it('trigger behaviour still works after second application', () => {
+    const TEST_PROP_ID2 = 'a2970002-0002-0002-0002-000000000002';
+
     const insertSql = isFullSchema
-      ? `INSERT INTO public.properties (business_id, name, property_type, updated_at)
-         VALUES ('${testBizId}', '__m297_test_row__', 'apartment', '2020-01-01T00:00:00Z')
-         RETURNING id;`
-      : `INSERT INTO public.properties (name, updated_at)
-         VALUES ('__m297_test_row__', '2020-01-01T00:00:00Z')
-         RETURNING id;`;
+      ? `INSERT INTO public.properties (id, business_id, name, property_type, updated_at)
+         VALUES ('${TEST_PROP_ID2}', '${testBizId}', '__m297_test_row2__', 'apartment', '2020-01-01T00:00:00Z')
+         ON CONFLICT DO NOTHING;`
+      : `INSERT INTO public.properties (id, name, updated_at)
+         VALUES ('${TEST_PROP_ID2}', '__m297_test_row2__', '2020-01-01T00:00:00Z')
+         ON CONFLICT DO NOTHING;`;
 
     const insertResult = runSQL(insertSql);
     expect(insertResult.exitCode).toBe(0);
-    const testId = insertResult.stdout;
 
     // Update
-    runSQL(`UPDATE public.properties SET name = '__m297_test_idempotent__' WHERE id = '${testId}';`);
+    runSQL(`UPDATE public.properties SET name = '__m297_test_idempotent__' WHERE id = '${TEST_PROP_ID2}';`);
 
     // Verify updated_at advanced
     const afterUpdate = runSQL(
-      `SELECT updated_at > '2020-01-02T00:00:00Z'::timestamptz FROM public.properties WHERE id = '${testId}';`
+      `SELECT updated_at > '2020-01-02T00:00:00Z'::timestamptz FROM public.properties WHERE id = '${TEST_PROP_ID2}';`
     );
     expect(afterUpdate.stdout).toBe('t');
 
     // Clean up
-    runSQL(`DELETE FROM public.properties WHERE id = '${testId}';`);
+    runSQL(`DELETE FROM public.properties WHERE id = '${TEST_PROP_ID2}';`);
   });
 });
 
