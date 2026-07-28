@@ -7,6 +7,17 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-27
 
+### Security: Restrict 7 sensitive RPC EXECUTE privileges (Migration 296)
+- `supabase/migrations/296_restrict_sensitive_rpc_execution.sql` — Forward security migration. Explicitly revokes pre-existing direct `anon` and `authenticated` EXECUTE grants on 7 SECURITY DEFINER RPCs: book_slot_atomic (26 args), restore_stock, restore_variant_stock, restore_tickets_sold, redeem_loyalty_points, increment_campaign_donation, upsert_customer_profile. All confirmed service-role-only via application caller audit. Does NOT modify function bodies, owners, SECURITY DEFINER, search_path, or finance logic.
+- `lib/__tests__/migration-296-rpc-permissions.test.ts` — Static migration-source tests verifying exact signatures, REVOKE/GRANT statements, role guards, and safety constraints.
+- `lib/__tests__/migration-296-rpc-permissions-db.test.ts` — Real PostgreSQL tests verifying function existence, before/after privilege state, function property preservation, and idempotency for all 7 functions.
+- `.github/workflows/ci.yml` — Added "Migration 296 RPC permission tests" CI step with zero-skip enforcement.
+- `docs/MIGRATION_REGISTRY.md` — Migration 296 registered as pending review. Migrations 244 and 295 updated to production-verified. Next available version updated to 297.
+- `CHANGELOG.md` — This entry.
+  - **Affects:** EXECUTE privilege on 7 SECURITY DEFINER RPCs for anon and authenticated roles
+  - **Could break:** Nothing — permission-only change. All 7 functions are called exclusively from service-role clients.
+  - **Not yet applied to production** — requires review and merge before application.
+
 ### Security: Restrict process_recurring_charge RPC execution (Migration 295)
 - `supabase/migrations/295_restrict_recurring_charge_rpc_execute.sql` — Forward security migration. Explicitly revokes pre-existing direct `anon` and `authenticated` EXECUTE grants on `process_recurring_charge(text, text, text, text, text, bigint, text, text, text, text)` that survived Migration 244's `REVOKE ... FROM PUBLIC`. Also re-applies REVOKE FROM PUBLIC and confirms GRANT EXECUTE TO service_role. Does NOT modify function body, owner, SECURITY DEFINER, search_path, or finance logic.
 - `lib/__tests__/migration-295-rpc-permissions.test.ts` — 18 static analysis tests verifying: correct function signature targeting, all required REVOKE/GRANT statements, no function/schema modifications, idempotency, and pg_roles guards.

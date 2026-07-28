@@ -16,7 +16,8 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 | Version | Name | Status | PR | Notes |
 |---------|------|--------|----|-------|
-| 295 | `restrict_recurring_charge_rpc_execute` | Pending review | — | Forward fix: revokes pre-existing direct anon/authenticated EXECUTE grants on process_recurring_charge that survived Migration 244's REVOKE FROM PUBLIC |
+| 296 | `restrict_sensitive_rpc_execution` | Pending review | — | Forward fix: revokes pre-existing direct anon/authenticated EXECUTE grants on 7 SECURITY DEFINER RPCs (book_slot_atomic, restore_stock, restore_variant_stock, restore_tickets_sold, redeem_loyalty_points, increment_campaign_donation, upsert_customer_profile). All confirmed service-role-only via application caller audit. |
+| 295 | `restrict_recurring_charge_rpc_execute` | Applied to production (verified) | #61 | Forward fix: revokes pre-existing direct anon/authenticated EXECUTE grants on process_recurring_charge that survived Migration 244's REVOKE FROM PUBLIC |
 | 294 | `complete_migration_119_index` | Applied to production (verified) | #56 | Completes missing idx_form_responses_business from Migration 119 |
 | 293 | `fix_production_table_exposure` | Applied to production (verified) | #54 | Security remediation — production-verified per PR #55 |
 | 292 | `atomic_payout_claim` | Applied to production | #50 | |
@@ -24,12 +25,12 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 247 | `admin_role_escalation_fix` | Applied to production | #36 | |
 | 246 | `phone_otp_challenges` | Applied to production | #35 | |
 | 245 | `fix_book_slot_atomic_overloads` | Applied to production | — | |
-| 244 | `payment_source_classification` | **Not applied to production** | — | Issue #53 preflight confirmed this migration was never applied |
+| 244 | `payment_source_classification` | Applied to production (verified) | — | Production-verified 2026-07-27. payment_source column, process_recurring_charge RPC update, backfill. Permission gap fixed by Migration 295. |
 | 200 | `partner_events_api` | Applied to production (verified) | — | Production-verified 2026-07-27. api_key_id nullable UUID with FK to api_keys(id) ON DELETE SET NULL; partial B-tree index exists; event count remained 14; existing events remain NULL. |
 | 199 | `campaign_donation_toggles` | Applied to production (verified) | #58 | Adds allow_after_end_date and allow_after_goal_met BOOLEAN columns to campaigns. Production-verified 2026-07-27. |
 | 119 | `forms` | Applied (completed by Migration 294) | #56 | All statements satisfied: tables, policies, indexes exist. Final missing index supplied by Migration 294. Individually recorded as applied. |
 
-**Next available version:** 296
+**Next available version:** 297
 
 ## Reservation Process
 
