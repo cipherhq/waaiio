@@ -1,1 +1,107 @@
-[]
+[
+  {
+    "version": "121",
+    "filename": "121_property_blocked_dates.sql",
+    "checksum": "e1fc3342336a0a159869bf54984cd7164c914263a13286628c533b4850528470",
+    "production_evidence_digest": "9f4ed384dee8a3be9317fcdf1165b02dd3fbed0a3933ac9c9079dd65d3415786",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "123",
+    "filename": "123_add_assigned_channel_id.sql",
+    "checksum": "fcee4c2be32299881217a633c847b5b6512229c16b3eb933c7473ab43f266f01",
+    "production_evidence_digest": "cc550822f1392b46dc8ad54c739c302cc1cd468f414cfa0159258b91d45edfe5",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "124",
+    "filename": "124_auto_reply.sql",
+    "checksum": "c6bf7400e02e3111f240b1bac0ba4d7284650bdcec71de8c37d8a349d3b32ee5",
+    "production_evidence_digest": "a6efd17cc591679d064f74e392f456f6fd1745193e9225d8b0e65c9df9533985",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "125",
+    "filename": "125_membership_tiers.sql",
+    "checksum": "89cd6d0211660d77f020c2af21521b6555600eb41f08647074ce201bc416f778",
+    "production_evidence_digest": "9255438f27dc85b527e09867d55fadec07c4626ec8f6d22f5cfcace120fb725b",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "127",
+    "filename": "127_notification_preferences.sql",
+    "checksum": "f5c0defc128381ac515f0ecaa7b5934303cbbfc0048ca2502bbf534fcfc7f671",
+    "production_evidence_digest": "55add2ac27460bdf213ac3577d844a64eb800713e5ce480fcf6ee4f5d47afbbf",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "128",
+    "filename": "128_platform_fee_refund.sql",
+    "checksum": "949d644cf1be958b9af0f51fcccfcc89dda9464403c03f727c554d5f9594a17a",
+    "production_evidence_digest": "8ca9c072290b73fa8bbc06ca359688f7644a572a26dc4e8a85153ec72c35b43b",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "129",
+    "filename": "129_payout_adjustments.sql",
+    "checksum": "4f7ea4ae26f123b43b6fafe224807fc41a00c92d3a01cfac40342a0d48fd23b2",
+    "production_evidence_digest": "6cbef4d1bb7d1fd8518103612c5dcbd0fc8026f25a3d4a4d1c737bee64ef04f8",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "131",
+    "filename": "131_standalone_invites.sql",
+    "checksum": "1d90d5f6eb5b594fad4e77d1df0b86012c0c3c3625b08b93a0f55f2215468c06",
+    "production_evidence_digest": "d6ed1109bc746dc938445d3350dd65772a646d5c02ecc80a9eac526e04deb367",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "132",
+    "filename": "132_reservation_checkin_flow.sql",
+    "checksum": "9cd74de9a00920932cbfa041bbfb0967fd829fb72544077c18ffe735545d9e8b",
+    "production_evidence_digest": "afad56e144772c4f9a7c3fcbe99b06b5503743f393ea0d6bcbe735dce5892605",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "133",
+    "filename": "133_storage_bucket_security.sql",
+    "checksum": "5c1bafb5f79c9543ad5f89edef9cfc41b4277d085dfd1eac5f60d4393febe625",
+    "production_evidence_digest": "69d8d502dd0ddbb0fb3477b44c6d1f3794b045b69e2b9a5e6cb9e87ee94cf655",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "134",
+    "filename": "134_add_new_capability_enum_values.sql",
+    "checksum": "75488f96639efd7693cc517e5e2cb66a4db529688cec73b68989670c004d6365",
+    "production_evidence_digest": "1334e86c5061d435f71e86f5c832a1693a212b77d557d7f87de50bd20e19ab1c",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "135",
+    "filename": "135_drop_permissive_storage_policy.sql",
+    "checksum": "4e2e4296657022a3c85bd7df81bdec3d063408e051c0d8b89461b95e035e6bba",
+    "production_evidence_digest": "24e1669c97086915d07ac452c0e1c4dd5340e4c6c1e583e6b3a63e6776033d90",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "136",
+    "filename": "136_fix_session_race_and_booking_race.sql",
+    "checksum": "07d3689c91f1dac5dfa024157ea57f2c41d448a156a3317b669b07fc064fef1e",
+    "production_evidence_digest": "8af710063959ea68a880045d816d4f8c75473fda3305b8f3e23565053c9dcba6",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "137",
+    "filename": "137_atomic_booking_slot.sql",
+    "checksum": "2ae67a3eb04ea461750216850ad8802a3fb281a2d309089a11bb9d3499dc5fce",
+    "production_evidence_digest": "b7b8ae48605a4cc690b456a23047e97494c293f192b6159156c2514249304439",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "138",
+    "filename": "138_dashboard_aggregate_rpcs.sql",
+    "checksum": "85db896f8b6ea0bd19f31a0b598d995262013ee9037912eb712a0a49f7f63c6b",
+    "production_evidence_digest": "2e6e17b6b7c567290dadb25cfd096c53d5bc979caf4058f07870dbd84be2472e",
+    "confidence": "HIGH"
+  }
+]

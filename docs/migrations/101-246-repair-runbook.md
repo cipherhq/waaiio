@@ -20,11 +20,11 @@ This runbook governs the controlled verification and repair of 124 migration-his
 ## Current State
 
 - **23 ALIGNED_TRACKED:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 176, 181, 182, 199, 200, 244
-- **0 VERIFIED_APPLIED_UNTRACKED**
-- **109 PENDING_PRODUCTION_REVERIFICATION:** require read-only verification
+- **15 VERIFIED_APPLIED_UNTRACKED:** 121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138
+- **94 PENDING_PRODUCTION_REVERIFICATION:** require read-only verification
 - **12 NOT_VERIFIABLE_SAFELY:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 SUPERSEDED:** 122, 130
-- **Active repair allowlist: 0**
+- **Active repair allowlist: 15** (Batch 2 approved, pending repair)
 
 ## Batch Status
 
@@ -39,9 +39,18 @@ This runbook governs the controlled verification and repair of 124 migration-his
 - All 15 versions appear exactly once in remote schema_migrations
 - No migration SQL executed. No schema or data change. No deployment.
 
-### Batches 2-9 — Verification: NOT STARTED
-- 109 candidates remain across 8 batches
-- Verification will proceed after Batch 1 repair evidence PR is reviewed and merged
+### Batch 2 — Verification: COMPLETE | Repair: NOT STARTED
+- **Versions:** 121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138
+- **Object checks:** 63 (63 passed, 0 superseded, 0 failed)
+- **Verification evidence:** `docs/migrations/evidence/batch-02-production-verification.json`
+- **Repair evidence:** not yet created (repair blocked until evidence PR merges)
+- All 15 versions approved for repair with production_evidence_digest
+- No migration SQL executed. No schema or data change. No deployment.
+- Read-only metadata verification occurred 2026-07-28.
+
+### Batches 3-9 — Verification: NOT STARTED
+- 94 candidates remain across 7 batches
+- Verification will proceed after Batch 2 repair is complete
 
 ## Step 1 — Read-Only Production Verification
 
