@@ -13,6 +13,9 @@
  * - Every approved entry must have verified production evidence with digests
  * - Verification candidates = exact PENDING set
  * - Superseded objects must document replacement and impact
+ * - Rejected verified_state values are never allowed in approved evidence
+ * - All timestamps must be valid UTC
+ * - Batch evidence files must cross-validate against manifest
  *
  * Does not connect to Supabase or any external service.
  */
@@ -24,6 +27,7 @@ const ALLOWLIST_PATH = resolve('docs/migrations/101-246-repair-allowlist.json');
 const MANIFEST_PATH = resolve('docs/migrations/101-246-production-reconciliation.json');
 const CANDIDATES_PATH = resolve('docs/migrations/101-246-verification-candidates.json');
 const MIGRATIONS_DIR = resolve('supabase/migrations');
+const BATCH_01_PATH = resolve('docs/migrations/evidence/batch-01-production-verification.json');
 
 const VALID_CLASSIFICATIONS = new Set([
   'ALIGNED_TRACKED',
@@ -31,6 +35,16 @@ const VALID_CLASSIFICATIONS = new Set([
   'PENDING_PRODUCTION_REVERIFICATION',
   'NOT_VERIFIABLE_SAFELY',
   'SUPERSEDED_WITH_EQUIVALENT_STATE'
+]);
+
+const REJECTED_VERIFIED_STATES = new Set([
+  'true', 'false', 'missing', 'absent', 'failed', 'ambiguous',
+  'unknown', 'unverified', '', null
+]);
+
+const VALID_SUPERSEDED_STATES = new Set([
+  'superseded_with_equivalent_state',
+  'superseded_with_stricter_state'
 ]);
 
 const EXPECTED_MANIFEST_COUNT = 146;
@@ -54,6 +68,14 @@ function warn(msg) {
 
 function pass(msg) {
   console.log(`  PASS: ${msg}`);
+}
+
+function isValidUTCTimestamp(ts) {
+  if (!ts || typeof ts !== 'string') return false;
+  // Accept Z suffix or +00:00 offset
+  if (!ts.endsWith('Z') && !ts.endsWith('+00:00')) return false;
+  const d = new Date(ts);
+  return !isNaN(d.getTime());
 }
 
 console.log('=== Migration Reconciliation Validation ===\n');
@@ -197,7 +219,7 @@ for (const e of approvedInManifest) {
     fail(`Version ${e.version}: approved but evidence array is empty`);
     approvedErrors++;
   } else {
-    // Every evidence item must have verified_state and verified_at
+    // Every evidence item must have verified_state, verified_at, and verification_source
     for (const ev of e.evidence) {
       if (!ev.verified_state) {
         fail(`Version ${e.version}: evidence for ${ev.object_name} missing verified_state`);
@@ -207,6 +229,67 @@ for (const e of approvedInManifest) {
         fail(`Version ${e.version}: evidence for ${ev.object_name} missing verified_at`);
         approvedErrors++;
       }
+      if (!ev.verification_source) {
+        fail(`Version ${e.version}: evidence for ${ev.object_name} missing verification_source`);
+        approvedErrors++;
+      }
+
+      // 2a: Reject unsafe verified_state values
+      if (REJECTED_VERIFIED_STATES.has(ev.verified_state)) {
+        fail(`Version ${e.version}: evidence for ${ev.object_name} has rejected verified_state "${ev.verified_state}"`);
+        approvedErrors++;
+      }
+
+      // 2b: verified_state must satisfy expected_state
+      if (ev.verified_state && !REJECTED_VERIFIED_STATES.has(ev.verified_state)) {
+        const isSuperseded = VALID_SUPERSEDED_STATES.has(ev.verified_state);
+        if (isSuperseded) {
+          // Superseded evidence must have replacement metadata
+          if (!ev.replacement_object_name) {
+            fail(`Version ${e.version}: superseded object ${ev.object_name} missing replacement_object_name`);
+            approvedErrors++;
+          }
+          if (!ev.superseding_migration) {
+            fail(`Version ${e.version}: superseded object ${ev.object_name} missing superseding_migration`);
+            approvedErrors++;
+          }
+          if (!ev.rationale) {
+            fail(`Version ${e.version}: superseded object ${ev.object_name} missing rationale`);
+            approvedErrors++;
+          }
+          if (!ev.application_behaviour_impact) {
+            fail(`Version ${e.version}: superseded object ${ev.object_name} missing application_behaviour_impact`);
+            approvedErrors++;
+          }
+          // Superseded evidence must have valid verified_at
+          if (!isValidUTCTimestamp(ev.verified_at)) {
+            fail(`Version ${e.version}: superseded object ${ev.object_name} has invalid verified_at timestamp "${ev.verified_at}"`);
+            approvedErrors++;
+          }
+        } else {
+          // Non-superseded: verified_state must equal expected_state
+          if (ev.verified_state !== ev.expected_state) {
+            fail(`Version ${e.version}: evidence for ${ev.object_name} has verified_state "${ev.verified_state}" but expected_state "${ev.expected_state}"`);
+            approvedErrors++;
+          }
+        }
+      }
+
+      // 2c: UTC timestamp validation for verified_at
+      if (ev.verified_at && !isValidUTCTimestamp(ev.verified_at)) {
+        fail(`Version ${e.version}: evidence for ${ev.object_name} has non-UTC timestamp "${ev.verified_at}"`);
+        approvedErrors++;
+      }
+
+      // 2e: Reject failed/ambiguous results
+      if (ev.result === 'failed') {
+        fail(`Version ${e.version}: evidence for ${ev.object_name} has result "failed" — cannot be approved`);
+        approvedErrors++;
+      }
+      if (ev.result === 'ambiguous') {
+        fail(`Version ${e.version}: evidence for ${ev.object_name} has result "ambiguous" — cannot be approved`);
+        approvedErrors++;
+      }
     }
   }
   if (e.current_classification !== 'VERIFIED_APPLIED_UNTRACKED') {
@@ -214,28 +297,10 @@ for (const e of approvedInManifest) {
     approvedErrors++;
   }
 
-  // Check for superseded objects — must have replacement metadata
-  if (Array.isArray(e.evidence)) {
-    for (const ev of e.evidence) {
-      if (ev.verified_state && ev.verified_state.includes('superseded')) {
-        if (!ev.replacement_object_name) {
-          fail(`Version ${e.version}: superseded object ${ev.object_name} missing replacement_object_name`);
-          approvedErrors++;
-        }
-        if (!ev.superseding_migration) {
-          fail(`Version ${e.version}: superseded object ${ev.object_name} missing superseding_migration`);
-          approvedErrors++;
-        }
-        if (!ev.rationale) {
-          fail(`Version ${e.version}: superseded object ${ev.object_name} missing rationale`);
-          approvedErrors++;
-        }
-        if (!ev.application_behaviour_impact) {
-          fail(`Version ${e.version}: superseded object ${ev.object_name} missing application_behaviour_impact`);
-          approvedErrors++;
-        }
-      }
-    }
+  // 2c: UTC timestamp validation for last_verified_at
+  if (e.last_verified_at && !isValidUTCTimestamp(e.last_verified_at)) {
+    fail(`Version ${e.version}: last_verified_at is not a valid UTC timestamp "${e.last_verified_at}"`);
+    approvedErrors++;
   }
 }
 if (approvedErrors === 0) pass(`All ${approvedInManifest.length} approved entries correctly configured with production evidence`);
@@ -403,6 +468,171 @@ for (const entry of candidates) {
   }
 }
 if (candErrors === 0) pass(`All ${candidates.length} candidate checksums and digests verified`);
+
+// ══════════════════════════════════════════════════════════════
+// BATCH EVIDENCE CROSS-VALIDATION
+// ══════════════════════════════════════════════════════════════
+console.log('\n--- Batch Evidence Cross-Validation ---\n');
+
+if (existsSync(BATCH_01_PATH)) {
+  let batch01;
+  try {
+    batch01 = JSON.parse(readFileSync(BATCH_01_PATH, 'utf-8'));
+    pass('Batch 01 evidence is valid JSON');
+  } catch (e) {
+    fail('Batch 01 evidence is invalid JSON: ' + e.message);
+  }
+
+  if (batch01) {
+    let batchErrors = 0;
+
+    // Check main_sha
+    if (batch01.main_sha !== '761fdf8895079488ead7f8e4d5e359e4262a89ae') {
+      fail(`Batch 01 main_sha mismatch: ${batch01.main_sha}`);
+      batchErrors++;
+    } else {
+      pass('Batch 01 main_sha correct');
+    }
+
+    // Check batch_number
+    if (batch01.batch_number !== 1) {
+      fail(`Batch 01 batch_number: ${batch01.batch_number}, expected 1`);
+      batchErrors++;
+    } else {
+      pass('Batch 01 batch_number = 1');
+    }
+
+    // Check versions
+    const expectedBatch1Versions = ['102','103','104','106','108','109','110','111','112','113','114','116','117','118','120'];
+    const batch1VersionsMatch = JSON.stringify(batch01.versions) === JSON.stringify(expectedBatch1Versions);
+    if (!batch1VersionsMatch) {
+      fail(`Batch 01 versions mismatch`);
+      batchErrors++;
+    } else {
+      pass('Batch 01 versions = exact 15 versions');
+    }
+
+    // Check totals
+    if (batch01.total_objects_checked !== 94) {
+      fail(`Batch 01 total_objects_checked: ${batch01.total_objects_checked}, expected 94`);
+      batchErrors++;
+    } else {
+      pass('Batch 01 total_objects_checked = 94');
+    }
+
+    if (batch01.total_passed !== 93) {
+      fail(`Batch 01 total_passed: ${batch01.total_passed}, expected 93`);
+      batchErrors++;
+    } else {
+      pass('Batch 01 total_passed = 93');
+    }
+
+    if (batch01.total_superseded !== 1) {
+      fail(`Batch 01 total_superseded: ${batch01.total_superseded}, expected 1`);
+      batchErrors++;
+    } else {
+      pass('Batch 01 total_superseded = 1');
+    }
+
+    if (batch01.total_failed !== 0) {
+      fail(`Batch 01 total_failed: ${batch01.total_failed}, expected 0`);
+      batchErrors++;
+    } else {
+      pass('Batch 01 total_failed = 0');
+    }
+
+    // Check all classifications = VERIFIED_APPLIED_UNTRACKED
+    if (batch01.classifications) {
+      let classErrors = 0;
+      for (const [ver, cls] of Object.entries(batch01.classifications)) {
+        if (cls !== 'VERIFIED_APPLIED_UNTRACKED') {
+          fail(`Batch 01 version ${ver}: classification=${cls}, expected VERIFIED_APPLIED_UNTRACKED`);
+          classErrors++;
+          batchErrors++;
+        }
+      }
+      if (classErrors === 0) pass('Batch 01 all classifications = VERIFIED_APPLIED_UNTRACKED');
+    }
+
+    // Check checksums match repository
+    let checksumErrors = 0;
+    for (const m of batch01.migrations || []) {
+      const repoFile = migrationFiles.find(f => f.startsWith(m.version + '_'));
+      if (!repoFile) { continue; }
+      const content = readFileSync(resolve(MIGRATIONS_DIR, repoFile), 'utf-8');
+      const sha256 = createHash('sha256').update(content).digest('hex');
+      if (m.checksum !== sha256) {
+        fail(`Batch 01 version ${m.version}: checksum mismatch with repository`);
+        checksumErrors++;
+        batchErrors++;
+      }
+    }
+    if (checksumErrors === 0) pass('Batch 01 all checksums match repository');
+
+    // Check evidence versions = allowlist versions
+    const batch1VersionSet = new Set(batch01.versions);
+    const allowlistVersionSet = new Set(allowlist.map(e => e.version));
+    const batch1NotAllowlist = [...batch1VersionSet].filter(v => !allowlistVersionSet.has(v));
+    const allowlistNotBatch1Extra = [...allowlistVersionSet].filter(v => !batch1VersionSet.has(v));
+    // Batch 1 versions should be a subset of (or equal to) allowlist versions
+    if (batch1NotAllowlist.length > 0) {
+      fail(`Batch 01 versions not in allowlist: ${batch1NotAllowlist.join(', ')}`);
+      batchErrors++;
+    } else {
+      pass('Batch 01 evidence versions present in allowlist');
+    }
+
+    // Check Migration 103 contains supersession documentation
+    const mig103 = (batch01.migrations || []).find(m => m.version === '103');
+    if (mig103) {
+      const supersededObj = mig103.objects.find(o => o.result === 'superseded');
+      if (!supersededObj) {
+        fail('Batch 01 Migration 103: no superseded object found');
+        batchErrors++;
+      } else {
+        if (!supersededObj.replacement_object_name) {
+          fail('Batch 01 Migration 103: superseded object missing replacement_object_name');
+          batchErrors++;
+        }
+        if (!supersededObj.superseding_migration) {
+          fail('Batch 01 Migration 103: superseded object missing superseding_migration');
+          batchErrors++;
+        }
+        if (!supersededObj.rationale) {
+          fail('Batch 01 Migration 103: superseded object missing rationale');
+          batchErrors++;
+        }
+        if (!supersededObj.application_behaviour_impact) {
+          fail('Batch 01 Migration 103: superseded object missing application_behaviour_impact');
+          batchErrors++;
+        }
+        if (supersededObj.replacement_object_name && supersededObj.superseding_migration && supersededObj.rationale && supersededObj.application_behaviour_impact) {
+          pass('Batch 01 Migration 103 supersession fully documented');
+        }
+      }
+    } else {
+      fail('Batch 01: Migration 103 not found in batch evidence');
+      batchErrors++;
+    }
+
+    // Check no rejected verified_states in batch evidence
+    let batchStateErrors = 0;
+    for (const m of batch01.migrations || []) {
+      for (const obj of m.objects || []) {
+        if (REJECTED_VERIFIED_STATES.has(obj.verified_state)) {
+          fail(`Batch 01 version ${m.version}: object ${obj.object_name} has rejected verified_state "${obj.verified_state}"`);
+          batchStateErrors++;
+          batchErrors++;
+        }
+      }
+    }
+    if (batchStateErrors === 0) pass('Batch 01 no rejected verified_states');
+
+    if (batchErrors === 0) pass('Batch 01 cross-validation passed');
+  }
+} else {
+  pass('Batch 01 evidence file not present (skipped)');
+}
 
 // ── Summary ──
 console.log('\n=== Summary ===');

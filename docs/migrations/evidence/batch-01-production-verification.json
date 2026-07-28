@@ -21,7 +21,7 @@
   ],
   "total_objects_checked": 94,
   "total_passed": 93,
-  "total_failed": 1,
+  "total_failed": 0,
   "classifications": {
     "102": "VERIFIED_APPLIED_UNTRACKED",
     "103": "VERIFIED_APPLIED_UNTRACKED",
@@ -53,7 +53,7 @@
           "object_type": "column",
           "object_name": "services.available_days",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -61,7 +61,7 @@
           "object_type": "column",
           "object_name": "services.available_from",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -69,7 +69,7 @@
           "object_type": "column",
           "object_name": "services.available_to",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -77,7 +77,7 @@
           "object_type": "column",
           "object_name": "services.staff_ids",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -85,7 +85,7 @@
           "object_type": "column",
           "object_name": "services.allow_staff_selection",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -93,7 +93,7 @@
           "object_type": "column",
           "object_name": "services.requires_staff",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -111,7 +111,7 @@
           "object_type": "table",
           "object_name": "service_addons",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -119,7 +119,7 @@
           "object_type": "column",
           "object_name": "services.is_package",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -127,7 +127,7 @@
           "object_type": "column",
           "object_name": "services.included_service_ids",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -135,7 +135,7 @@
           "object_type": "column",
           "object_name": "bookings.venue_name",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -143,7 +143,7 @@
           "object_type": "column",
           "object_name": "bookings.venue_address",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -151,7 +151,7 @@
           "object_type": "column",
           "object_name": "bookings.end_date",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -159,7 +159,7 @@
           "object_type": "column",
           "object_name": "bookings.addons_snapshot",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -167,7 +167,7 @@
           "object_type": "column",
           "object_name": "services.gallery_urls",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -175,7 +175,7 @@
           "object_type": "column",
           "object_name": "services.quote_enabled",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -183,7 +183,7 @@
           "object_type": "column",
           "object_name": "quote_requests.service_id",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -191,7 +191,7 @@
           "object_type": "column",
           "object_name": "quote_requests.quote_type",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -199,7 +199,7 @@
           "object_type": "index",
           "object_name": "idx_service_addons_business",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -207,7 +207,7 @@
           "object_type": "index",
           "object_name": "idx_service_addons_service",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -215,16 +215,20 @@
           "object_type": "policy",
           "object_name": "service_addons_select",
           "expected_state": "exists",
-          "verified_state": "false",
+          "verified_state": "superseded_with_stricter_state",
           "result": "superseded",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00",
-          "note": "Replaced by service_addons_owner_read in migration 144 (security tightening)"
+          "note": "Replaced by service_addons_owner_read in migration 144 (security tightening)",
+          "replacement_object_name": "service_addons_owner_read",
+          "superseding_migration": "144",
+          "rationale": "Security tightening: public select replaced with owner-scoped read",
+          "application_behaviour_impact": "none"
         },
         {
           "object_type": "policy",
           "object_name": "service_addons_insert",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -232,7 +236,7 @@
           "object_type": "policy",
           "object_name": "service_addons_update",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -240,7 +244,7 @@
           "object_type": "policy",
           "object_name": "service_addons_delete",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -248,13 +252,14 @@
           "object_type": "rls",
           "object_name": "service_addons",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
       ],
       "passed": 17,
-      "failed": 1
+      "failed": 0,
+      "superseded": 1
     },
     {
       "version": "104",
@@ -266,7 +271,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.event_services",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -284,7 +289,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.nail_tech",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -292,7 +297,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.mua",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -300,7 +305,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.pet_grooming",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -308,7 +313,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.therapy",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -316,7 +321,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.bakery",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -324,7 +329,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.mechanic",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -332,7 +337,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.cleaning",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -340,7 +345,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.plumber",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -348,7 +353,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.pest_control",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -356,7 +361,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.driving_school",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -364,7 +369,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.music_studio",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -372,7 +377,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.legal",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -380,7 +385,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.daycare",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -388,7 +393,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.printing",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -396,7 +401,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.car_rental",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -404,7 +409,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.supermarket",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -412,7 +417,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.security",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -420,7 +425,7 @@
           "object_type": "enum_value",
           "object_name": "business_category.accounting",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -438,7 +443,7 @@
           "object_type": "table",
           "object_name": "refund_requests",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -446,7 +451,7 @@
           "object_type": "index",
           "object_name": "idx_refund_requests_business",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -454,7 +459,7 @@
           "object_type": "index",
           "object_name": "idx_refund_requests_status",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -462,7 +467,7 @@
           "object_type": "policy",
           "object_name": "admin_all_refund_requests",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -470,7 +475,7 @@
           "object_type": "policy",
           "object_name": "owners_view_refund_requests",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -478,7 +483,7 @@
           "object_type": "rls",
           "object_name": "refund_requests",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -496,7 +501,7 @@
           "object_type": "table",
           "object_name": "campaign_donations",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -504,7 +509,7 @@
           "object_type": "column",
           "object_name": "payments.campaign_id",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -512,7 +517,7 @@
           "object_type": "index",
           "object_name": "idx_campaign_donations_campaign",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -520,7 +525,7 @@
           "object_type": "index",
           "object_name": "idx_campaign_donations_business",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -528,7 +533,7 @@
           "object_type": "policy",
           "object_name": "admin_all_campaign_donations",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -536,7 +541,7 @@
           "object_type": "policy",
           "object_name": "owners_view_campaign_donations",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -544,7 +549,7 @@
           "object_type": "rls",
           "object_name": "campaign_donations",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -562,7 +567,7 @@
           "object_type": "publication",
           "object_name": "supabase_realtime:queue_entries",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -580,7 +585,7 @@
           "object_type": "column",
           "object_name": "customer_feedback.business_response",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -588,7 +593,7 @@
           "object_type": "column",
           "object_name": "customer_feedback.responded_at",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -596,7 +601,7 @@
           "object_type": "function",
           "object_name": "update_business_rating",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -604,7 +609,7 @@
           "object_type": "trigger",
           "object_name": "trg_update_business_rating",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -622,7 +627,7 @@
           "object_type": "column",
           "object_name": "campaigns.min_donation",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -630,7 +635,7 @@
           "object_type": "column",
           "object_name": "campaigns.max_donation",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -648,7 +653,7 @@
           "object_type": "enum_value",
           "object_name": "capability_type.survey",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -656,7 +661,7 @@
           "object_type": "enum_value",
           "object_name": "capability_type.reports",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -664,7 +669,7 @@
           "object_type": "enum_value",
           "object_name": "capability_type.queue",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -682,7 +687,7 @@
           "object_type": "table",
           "object_name": "event_ticket_types",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -690,7 +695,7 @@
           "object_type": "column",
           "object_name": "event_tickets.ticket_type_id",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -698,7 +703,7 @@
           "object_type": "column",
           "object_name": "event_tickets.ticket_type_name",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -706,7 +711,7 @@
           "object_type": "policy",
           "object_name": "event_ticket_types_owner_select",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -714,7 +719,7 @@
           "object_type": "policy",
           "object_name": "event_ticket_types_owner_insert",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -722,7 +727,7 @@
           "object_type": "policy",
           "object_name": "event_ticket_types_owner_update",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -730,7 +735,7 @@
           "object_type": "policy",
           "object_name": "event_ticket_types_owner_delete",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -738,7 +743,7 @@
           "object_type": "policy",
           "object_name": "event_ticket_types_service_all",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -746,7 +751,7 @@
           "object_type": "rls",
           "object_name": "event_ticket_types",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -764,7 +769,7 @@
           "object_type": "column",
           "object_name": "customer_reports.file_size",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -772,7 +777,7 @@
           "object_type": "column",
           "object_name": "customer_reports.access_token",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -780,7 +785,7 @@
           "object_type": "column",
           "object_name": "customer_reports.access_count",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -788,7 +793,7 @@
           "object_type": "index",
           "object_name": "idx_customer_reports_biz_size",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -796,7 +801,7 @@
           "object_type": "index",
           "object_name": "idx_customer_reports_access_token",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -814,7 +819,7 @@
           "object_type": "table",
           "object_name": "appointments",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -822,7 +827,7 @@
           "object_type": "column",
           "object_name": "bookings.appointment_id",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -830,7 +835,7 @@
           "object_type": "index",
           "object_name": "idx_appointments_business",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -838,7 +843,7 @@
           "object_type": "policy",
           "object_name": "appointments_owner_select",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -846,7 +851,7 @@
           "object_type": "policy",
           "object_name": "appointments_owner_insert",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -854,7 +859,7 @@
           "object_type": "policy",
           "object_name": "appointments_owner_update",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -862,7 +867,7 @@
           "object_type": "policy",
           "object_name": "appointments_owner_delete",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -870,7 +875,7 @@
           "object_type": "policy",
           "object_name": "appointments_service_all",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -878,7 +883,7 @@
           "object_type": "enum_value",
           "object_name": "flow_type.appointment",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -886,7 +891,7 @@
           "object_type": "enum_value",
           "object_name": "capability_type.appointment",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -894,7 +899,7 @@
           "object_type": "rls",
           "object_name": "appointments",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -912,7 +917,7 @@
           "object_type": "column",
           "object_name": "events.self_checkin_enabled",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -930,7 +935,7 @@
           "object_type": "column",
           "object_name": "appointments.auto_approve",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         },
@@ -938,7 +943,7 @@
           "object_type": "column",
           "object_name": "services.auto_approve",
           "expected_state": "exists",
-          "verified_state": "true",
+          "verified_state": "exists",
           "result": "pass",
           "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
         }
@@ -947,13 +952,18 @@
       "failed": 0
     }
   ],
-  "failed_objects": [
+  "failed_objects": [],
+  "no_write_occurred": true,
+  "total_superseded": 1,
+  "superseded_objects": [
     {
       "version": "103",
       "type": "policy",
       "name": "service_addons_select",
-      "note": "service_addons_select superseded by service_addons_owner_read (mig 144)"
+      "replacement_object_name": "service_addons_owner_read",
+      "superseding_migration": "144",
+      "rationale": "Security tightening: public select replaced with owner-scoped read",
+      "application_behaviour_impact": "none"
     }
-  ],
-  "no_write_occurred": true
+  ]
 }

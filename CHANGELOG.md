@@ -21,7 +21,7 @@ If something breaks, check this log to find what changed and when.
 - `lib/__tests__/secret-scanner-migration-json.test.ts` — Updated tests for new evidence path scope and production_evidence_digest key.
 - Migration 103 policy supersession documented: `service_addons_select` replaced by `service_addons_owner_read` (Migration 144, security tightening). No application behaviour impact.
   - **Affects:** Migration repair process, Issue #53 tracking, OPS-001 milestone
-  - **Could break:** Nothing — documentation and tooling only. No migration SQL modified. No repair, deployment, or production write occurred.
+  - **Could break:** Nothing — documentation and tooling only. No migration SQL modified. Read-only production metadata verification occurred; no production write, repair, or deployment occurred; no customer-record contents accessed.
 
 ### Correction: SQL-derived objects are not production evidence
 - `docs/migrations/101-246-production-reconciliation.json` — 124 candidates reclassified from VERIFIED_APPLIED_UNTRACKED to PENDING_PRODUCTION_REVERIFICATION. SQL-derived expected objects preserved but clearly marked as `evidence_source: "sql_derived"` (not production evidence). `repair_eligible` set to false for all candidates. Final counts: 8 ALIGNED_TRACKED, 124 PENDING_PRODUCTION_REVERIFICATION, 12 NOT_VERIFIABLE_SAFELY, 2 SUPERSEDED.

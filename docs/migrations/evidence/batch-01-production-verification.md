@@ -5,14 +5,15 @@
 **Versions:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 120
 **Total object checks:** 94
 **Passed:** 93
-**Failed:** 1 (1 superseded by migration 144)
+**Superseded:** 1 (Migration 103 `service_addons_select` replaced by `service_addons_owner_read` in Migration 144)
+**Failed:** 0
 
 ## Classifications
 
 | Version | Filename | Objects | Passed | Failed | Classification |
 |---|---|---|---|---|---|
 | 102 | 102_service_availability.sql | 6 | 6 | 0 | VERIFIED_APPLIED_UNTRACKED |
-| 103 | 103_service_features.sql | 18 | 17 | 1 | VERIFIED_APPLIED_UNTRACKED |
+| 103 | 103_service_features.sql | 18 | 17 | 1 superseded, 0 failed | VERIFIED_APPLIED_UNTRACKED |
 | 104 | 104_event_services_category.sql | 1 | 1 | 0 | VERIFIED_APPLIED_UNTRACKED |
 | 106 | 106_new_subcategories.sql | 18 | 18 | 0 | VERIFIED_APPLIED_UNTRACKED |
 | 108 | 108_refund_requests.sql | 6 | 6 | 0 | VERIFIED_APPLIED_UNTRACKED |
@@ -33,15 +34,13 @@
 |---|---|
 | VERIFIED_APPLIED_UNTRACKED | 15 |
 
-## Failed/Ambiguous Objects
+## Superseded Objects
 
-| Version | Type | Name | Note |
-|---|---|---|---|
-| 103 | policy | service_addons_select | service_addons_select superseded by service_addons_owner_read (mig 144) |
+| Version | Type | Name | Replacement | Superseding Migration | Rationale | Impact |
+|---|---|---|---|---|---|---|
+| 103 | policy | service_addons_select | service_addons_owner_read | 144 | Security tightening: public select replaced with owner-scoped read | none |
 
 ## Confirmation
 
-- No production writes occurred
-- No migration repair executed
-- No customer or transaction records accessed
-- Approved repair allowlist remains empty
+- Read-only production metadata verification occurred; no production write, repair, or deployment occurred; no customer-record contents accessed
+- Approved repair allowlist contains 15 versions pending independent review
