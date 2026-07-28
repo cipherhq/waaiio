@@ -48,25 +48,25 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 106 | `new_subcategories` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 | 104 | `event_services_category` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 | 103 | `service_features` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
-| 138 | `dashboard_aggregate_rpcs` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 6 objects checked, all passed. Repair pending. |
-| 137 | `atomic_booking_slot` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 3 objects checked, all passed. Repair pending. |
-| 136 | `fix_session_race_and_booking_race` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 2 objects checked, all passed. Repair pending. |
-| 135 | `drop_permissive_storage_policy` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 1 object checked, passed. Repair pending. |
-| 134 | `add_new_capability_enum_values` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 4 objects checked, all passed. Repair pending. |
-| 133 | `storage_bucket_security` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 7 objects checked, all passed. Repair pending. |
-| 132 | `reservation_checkin_flow` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 5 objects checked, all passed. Repair pending. |
-| 131 | `standalone_invites` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 8 objects checked, all passed. Repair pending. |
-| 129 | `payout_adjustments` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 7 objects checked, all passed. Repair pending. |
-| 128 | `platform_fee_refund` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 3 objects checked, all passed. Repair pending. |
-| 127 | `notification_preferences` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 1 object checked, passed. Repair pending. |
-| 125 | `membership_tiers` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 6 objects checked, all passed. Repair pending. |
-| 124 | `auto_reply` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 1 object checked, passed. Repair pending. |
-| 123 | `add_assigned_channel_id` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 4 objects checked, all passed. Repair pending. |
-| 121 | `property_blocked_dates` | Batch 2 verified (approved for repair) | — | Production metadata verified 2026-07-28. 5 objects checked, all passed. Repair pending. |
+| 138 | `dashboard_aggregate_rpcs` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 137 | `atomic_booking_slot` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 136 | `fix_session_race_and_booking_race` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 135 | `drop_permissive_storage_policy` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 134 | `add_new_capability_enum_values` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 133 | `storage_bucket_security` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 132 | `reservation_checkin_flow` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 131 | `standalone_invites` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 129 | `payout_adjustments` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 128 | `platform_fee_refund` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 127 | `notification_preferences` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 125 | `membership_tiers` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 124 | `auto_reply` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 123 | `add_assigned_channel_id` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 121 | `property_blocked_dates` | Batch 2 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 | 102 | `service_availability` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 
 **Batch 1 repair summary:** 15 versions (102-120) now tracked in remote schema_migrations.
-**Batch 2 verification summary:** 15 versions (121-138) verified against production metadata. 63 object checks, all passed. Approved for repair. 94 candidates remain for future verification batches.
+**Batch 2 repair summary:** 15 versions (121-138) now tracked in remote schema_migrations. Remote count 118 -> 133 (+15). 101-246 tracked count 23 -> 38 (+15). 94 candidates remain for future verification batches.
 
 **Next available version:** 298
 
@@ -145,8 +145,8 @@ Per Issue #53 preflight findings:
 ## Remaining Untracked Migrations (101-246)
 
 Of the 146 migrations in the 101-246 range:
-- **23 aligned/tracked:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 176, 181, 182, 199, 200, 244
-- **15 verified and approved for repair (Batch 2):** 121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138
+- **38 aligned/tracked:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138, 176, 181, 182, 199, 200, 244
+- **0 verified and pending repair:** (all verified batches now repaired)
 - **94 remaining candidates pending verification:** Batches 3-9 per verification candidates (`docs/migrations/101-246-verification-candidates.json`)
 - **12 not verifiable safely:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 superseded:** 122 (by 233), 130 (by 233)

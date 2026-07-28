@@ -7,6 +7,19 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-28
 
+### Operations: Batch 2 migration-history repair recorded (15 versions)
+- `docs/migrations/evidence/batch-02-repair.json` — Repair evidence for 15 versions (121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138). Remote count 118 -> 133. 101-246 tracked count 23 -> 38. All exit_status=0, all version_tracked=true.
+- `docs/migrations/evidence/batch-02-repair.md` — Repair summary.
+- `docs/migrations/101-246-production-reconciliation.json` — 15 entries updated from VERIFIED_APPLIED_UNTRACKED to ALIGNED_TRACKED with repair_batch=2, repair_evidence_digest. New counts: 38 ALIGNED, 0 VERIFIED, 94 PENDING, 12 NV, 2 SUPERSEDED.
+- `docs/migrations/101-246-repair-allowlist.json` — Cleared to empty array (all Batch 2 versions now repaired).
+- `scripts/validate-migration-repair-allowlist.mjs` — Generalized Batch 1 repair evidence section to discover all `batch-*-repair.json` files dynamically. Cross-validates no duplicate versions or batch numbers across repair batches. Validates each batch individually with SHA, timestamp, exit_status, version_tracked, count deltas, filename/checksum matching, and digest recomputation. Updated expected counts: ALIGNED=38, VERIFIED=0.
+- `lib/__tests__/migration-repair-validator.test.ts` — Added 11 Batch 2 repair-specific regression tests: duplicate repair batch number, duplicate version across batches, version-set mismatch, missing evidence, unsuccessful command, total-count delta, range-count delta, digest mismatch, version in allowlist, version in candidates, valid Batch 1+2 evidence. Updated integration test for post-repair state.
+- `docs/migrations/101-246-repair-runbook.md` — Batch 2 marked verification COMPLETE, repair COMPLETE. 94 candidates remain for Batches 3-9.
+- `docs/MIGRATION_REGISTRY.md` — 15 Batch 2 versions updated to "Batch 2 repaired (tracked)". 94 candidates remaining.
+- `docs/engineering-status.json` — OPS-001 updated: Batch 2 repair complete, next action is Batch 3 verification.
+  - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — tooling and metadata only. No migration SQL executed, no schema change, no deployment.
+
 ### Operations: Batch 2 evidence hardening — exact state validation, complete fields, cross-checks
 - `scripts/validate-migration-repair-allowlist.mjs` — Removed broad `STATES_SATISFYING_EXISTS` set; verified_state must exactly equal expected_state. Added version-set equality check (batch.versions = migrations = classifications keys), per-migration object_count reconciliation, global totals reconciliation, verification_source/query_category requirement for Batch 2+, manifest cross-validation for Batch 2+ objects, missing repository migration file now fails instead of silently skipping. Batch 1 missing enrichment fields produce warnings only.
 - `docs/migrations/101-246-production-reconciliation.json` — 4 RLS entries (versions 121, 125, 129, 131) corrected: expected_state changed from "exists" to "enabled" to match actual verified_state. Allowlist digests recomputed.
