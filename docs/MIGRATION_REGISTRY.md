@@ -113,6 +113,7 @@ Per Issue #53 preflight findings:
 
 Of the 146 migrations in the 101-246 range:
 - **8 aligned/tracked:** 115, 119, 176, 181, 182, 199, 200, 244
-- **127 verified-applied-untracked:** Repair candidates per allowlist (`docs/migrations/101-246-repair-allowlist.json`)
-- **9 not verifiable safely:** 101, 105, 107, 160, 163, 164, 187, 222, 226
+- **15 verified and approved for repair (Batch 1, not yet repaired):** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 120
+- **109 remaining candidates pending verification:** Batches 2-9 per verification candidates (`docs/migrations/101-246-verification-candidates.json`)
+- **12 not verifiable safely:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 superseded:** 122 (by 233), 130 (by 233)

@@ -7,6 +7,22 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-28
 
+### Operations: Batch 1 migration production verification evidence
+- `docs/migrations/evidence/batch-01-production-verification.json` — Sanitized production evidence for 15 migrations (102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 120). 94 metadata checks (93 passed, 1 superseded).
+- `docs/migrations/evidence/batch-01-production-verification.md` — Verification summary.
+- `docs/migrations/101-246-production-reconciliation.json` — 15 entries updated from PENDING_PRODUCTION_REVERIFICATION to VERIFIED_APPLIED_UNTRACKED with production evidence. New counts: 8 ALIGNED, 15 VERIFIED, 109 PENDING, 12 NV, 2 SUPERSEDED.
+- `docs/migrations/101-246-repair-allowlist.json` — Populated with 15 approved entries including production_evidence_digest.
+- `docs/migrations/101-246-verification-candidates.json` — Reduced from 124 to 109 (15 Batch 1 versions removed).
+- `scripts/validate-migration-repair-allowlist.mjs` — Rewritten for progressive batch support: PENDING + VERIFIED = 124; validates production evidence, superseded objects, and digest recomputation.
+- `docs/migrations/101-246-repair-runbook.md` — Batch 1 status section added.
+- `docs/MIGRATION_REGISTRY.md` — Updated to show 15 verified/approved for repair, 109 remaining candidates.
+- `docs/engineering-status.json`, `docs/ENGINEERING_STATUS.md` — OPS-001 updated with Batch 1 evidence.
+- `scripts/filter-secret-scan-false-positives.mjs` — Extended path scope to include `docs/migrations/evidence/*.json` and key `production_evidence_digest`.
+- `lib/__tests__/secret-scanner-migration-json.test.ts` — Updated tests for new evidence path scope and production_evidence_digest key.
+- Migration 103 policy supersession documented: `service_addons_select` replaced by `service_addons_owner_read` (Migration 144, security tightening). No application behaviour impact.
+  - **Affects:** Migration repair process, Issue #53 tracking, OPS-001 milestone
+  - **Could break:** Nothing — documentation and tooling only. No migration SQL modified. Read-only production metadata verification occurred; no production write, repair, or deployment occurred; no customer-record contents accessed.
+
 ### Correction: SQL-derived objects are not production evidence
 - `docs/migrations/101-246-production-reconciliation.json` — 124 candidates reclassified from VERIFIED_APPLIED_UNTRACKED to PENDING_PRODUCTION_REVERIFICATION. SQL-derived expected objects preserved but clearly marked as `evidence_source: "sql_derived"` (not production evidence). `repair_eligible` set to false for all candidates. Final counts: 8 ALIGNED_TRACKED, 124 PENDING_PRODUCTION_REVERIFICATION, 12 NOT_VERIFIABLE_SAFELY, 2 SUPERSEDED.
 - `docs/migrations/101-246-repair-allowlist.json` — Emptied to `[]`. No repairs approved until read-only production verification.

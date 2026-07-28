@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
-  "last_reconciled_main_sha": "16dad8785f31e752c0319d871dd5bee0871a1d46",
-  "last_reconciled_at": "2026-07-28T03:42:41Z",
+  "last_reconciled_main_sha": "761fdf8895079488ead7f8e4d5e359e4262a89ae",
+  "last_reconciled_at": "2026-07-28T12:09:25Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -253,7 +253,7 @@
       "pr_numbers": [56, 58, 59, 62, 63],
       "implementation_sha": null,
       "reviewed_sha": null,
-      "merge_sha": "16dad8785f31e752c0319d871dd5bee0871a1d46",
+      "merge_sha": "761fdf8895079488ead7f8e4d5e359e4262a89ae",
       "deployed_sha": null,
       "environment": "production",
       "production_verified_at": null,
@@ -286,17 +286,22 @@
         "Migration 297 production-verified: properties_updated_at trigger confirmed present",
         "Migration 115 fully satisfied — all 12 durable schema effects present",
         "Evidence-backed reconciliation manifest created for all 146 migrations (101-246)",
-        "Immutable repair allowlist generated for 127 verified-but-untracked candidates",
         "Controlled batching runbook created (9 batches, maximum 15 versions per batch)",
-        "CI-integrated validator script added (scripts/validate-migration-repair-allowlist.mjs)"
+        "CI-integrated validator script added (scripts/validate-migration-repair-allowlist.mjs)",
+        "Batch 1 production verification complete: 15 versions (102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 120)",
+        "94 metadata checks: 93 passed, 1 superseded (Migration 103 service_addons_select policy replaced by service_addons_owner_read in Migration 144)",
+        "Approved repair allowlist now contains 15 versions with production_evidence_digest",
+        "109 candidates remain for verification in Batches 2-9",
+        "No migration repair executed — repair blocked until evidence PR merges"
       ],
       "blockers": [
-        "127 migration repair candidates awaiting controlled repair-plan execution",
-        "9 NOT_VERIFIABLE_SAFELY migrations require new evidence before disposition",
+        "Batch 1 evidence PR must merge before repair can proceed",
+        "109 migration repair candidates awaiting verification (Batches 2-9)",
+        "12 NOT_VERIFIABLE_SAFELY migrations require new evidence before disposition",
         "2 SUPERSEDED migrations (122, 130) require final disposition decision"
       ],
-      "next_action": "Execute controlled repair batches per approved runbook (docs/migrations/101-246-repair-runbook.md)",
-      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migrations 115, 119, 199, 200, 244, 294, 295, 296, 297 production-verified. Migrations 176, 181, 182 individually verified and recorded. Migration 115 fully satisfied (completed by Migration 297, PR #63). 127 repair candidates documented in immutable allowlist with controlled batching runbook. 9 NOT_VERIFIABLE_SAFELY and 2 SUPERSEDED migrations excluded from repair. No migration repair was executed."
+      "next_action": "Merge Batch 1 evidence PR, then execute Batch 1 repair per runbook (docs/migrations/101-246-repair-runbook.md)",
+      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migrations 115, 119, 199, 200, 244, 294, 295, 296, 297 production-verified. Migrations 176, 181, 182 individually verified and recorded. Migration 115 fully satisfied (completed by Migration 297, PR #63). Batch 1 verification complete (15 versions, 94 object checks). Approved repair allowlist contains 15 versions with production evidence digests. 109 candidates remain for Batches 2-9. 12 NOT_VERIFIABLE_SAFELY and 2 SUPERSEDED migrations excluded from repair. No migration repair was executed."
     }
   ]
 }

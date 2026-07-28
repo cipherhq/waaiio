@@ -7,16 +7,16 @@ import { resolve } from 'path';
  *
  * The pre-commit hook pipes git diff through scripts/filter-secret-scan-false-positives.mjs
  * which exempts only lines where:
- * 1. The current file is docs/migrations/*.json (path-scoped)
- * 2. The line is a JSON property with key "checksum", "local_checksum", or "evidence_digest"
+ * 1. The current file is docs/migrations/*.json or docs/migrations/evidence/*.json (path-scoped)
+ * 2. The line is a JSON property with key "checksum", "local_checksum", "evidence_digest", or "production_evidence_digest"
  * 3. The value is exactly a 64-character lowercase hex string
  *
  * All other files are fully scanned with no exemptions.
  */
 
 // The exact regex used in the filter script for exemptions
-const EXEMPTION_KEY_REGEX = /^\+\s*"(checksum|local_checksum|evidence_digest)"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$/;
-const MIGRATION_JSON_PATH = /^docs\/migrations\/[^/]+\.json$/;
+const EXEMPTION_KEY_REGEX = /^\+\s*"(checksum|local_checksum|evidence_digest|production_evidence_digest)"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$/;
+const MIGRATION_JSON_PATH = /^docs\/migrations\/(evidence\/)?[^/]+\.json$/;
 
 // One of the secret patterns from the pre-commit hook (Twilio SID)
 const TWILIO_PATTERN = /AC[0-9a-f]{32}/;
@@ -90,8 +90,13 @@ describe('Secret scanner migration JSON exemption', () => {
       expect(TWILIO_PATTERN.test(line)).toBe(true);
     });
 
-    it('only matches the three allowed keys', () => {
-      const allowedKeys = ['checksum', 'local_checksum', 'evidence_digest'];
+    it('exempts a legitimate production_evidence_digest line', () => {
+      const line = '+    "production_evidence_digest": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",';
+      expect(EXEMPTION_KEY_REGEX.test(line)).toBe(true);
+    });
+
+    it('only matches the four allowed keys', () => {
+      const allowedKeys = ['checksum', 'local_checksum', 'evidence_digest', 'production_evidence_digest'];
       const disallowedKeys = [
         'evidence', 'durable_evidence_summary', 'recommended_action',
         'filename', 'version', 'repair_status', 'confidence', 'current_classification',
@@ -141,13 +146,35 @@ describe('Secret scanner migration JSON exemption', () => {
       expect(MIGRATION_JSON_PATH.test('docs/other/manifest.json')).toBe(false);
     });
 
-    it('docs/migrations/subdir/file.json does NOT match the exempt path', () => {
+    it('docs/migrations/evidence/batch-01.json matches the exempt path', () => {
+      expect(MIGRATION_JSON_PATH.test('docs/migrations/evidence/batch-01.json')).toBe(true);
+    });
+
+    it('docs/migrations/subdir/file.json does NOT match the exempt path (non-evidence subdir)', () => {
       expect(MIGRATION_JSON_PATH.test('docs/migrations/subdir/file.json')).toBe(false);
     });
   });
 
   describe('Filter script integration', () => {
     const TWILIO_SID_PATTERN = 'AC[0-9a-f]{32}';
+
+    it('exempts checksum in docs/migrations/evidence/batch-01.json', () => {
+      const checksumValue = EXEMPT_CHECKSUM;
+      const diff = buildDiff('docs/migrations/evidence/batch-01.json', [
+        `    "checksum": "${checksumValue}",`,
+      ]);
+      const output = runFilter(diff, TWILIO_SID_PATTERN);
+      expect(output).toBe('');
+    });
+
+    it('exempts production_evidence_digest in docs/migrations/allowlist.json', () => {
+      const checksumValue = EXEMPT_CHECKSUM;
+      const diff = buildDiff('docs/migrations/allowlist.json', [
+        `    "production_evidence_digest": "${checksumValue}",`,
+      ]);
+      const output = runFilter(diff, TWILIO_SID_PATTERN);
+      expect(output).toBe('');
+    });
 
     it('exempts checksum in docs/migrations/manifest.json', () => {
       // 64-char lowercase hex starting with 'ac' which triggers Twilio SID pattern (case-insensitive)
