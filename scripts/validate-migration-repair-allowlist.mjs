@@ -1040,9 +1040,26 @@ for (const { file, batchNumber, data: repairData } of allRepairBatches) {
 
   let repairErrors = 0;
 
-  // Valid SHA
-  if (!repairData.repository_sha || typeof repairData.repository_sha !== 'string' || repairData.repository_sha.length < 7) {
-    fail(`Repair Batch ${batchNumber}: invalid repository_sha`);
+  // ── 2a. Filename/JSON batch-number equality ──
+  const fileMatch = file.match(/batch-(\d+)-repair\.json$/);
+  const filenameBatchNum = fileMatch ? parseInt(fileMatch[1]) : null;
+  if (!filenameBatchNum || filenameBatchNum < 1) {
+    fail(`${file}: cannot derive positive batch number from filename`);
+    continue;
+  }
+  if (!Number.isInteger(repairData.batch_number) || repairData.batch_number < 1) {
+    fail(`${file}: missing or invalid JSON batch_number`);
+    continue;
+  }
+  if (repairData.batch_number !== filenameBatchNum) {
+    fail(`${file}: filename batch ${filenameBatchNum} !== JSON batch_number ${repairData.batch_number}`);
+    continue;
+  }
+  pass(`Repair Batch ${batchNumber} filename/JSON batch-number match`);
+
+  // ── 2b. Full 40-char lowercase SHA ──
+  if (!/^[0-9a-f]{40}$/.test(repairData.repository_sha)) {
+    fail(`Repair batch ${repairData.batch_number}: repository_sha is not a valid 40-char lowercase hex SHA`);
     repairErrors++;
   } else {
     pass(`Repair Batch ${batchNumber} repository_sha: ${repairData.repository_sha.substring(0, 8)}`);
@@ -1056,18 +1073,146 @@ for (const { file, batchNumber, data: repairData } of allRepairBatches) {
     pass(`Repair Batch ${batchNumber} timestamp valid UTC`);
   }
 
+  // ── 2c. Exact version-set equality (5 sets must match) ──
+  const approvedSet = new Set(repairData.approved_versions.map(String));
+  const resultSet = new Set(repairData.repair_results.map(r => String(r.version)));
+  const fileSet = new Set(Object.keys(repairData.migration_files));
+  const manifestRepairSet = new Set(manifest.filter(e => e.repair_batch === repairData.batch_number).map(e => e.version));
+  const newVersionsSet = new Set((repairData.post_repair.new_versions_added || []).map(String));
+
+  for (const [name, s] of [['repair_results', resultSet], ['migration_files', fileSet], ['manifest repair_batch', manifestRepairSet], ['new_versions_added', newVersionsSet]]) {
+    const missing = [...approvedSet].filter(v => !s.has(v));
+    const extra = [...s].filter(v => !approvedSet.has(v));
+    if (missing.length > 0 || extra.length > 0) {
+      fail(`Repair batch ${repairData.batch_number}: approved_versions vs ${name} mismatch (missing: ${missing.join(',')}, extra: ${extra.join(',')})`);
+      repairErrors++;
+    }
+  }
+  const approvedArr = repairData.approved_versions.map(Number);
+  if (new Set(approvedArr).size !== approvedArr.length) {
+    fail(`Repair batch ${repairData.batch_number}: duplicate approved_versions`);
+    repairErrors++;
+  }
+  const sortedApproved = [...approvedArr].sort((a,b) => a-b);
+  if (!approvedArr.every((v,i) => v === sortedApproved[i])) {
+    fail(`Repair batch ${repairData.batch_number}: approved_versions not sorted`);
+    repairErrors++;
+  }
+  if (repairErrors === 0) pass(`Repair Batch ${batchNumber} 5-way version-set equality`);
+
+  // ── 2d. Derive before/after version difference ──
+  const preVersions = new Set((repairData.pre_repair.range_101_246_versions || []).map(String));
+  const postVersions = new Set((repairData.post_repair.range_101_246_versions || []).map(String));
+  const derivedAdded = [...postVersions].filter(v => !preVersions.has(v)).sort((a,b) => parseInt(a)-parseInt(b));
+  const derivedRemoved = [...preVersions].filter(v => !postVersions.has(v));
+  const approvedSorted = [...approvedSet].sort((a,b) => parseInt(a)-parseInt(b));
+
+  if (JSON.stringify(derivedAdded) !== JSON.stringify(approvedSorted)) {
+    fail(`Repair batch ${repairData.batch_number}: derived added versions don't match approved`);
+    repairErrors++;
+  } else {
+    pass(`Repair Batch ${batchNumber} derived added versions match approved`);
+  }
+  if (derivedRemoved.length > 0) {
+    fail(`Repair batch ${repairData.batch_number}: ${derivedRemoved.length} pre-existing versions removed`);
+    repairErrors++;
+  } else {
+    pass(`Repair Batch ${batchNumber} no pre-existing versions removed`);
+  }
+  if (repairData.post_repair.total_remote_count - repairData.pre_repair.total_remote_count !== repairData.approved_count) {
+    fail(`Repair batch ${repairData.batch_number}: total count delta mismatch`);
+    repairErrors++;
+  }
+  if (repairData.post_repair.range_101_246_count - repairData.pre_repair.range_101_246_count !== repairData.approved_count) {
+    fail(`Repair batch ${repairData.batch_number}: range count delta mismatch`);
+    repairErrors++;
+  }
+
+  // ── 2e. Validate each result (order-independent) ──
+  const postTotals = [];
+  const postRanges = [];
+  for (const r of repairData.repair_results) {
+    if (!approvedSet.has(String(r.version))) {
+      fail(`Repair batch ${repairData.batch_number}: result version ${r.version} not in approved_versions`);
+      repairErrors++;
+    }
+    if (r.exit_status !== 0) {
+      fail(`Repair batch ${repairData.batch_number} version ${r.version}: exit_status=${r.exit_status}`);
+      repairErrors++;
+    }
+    if (r.version_tracked !== true) {
+      fail(`Repair batch ${repairData.batch_number} version ${r.version}: version_tracked=${r.version_tracked}`);
+      repairErrors++;
+    }
+    // total_delta check (Batch 2+ uses total_delta, Batch 1 uses delta)
+    const tDelta = r.total_delta !== undefined ? r.total_delta : r.delta;
+    if (tDelta !== 1) {
+      fail(`Repair batch ${repairData.batch_number} version ${r.version}: total_delta=${tDelta}`);
+      repairErrors++;
+    }
+    // range_delta check (Batch 2+ only)
+    if (r.range_delta !== undefined && r.range_delta !== 1) {
+      fail(`Repair batch ${repairData.batch_number} version ${r.version}: range_delta=${r.range_delta}`);
+      repairErrors++;
+    }
+    if (!Number.isInteger(r.post_total)) {
+      fail(`Repair batch ${repairData.batch_number} version ${r.version}: post_total not integer`);
+      repairErrors++;
+    }
+    postTotals.push(r.post_total);
+    // post_range is only present in Batch 2+
+    if (r.post_range !== undefined) {
+      if (!Number.isInteger(r.post_range)) {
+        fail(`Repair batch ${repairData.batch_number} version ${r.version}: post_range not integer`);
+        repairErrors++;
+      }
+      postRanges.push(r.post_range);
+    }
+  }
+
+  // Order-independent: post_total set must be pre+1 through post
+  const expectedTotalSet = new Set();
+  for (let i = repairData.pre_repair.total_remote_count + 1; i <= repairData.post_repair.total_remote_count; i++) expectedTotalSet.add(i);
+  const actualTotalSet = new Set(postTotals);
+  if (actualTotalSet.size !== postTotals.length) {
+    fail(`Repair batch ${repairData.batch_number}: duplicate post_total values`);
+    repairErrors++;
+  }
+  if (actualTotalSet.size !== expectedTotalSet.size || [...actualTotalSet].some(v => !expectedTotalSet.has(v))) {
+    fail(`Repair batch ${repairData.batch_number}: post_total values don't cover ${repairData.pre_repair.total_remote_count+1}-${repairData.post_repair.total_remote_count}`);
+    repairErrors++;
+  } else {
+    pass(`Repair Batch ${batchNumber} post_total set covers ${repairData.pre_repair.total_remote_count+1}-${repairData.post_repair.total_remote_count}`);
+  }
+
+  // post_range order-independent check (only if post_range values exist)
+  if (postRanges.length > 0) {
+    const expectedRangeSet = new Set();
+    for (let i = repairData.pre_repair.range_101_246_count + 1; i <= repairData.post_repair.range_101_246_count; i++) expectedRangeSet.add(i);
+    const actualRangeSet = new Set(postRanges);
+    if (actualRangeSet.size !== postRanges.length) {
+      fail(`Repair batch ${repairData.batch_number}: duplicate post_range values`);
+      repairErrors++;
+    }
+    if (actualRangeSet.size !== expectedRangeSet.size || [...actualRangeSet].some(v => !expectedRangeSet.has(v))) {
+      fail(`Repair batch ${repairData.batch_number}: post_range values don't cover ${repairData.pre_repair.range_101_246_count+1}-${repairData.post_repair.range_101_246_count}`);
+      repairErrors++;
+    } else {
+      pass(`Repair Batch ${batchNumber} post_range set covers ${repairData.pre_repair.range_101_246_count+1}-${repairData.post_repair.range_101_246_count}`);
+    }
+  }
+
   // Build lookup for repair results
   const repairResultsByVersion = {};
   repairData.repair_results.forEach(r => { repairResultsByVersion[String(r.version)] = r; });
 
   // Cross-validate each completed entry against repair evidence
   const batchCompletedEntries = completedEntries.filter(e => e.repair_batch === batchNumber);
-  const approvedVersionSet = new Set(repairData.approved_versions.map(String));
 
   // Verify manifest entries with this batch number match repair evidence versions
   const manifestBatchVersions = new Set(batchCompletedEntries.map(e => e.version));
-  const evidenceNotInManifest = [...approvedVersionSet].filter(v => !manifestBatchVersions.has(v));
-  const manifestNotInEvidence = [...manifestBatchVersions].filter(v => !approvedVersionSet.has(v));
+  const evidenceNotInManifest = [...approvedSet].filter(v => !manifestBatchVersions.has(v));
+  const manifestNotInEvidence = [...manifestBatchVersions].filter(v => !approvedSet.has(v));
   if (evidenceNotInManifest.length > 0 || manifestNotInEvidence.length > 0) {
     fail(`Repair Batch ${batchNumber}: version-set mismatch between manifest (repair_batch=${batchNumber}) and repair evidence`);
     repairErrors++;

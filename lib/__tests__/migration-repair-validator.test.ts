@@ -103,21 +103,27 @@ interface RepairResult {
   version: number;
   exit_status: number;
   post_total: number;
+  post_range?: number;
   version_tracked: boolean;
-  delta: number;
+  delta?: number;
+  total_delta?: number;
+  range_delta?: number;
 }
 
 interface RepairEvidence {
+  batch_number?: number;
   timestamp_utc: string;
   repository_sha: string;
   approved_versions: number[];
   approved_count: number;
   migration_files: Record<string, { filename: string; checksum: string }>;
   repair_results: RepairResult[];
-  pre_repair: { total_remote_count: number; range_101_246_count: number };
+  pre_repair: { total_remote_count: number; range_101_246_count: number; range_101_246_versions?: number[] };
   post_repair: {
     total_remote_count: number;
     range_101_246_count: number;
+    range_101_246_versions?: number[];
+    new_versions_added?: number[];
     all_approved_appear_exactly_once: boolean;
     total_delta: number;
     range_delta: number;
@@ -1817,5 +1823,332 @@ describe('Batch 2 repair-specific validation', () => {
     expect(batch2).toBeDefined();
     expect(batch1.post_repair.total_remote_count).toBe(118);
     expect(batch2.post_repair.total_remote_count).toBe(133);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// REPAIR EVIDENCE BINDING TESTS
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * Helper to create a minimal valid repair evidence object for testing.
+ */
+function makeRepairEvidence(overrides: Partial<RepairEvidence> = {}): RepairEvidence {
+  return {
+    batch_number: 1,
+    timestamp_utc: '2026-07-28T13:21:43.345538+00:00',
+    repository_sha: '1501eb825ff8c5d5a94373b6daa8166a471be48f',
+    approved_versions: [102, 103],
+    approved_count: 2,
+    migration_files: {
+      '102': { filename: '102_test.sql', checksum: 'aaa' },
+      '103': { filename: '103_test.sql', checksum: 'bbb' },
+    },
+    repair_results: [
+      { version: 102, exit_status: 0, post_total: 104, post_range: 9, version_tracked: true, total_delta: 1, range_delta: 1 },
+      { version: 103, exit_status: 0, post_total: 105, post_range: 10, version_tracked: true, total_delta: 1, range_delta: 1 },
+    ],
+    pre_repair: { total_remote_count: 103, range_101_246_count: 8, range_101_246_versions: [115, 119, 176, 181, 182, 199, 200, 244] },
+    post_repair: {
+      total_remote_count: 105,
+      range_101_246_count: 10,
+      range_101_246_versions: [102, 103, 115, 119, 176, 181, 182, 199, 200, 244],
+      new_versions_added: [102, 103],
+      all_approved_appear_exactly_once: true,
+      total_delta: 2,
+      range_delta: 2,
+    },
+    ...overrides,
+  };
+}
+
+/**
+ * Validates repair evidence binding rules.
+ * Returns array of error messages (empty = valid).
+ */
+function validateRepairEvidenceBinding(
+  filename: string,
+  repairData: RepairEvidence,
+  manifest: ManifestEntry[]
+): string[] {
+  const errors: string[] = [];
+
+  // 2a. Filename/JSON batch-number equality
+  const fileMatch = filename.match(/batch-(\d+)-repair\.json$/);
+  const filenameBatchNum = fileMatch ? parseInt(fileMatch[1]) : null;
+  if (!filenameBatchNum || filenameBatchNum < 1) {
+    errors.push(`${filename}: cannot derive positive batch number from filename`);
+    return errors;
+  }
+  if (!Number.isInteger(repairData.batch_number) || (repairData.batch_number ?? 0) < 1) {
+    errors.push(`${filename}: missing or invalid JSON batch_number`);
+    return errors;
+  }
+  if (repairData.batch_number !== filenameBatchNum) {
+    errors.push(`${filename}: filename batch ${filenameBatchNum} !== JSON batch_number ${repairData.batch_number}`);
+    return errors;
+  }
+
+  // 2b. Full 40-char lowercase SHA
+  if (!/^[0-9a-f]{40}$/.test(repairData.repository_sha)) {
+    errors.push(`Repair batch ${repairData.batch_number}: repository_sha is not a valid 40-char lowercase hex SHA`);
+  }
+
+  // 2c. 5-way version-set equality
+  const approvedSet = new Set(repairData.approved_versions.map(String));
+  const resultSet = new Set(repairData.repair_results.map(r => String(r.version)));
+  const fileSet = new Set(Object.keys(repairData.migration_files));
+  const manifestRepairSet = new Set(manifest.filter(e => e.repair_batch === repairData.batch_number).map(e => e.version));
+  const newVersionsSet = new Set((repairData.post_repair.new_versions_added || []).map(String));
+
+  for (const [name, s] of [['repair_results', resultSet], ['migration_files', fileSet], ['manifest repair_batch', manifestRepairSet], ['new_versions_added', newVersionsSet]] as const) {
+    const missing = [...approvedSet].filter(v => !s.has(v));
+    const extra = [...s].filter(v => !approvedSet.has(v));
+    if (missing.length > 0 || extra.length > 0) {
+      errors.push(`Repair batch ${repairData.batch_number}: approved_versions vs ${name} mismatch (missing: ${missing.join(',')}, extra: ${extra.join(',')})`);
+    }
+  }
+
+  // 2d. Derive before/after version difference
+  const preVersions = new Set((repairData.pre_repair.range_101_246_versions || []).map(String));
+  const postVersions = new Set((repairData.post_repair.range_101_246_versions || []).map(String));
+  const derivedAdded = [...postVersions].filter(v => !preVersions.has(v)).sort((a, b) => parseInt(a) - parseInt(b));
+  const derivedRemoved = [...preVersions].filter(v => !postVersions.has(v));
+  const approvedSorted = [...approvedSet].sort((a, b) => parseInt(a) - parseInt(b));
+
+  if (JSON.stringify(derivedAdded) !== JSON.stringify(approvedSorted)) {
+    errors.push(`Repair batch ${repairData.batch_number}: derived added versions don't match approved`);
+  }
+  if (derivedRemoved.length > 0) {
+    errors.push(`Repair batch ${repairData.batch_number}: ${derivedRemoved.length} pre-existing versions removed`);
+  }
+  if (repairData.post_repair.total_remote_count - repairData.pre_repair.total_remote_count !== repairData.approved_count) {
+    errors.push(`Repair batch ${repairData.batch_number}: total count delta mismatch`);
+  }
+  if (repairData.post_repair.range_101_246_count - repairData.pre_repair.range_101_246_count !== repairData.approved_count) {
+    errors.push(`Repair batch ${repairData.batch_number}: range count delta mismatch`);
+  }
+
+  // 2e. Validate each result (order-independent)
+  const postTotals: number[] = [];
+  const postRanges: number[] = [];
+  for (const r of repairData.repair_results) {
+    if (!approvedSet.has(String(r.version))) {
+      errors.push(`Repair batch ${repairData.batch_number}: result version ${r.version} not in approved_versions`);
+    }
+    if (r.exit_status !== 0) errors.push(`Repair batch ${repairData.batch_number} version ${r.version}: exit_status=${r.exit_status}`);
+    if (r.version_tracked !== true) errors.push(`Repair batch ${repairData.batch_number} version ${r.version}: version_tracked=${r.version_tracked}`);
+    const tDelta = r.total_delta !== undefined ? r.total_delta : r.delta;
+    if (tDelta !== 1) errors.push(`Repair batch ${repairData.batch_number} version ${r.version}: total_delta=${tDelta}`);
+    if (r.range_delta !== undefined && r.range_delta !== 1) errors.push(`Repair batch ${repairData.batch_number} version ${r.version}: range_delta=${r.range_delta}`);
+    if (!Number.isInteger(r.post_total)) errors.push(`Repair batch ${repairData.batch_number} version ${r.version}: post_total not integer`);
+    postTotals.push(r.post_total);
+    if (r.post_range !== undefined) {
+      if (!Number.isInteger(r.post_range)) errors.push(`Repair batch ${repairData.batch_number} version ${r.version}: post_range not integer`);
+      postRanges.push(r.post_range);
+    }
+  }
+
+  // Order-independent: post_total set must be pre+1 through post
+  const expectedTotalSet = new Set<number>();
+  for (let i = repairData.pre_repair.total_remote_count + 1; i <= repairData.post_repair.total_remote_count; i++) expectedTotalSet.add(i);
+  const actualTotalSet = new Set(postTotals);
+  if (actualTotalSet.size !== postTotals.length) errors.push(`Repair batch ${repairData.batch_number}: duplicate post_total values`);
+  if (actualTotalSet.size !== expectedTotalSet.size || [...actualTotalSet].some(v => !expectedTotalSet.has(v))) {
+    errors.push(`Repair batch ${repairData.batch_number}: post_total values don't cover ${repairData.pre_repair.total_remote_count + 1}-${repairData.post_repair.total_remote_count}`);
+  }
+
+  if (postRanges.length > 0) {
+    const expectedRangeSet = new Set<number>();
+    for (let i = repairData.pre_repair.range_101_246_count + 1; i <= repairData.post_repair.range_101_246_count; i++) expectedRangeSet.add(i);
+    const actualRangeSet = new Set(postRanges);
+    if (actualRangeSet.size !== postRanges.length) errors.push(`Repair batch ${repairData.batch_number}: duplicate post_range values`);
+    if (actualRangeSet.size !== expectedRangeSet.size || [...actualRangeSet].some(v => !expectedRangeSet.has(v))) {
+      errors.push(`Repair batch ${repairData.batch_number}: post_range values don't cover ${repairData.pre_repair.range_101_246_count + 1}-${repairData.post_repair.range_101_246_count}`);
+    }
+  }
+
+  return errors;
+}
+
+describe('Repair evidence binding tests', () => {
+  it('rejects missing JSON batch_number in repair evidence', () => {
+    const data = makeRepairEvidence({ batch_number: undefined });
+    const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, []);
+    expect(errors.some(e => e.includes('missing or invalid JSON batch_number'))).toBe(true);
+  });
+
+  it('rejects filename/JSON batch-number mismatch', () => {
+    const data = makeRepairEvidence({ batch_number: 2 });
+    const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, []);
+    expect(errors.some(e => e.includes('filename batch 1 !== JSON batch_number 2'))).toBe(true);
+  });
+
+  it('rejects abbreviated repository SHA', () => {
+    const data = makeRepairEvidence({ repository_sha: '1501eb82' });
+    const manifest = [
+      makeCompletedEntry({ version: '102', repair_batch: 1 }),
+      makeCompletedEntry({ version: '103', repair_batch: 1 }),
+    ];
+    const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, manifest);
+    expect(errors.some(e => e.includes('not a valid 40-char lowercase hex SHA'))).toBe(true);
+  });
+
+  it('rejects approved_versions/repair_results set mismatch', () => {
+    const data = makeRepairEvidence({
+      repair_results: [
+        // Only 102, missing 103
+        { version: 102, exit_status: 0, post_total: 104, post_range: 9, version_tracked: true, total_delta: 1, range_delta: 1 },
+      ],
+    });
+    const manifest = [
+      makeCompletedEntry({ version: '102', repair_batch: 1 }),
+      makeCompletedEntry({ version: '103', repair_batch: 1 }),
+    ];
+    const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, manifest);
+    expect(errors.some(e => e.includes('approved_versions vs repair_results mismatch'))).toBe(true);
+  });
+
+  it('rejects extra migration_files version', () => {
+    const data = makeRepairEvidence();
+    data.migration_files['999'] = { filename: '999_extra.sql', checksum: 'xxx' };
+    const manifest = [
+      makeCompletedEntry({ version: '102', repair_batch: 1 }),
+      makeCompletedEntry({ version: '103', repair_batch: 1 }),
+    ];
+    const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, manifest);
+    expect(errors.some(e => e.includes('approved_versions vs migration_files mismatch'))).toBe(true);
+  });
+
+  it('rejects new_versions_added mismatch', () => {
+    const data = makeRepairEvidence();
+    data.post_repair.new_versions_added = [102, 103, 999]; // 999 not in approved
+    const manifest = [
+      makeCompletedEntry({ version: '102', repair_batch: 1 }),
+      makeCompletedEntry({ version: '103', repair_batch: 1 }),
+    ];
+    const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, manifest);
+    expect(errors.some(e => e.includes('approved_versions vs new_versions_added mismatch'))).toBe(true);
+  });
+
+  it('rejects unrelated added version in derived diff', () => {
+    const data = makeRepairEvidence();
+    // Add an unrelated version to post that's not in approved
+    data.post_repair.range_101_246_versions = [102, 103, 115, 119, 176, 181, 182, 199, 200, 244, 999];
+    data.post_repair.range_101_246_count = 11;
+    const manifest = [
+      makeCompletedEntry({ version: '102', repair_batch: 1 }),
+      makeCompletedEntry({ version: '103', repair_batch: 1 }),
+    ];
+    const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, manifest);
+    expect(errors.some(e => e.includes('derived added versions don\'t match approved'))).toBe(true);
+  });
+
+  it('rejects removed pre-existing version', () => {
+    const data = makeRepairEvidence();
+    // Remove version 115 from post (was in pre)
+    data.post_repair.range_101_246_versions = [102, 103, 119, 176, 181, 182, 199, 200, 244];
+    data.post_repair.range_101_246_count = 9;
+    const manifest = [
+      makeCompletedEntry({ version: '102', repair_batch: 1 }),
+      makeCompletedEntry({ version: '103', repair_batch: 1 }),
+    ];
+    const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, manifest);
+    expect(errors.some(e => e.includes('pre-existing versions removed'))).toBe(true);
+  });
+
+  it('rejects duplicate repair result version', () => {
+    const data = makeRepairEvidence({
+      repair_results: [
+        { version: 102, exit_status: 0, post_total: 104, post_range: 9, version_tracked: true, total_delta: 1, range_delta: 1 },
+        { version: 102, exit_status: 0, post_total: 105, post_range: 10, version_tracked: true, total_delta: 1, range_delta: 1 },
+      ],
+    });
+    const manifest = [
+      makeCompletedEntry({ version: '102', repair_batch: 1 }),
+      makeCompletedEntry({ version: '103', repair_batch: 1 }),
+    ];
+    const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, manifest);
+    // Result set will have only '102', missing '103'
+    expect(errors.some(e => e.includes('approved_versions vs repair_results mismatch'))).toBe(true);
+  });
+
+  it('rejects duplicate intermediate post_total', () => {
+    const data = makeRepairEvidence({
+      repair_results: [
+        { version: 102, exit_status: 0, post_total: 104, post_range: 9, version_tracked: true, total_delta: 1, range_delta: 1 },
+        { version: 103, exit_status: 0, post_total: 104, post_range: 10, version_tracked: true, total_delta: 1, range_delta: 1 }, // duplicate post_total
+      ],
+    });
+    const manifest = [
+      makeCompletedEntry({ version: '102', repair_batch: 1 }),
+      makeCompletedEntry({ version: '103', repair_batch: 1 }),
+    ];
+    const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, manifest);
+    expect(errors.some(e => e.includes('duplicate post_total values'))).toBe(true);
+  });
+
+  it('rejects missing intermediate post_total', () => {
+    const data = makeRepairEvidence({
+      approved_versions: [102, 103, 104],
+      approved_count: 3,
+      migration_files: {
+        '102': { filename: '102_test.sql', checksum: 'aaa' },
+        '103': { filename: '103_test.sql', checksum: 'bbb' },
+        '104': { filename: '104_test.sql', checksum: 'ccc' },
+      },
+      repair_results: [
+        { version: 102, exit_status: 0, post_total: 104, post_range: 9, version_tracked: true, total_delta: 1, range_delta: 1 },
+        { version: 103, exit_status: 0, post_total: 105, post_range: 10, version_tracked: true, total_delta: 1, range_delta: 1 },
+        // Skips 106, jumps to 107
+        { version: 104, exit_status: 0, post_total: 107, post_range: 11, version_tracked: true, total_delta: 1, range_delta: 1 },
+      ],
+      pre_repair: { total_remote_count: 103, range_101_246_count: 8, range_101_246_versions: [115, 119, 176, 181, 182, 199, 200, 244] },
+      post_repair: {
+        total_remote_count: 106,
+        range_101_246_count: 11,
+        range_101_246_versions: [102, 103, 104, 115, 119, 176, 181, 182, 199, 200, 244],
+        new_versions_added: [102, 103, 104],
+        all_approved_appear_exactly_once: true,
+        total_delta: 3,
+        range_delta: 3,
+      },
+    });
+    const manifest = [
+      makeCompletedEntry({ version: '102', repair_batch: 1 }),
+      makeCompletedEntry({ version: '103', repair_batch: 1 }),
+      makeCompletedEntry({ version: '104', repair_batch: 1 }),
+    ];
+    const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, manifest);
+    // post_total 107 is out of range (expected 104-106)
+    expect(errors.some(e => e.includes('post_total values don\'t cover'))).toBe(true);
+  });
+
+  it('rejects out-of-range intermediate post_total', () => {
+    const data = makeRepairEvidence({
+      repair_results: [
+        { version: 102, exit_status: 0, post_total: 104, post_range: 9, version_tracked: true, total_delta: 1, range_delta: 1 },
+        { version: 103, exit_status: 0, post_total: 999, post_range: 10, version_tracked: true, total_delta: 1, range_delta: 1 }, // way out of range
+      ],
+    });
+    const manifest = [
+      makeCompletedEntry({ version: '102', repair_batch: 1 }),
+      makeCompletedEntry({ version: '103', repair_batch: 1 }),
+    ];
+    const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, manifest);
+    expect(errors.some(e => e.includes('post_total values don\'t cover'))).toBe(true);
+  });
+
+  it('rejects incorrect final total count', () => {
+    const data = makeRepairEvidence();
+    // post total is 105 but approved_count is 2, pre is 103, so delta should be 2 -> post should be 105
+    // Change post to 106 to cause mismatch
+    data.post_repair.total_remote_count = 106;
+    const manifest = [
+      makeCompletedEntry({ version: '102', repair_batch: 1 }),
+      makeCompletedEntry({ version: '103', repair_batch: 1 }),
+    ];
+    const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, manifest);
+    expect(errors.some(e => e.includes('total count delta mismatch'))).toBe(true);
   });
 });

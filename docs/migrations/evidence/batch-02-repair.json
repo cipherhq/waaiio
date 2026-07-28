@@ -344,5 +344,6 @@
     "batch_3_not_started": true,
     "repository_validator_passed": true,
     "governance_validator_passed": true
-  }
+  },
+  "batch_number": 2
 }
