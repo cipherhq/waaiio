@@ -9,7 +9,7 @@ If something breaks, check this log to find what changed and when.
 
 ### Database: Complete Migration 115 properties trigger (Migration 297)
 - `supabase/migrations/297_complete_migration_115_trigger.sql` — Forward trigger creation. Creates the missing `properties_updated_at` trigger on `public.properties` using the existing `public.update_updated_at()` function. BEFORE UPDATE, FOR EACH ROW. Idempotent via pg_trigger check. Fails clearly if prerequisites are missing. No data backfill required.
-- `lib/__tests__/migration-297-trigger.test.ts` — 12 static migration-source tests verifying: correct target table, trigger name, timing, row-level, function call, idempotency guard, no schema/data modifications, prerequisite checks.
+- `lib/__tests__/migration-297-trigger.test.ts` — 18 static migration-source tests verifying: correct target table, trigger name, timing, row-level, function call, idempotency guard, prerequisite checks. Migration 297 creates only the missing trigger schema object. It does not modify tables, columns, function bodies, policies or existing row data.
 - `lib/__tests__/migration-297-trigger-db.test.ts` — 18 real PostgreSQL tests verifying: prerequisite existence, trigger creation, trigger properties (enabled, BEFORE, UPDATE, row-level, target table, function), behaviour (updated_at advances on UPDATE), function hash preservation, no unrelated triggers, row count preservation, idempotent second application.
 - `.github/workflows/ci.yml` — Added "Migration 297 trigger tests" CI step with zero-skip enforcement.
 - `docs/MIGRATION_REGISTRY.md` — Migration 297 registered as pending review. Migration 296 updated to production-verified (#62). Migrations 176, 181, 182 individually recorded. Migration 115 noted as partially applied. Migration 244 corrected to production-verified. Next available version updated to 298.
@@ -17,7 +17,7 @@ If something breaks, check this log to find what changed and when.
 - `docs/ENGINEERING_STATUS.md` — OPS-001 row updated with PR #62 and merge SHA ae537205.
 - `CHANGELOG.md` — This entry.
   - **Affects:** `properties_updated_at` trigger on `public.properties` table
-  - **Could break:** Nothing — trigger-only change using existing function. No data or schema modifications.
+  - **Could break:** Nothing — creates only the missing trigger schema object. Does not modify tables, columns, function bodies, policies or existing row data.
   - **Production has NOT been modified by this PR** — Migration 297 must be reviewed, merged, and applied separately.
 
 ### Operations: Record Migrations 176, 181, 182 individual verification

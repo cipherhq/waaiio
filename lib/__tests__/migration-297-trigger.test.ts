@@ -51,9 +51,9 @@ describe('Migration 297 idempotency', () => {
   });
 });
 
-// ── Safety: must NOT modify schema or data ──
+// ── Safety: does not modify tables, functions or row data ──
 
-describe('Migration 297 does not modify schema or data', () => {
+describe('Migration 297 does not modify tables, functions or row data', () => {
   it('does NOT contain CREATE TABLE', () => {
     expect(migrationCode.toUpperCase()).not.toContain('CREATE TABLE');
   });
