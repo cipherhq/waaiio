@@ -20,11 +20,11 @@ This runbook governs the controlled verification and repair of 124 migration-his
 ## Current State
 
 - **38 ALIGNED_TRACKED:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138, 176, 181, 182, 199, 200, 244
-- **0 VERIFIED_APPLIED_UNTRACKED:** (all verified batches repaired)
-- **94 PENDING_PRODUCTION_REVERIFICATION:** require read-only verification
+- **15 VERIFIED_APPLIED_UNTRACKED:** 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153 (Batch 3 verified, repair pending)
+- **79 PENDING_PRODUCTION_REVERIFICATION:** require read-only verification
 - **12 NOT_VERIFIABLE_SAFELY:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 SUPERSEDED:** 122, 130
-- **Active repair allowlist: 0** (cleared after Batch 2 repair)
+- **Active repair allowlist: 15** (Batch 3 approved, repair pending)
 
 ## Batch Status
 
@@ -49,9 +49,20 @@ This runbook governs the controlled verification and repair of 124 migration-his
 - All 15 versions appear exactly once in remote schema_migrations
 - No migration SQL executed. No schema or data change. No deployment.
 
-### Batches 3-9 — Verification: NOT STARTED
-- 94 candidates remain across 7 batches
-- Verification will proceed after Batch 2 repair evidence is reviewed and merged
+### Batch 3 — Verification: COMPLETE | Repair: NOT STARTED
+- **Versions:** 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153
+- **Object checks:** 91 (88 passed, 3 superseded, 0 failed)
+- **Superseded objects:**
+  - Migration 147: `trg_bot_session_deactivate ON bot_sessions` (DROP+CREATE same migration)
+  - Migration 149: `public_read_active_businesses ON businesses` (dropped by Migration 293, security hardening)
+  - Migration 149: `trg_generate_event_slug ON events` (DROP+CREATE same migration)
+- **Verification evidence:** `docs/migrations/evidence/batch-03-production-verification.json`
+- **Repair evidence:** not yet created
+- Repair blocked until evidence PR is reviewed and merged
+
+### Batches 4-9 — Verification: NOT STARTED
+- 79 candidates remain across 6 batches
+- Verification will proceed after Batch 3 repair is complete
 
 ## Step 1 — Read-Only Production Verification
 

@@ -279,16 +279,15 @@ function validateManifestCrossMatch(
     }
     if (!Array.isArray(me.evidence)) continue;
     for (const obj of m.objects || []) {
+      // Match by object_type + object_name + expected_state to handle duplicate names (e.g., DROP+CREATE)
       const manifestObj = me.evidence.find(ev =>
         ev.object_type === (obj as { object_type?: string }).object_type &&
-        ev.object_name === obj.object_name
+        ev.object_name === obj.object_name &&
+        ev.expected_state === (obj as { expected_state?: string }).expected_state
       );
       if (!manifestObj) {
-        errors.push(`version ${m.version}: object ${obj.object_name} not found in manifest`);
+        errors.push(`version ${m.version}: object ${obj.object_name} (expected_state=${(obj as { expected_state?: string }).expected_state}) not found in manifest`);
         continue;
-      }
-      if (manifestObj.expected_state !== (obj as { expected_state?: string }).expected_state) {
-        errors.push(`version ${m.version}: object ${obj.object_name} expected_state mismatch`);
       }
       if (manifestObj.verified_state !== obj.verified_state) {
         errors.push(`version ${m.version}: object ${obj.object_name} verified_state mismatch`);
@@ -308,10 +307,11 @@ function validateManifestCrossMatch(
     for (const manifestObj of me.evidence) {
       const evidenceObj = (m.objects || []).find(o =>
         (o as { object_type?: string }).object_type === manifestObj.object_type &&
-        o.object_name === manifestObj.object_name
+        o.object_name === manifestObj.object_name &&
+        (o as { expected_state?: string }).expected_state === manifestObj.expected_state
       );
       if (!evidenceObj) {
-        errors.push(`version ${m.version}: manifest object ${manifestObj.object_name} not in evidence`);
+        errors.push(`version ${m.version}: manifest object ${manifestObj.object_name} (expected_state=${manifestObj.expected_state}) not in evidence`);
       }
     }
   }
@@ -1263,8 +1263,8 @@ describe('Repair evidence cross-validation', () => {
   });
 });
 
-describe('Real Batch 1 + Batch 2 evidence integration (post-repair)', () => {
-  it('both verification batches and both repair batches pass all validation rules together', () => {
+describe('Real Batch 1 + Batch 2 + Batch 3 evidence integration', () => {
+  it('all verification batches and repair batches pass all validation rules together', () => {
     const evidenceDir = resolve('docs/migrations/evidence');
     const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
     const allowlistPath = resolve('docs/migrations/101-246-repair-allowlist.json');
@@ -1276,7 +1276,7 @@ describe('Real Batch 1 + Batch 2 evidence integration (post-repair)', () => {
     const verificationFiles = readdirSync(evidenceDir)
       .filter(f => /^batch-\d+-production-verification\.json$/.test(f))
       .sort();
-    expect(verificationFiles.length).toBe(2);
+    expect(verificationFiles.length).toBe(3);
 
     // Repair evidence files
     const repairFiles = readdirSync(evidenceDir)
@@ -1316,8 +1316,8 @@ describe('Real Batch 1 + Batch 2 evidence integration (post-repair)', () => {
     const versionSetErrors = validateVersionSet(batch2);
     expect(versionSetErrors).toEqual([]);
 
-    // All Batch 1 AND Batch 2 versions are now completed in manifest (both repaired)
-    for (const b of batches) {
+    // Batch 1 AND Batch 2 versions are completed (repaired), Batch 3 is approved
+    for (const b of [batches[0], batches[1]]) {
       for (const ver of b.versions) {
         const me = manifest.find(e => e.version === ver)!;
         expect(me).toBeDefined();
@@ -1332,22 +1332,36 @@ describe('Real Batch 1 + Batch 2 evidence integration (post-repair)', () => {
       }
     }
 
-    // No approved entries remain (all have been repaired)
-    const approvedEntries = manifest.filter(e => e.repair_status === 'approved_for_repair');
-    expect(approvedEntries.length).toBe(0);
+    // Batch 3 versions are approved_for_repair, not yet completed
+    const batch3 = batches.find(b => b.batch_number === 3)!;
+    expect(batch3).toBeDefined();
+    for (const ver of batch3.versions) {
+      const me = manifest.find(e => e.version === ver)!;
+      expect(me).toBeDefined();
+      expect(me.repair_status).toBe('approved_for_repair');
+      expect(me.current_classification).toBe('VERIFIED_APPLIED_UNTRACKED');
+      expect(me.remote_tracked).toBe(false);
+      expect(me.repair_eligible).toBe(true);
+      expect(allowlistVersions.has(ver)).toBe(true);
+      expect(candidateVersions.has(ver)).toBe(false);
+    }
 
-    // Classification counts (post Batch 2 repair)
+    // 15 approved entries (Batch 3)
+    const approvedEntries = manifest.filter(e => e.repair_status === 'approved_for_repair');
+    expect(approvedEntries.length).toBe(15);
+
+    // Classification counts (post Batch 3 verification, pre Batch 3 repair)
     const counts: Record<string, number> = {};
     manifest.forEach(e => { counts[e.current_classification] = (counts[e.current_classification] || 0) + 1; });
     expect(counts['ALIGNED_TRACKED']).toBe(38);
-    expect(counts['VERIFIED_APPLIED_UNTRACKED'] || 0).toBe(0);
-    expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(94);
+    expect(counts['VERIFIED_APPLIED_UNTRACKED']).toBe(15);
+    expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(79);
     expect(counts['NOT_VERIFIABLE_SAFELY']).toBe(12);
     expect(counts['SUPERSEDED_WITH_EQUIVALENT_STATE']).toBe(2);
 
-    // Allowlist = 0 (cleared), Candidates = 94
-    expect(allowlist.length).toBe(0);
-    expect(candidates.length).toBe(94);
+    // Allowlist = 15 (Batch 3), Candidates = 79
+    expect(allowlist.length).toBe(15);
+    expect(candidates.length).toBe(79);
 
     // 124-candidate cohort invariant: PENDING + VERIFIED + repaired candidates = 124
     const verifiedCount = counts['VERIFIED_APPLIED_UNTRACKED'] || 0;
@@ -1356,7 +1370,7 @@ describe('Real Batch 1 + Batch 2 evidence integration (post-repair)', () => {
       e.repair_status === 'completed' &&
       e.original_classification === 'VERIFIED_APPLIED_UNTRACKED'
     ).length;
-    expect(94 + verifiedCount + repairedCandidates).toBe(124);
+    expect(79 + verifiedCount + repairedCandidates).toBe(124);
     expect(repairedCandidates).toBe(30); // 15 Batch 1 + 15 Batch 2
 
     // Derived counts match for Batch 2 verification
@@ -2150,5 +2164,239 @@ describe('Repair evidence binding tests', () => {
     ];
     const errors = validateRepairEvidenceBinding('batch-01-repair.json', data, manifest);
     expect(errors.some(e => e.includes('total count delta mismatch'))).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// BATCH 3 SUPERSESSION AND VERIFICATION TESTS
+// ══════════════════════════════════════════════════════════════
+
+describe('Batch 3 superseded object validation', () => {
+  it('rejects superseded object missing superseding_migration', () => {
+    const errors = validateEvidenceItem('147', makeValidEvidence({
+      verified_state: 'superseded_with_equivalent_state',
+      result: 'superseded',
+      replacement_object_name: 'trg_bot_session_deactivate',
+      superseding_migration: undefined,
+      rationale: 'DROP+CREATE same migration',
+      application_behaviour_impact: 'none'
+    }));
+    expect(errors.some(e => e.includes('missing superseding_migration'))).toBe(true);
+  });
+
+  it('rejects superseded object missing rationale', () => {
+    const errors = validateEvidenceItem('149', makeValidEvidence({
+      verified_state: 'superseded_with_stricter_state',
+      result: 'superseded',
+      replacement_object_name: 'businesses_public view',
+      superseding_migration: '293',
+      rationale: undefined,
+      application_behaviour_impact: 'none'
+    }));
+    expect(errors.some(e => e.includes('missing rationale'))).toBe(true);
+  });
+
+  it('rejects superseded object missing application_behaviour_impact', () => {
+    const errors = validateEvidenceItem('149', makeValidEvidence({
+      verified_state: 'superseded_with_equivalent_state',
+      result: 'superseded',
+      replacement_object_name: 'trg_generate_event_slug',
+      superseding_migration: '149',
+      rationale: 'DROP+CREATE same migration',
+      application_behaviour_impact: undefined
+    }));
+    expect(errors.some(e => e.includes('missing application_behaviour_impact'))).toBe(true);
+  });
+});
+
+describe('Batch 3 verification state consistency', () => {
+  it('rejects Batch 3 version remaining in verification candidates', () => {
+    const batch3Versions = new Set(['139','140','141','142','143','144','145','146','147','148','149','150','151','152','153']);
+    const candidatesPath = resolve('docs/migrations/101-246-verification-candidates.json');
+    const candidates = JSON.parse(readFileSync(candidatesPath, 'utf-8')) as Array<{ version: string }>;
+    const overlap = candidates.filter(c => batch3Versions.has(c.version));
+    expect(overlap.length).toBe(0);
+  });
+
+  it('rejects non-Batch-3 version added to allowlist', () => {
+    const batch3Versions = new Set(['139','140','141','142','143','144','145','146','147','148','149','150','151','152','153']);
+    const allowlistPath = resolve('docs/migrations/101-246-repair-allowlist.json');
+    const allowlist = JSON.parse(readFileSync(allowlistPath, 'utf-8')) as Array<{ version: string }>;
+    const nonBatch3 = allowlist.filter(a => !batch3Versions.has(a.version));
+    expect(nonBatch3.length).toBe(0);
+  });
+
+  it('rejects Batch 3 entry marked remote_tracked=true', () => {
+    const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as ManifestEntry[];
+    const batch3Entries = manifest.filter(e => e.verification_batch === 3);
+    expect(batch3Entries.length).toBe(15);
+    for (const e of batch3Entries) {
+      expect(e.remote_tracked).toBe(false);
+    }
+  });
+
+  it('rejects repair completion fields before repair', () => {
+    const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as ManifestEntry[];
+    const batch3Entries = manifest.filter(e => e.verification_batch === 3);
+    for (const e of batch3Entries) {
+      expect(e.repair_status).toBe('approved_for_repair');
+      expect(e.repaired_at).toBeUndefined();
+      expect(e.repair_evidence_digest).toBeUndefined();
+      expect(e.repair_evidence_path).toBeUndefined();
+    }
+  });
+
+  it('rejects incorrect production_evidence_digest for Batch 3', () => {
+    const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
+    const allowlistPath = resolve('docs/migrations/101-246-repair-allowlist.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as ManifestEntry[];
+    const allowlist = JSON.parse(readFileSync(allowlistPath, 'utf-8')) as Array<{ version: string; production_evidence_digest: string }>;
+    const manifestByVersion: Record<string, ManifestEntry> = {};
+    manifest.forEach(e => { manifestByVersion[e.version] = e; });
+
+    for (const entry of allowlist) {
+      const me = manifestByVersion[entry.version];
+      expect(me).toBeDefined();
+      const canonical = JSON.stringify({
+        version: me.version, filename: me.filename, checksum: me.checksum,
+        current_classification: me.current_classification, evidence_source: me.evidence_source,
+        evidence: me.evidence, last_verified_at: me.last_verified_at
+      });
+      const expectedDigest = createHash('sha256').update(canonical).digest('hex');
+      expect(entry.production_evidence_digest).toBe(expectedDigest);
+    }
+  });
+
+  it('real Batch 3 verification evidence passes all checks', () => {
+    const evidencePath = resolve('docs/migrations/evidence/batch-03-production-verification.json');
+    const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
+
+    expect(existsSync(evidencePath)).toBe(true);
+    const batch = JSON.parse(readFileSync(evidencePath, 'utf-8')) as BatchEvidence;
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as ManifestEntry[];
+
+    // Batch totals
+    expect(batch.total_objects_checked).toBe(91);
+    expect(batch.total_passed).toBe(88);
+    expect(batch.total_superseded).toBe(3);
+    expect(batch.total_failed).toBe(0);
+    expect(batch.versions.length).toBe(15);
+
+    const totalErrors = validateBatchTotals(batch);
+    expect(totalErrors).toEqual([]);
+
+    const versionSetErrors = validateVersionSet(batch);
+    expect(versionSetErrors).toEqual([]);
+
+    const derivedCountErrors = validateDerivedCounts(batch);
+    expect(derivedCountErrors).toEqual([]);
+
+    const completenessErrors = validateObjectEvidenceCompleteness(batch);
+    expect(completenessErrors).toEqual([]);
+
+    // All evidence items pass validation
+    const batch3Entries = manifest.filter(e => e.verification_batch === 3);
+    expect(batch3Entries.length).toBe(15);
+
+    const allErrors: string[] = [];
+    for (const entry of batch3Entries) {
+      for (const ev of entry.evidence) {
+        const errs = validateEvidenceItem(entry.version, ev);
+        allErrors.push(...errs);
+      }
+    }
+    if (allErrors.length > 0) {
+      console.error('Batch 3 validation errors:', allErrors);
+    }
+    expect(allErrors).toEqual([]);
+
+    // 3 superseded objects must have full metadata
+    const supersededObjs = batch.migrations.flatMap(m => m.objects.filter(o => o.result === 'superseded'));
+    expect(supersededObjs.length).toBe(3);
+    for (const obj of supersededObjs) {
+      expect(VALID_SUPERSEDED_STATES.has(obj.verified_state)).toBe(true);
+    }
+
+    // Cross-validate with manifest
+    const crossErrors = validateManifestCrossMatch(batch, manifest);
+    expect(crossErrors).toEqual([]);
+
+    const batchSetErrors = validateManifestBatchVersionSet(batch, manifest);
+    expect(batchSetErrors).toEqual([]);
+  });
+});
+
+describe('Real Batch 1 + Batch 2 + Batch 3 evidence integration (pre-repair)', () => {
+  it('all three verification batches and two repair batches pass together', () => {
+    const evidenceDir = resolve('docs/migrations/evidence');
+    const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
+    const allowlistPath = resolve('docs/migrations/101-246-repair-allowlist.json');
+    const candidatesPath = resolve('docs/migrations/101-246-verification-candidates.json');
+
+    const verificationFiles = readdirSync(evidenceDir)
+      .filter(f => /^batch-\d+-production-verification\.json$/.test(f))
+      .sort();
+    expect(verificationFiles.length).toBe(3);
+
+    const repairFiles = readdirSync(evidenceDir)
+      .filter(f => /^batch-\d+-repair\.json$/.test(f))
+      .sort();
+    expect(repairFiles.length).toBe(2);
+
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as ManifestEntry[];
+    const allowlist = JSON.parse(readFileSync(allowlistPath, 'utf-8')) as Array<{ version: string }>;
+    const candidates = JSON.parse(readFileSync(candidatesPath, 'utf-8')) as Array<{ version: string }>;
+
+    // No duplicate batch numbers across verification batches
+    const batches: BatchEvidence[] = verificationFiles.map(f =>
+      JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8'))
+    );
+    const batchNums = batches.map(b => b.batch_number);
+    expect(new Set(batchNums).size).toBe(batchNums.length);
+
+    // No duplicate versions across verification batches
+    const allVersions: string[] = [];
+    for (const b of batches) allVersions.push(...b.versions);
+    expect(new Set(allVersions).size).toBe(allVersions.length);
+    expect(allVersions.length).toBe(45); // 15 + 15 + 15
+
+    // Classification counts
+    const counts: Record<string, number> = {};
+    manifest.forEach(e => { counts[e.current_classification] = (counts[e.current_classification] || 0) + 1; });
+    expect(counts['ALIGNED_TRACKED']).toBe(38);
+    expect(counts['VERIFIED_APPLIED_UNTRACKED']).toBe(15);
+    expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(79);
+    expect(counts['NOT_VERIFIABLE_SAFELY']).toBe(12);
+    expect(counts['SUPERSEDED_WITH_EQUIVALENT_STATE']).toBe(2);
+
+    // Allowlist = 15 (Batch 3), Candidates = 79
+    expect(allowlist.length).toBe(15);
+    expect(candidates.length).toBe(79);
+
+    // 124-candidate cohort invariant: PENDING + VERIFIED + repaired candidates = 124
+    const repairedCandidates = manifest.filter(e =>
+      e.current_classification === 'ALIGNED_TRACKED' &&
+      e.repair_status === 'completed' &&
+      e.original_classification === 'VERIFIED_APPLIED_UNTRACKED'
+    ).length;
+    expect(79 + 15 + repairedCandidates).toBe(124);
+    expect(repairedCandidates).toBe(30); // 15 Batch 1 + 15 Batch 2
+
+    // Batch 1+2 completed entries NOT in allowlist or candidates
+    const batch1and2Versions = new Set([...batches[0].versions, ...batches[1].versions]);
+    const allowlistVersions = new Set(allowlist.map(a => a.version));
+    const candidateVersions = new Set(candidates.map(c => c.version));
+    for (const ver of batch1and2Versions) {
+      expect(allowlistVersions.has(ver)).toBe(false);
+      expect(candidateVersions.has(ver)).toBe(false);
+    }
+
+    // Batch 3 versions ARE in allowlist, NOT in candidates
+    for (const ver of batches[2].versions) {
+      expect(allowlistVersions.has(ver)).toBe(true);
+      expect(candidateVersions.has(ver)).toBe(false);
+    }
   });
 });

@@ -7,6 +7,21 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-28
 
+### Operations: Batch 3 migration production verification recorded (15 versions)
+- `docs/migrations/evidence/batch-03-production-verification.json` — Verification evidence for 15 versions (139-153). 91 object checks: 88 passed, 3 superseded, 0 failed, 0 ambiguous.
+- `docs/migrations/evidence/batch-03-production-verification.md` — Verification summary.
+- `docs/migrations/101-246-production-reconciliation.json` — 15 entries updated from PENDING_PRODUCTION_REVERIFICATION to VERIFIED_APPLIED_UNTRACKED with verification_batch=3, production evidence. New counts: 38 ALIGNED, 15 VERIFIED, 79 PENDING, 12 NV, 2 SUPERSEDED.
+- `docs/migrations/101-246-repair-allowlist.json` — Populated with 15 Batch 3 versions and production_evidence_digest.
+- `docs/migrations/101-246-verification-candidates.json` — 15 Batch 3 versions removed. 79 candidates remain.
+- `scripts/validate-migration-repair-allowlist.mjs` — Updated expected counts: VERIFIED=15, PENDING=79. Active allowlist=15.
+- `lib/__tests__/migration-repair-validator.test.ts` — Added Batch 3 regression tests: superseded metadata fields (3 tests), Batch 3 state consistency (5 tests), real Batch 3 evidence validation (1 test), integration with all 3 verification + 2 repair batches (1 test). Updated existing integration test for post-Batch-3 state.
+- `docs/migrations/101-246-repair-runbook.md` — Batch 3 marked verification COMPLETE, repair NOT STARTED. 79 candidates remain for Batches 4-9.
+- `docs/MIGRATION_REGISTRY.md` — 15 Batch 3 versions added as "verified (repair pending)".
+- `docs/engineering-status.json` — OPS-001 updated: Batch 3 verification complete, next action = merge evidence PR then repair.
+- **Superseded objects (3):** trg_bot_session_deactivate (mig 147, DROP+CREATE same migration), public_read_active_businesses (mig 293, security hardening), trg_generate_event_slug (mig 149, DROP+CREATE same migration).
+  - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — tooling and metadata only. No migration SQL executed, no schema change, no deployment, no repair.
+
 ### Operations: Batch 2 migration-history repair recorded (15 versions)
 - `docs/migrations/evidence/batch-02-repair.json` — Repair evidence for 15 versions (121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138). Remote count 118 -> 133. 101-246 tracked count 23 -> 38. All exit_status=0, all version_tracked=true.
 - `docs/migrations/evidence/batch-02-repair.md` — Repair summary.

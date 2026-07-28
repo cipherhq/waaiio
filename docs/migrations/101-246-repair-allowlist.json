@@ -1,1 +1,107 @@
-[]
+[
+  {
+    "version": "139",
+    "filename": "139_fix_atomic_booking_type_cast.sql",
+    "checksum": "0970f4a6a987d8b8d6a09d4d3d580ff96771c3c2a6ea6edb67efa98fe18038d0",
+    "production_evidence_digest": "2c582c9e478fa87358592f5df64a9a2ca7eae36f1b3ba57b8eb3983543e2e110",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "140",
+    "filename": "140_fix_atomic_booking_for_update.sql",
+    "checksum": "7424adc167d1c7a7a4473b6665c809744715eae9b16324e6f80df997d1f04a8a",
+    "production_evidence_digest": "a338026842541f0c99488389f72cc0e562ed9d73ae6ecd106179151c1159009a",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "141",
+    "filename": "141_fix_atomic_booking_enum_casts.sql",
+    "checksum": "e4a7fdc58550bfff51ec217578b7cc66148a7dd70833803941f740f735909efa",
+    "production_evidence_digest": "66b2c6e636767bc453466d59547d3555159e33f89a272d4ddd198e5fdb1f5df2",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "142",
+    "filename": "142_checkin_checkout_noshow.sql",
+    "checksum": "6fa794ab471bdb61ca9b1f27681ccf53537b16d6db32d055160ed160fb5d5e0a",
+    "production_evidence_digest": "e487322c062e52e0193535b95928a9766d07a74d0d1817b28e85253cd651ac29",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "143",
+    "filename": "143_add_paypal_gateway.sql",
+    "checksum": "ebfb89e65d8ea5d65252cd0223374f56b15d43f7cfb69113cd20707fcf5d31b8",
+    "production_evidence_digest": "6ea415c08e9a22e87082d8ec00be80e82c93d3e06563215283009b492e1dc942",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "144",
+    "filename": "144_rls_fix_permissive_policies.sql",
+    "checksum": "d7033e58fa7d7599ea1ade81d2e184f64c7ea06df7357ad7aa4de9c2399a2238",
+    "production_evidence_digest": "7299f928bd3f7f3956eacb99754fe23707b00d9a1f3618fd3833cfa49f046c69",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "145",
+    "filename": "145_saved_card_pin.sql",
+    "checksum": "a0f98eca299b8b83d655b3e010fbf3a045590430b4626fdfcb7352c86f9fd3ea",
+    "production_evidence_digest": "f404675156cb7ae9b79276bb349e073889b9a95795ba4ab68a02718d71f51972",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "146",
+    "filename": "146_service_buffer_time.sql",
+    "checksum": "4dfc50fdbc4c69201540e08a4c131004413f81e5a1f9e6f57fa23b1f3ea1de72",
+    "production_evidence_digest": "49731bf0e821f37fef4244c5eeac49628beffd0bc723a9015d4c2a0dfde8794e",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "147",
+    "filename": "147_auto_last_active_on_deactivate.sql",
+    "checksum": "120f42d0c7b8320dce800cc02162d43602f2d26a3c799fe640c6ebc4cdb1dd80",
+    "production_evidence_digest": "03579e5acbcb62b7dac0bc210eb8ba3ca0320ad17f2703f4534a544357a965d5",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "148",
+    "filename": "148_add_missing_fk_indexes.sql",
+    "checksum": "d0c684fa5cb8e391e4333b3e61847fc0191e4ed38ed73446f0cf5c0183e6c8f3",
+    "production_evidence_digest": "7d2215aed0b56d27832c70c3c9e0f3b0a6a668c3dfa4cebe91e6259cf3e93bad",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "149",
+    "filename": "149_public_event_booking_slugs.sql",
+    "checksum": "2d6020f6d4ded0e9b7757cab455976dc6cf6280684ecc5f427edc474b4a99ba6",
+    "production_evidence_digest": "ea63ad8141bcc2caec5202e920934e56f0346b6f28f2b0310fa946141945b35f",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "150",
+    "filename": "150_group_bookings_waitlist_conversion.sql",
+    "checksum": "67ef7affd6e3b19fd37e9287fc89217871bdb56125a8633d971821a49fe70eff",
+    "production_evidence_digest": "202cce6cf6deacca0c3c2b36d58dc417f52cefa481e8e8d8fc542db176321335",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "151",
+    "filename": "151_llm_classifications_owner_rls.sql",
+    "checksum": "43450127a84d3adbaaccde03bd4832dc77b76a847c3031330236dd496d57e065",
+    "production_evidence_digest": "ba1772a0a0ad6180608480d10cd3e8cd5cba71ccdbc72582dfb161788c398377",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "152",
+    "filename": "152_catalog_sync.sql",
+    "checksum": "62f0393defda7ebb3f5f65da3bfcfbf9f368f6c3327a07e8b16df8b4d8368100",
+    "production_evidence_digest": "5096fbaa2a18b44e0a4ef35bae86597e595b8ae2ce1653d00b13e77ad98aa26e",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "153",
+    "filename": "153_payment_confirmation_dedup.sql",
+    "checksum": "b2af98ffece645c9d67be80afc6e0f06bad40c80f0e84a71f4d5dc01ffaf3cbb",
+    "production_evidence_digest": "a12d187f1b4c0e7c2a515e61de1d8bfe127bd108df8f2cd74eec14a2330e206f",
+    "confidence": "HIGH"
+  }
+]
