@@ -7,6 +7,19 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-28
 
+### Operations: Batch 3 migration-history repair recorded (15 versions)
+- `docs/migrations/evidence/batch-03-repair.json` — Repair evidence for 15 versions (139-153). Remote count 133 -> 148. 101-246 tracked count 38 -> 53. All exit_status=0, all version_tracked=true.
+- `docs/migrations/evidence/batch-03-repair.md` — Repair summary.
+- `docs/migrations/101-246-production-reconciliation.json` — 15 entries updated from VERIFIED_APPLIED_UNTRACKED to ALIGNED_TRACKED with repair_batch=3, repair_evidence_digest. New counts: 53 ALIGNED, 0 VERIFIED, 79 PENDING, 12 NV, 2 SUPERSEDED.
+- `docs/migrations/101-246-repair-allowlist.json` — Cleared to empty array (all Batch 3 versions now repaired).
+- `scripts/validate-migration-repair-allowlist.mjs` — Updated expected counts: ALIGNED=53, VERIFIED=0. Updated repair evidence validation to handle Batch 3 report structure (repair_timestamp, migration_filenames, approved_checksums, tracked_version_snapshot, derived_added/removed sets, confirmations.every_approved_version_appears_exactly_once).
+- `lib/__tests__/migration-repair-validator.test.ts` — Updated integration tests for post-Batch-3-repair state (45 repaired, 3 repair files, counts 53/0/79). Added Batch 3 repair-specific tests: pre/post total (133->148), pre/post range (38->53), valid Batch 1+2+3 evidence, all 45 digests recompute.
+- `docs/migrations/101-246-repair-runbook.md` — Batch 3 marked repair COMPLETE. 79 candidates remain for Batches 4-9.
+- `docs/MIGRATION_REGISTRY.md` — 15 Batch 3 versions updated from "verified (repair pending)" to "Batch 3 repaired (tracked)".
+- `docs/engineering-status.json` — OPS-001 updated: Batch 3 repair complete, 45 total repaired, next action = merge evidence PR then begin Batch 4.
+  - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — migration-history metadata repair only; no migration SQL executed, no schema or application-data change, no deployment.
+
 ### Operations: Batch 3 migration production verification recorded (15 versions)
 - `docs/migrations/evidence/batch-03-production-verification.json` — Verification evidence for 15 versions (139-153). 91 object checks: 88 passed, 3 superseded, 0 failed, 0 ambiguous.
 - `docs/migrations/evidence/batch-03-production-verification.md` — Verification summary.
