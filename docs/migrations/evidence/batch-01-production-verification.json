@@ -1,0 +1,959 @@
+{
+  "main_sha": "761fdf8895079488ead7f8e4d5e359e4262a89ae",
+  "batch_number": 1,
+  "verification_timestamp": "2026-07-28T11:57:05.694160+00:00",
+  "versions": [
+    "102",
+    "103",
+    "104",
+    "106",
+    "108",
+    "109",
+    "110",
+    "111",
+    "112",
+    "113",
+    "114",
+    "116",
+    "117",
+    "118",
+    "120"
+  ],
+  "total_objects_checked": 94,
+  "total_passed": 93,
+  "total_failed": 1,
+  "classifications": {
+    "102": "VERIFIED_APPLIED_UNTRACKED",
+    "103": "VERIFIED_APPLIED_UNTRACKED",
+    "104": "VERIFIED_APPLIED_UNTRACKED",
+    "106": "VERIFIED_APPLIED_UNTRACKED",
+    "108": "VERIFIED_APPLIED_UNTRACKED",
+    "109": "VERIFIED_APPLIED_UNTRACKED",
+    "110": "VERIFIED_APPLIED_UNTRACKED",
+    "111": "VERIFIED_APPLIED_UNTRACKED",
+    "112": "VERIFIED_APPLIED_UNTRACKED",
+    "113": "VERIFIED_APPLIED_UNTRACKED",
+    "114": "VERIFIED_APPLIED_UNTRACKED",
+    "116": "VERIFIED_APPLIED_UNTRACKED",
+    "117": "VERIFIED_APPLIED_UNTRACKED",
+    "118": "VERIFIED_APPLIED_UNTRACKED",
+    "120": "VERIFIED_APPLIED_UNTRACKED"
+  },
+  "classification_counts": {
+    "VERIFIED_APPLIED_UNTRACKED": 15
+  },
+  "migrations": [
+    {
+      "version": "102",
+      "filename": "102_service_availability.sql",
+      "checksum": "15225e4893722caf2792a337897d4d396b3c71518ba25280d2e3221091e05720",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "column",
+          "object_name": "services.available_days",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "services.available_from",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "services.available_to",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "services.staff_ids",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "services.allow_staff_selection",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "services.requires_staff",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 6,
+      "failed": 0
+    },
+    {
+      "version": "103",
+      "filename": "103_service_features.sql",
+      "checksum": "0df8ff75391362af4fd965d8e8d599953080e9853ce62932c3685d421cc4e2c6",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "table",
+          "object_name": "service_addons",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "services.is_package",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "services.included_service_ids",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "bookings.venue_name",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "bookings.venue_address",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "bookings.end_date",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "bookings.addons_snapshot",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "services.gallery_urls",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "services.quote_enabled",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "quote_requests.service_id",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "quote_requests.quote_type",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_service_addons_business",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_service_addons_service",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "service_addons_select",
+          "expected_state": "exists",
+          "verified_state": "false",
+          "result": "superseded",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00",
+          "note": "Replaced by service_addons_owner_read in migration 144 (security tightening)"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "service_addons_insert",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "service_addons_update",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "service_addons_delete",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "service_addons",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 17,
+      "failed": 1
+    },
+    {
+      "version": "104",
+      "filename": "104_event_services_category.sql",
+      "checksum": "f2e0537fbf456ce8c1d8f1ce8b893977ef19d96fd9d89a3e5c83e9d5adc387c2",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.event_services",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "version": "106",
+      "filename": "106_new_subcategories.sql",
+      "checksum": "be27008464c1a757e24fbc6bc464eacee4e0887b47e88692565c5d1ae0434a56",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.nail_tech",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.mua",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.pet_grooming",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.therapy",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.bakery",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.mechanic",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.cleaning",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.plumber",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.pest_control",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.driving_school",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.music_studio",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.legal",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.daycare",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.printing",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.car_rental",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.supermarket",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.security",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "business_category.accounting",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 18,
+      "failed": 0
+    },
+    {
+      "version": "108",
+      "filename": "108_refund_requests.sql",
+      "checksum": "88eaa936e0488728022b60c1cbbbf2062c15701c1787e90ef2d3f4cde388ea29",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "table",
+          "object_name": "refund_requests",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_refund_requests_business",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_refund_requests_status",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "admin_all_refund_requests",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "owners_view_refund_requests",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "refund_requests",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 6,
+      "failed": 0
+    },
+    {
+      "version": "109",
+      "filename": "109_campaign_donations.sql",
+      "checksum": "2c5b90f247da88570330fd0496b4dfc8bd98d60586913194c2cf9c2aef2fd3d5",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "table",
+          "object_name": "campaign_donations",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "payments.campaign_id",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_campaign_donations_campaign",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_campaign_donations_business",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "admin_all_campaign_donations",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "owners_view_campaign_donations",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "campaign_donations",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 7,
+      "failed": 0
+    },
+    {
+      "version": "110",
+      "filename": "110_queue_realtime.sql",
+      "checksum": "64c083e496b0f27a94d442cb860bfda1812d9ac9e6d4d5f69c93247b9e2a5700",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "publication",
+          "object_name": "supabase_realtime:queue_entries",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "version": "111",
+      "filename": "111_feedback_improvements.sql",
+      "checksum": "8b4b51dfffea7fdcd9d6cb3cd662a2a14909c69c0bd019f33701fe65a5c9f8e3",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "column",
+          "object_name": "customer_feedback.business_response",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "customer_feedback.responded_at",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "function",
+          "object_name": "update_business_rating",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "trigger",
+          "object_name": "trg_update_business_rating",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 4,
+      "failed": 0
+    },
+    {
+      "version": "112",
+      "filename": "112_campaign_donation_limits.sql",
+      "checksum": "1a5121856df073521da2fb513bd33d6b50745e46d48b1510d793e30a324e0f4b",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "column",
+          "object_name": "campaigns.min_donation",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "campaigns.max_donation",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "version": "113",
+      "filename": "113_add_missing_capability_enum_values.sql",
+      "checksum": "25d2463bde977c497aa40f23695a8789b53f37da29e3610243a2df532339a914",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "enum_value",
+          "object_name": "capability_type.survey",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "capability_type.reports",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "capability_type.queue",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 3,
+      "failed": 0
+    },
+    {
+      "version": "114",
+      "filename": "114_event_ticket_types.sql",
+      "checksum": "ee96025c4fcd7806317fe7918bb0f494583a8baa587063cad2a08baf96c92f1c",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "table",
+          "object_name": "event_ticket_types",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "event_tickets.ticket_type_id",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "event_tickets.ticket_type_name",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "event_ticket_types_owner_select",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "event_ticket_types_owner_insert",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "event_ticket_types_owner_update",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "event_ticket_types_owner_delete",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "event_ticket_types_service_all",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "event_ticket_types",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "version": "116",
+      "filename": "116_document_share_improvements.sql",
+      "checksum": "3e3d48fbe8eb8551339ba91dfc66ae6ea748cdc6de5eda6fc600bdfab93f725d",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "column",
+          "object_name": "customer_reports.file_size",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "customer_reports.access_token",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "customer_reports.access_count",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_customer_reports_biz_size",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_customer_reports_access_token",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 5,
+      "failed": 0
+    },
+    {
+      "version": "117",
+      "filename": "117_appointments_table.sql",
+      "checksum": "3463257958a28c31fdb6e5908cb0f52ea5c75ed88e7e64fc8f3277bcb70214e1",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "table",
+          "object_name": "appointments",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "bookings.appointment_id",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_appointments_business",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "appointments_owner_select",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "appointments_owner_insert",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "appointments_owner_update",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "appointments_owner_delete",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "appointments_service_all",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "flow_type.appointment",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "enum_value",
+          "object_name": "capability_type.appointment",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "appointments",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 11,
+      "failed": 0
+    },
+    {
+      "version": "118",
+      "filename": "118_event_self_checkin.sql",
+      "checksum": "6a16ccf5d3e2b3cdcffdf5f4baeaa4b2814e5abdbf759e79c6462a4f4695efae",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "column",
+          "object_name": "events.self_checkin_enabled",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "version": "120",
+      "filename": "120_auto_approve.sql",
+      "checksum": "dc63025ea1e283db62c771823cb2a7f1b3cced470009226327972fa0f4a56f7e",
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "objects": [
+        {
+          "object_type": "column",
+          "object_name": "appointments.auto_approve",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        },
+        {
+          "object_type": "column",
+          "object_name": "services.auto_approve",
+          "expected_state": "exists",
+          "verified_state": "true",
+          "result": "pass",
+          "verification_timestamp": "2026-07-28T11:57:05.694160+00:00"
+        }
+      ],
+      "passed": 2,
+      "failed": 0
+    }
+  ],
+  "failed_objects": [
+    {
+      "version": "103",
+      "type": "policy",
+      "name": "service_addons_select",
+      "note": "service_addons_select superseded by service_addons_owner_read (mig 144)"
+    }
+  ],
+  "no_write_occurred": true
+}

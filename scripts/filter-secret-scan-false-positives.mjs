@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
  * Filters secret-scanning matches from git diff, applying narrow exemptions
- * for SHA-256 checksum fields in docs/migrations/*.json only.
+ * for SHA-256 checksum fields in docs/migrations/*.json and docs/migrations/evidence/*.json only.
  *
  * Usage: git diff --cached -U0 | node scripts/filter-secret-scan-false-positives.mjs <PATTERN>
  *
  * Reads unified diff from stdin, applies the secret pattern, then exempts
  * only lines where:
- * - The current file is docs/migrations/*.json
- * - The line is a JSON property with key "checksum", "local_checksum", or "evidence_digest"
+ * - The current file is docs/migrations/*.json or docs/migrations/evidence/*.json
+ * - The line is a JSON property with key "checksum", "local_checksum", "evidence_digest", or "production_evidence_digest"
  * - The value is exactly a 64-character lowercase hexadecimal string
  *
  * Outputs only genuine (non-exempt) matches, one per line, prefixed with filename.
@@ -21,8 +21,8 @@ if (!combinedPattern) {
 }
 
 const secretRegex = new RegExp(combinedPattern, 'i');
-const exemptKeyRegex = /^\+\s*"(checksum|local_checksum|evidence_digest)"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$/;
-const migrationJsonPath = /^docs\/migrations\/[^/]+\.json$/;
+const exemptKeyRegex = /^\+\s*"(checksum|local_checksum|evidence_digest|production_evidence_digest)"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$/;
+const migrationJsonPath = /^docs\/migrations\/(evidence\/)?[^/]+\.json$/;
 
 let currentFile = '';
 const rl = createInterface({ input: process.stdin });
