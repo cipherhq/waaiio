@@ -54,8 +54,8 @@ describe('Migration 297: Real PostgreSQL trigger tests', () => {
   let beforeTriggerNames: string[] = [];
   let triggerAlreadyExisted = false;
   let testBizId = '';
-  const TEST_BIZ_ID = 'm297bbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
-  const TEST_USER_ID = 'm297aaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  const TEST_BIZ_ID = 'a297bbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  const TEST_USER_ID = 'a297aaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 
   beforeAll(() => {
     // Detect CI (full schema) vs local (empty DB)
@@ -94,8 +94,8 @@ describe('Migration 297: Real PostgreSQL trigger tests', () => {
         INSERT INTO auth.users (id, email) VALUES ('${TEST_USER_ID}', 'm297test@test.local') ON CONFLICT DO NOTHING;
         ALTER TABLE auth.users ENABLE TRIGGER ALL;
         INSERT INTO profiles (id, first_name, last_name, email) VALUES ('${TEST_USER_ID}', 'M297', 'Test', 'm297test@test.local') ON CONFLICT DO NOTHING;
-        INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code)
-        VALUES ('${TEST_BIZ_ID}', 'M297 Test Biz', 'm297-test-biz', '${TEST_USER_ID}', '1 Test', 'Test', 'Test', '+0', 'active', 'NG')
+        INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code, verification_level)
+        VALUES ('${TEST_BIZ_ID}', 'M297 Test Biz', 'm297-test-biz', '${TEST_USER_ID}', '1 Test', 'Test', 'Test', '+0', 'active', 'NG', 'basic')
         ON CONFLICT (slug) DO NOTHING;
       `);
       testBizId = TEST_BIZ_ID;
