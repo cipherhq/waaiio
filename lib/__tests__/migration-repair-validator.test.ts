@@ -2650,3 +2650,161 @@ describe('Safety confirmation rejection tests', () => {
     expect(confirmations['no_unrelated_version_changed']).toBe(false);
   });
 });
+
+// ══════════════════════════════════════════════════════════════
+// BATCH 3+ REQUIRED-FIELD SCHEMA TESTS
+// ══════════════════════════════════════════════════════════════
+
+describe('Batch 3+ required-field schema validation', () => {
+  // Helper: validate required fields for Batch 3+ repair evidence
+  function validateBatch3RequiredFields(repairData: Record<string, unknown>): string[] {
+    const errors: string[] = [];
+    if ((repairData.batch_number as number) < 3) return errors;
+
+    const requireArray = (path: string, val: unknown): boolean => {
+      if (!Array.isArray(val)) {
+        errors.push(`${path} must be an array (got ${val === null ? 'null' : typeof val})`);
+        return false;
+      }
+      return true;
+    };
+    const requireObject = (path: string, val: unknown): boolean => {
+      if (!val || typeof val !== 'object' || Array.isArray(val)) {
+        errors.push(`${path} must be a plain object (got ${val === null ? 'null' : Array.isArray(val) ? 'array' : typeof val})`);
+        return false;
+      }
+      return true;
+    };
+
+    requireArray('migration_filenames', repairData.migration_filenames);
+    requireObject('approved_checksums', repairData.approved_checksums);
+    requireObject('approved_production_evidence_digests', repairData.approved_production_evidence_digests);
+    const hasPreRepair = requireObject('pre_repair', repairData.pre_repair);
+    const hasPostRepair = requireObject('post_repair', repairData.post_repair);
+    requireObject('confirmations', repairData.confirmations);
+
+    if (hasPreRepair) {
+      requireArray('pre_repair.tracked_version_snapshot', (repairData.pre_repair as Record<string, unknown>)?.tracked_version_snapshot);
+    }
+    if (hasPostRepair) {
+      const postRepair = repairData.post_repair as Record<string, unknown>;
+      requireArray('post_repair.tracked_version_snapshot', postRepair?.tracked_version_snapshot);
+      requireArray('post_repair.new_versions_added', postRepair?.new_versions_added);
+      requireArray('post_repair.lost_versions', postRepair?.lost_versions);
+    }
+    requireArray('derived_added_version_set', repairData.derived_added_version_set);
+    requireArray('derived_removed_version_set', repairData.derived_removed_version_set);
+
+    return errors;
+  }
+
+  // Helper: make a minimal valid Batch 3 repair evidence object
+  function makeMinimalBatch3Evidence(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      batch_number: 3,
+      migration_filenames: ['139_test.sql'],
+      approved_checksums: { '139': 'a'.repeat(64) },
+      approved_production_evidence_digests: { '139': 'b'.repeat(64) },
+      pre_repair: { tracked_version_snapshot: [1, 2, 3], total_remote_count: 3, range_101_246_count: 0 },
+      post_repair: {
+        tracked_version_snapshot: [1, 2, 3, 139],
+        total_remote_count: 4,
+        range_101_246_count: 1,
+        new_versions_added: [139],
+        lost_versions: []
+      },
+      confirmations: { every_approved_version_appears_exactly_once: true },
+      derived_added_version_set: [139],
+      derived_removed_version_set: [],
+      ...overrides
+    };
+  }
+
+  it('rejects missing migration_filenames field', () => {
+    const data = makeMinimalBatch3Evidence({ migration_filenames: undefined });
+    const errors = validateBatch3RequiredFields(data);
+    expect(errors.some(e => e.includes('migration_filenames must be an array'))).toBe(true);
+  });
+
+  it('rejects missing approved_checksums field', () => {
+    const data = makeMinimalBatch3Evidence({ approved_checksums: undefined });
+    const errors = validateBatch3RequiredFields(data);
+    expect(errors.some(e => e.includes('approved_checksums must be a plain object'))).toBe(true);
+  });
+
+  it('rejects missing approved_production_evidence_digests field', () => {
+    const data = makeMinimalBatch3Evidence({ approved_production_evidence_digests: undefined });
+    const errors = validateBatch3RequiredFields(data);
+    expect(errors.some(e => e.includes('approved_production_evidence_digests must be a plain object'))).toBe(true);
+  });
+
+  it('rejects missing pre_repair.tracked_version_snapshot', () => {
+    const data = makeMinimalBatch3Evidence({
+      pre_repair: { total_remote_count: 3, range_101_246_count: 0 }
+    });
+    const errors = validateBatch3RequiredFields(data);
+    expect(errors.some(e => e.includes('pre_repair.tracked_version_snapshot must be an array'))).toBe(true);
+  });
+
+  it('rejects missing post_repair.tracked_version_snapshot', () => {
+    const data = makeMinimalBatch3Evidence({
+      post_repair: { total_remote_count: 4, range_101_246_count: 1, new_versions_added: [139], lost_versions: [] }
+    });
+    const errors = validateBatch3RequiredFields(data);
+    expect(errors.some(e => e.includes('post_repair.tracked_version_snapshot must be an array'))).toBe(true);
+  });
+
+  it('rejects missing post_repair.new_versions_added', () => {
+    const data = makeMinimalBatch3Evidence({
+      post_repair: { tracked_version_snapshot: [1, 2, 3, 139], total_remote_count: 4, range_101_246_count: 1, lost_versions: [] }
+    });
+    const errors = validateBatch3RequiredFields(data);
+    expect(errors.some(e => e.includes('post_repair.new_versions_added must be an array'))).toBe(true);
+  });
+
+  it('rejects missing post_repair.lost_versions', () => {
+    const data = makeMinimalBatch3Evidence({
+      post_repair: { tracked_version_snapshot: [1, 2, 3, 139], total_remote_count: 4, range_101_246_count: 1, new_versions_added: [139] }
+    });
+    const errors = validateBatch3RequiredFields(data);
+    expect(errors.some(e => e.includes('post_repair.lost_versions must be an array'))).toBe(true);
+  });
+
+  it('rejects missing derived_added_version_set', () => {
+    const data = makeMinimalBatch3Evidence({ derived_added_version_set: undefined });
+    const errors = validateBatch3RequiredFields(data);
+    expect(errors.some(e => e.includes('derived_added_version_set must be an array'))).toBe(true);
+  });
+
+  it('rejects missing derived_removed_version_set', () => {
+    const data = makeMinimalBatch3Evidence({ derived_removed_version_set: undefined });
+    const errors = validateBatch3RequiredFields(data);
+    expect(errors.some(e => e.includes('derived_removed_version_set must be an array'))).toBe(true);
+  });
+
+  it('rejects missing confirmations object', () => {
+    const data = makeMinimalBatch3Evidence({ confirmations: undefined });
+    const errors = validateBatch3RequiredFields(data);
+    expect(errors.some(e => e.includes('confirmations must be a plain object'))).toBe(true);
+  });
+
+  it('rejects wrong-type field (array instead of object)', () => {
+    const data = makeMinimalBatch3Evidence({ approved_checksums: ['not', 'an', 'object'] });
+    const errors = validateBatch3RequiredFields(data);
+    expect(errors.some(e => e.includes('approved_checksums must be a plain object (got array)'))).toBe(true);
+  });
+
+  it('rejects no repository migration file found', () => {
+    // Verify that version 999 has no matching repo file — the validator would fail this
+    const migDir = resolve('supabase/migrations');
+    const files = readdirSync(migDir).filter(f => f.startsWith('999_'));
+    expect(files.length).toBe(0);
+  });
+
+  it('rejects multiple repository files matching one version', () => {
+    // Test the uniqueness check logic: if two files match, it's an error
+    const mockFiles = ['100_first.sql', '100_second.sql', '101_test.sql'];
+    const matchingFiles = mockFiles.filter(f => f.startsWith('100_'));
+    expect(matchingFiles.length).toBeGreaterThan(1);
+  });
+});

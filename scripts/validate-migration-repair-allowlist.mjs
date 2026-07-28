@@ -1080,6 +1080,44 @@ for (const { file, batchNumber, data: repairData } of allRepairBatches) {
     pass(`Repair Batch ${batchNumber} timestamp valid UTC`);
   }
 
+  // ── Required Batch 3+ structure ──
+  if (repairData.batch_number >= 3) {
+    let structErrors = 0;
+    const requireArray = (path, val) => {
+      if (!Array.isArray(val)) { fail(`Repair batch ${batchNumber}: ${path} must be an array (got ${val === null ? 'null' : typeof val})`); structErrors++; repairErrors++; return false; }
+      return true;
+    };
+    const requireObject = (path, val) => {
+      if (!val || typeof val !== 'object' || Array.isArray(val)) { fail(`Repair batch ${batchNumber}: ${path} must be a plain object (got ${val === null ? 'null' : Array.isArray(val) ? 'array' : typeof val})`); structErrors++; repairErrors++; return false; }
+      return true;
+    };
+
+    const hasMigrationFilenames = requireArray('migration_filenames', repairData.migration_filenames);
+    const hasApprovedChecksums = requireObject('approved_checksums', repairData.approved_checksums);
+    const hasApprovedPED = requireObject('approved_production_evidence_digests', repairData.approved_production_evidence_digests);
+    const hasPreRepair = requireObject('pre_repair', repairData.pre_repair);
+    const hasPostRepair = requireObject('post_repair', repairData.post_repair);
+    const hasConfirmations = requireObject('confirmations', repairData.confirmations);
+
+    let hasPreSnapshot = false, hasPostSnapshot = false;
+    if (hasPreRepair) {
+      hasPreSnapshot = requireArray('pre_repair.tracked_version_snapshot', repairData.pre_repair?.tracked_version_snapshot);
+    }
+    if (hasPostRepair) {
+      hasPostSnapshot = requireArray('post_repair.tracked_version_snapshot', repairData.post_repair?.tracked_version_snapshot);
+      requireArray('post_repair.new_versions_added', repairData.post_repair?.new_versions_added);
+      requireArray('post_repair.lost_versions', repairData.post_repair?.lost_versions);
+    }
+    requireArray('derived_added_version_set', repairData.derived_added_version_set);
+    requireArray('derived_removed_version_set', repairData.derived_removed_version_set);
+
+    if (structErrors > 0) {
+      fail(`Repair batch ${batchNumber}: ${structErrors} required fields missing or wrong type — skipping dependent checks`);
+      continue; // Skip dependent validation for this batch
+    }
+    pass(`Repair Batch ${batchNumber} all required structural fields present`);
+  }
+
   // ── 2c. Exact version-set equality (4-5 sets must match) ──
   const approvedSet = new Set(repairData.approved_versions.map(String));
   const resultSet = new Set(repairData.repair_results.map(r => String(r.version)));
@@ -1157,9 +1195,16 @@ for (const { file, batchNumber, data: repairData } of allRepairBatches) {
         fail(`Repair batch ${batchNumber} version ${ver}: checksum mismatch with manifest`);
         csErrors++; repairErrors++;
       }
-      // Also verify against actual repository file
-      const repoFile = migrationFiles.find(f => f.startsWith(ver + '_'));
-      if (repoFile) {
+      // Also verify against actual repository file — require exactly one match
+      const matchingFiles = migrationFiles.filter(f => f.startsWith(ver + '_'));
+      if (matchingFiles.length === 0) {
+        fail(`Repair batch ${batchNumber} version ${ver}: no repository migration file found`);
+        csErrors++; repairErrors++;
+      } else if (matchingFiles.length > 1) {
+        fail(`Repair batch ${batchNumber} version ${ver}: multiple repository files match: ${matchingFiles.join(', ')}`);
+        csErrors++; repairErrors++;
+      } else {
+        const repoFile = matchingFiles[0];
         const content = readFileSync(resolve(MIGRATIONS_DIR, repoFile), 'utf-8');
         const sha256 = createHash('sha256').update(content).digest('hex');
         if (cs !== sha256) {
@@ -1266,16 +1311,45 @@ for (const { file, batchNumber, data: repairData } of allRepairBatches) {
     }
 
     // Cross-validate with explicit fields
-    if (repairData.post_repair.new_versions_added) {
-      const newAdded = repairData.post_repair.new_versions_added.map(String).sort((a,b) => parseInt(a)-parseInt(b));
+    // For Batch 3+, these fields are REQUIRED, not optional
+    if (repairData.batch_number >= 3) {
+      // new_versions_added must equal snapshot-derived added set
+      const newAdded = (repairData.post_repair.new_versions_added || []).map(String).sort((a,b) => parseInt(a)-parseInt(b));
       if (JSON.stringify(newAdded) !== JSON.stringify(snapAdded)) {
         fail(`Repair batch ${batchNumber}: post_repair.new_versions_added doesn't match snapshot-derived added set`);
         repairErrors++;
       }
-    }
-    if (repairData.post_repair.lost_versions && repairData.post_repair.lost_versions.length > 0) {
-      fail(`Repair batch ${batchNumber}: post_repair.lost_versions is non-empty`);
-      repairErrors++;
+      // lost_versions must equal snapshot-derived removed set (empty)
+      const lost = (repairData.post_repair.lost_versions || []).map(String);
+      if (lost.length > 0) {
+        fail(`Repair batch ${batchNumber}: post_repair.lost_versions is non-empty: ${lost.join(',')}`);
+        repairErrors++;
+      }
+      // derived_added_version_set must equal snapshot-derived added set
+      if (repairData.derived_added_version_set) {
+        const explicitAdded = repairData.derived_added_version_set.map(String).sort((a,b) => parseInt(a)-parseInt(b));
+        if (JSON.stringify(explicitAdded) !== JSON.stringify(snapAdded)) {
+          fail(`Repair batch ${batchNumber}: derived_added_version_set doesn't match snapshot-derived added set`);
+          repairErrors++;
+        }
+      }
+      // derived_removed_version_set must equal snapshot-derived removed set (empty)
+      if (repairData.derived_removed_version_set && repairData.derived_removed_version_set.length > 0) {
+        fail(`Repair batch ${batchNumber}: derived_removed_version_set is non-empty`);
+        repairErrors++;
+      }
+    } else {
+      if (repairData.post_repair.new_versions_added) {
+        const newAdded = repairData.post_repair.new_versions_added.map(String).sort((a,b) => parseInt(a)-parseInt(b));
+        if (JSON.stringify(newAdded) !== JSON.stringify(snapAdded)) {
+          fail(`Repair batch ${batchNumber}: post_repair.new_versions_added doesn't match snapshot-derived added set`);
+          repairErrors++;
+        }
+      }
+      if (repairData.post_repair.lost_versions && repairData.post_repair.lost_versions.length > 0) {
+        fail(`Repair batch ${batchNumber}: post_repair.lost_versions is non-empty`);
+        repairErrors++;
+      }
     }
 
     pass(`Repair Batch ${batchNumber} snapshot validation passed`);
@@ -1298,8 +1372,8 @@ for (const { file, batchNumber, data: repairData } of allRepairBatches) {
 
     let confErrors = 0;
     for (const key of requiredConfirmations) {
-      if (repairData.confirmations[key] !== true) {
-        fail(`Repair batch ${batchNumber}: confirmation "${key}" is not true (got: ${repairData.confirmations[key]})`);
+      if (!(key in repairData.confirmations) || repairData.confirmations[key] !== true) {
+        fail(`Repair batch ${batchNumber}: confirmation "${key}" must be boolean true (got: ${JSON.stringify(repairData.confirmations[key])})`);
         confErrors++; repairErrors++;
       }
     }
