@@ -5,6 +5,31 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-28
+
+### Database: Complete Migration 115 properties trigger (Migration 297)
+- `supabase/migrations/297_complete_migration_115_trigger.sql` — Forward trigger creation. Creates the missing `properties_updated_at` trigger on `public.properties` using the existing `public.update_updated_at()` function. BEFORE UPDATE, FOR EACH ROW. Idempotent via pg_trigger check. Fails clearly if prerequisites are missing. No data backfill required.
+- `lib/__tests__/migration-297-trigger.test.ts` — 12 static migration-source tests verifying: correct target table, trigger name, timing, row-level, function call, idempotency guard, no schema/data modifications, prerequisite checks.
+- `lib/__tests__/migration-297-trigger-db.test.ts` — 18 real PostgreSQL tests verifying: prerequisite existence, trigger creation, trigger properties (enabled, BEFORE, UPDATE, row-level, target table, function), behaviour (updated_at advances on UPDATE), function hash preservation, no unrelated triggers, row count preservation, idempotent second application.
+- `.github/workflows/ci.yml` — Added "Migration 297 trigger tests" CI step with zero-skip enforcement.
+- `docs/MIGRATION_REGISTRY.md` — Migration 297 registered as pending review. Migration 296 updated to production-verified (#62). Migrations 176, 181, 182 individually recorded. Migration 115 noted as partially applied. Migration 244 corrected to production-verified. Next available version updated to 298.
+- `docs/engineering-status.json` — OPS-001 updated: reconciled to main SHA ae537205, PR #62 added, migrations 244/295/296 production-verified, 176/181/182 individually recorded, Migration 297 created.
+- `docs/ENGINEERING_STATUS.md` — OPS-001 row updated with PR #62 and merge SHA ae537205.
+- `CHANGELOG.md` — This entry.
+  - **Affects:** `properties_updated_at` trigger on `public.properties` table
+  - **Could break:** Nothing — trigger-only change using existing function. No data or schema modifications.
+  - **Production has NOT been modified by this PR** — Migration 297 must be reviewed, merged, and applied separately.
+
+### Operations: Record Migrations 176, 181, 182 individual verification
+- `docs/MIGRATION_REGISTRY.md` — Migrations 176 (api_keys), 181 (recurring_charge_rpc), 182 (recurring_bookings) individually verified and recorded as present in production. 2026-07-28.
+  - **Affects:** Engineering ledgers and Issue #53 tracking only
+  - **Could break:** Nothing — documentation only
+
+### Operations: Record Migration 296 production verification
+- `docs/MIGRATION_REGISTRY.md` — Migration 296 (restrict_sensitive_rpc_execution) status updated to applied to production (verified), PR #62.
+  - **Affects:** Engineering ledgers only
+  - **Could break:** Nothing — documentation only
+
 ## 2026-07-27
 
 ### Security: Restrict 7 sensitive RPC EXECUTE privileges (Migration 296)
