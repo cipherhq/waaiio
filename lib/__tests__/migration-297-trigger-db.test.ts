@@ -53,6 +53,9 @@ describe('Migration 297: Real PostgreSQL trigger tests', () => {
   let beforeRowCount = '';
   let beforeTriggerNames: string[] = [];
   let triggerAlreadyExisted = false;
+  let testBizId = '';
+  const TEST_BIZ_ID = 'm297bbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  const TEST_USER_ID = 'm297aaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 
   beforeAll(() => {
     // Detect CI (full schema) vs local (empty DB)
@@ -82,6 +85,20 @@ describe('Migration 297: Real PostgreSQL trigger tests', () => {
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
       `);
+    }
+
+    if (isFullSchema) {
+      // CI mode: create a test business for FK constraints
+      runSQL(`
+        ALTER TABLE auth.users DISABLE TRIGGER ALL;
+        INSERT INTO auth.users (id, email) VALUES ('${TEST_USER_ID}', 'm297test@test.local') ON CONFLICT DO NOTHING;
+        ALTER TABLE auth.users ENABLE TRIGGER ALL;
+        INSERT INTO profiles (id, first_name, last_name, email) VALUES ('${TEST_USER_ID}', 'M297', 'Test', 'm297test@test.local') ON CONFLICT DO NOTHING;
+        INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code)
+        VALUES ('${TEST_BIZ_ID}', 'M297 Test Biz', 'm297-test-biz', '${TEST_USER_ID}', '1 Test', 'Test', 'Test', '+0', 'active', 'NG')
+        ON CONFLICT (slug) DO NOTHING;
+      `);
+      testBizId = TEST_BIZ_ID;
     }
 
     // Check if trigger already exists (CI mode where Migration 297 was applied in "Apply all migrations")
@@ -119,9 +136,18 @@ describe('Migration 297: Real PostgreSQL trigger tests', () => {
 
   afterAll(() => {
     // Clean up test data
-    runSQL(`DELETE FROM public.properties WHERE name = '__m297_test_row__';`);
+    runSQL(`DELETE FROM public.properties WHERE name LIKE '__m297_%';`);
 
-    if (!isFullSchema) {
+    if (isFullSchema) {
+      // Clean up test business
+      runSQL(`DELETE FROM businesses WHERE slug = 'm297-test-biz';`);
+      runSQL(`DELETE FROM profiles WHERE id = '${TEST_USER_ID}';`);
+      runSQL(`
+        ALTER TABLE auth.users DISABLE TRIGGER ALL;
+        DELETE FROM auth.users WHERE id = '${TEST_USER_ID}';
+        ALTER TABLE auth.users ENABLE TRIGGER ALL;
+      `);
+    } else {
       // Local mode: drop table and function
       runSQL(`DROP TABLE IF EXISTS public.properties;`);
       runSQL(`DROP FUNCTION IF EXISTS public.update_updated_at();`);
@@ -234,17 +260,10 @@ describe('Migration 297: Real PostgreSQL trigger tests', () => {
   // ── Behaviour test ──
 
   it('trigger advances updated_at on UPDATE', () => {
-    // In CI full schema, business_id NOT NULL with FK to businesses — need a valid business
-    let bizId: string | null = null;
-    if (isFullSchema) {
-      const bizResult = runSQL(`SELECT id FROM public.businesses LIMIT 1;`);
-      bizId = bizResult.stdout || null;
-    }
-
     // Insert a test row with required columns
-    const insertSql = bizId
+    const insertSql = isFullSchema
       ? `INSERT INTO public.properties (business_id, name, property_type, updated_at)
-         VALUES ('${bizId}', '__m297_test_row__', 'apartment', '2020-01-01T00:00:00Z')
+         VALUES ('${testBizId}', '__m297_test_row__', 'apartment', '2020-01-01T00:00:00Z')
          RETURNING id;`
       : `INSERT INTO public.properties (name, updated_at)
          VALUES ('__m297_test_row__', '2020-01-01T00:00:00Z')
@@ -328,16 +347,9 @@ describe('Migration 297: Real PostgreSQL trigger tests', () => {
   });
 
   it('trigger behaviour still works after second application', () => {
-    // In CI full schema, need a valid business_id
-    let bizId: string | null = null;
-    if (isFullSchema) {
-      const bizResult = runSQL(`SELECT id FROM public.businesses LIMIT 1;`);
-      bizId = bizResult.stdout || null;
-    }
-
-    const insertSql = bizId
+    const insertSql = isFullSchema
       ? `INSERT INTO public.properties (business_id, name, property_type, updated_at)
-         VALUES ('${bizId}', '__m297_test_row__', 'apartment', '2020-01-01T00:00:00Z')
+         VALUES ('${testBizId}', '__m297_test_row__', 'apartment', '2020-01-01T00:00:00Z')
          RETURNING id;`
       : `INSERT INTO public.properties (name, updated_at)
          VALUES ('__m297_test_row__', '2020-01-01T00:00:00Z')
