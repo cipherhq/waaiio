@@ -2808,3 +2808,151 @@ describe('Batch 3+ required-field schema validation', () => {
     expect(matchingFiles.length).toBeGreaterThan(1);
   });
 });
+
+// ══════════════════════════════════════════════════════════════
+// CLI INTEGRATION TESTS — execute the real validator script
+// ══════════════════════════════════════════════════════════════
+
+describe('Validator CLI integration tests (real script, temporary fixtures)', () => {
+  const { execSync } = require('child_process');
+  const { mkdirSync, cpSync, rmSync, writeFileSync } = require('fs');
+  const { join } = require('path');
+  const os = require('os');
+
+  // Absolute path to the real validator script
+  const VALIDATOR_SCRIPT = resolve('scripts/validate-migration-repair-allowlist.mjs');
+  // Source directories for fixture setup
+  const SRC_DOCS_MIGRATIONS = resolve('docs/migrations');
+  const SRC_SUPABASE_MIGRATIONS = resolve('supabase/migrations');
+
+  function createTempFixture(): string {
+    const tmpDir = join(os.tmpdir(), `validator-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    mkdirSync(join(tmpDir, 'docs', 'migrations', 'evidence'), { recursive: true });
+    mkdirSync(join(tmpDir, 'supabase', 'migrations'), { recursive: true });
+
+    // Copy manifest, allowlist, candidates
+    cpSync(join(SRC_DOCS_MIGRATIONS, '101-246-production-reconciliation.json'), join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json'));
+    cpSync(join(SRC_DOCS_MIGRATIONS, '101-246-repair-allowlist.json'), join(tmpDir, 'docs', 'migrations', '101-246-repair-allowlist.json'));
+    cpSync(join(SRC_DOCS_MIGRATIONS, '101-246-verification-candidates.json'), join(tmpDir, 'docs', 'migrations', '101-246-verification-candidates.json'));
+
+    // Copy all evidence files
+    const evidenceDir = join(SRC_DOCS_MIGRATIONS, 'evidence');
+    if (existsSync(evidenceDir)) {
+      for (const f of readdirSync(evidenceDir)) {
+        cpSync(join(evidenceDir, f), join(tmpDir, 'docs', 'migrations', 'evidence', f));
+      }
+    }
+
+    // Copy migration SQL files
+    for (const f of readdirSync(SRC_SUPABASE_MIGRATIONS).filter(f => f.endsWith('.sql'))) {
+      cpSync(join(SRC_SUPABASE_MIGRATIONS, f), join(tmpDir, 'supabase', 'migrations', f));
+    }
+
+    return tmpDir;
+  }
+
+  function runValidator(cwd: string): { exitCode: number; output: string } {
+    try {
+      const output = execSync(`node "${VALIDATOR_SCRIPT}"`, { cwd, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] });
+      return { exitCode: 0, output };
+    } catch (err: any) {
+      return { exitCode: err.status || 1, output: (err.stdout || '') + (err.stderr || '') };
+    }
+  }
+
+  function cleanup(tmpDir: string) {
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+
+  // Positive control: unmodified fixtures must pass
+  it('unmodified fixtures pass the real validator', () => {
+    const tmpDir = createTempFixture();
+    try {
+      const { exitCode, output } = runValidator(tmpDir);
+      expect(exitCode).toBe(0);
+      expect(output).toContain('Migration reconciliation validation PASSED');
+    } finally {
+      cleanup(tmpDir);
+    }
+  }, 30000);
+
+  // A. Required map/array section omitted: remove migration_filenames
+  it('rejects Batch 3 repair evidence with migration_filenames removed', () => {
+    const tmpDir = createTempFixture();
+    try {
+      const repairPath = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-03-repair.json');
+      const data = JSON.parse(readFileSync(repairPath, 'utf-8'));
+      delete data.migration_filenames;
+      writeFileSync(repairPath, JSON.stringify(data, null, 2));
+      const { exitCode, output } = runValidator(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toContain('migration_filenames');
+    } finally {
+      cleanup(tmpDir);
+    }
+  }, 30000);
+
+  // B. Snapshot section omitted
+  it('rejects Batch 3 repair evidence with pre_repair.tracked_version_snapshot removed', () => {
+    const tmpDir = createTempFixture();
+    try {
+      const repairPath = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-03-repair.json');
+      const data = JSON.parse(readFileSync(repairPath, 'utf-8'));
+      delete data.pre_repair.tracked_version_snapshot;
+      writeFileSync(repairPath, JSON.stringify(data, null, 2));
+      const { exitCode, output } = runValidator(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toContain('tracked_version_snapshot');
+    } finally {
+      cleanup(tmpDir);
+    }
+  }, 30000);
+
+  // C. Explicit derived set omitted
+  it('rejects Batch 3 repair evidence with derived_added_version_set removed', () => {
+    const tmpDir = createTempFixture();
+    try {
+      const repairPath = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-03-repair.json');
+      const data = JSON.parse(readFileSync(repairPath, 'utf-8'));
+      delete data.derived_added_version_set;
+      writeFileSync(repairPath, JSON.stringify(data, null, 2));
+      const { exitCode, output } = runValidator(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toContain('derived_added_version_set');
+    } finally {
+      cleanup(tmpDir);
+    }
+  }, 30000);
+
+  // D. Complete confirmation object omitted
+  it('rejects Batch 3 repair evidence with confirmations removed', () => {
+    const tmpDir = createTempFixture();
+    try {
+      const repairPath = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-03-repair.json');
+      const data = JSON.parse(readFileSync(repairPath, 'utf-8'));
+      delete data.confirmations;
+      writeFileSync(repairPath, JSON.stringify(data, null, 2));
+      const { exitCode, output } = runValidator(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toContain('confirmations');
+    } finally {
+      cleanup(tmpDir);
+    }
+  }, 30000);
+
+  // E. Repository migration-file binding failure: remove the matching migration file
+  it('rejects when a required migration SQL file is missing from repository', () => {
+    const tmpDir = createTempFixture();
+    try {
+      // Remove migration 139's SQL file
+      const migDir = join(tmpDir, 'supabase', 'migrations');
+      const file139 = readdirSync(migDir).find(f => f.startsWith('139_'));
+      if (file139) rmSync(join(migDir, file139));
+      const { exitCode, output } = runValidator(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/139.*filename mismatch|139.*no.*migration file|139.*checksum mismatch/i);
+    } finally {
+      cleanup(tmpDir);
+    }
+  }, 30000);
+});
