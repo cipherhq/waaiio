@@ -1348,7 +1348,7 @@ describe('Real Batch 1 + Batch 2 + Batch 3 evidence integration (post-repair)', 
     expect(repairedCandidates).toBe(45); // 15 Batch 1 + 15 Batch 2 + 15 Batch 3
 
     // No duplicate versions across repair batches
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    
     const repairs: any[] = repairFiles.map(f =>
       JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8'))
     );
@@ -1734,7 +1734,7 @@ describe('Batch 2 repair-specific validation', () => {
       .sort();
     expect(repairFiles.length).toBe(3);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    
     const repairs: any[] = repairFiles.map(f =>
       JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8'))
     );
@@ -2249,7 +2249,7 @@ describe('Batch 3 repair-specific validation', () => {
   it('Batch 3 pre/post total mismatch (133 to 148)', () => {
     const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
     expect(existsSync(repairPath)).toBe(true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    
     const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
     expect(repairData.pre_repair.total_remote_count).toBe(133);
     expect(repairData.post_repair.total_remote_count).toBe(148);
@@ -2258,7 +2258,7 @@ describe('Batch 3 repair-specific validation', () => {
 
   it('Batch 3 pre/post range mismatch (38 to 53)', () => {
     const repairPath = resolve('docs/migrations/evidence/batch-03-repair.json');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    
     const repairData = JSON.parse(readFileSync(repairPath, 'utf-8')) as any;
     expect(repairData.pre_repair.range_101_246_count).toBe(38);
     expect(repairData.post_repair.range_101_246_count).toBe(53);
@@ -2275,7 +2275,7 @@ describe('Batch 3 repair-specific validation', () => {
     // No duplicate versions across all 3 repair batches
     const allVersions: string[] = [];
     for (const f of repairFiles) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      
       const data = JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8')) as any;
       allVersions.push(...data.approved_versions.map(String));
     }
@@ -2283,11 +2283,11 @@ describe('Batch 3 repair-specific validation', () => {
     expect(allVersions.length).toBe(45);
 
     // Batch 1: 103->118, Batch 2: 118->133, Batch 3: 133->148
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    
     const batch1 = JSON.parse(readFileSync(resolve(evidenceDir, repairFiles[0]), 'utf-8')) as any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    
     const batch2 = JSON.parse(readFileSync(resolve(evidenceDir, repairFiles[1]), 'utf-8')) as any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    
     const batch3 = JSON.parse(readFileSync(resolve(evidenceDir, repairFiles[2]), 'utf-8')) as any;
 
     expect(batch1.pre_repair.total_remote_count).toBe(103);
@@ -2350,7 +2350,7 @@ describe('Batch 3 repair-specific validation', () => {
       .sort();
     const allErrors: string[] = [];
     for (const f of repairFiles) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      
       const repair = JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8')) as any;
       const repairTimestamp = repair.timestamp_utc || repair.repair_timestamp;
       const repairResultsByVersion: Record<string, RepairResult> = {};
