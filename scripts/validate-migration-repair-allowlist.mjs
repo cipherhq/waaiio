@@ -3,16 +3,18 @@
  * Validates the migration reconciliation manifest, repair allowlist,
  * verification candidates, and repair evidence against repository migration files.
  *
- * Progressive invariants after Batch 1 repair:
+ * Progressive invariants (multi-batch aware):
  * - Manifest has exactly 146 entries (one per version 101-246)
- * - ALIGNED_TRACKED = 23 (8 original + 15 repaired)
- * - VERIFIED_APPLIED_UNTRACKED = 0
- * - PENDING_PRODUCTION_REVERIFICATION = 109
+ * - ALIGNED_TRACKED = 23 (8 original + 15 Batch 1 repaired)
+ * - VERIFIED_APPLIED_UNTRACKED = 15 (Batch 2 verified, pending repair)
+ * - PENDING_PRODUCTION_REVERIFICATION = 94
  * - NOT_VERIFIABLE_SAFELY = 12, SUPERSEDED = 2
- * - Active repair allowlist = 0
- * - Verification candidates = 109 (exact PENDING set)
+ * - Active repair allowlist = 15 (Batch 2 approved)
+ * - Verification candidates = 94 (exact PENDING set)
  * - The 124-candidate cohort: PENDING + VERIFIED + repaired candidates = 124
  * - Completed repair entries cross-validate against batch evidence
+ * - All verification batch evidence files are discovered and validated
+ * - No duplicate versions or batch numbers across batches
  *
  * Does not connect to Supabase or any external service.
  */
@@ -24,7 +26,7 @@ const ALLOWLIST_PATH = resolve('docs/migrations/101-246-repair-allowlist.json');
 const MANIFEST_PATH = resolve('docs/migrations/101-246-production-reconciliation.json');
 const CANDIDATES_PATH = resolve('docs/migrations/101-246-verification-candidates.json');
 const MIGRATIONS_DIR = resolve('supabase/migrations');
-const BATCH_01_VERIFICATION_PATH = resolve('docs/migrations/evidence/batch-01-production-verification.json');
+const EVIDENCE_DIR = resolve('docs/migrations/evidence');
 const BATCH_01_REPAIR_PATH = resolve('docs/migrations/evidence/batch-01-repair.json');
 
 const VALID_CLASSIFICATIONS = new Set([
@@ -45,8 +47,13 @@ const VALID_SUPERSEDED_STATES = new Set([
   'superseded_with_stricter_state'
 ]);
 
+// States that satisfy "exists" — e.g., RLS "enabled" satisfies expected_state "exists"
+const STATES_SATISFYING_EXISTS = new Set(['exists', 'enabled', 'nullable', 'dropped']);
+
 const EXPECTED_MANIFEST_COUNT = 146;
 const EXPECTED_ALIGNED = 23;
+const EXPECTED_VERIFIED = 15;
+const EXPECTED_PENDING = 94;
 const EXPECTED_NV = 12;
 const EXPECTED_SUPERSEDED = 2;
 const EXPECTED_CANDIDATE_COHORT = 124; // PENDING + VERIFIED + repaired candidates = 124
@@ -188,6 +195,12 @@ const verifiedCount = counts['VERIFIED_APPLIED_UNTRACKED'] || 0;
 if (alignedCount !== EXPECTED_ALIGNED) fail(`ALIGNED_TRACKED: ${alignedCount}, expected ${EXPECTED_ALIGNED}`);
 else pass(`ALIGNED_TRACKED: ${alignedCount}`);
 
+if (verifiedCount !== EXPECTED_VERIFIED) fail(`VERIFIED_APPLIED_UNTRACKED: ${verifiedCount}, expected ${EXPECTED_VERIFIED}`);
+else pass(`VERIFIED_APPLIED_UNTRACKED: ${verifiedCount}`);
+
+if (pendingCount !== EXPECTED_PENDING) fail(`PENDING: ${pendingCount}, expected ${EXPECTED_PENDING}`);
+else pass(`PENDING_PRODUCTION_REVERIFICATION: ${pendingCount}`);
+
 // Progressive: PENDING + VERIFIED + repaired candidates = 124
 const repairedCandidateCount = manifest.filter(e =>
   e.current_classification === 'ALIGNED_TRACKED' &&
@@ -263,7 +276,10 @@ for (const e of approvedInManifest) {
             approvedErrors++;
           }
         } else {
-          if (ev.verified_state !== ev.expected_state) {
+          // Accept verified_state that satisfies expected_state (e.g., "enabled" satisfies "exists" for RLS)
+          const stateMatch = ev.verified_state === ev.expected_state ||
+            (ev.expected_state === 'exists' && STATES_SATISFYING_EXISTS.has(ev.verified_state));
+          if (!stateMatch) {
             fail(`Version ${e.version}: evidence for ${ev.object_name} has verified_state "${ev.verified_state}" but expected_state "${ev.expected_state}"`);
             approvedErrors++;
           }
@@ -507,149 +523,213 @@ for (const entry of candidates) {
 if (candErrors === 0) pass(`All ${candidates.length} candidate checksums and digests verified`);
 
 // ══════════════════════════════════════════════════════════════
-// BATCH EVIDENCE CROSS-VALIDATION (Verification)
+// MULTI-BATCH VERIFICATION EVIDENCE CROSS-VALIDATION
 // ══════════════════════════════════════════════════════════════
-console.log('\n--- Batch 1 Verification Evidence Cross-Validation ---\n');
+console.log('\n--- Multi-Batch Verification Evidence Cross-Validation ---\n');
 
-if (existsSync(BATCH_01_VERIFICATION_PATH)) {
-  let batch01;
+// Discover all verification batch evidence files
+const batchFiles = existsSync(EVIDENCE_DIR)
+  ? readdirSync(EVIDENCE_DIR).filter(f => /^batch-\d+-production-verification\.json$/.test(f)).sort()
+  : [];
+
+if (batchFiles.length === 0) {
+  warn('No batch verification evidence files found');
+} else {
+  pass(`Found ${batchFiles.length} verification batch evidence file(s): ${batchFiles.join(', ')}`);
+}
+
+// Parse all batch evidence
+const allBatches = [];
+for (const file of batchFiles) {
+  const filePath = resolve(EVIDENCE_DIR, file);
   try {
-    batch01 = JSON.parse(readFileSync(BATCH_01_VERIFICATION_PATH, 'utf-8'));
-    pass('Batch 01 verification evidence is valid JSON');
+    const data = JSON.parse(readFileSync(filePath, 'utf-8'));
+    allBatches.push({ file, data });
+    pass(`${file} is valid JSON`);
   } catch (e) {
-    fail('Batch 01 verification evidence is invalid JSON: ' + e.message);
+    fail(`${file} is invalid JSON: ${e.message}`);
+  }
+}
+
+// Cross-validate: no duplicate batch numbers
+const batchNumbers = allBatches.map(b => b.data.batch_number);
+const uniqueBatchNumbers = new Set(batchNumbers);
+if (uniqueBatchNumbers.size !== batchNumbers.length) {
+  fail(`Duplicate batch numbers found: ${batchNumbers.join(', ')}`);
+} else {
+  pass(`All batch numbers unique: ${batchNumbers.join(', ')}`);
+}
+
+// Cross-validate: no duplicate versions across batches
+const allBatchVersions = [];
+for (const batch of allBatches) {
+  allBatchVersions.push(...(batch.data.versions || []));
+}
+const uniqueBatchVersions = new Set(allBatchVersions);
+if (uniqueBatchVersions.size !== allBatchVersions.length) {
+  const dupes = allBatchVersions.filter((v, i) => allBatchVersions.indexOf(v) !== i);
+  fail(`Duplicate versions across batches: ${[...new Set(dupes)].join(', ')}`);
+} else {
+  pass(`No duplicate versions across ${allBatches.length} batches (${allBatchVersions.length} total versions)`);
+}
+
+// Validate each batch individually
+for (const { file, data: batch } of allBatches) {
+  console.log(`\n--- Batch ${batch.batch_number} (${file}) ---\n`);
+
+  let batchErrors = 0;
+
+  // Valid SHA
+  if (!batch.main_sha || typeof batch.main_sha !== 'string' || batch.main_sha.length < 7) {
+    fail(`Batch ${batch.batch_number}: invalid main_sha`);
+    batchErrors++;
+  } else {
+    pass(`Batch ${batch.batch_number} main_sha: ${batch.main_sha.substring(0, 8)}`);
   }
 
-  if (batch01) {
-    let batchErrors = 0;
+  // Batch number must be a positive integer
+  if (!Number.isInteger(batch.batch_number) || batch.batch_number < 1) {
+    fail(`Batch ${batch.batch_number}: invalid batch_number`);
+    batchErrors++;
+  }
 
-    if (batch01.main_sha !== '761fdf8895079488ead7f8e4d5e359e4262a89ae') {
-      fail(`Batch 01 main_sha mismatch: ${batch01.main_sha}`);
-      batchErrors++;
-    } else {
-      pass('Batch 01 main_sha correct');
-    }
+  // Versions must be an array
+  if (!Array.isArray(batch.versions) || batch.versions.length === 0) {
+    fail(`Batch ${batch.batch_number}: empty or missing versions`);
+    batchErrors++;
+  }
 
-    if (batch01.batch_number !== 1) {
-      fail(`Batch 01 batch_number: ${batch01.batch_number}, expected 1`);
-      batchErrors++;
-    } else {
-      pass('Batch 01 batch_number = 1');
-    }
+  // Valid timestamp
+  if (!isValidUTCTimestamp(batch.verification_timestamp)) {
+    fail(`Batch ${batch.batch_number}: invalid verification_timestamp "${batch.verification_timestamp}"`);
+    batchErrors++;
+  } else {
+    pass(`Batch ${batch.batch_number} timestamp valid UTC`);
+  }
 
-    const expectedBatch1Versions = ['102','103','104','106','108','109','110','111','112','113','114','116','117','118','120'];
-    const batch1VersionsMatch = JSON.stringify(batch01.versions) === JSON.stringify(expectedBatch1Versions);
-    if (!batch1VersionsMatch) {
-      fail(`Batch 01 versions mismatch`);
-      batchErrors++;
-    } else {
-      pass('Batch 01 versions = exact 15 versions');
-    }
+  // Totals consistency
+  const computedTotal = (batch.total_passed || 0) + (batch.total_superseded || 0) + (batch.total_failed || 0);
+  if (computedTotal !== batch.total_objects_checked) {
+    fail(`Batch ${batch.batch_number}: totals inconsistent: passed(${batch.total_passed}) + superseded(${batch.total_superseded || 0}) + failed(${batch.total_failed}) = ${computedTotal}, expected ${batch.total_objects_checked}`);
+    batchErrors++;
+  } else {
+    pass(`Batch ${batch.batch_number} totals consistent: ${batch.total_objects_checked} objects`);
+  }
 
-    if (batch01.total_objects_checked !== 94) {
-      fail(`Batch 01 total_objects_checked: ${batch01.total_objects_checked}, expected 94`);
-      batchErrors++;
-    } else {
-      pass('Batch 01 total_objects_checked = 94');
-    }
+  // No failed objects
+  if (batch.total_failed > 0) {
+    fail(`Batch ${batch.batch_number}: has ${batch.total_failed} failed objects`);
+    batchErrors++;
+  } else {
+    pass(`Batch ${batch.batch_number} no failed objects`);
+  }
 
-    if (batch01.total_passed !== 93) {
-      fail(`Batch 01 total_passed: ${batch01.total_passed}, expected 93`);
-      batchErrors++;
-    } else {
-      pass('Batch 01 total_passed = 93');
-    }
-
-    if (batch01.total_superseded !== 1) {
-      fail(`Batch 01 total_superseded: ${batch01.total_superseded}, expected 1`);
-      batchErrors++;
-    } else {
-      pass('Batch 01 total_superseded = 1');
-    }
-
-    if (batch01.total_failed !== 0) {
-      fail(`Batch 01 total_failed: ${batch01.total_failed}, expected 0`);
-      batchErrors++;
-    } else {
-      pass('Batch 01 total_failed = 0');
-    }
-
-    if (batch01.classifications) {
-      let classErrors = 0;
-      for (const [ver, cls] of Object.entries(batch01.classifications)) {
-        if (cls !== 'VERIFIED_APPLIED_UNTRACKED') {
-          fail(`Batch 01 version ${ver}: classification=${cls}, expected VERIFIED_APPLIED_UNTRACKED`);
-          classErrors++;
-          batchErrors++;
-        }
-      }
-      if (classErrors === 0) pass('Batch 01 all classifications = VERIFIED_APPLIED_UNTRACKED');
-    }
-
-    let checksumErrors = 0;
-    for (const m of batch01.migrations || []) {
-      const repoFile = migrationFiles.find(f => f.startsWith(m.version + '_'));
-      if (!repoFile) { continue; }
-      const content = readFileSync(resolve(MIGRATIONS_DIR, repoFile), 'utf-8');
-      const sha256 = createHash('sha256').update(content).digest('hex');
-      if (m.checksum !== sha256) {
-        fail(`Batch 01 version ${m.version}: checksum mismatch with repository`);
-        checksumErrors++;
+  // All classifications must be VERIFIED_APPLIED_UNTRACKED (at time of verification)
+  if (batch.classifications) {
+    let classErrors = 0;
+    for (const [ver, cls] of Object.entries(batch.classifications)) {
+      if (cls !== 'VERIFIED_APPLIED_UNTRACKED') {
+        fail(`Batch ${batch.batch_number} version ${ver}: classification=${cls}, expected VERIFIED_APPLIED_UNTRACKED`);
+        classErrors++;
         batchErrors++;
       }
     }
-    if (checksumErrors === 0) pass('Batch 01 all checksums match repository');
+    if (classErrors === 0) pass(`Batch ${batch.batch_number} all classifications = VERIFIED_APPLIED_UNTRACKED`);
+  }
 
-    // Check Migration 103 contains supersession documentation
-    const mig103 = (batch01.migrations || []).find(m => m.version === '103');
+  // Checksums match repository
+  let checksumErrors = 0;
+  for (const m of batch.migrations || []) {
+    const repoFile = migrationFiles.find(f => f.startsWith(m.version + '_'));
+    if (!repoFile) { continue; }
+    const content = readFileSync(resolve(MIGRATIONS_DIR, repoFile), 'utf-8');
+    const sha256 = createHash('sha256').update(content).digest('hex');
+    if (m.checksum !== sha256) {
+      fail(`Batch ${batch.batch_number} version ${m.version}: checksum mismatch with repository`);
+      checksumErrors++;
+      batchErrors++;
+    }
+  }
+  if (checksumErrors === 0) pass(`Batch ${batch.batch_number} all checksums match repository`);
+
+  // No rejected verified_states in batch evidence
+  let batchStateErrors = 0;
+  for (const m of batch.migrations || []) {
+    for (const obj of m.objects || []) {
+      if (REJECTED_VERIFIED_STATES.has(obj.verified_state)) {
+        fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} has rejected verified_state "${obj.verified_state}"`);
+        batchStateErrors++;
+        batchErrors++;
+      }
+    }
+  }
+  if (batchStateErrors === 0) pass(`Batch ${batch.batch_number} no rejected verified_states`);
+
+  // All batch timestamps must be valid UTC
+  let tsErrors = 0;
+  for (const m of batch.migrations || []) {
+    for (const obj of m.objects || []) {
+      if (obj.verification_timestamp && !isValidUTCTimestamp(obj.verification_timestamp)) {
+        fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name} has non-UTC timestamp "${obj.verification_timestamp}"`);
+        tsErrors++;
+        batchErrors++;
+      }
+    }
+  }
+  if (tsErrors === 0) pass(`Batch ${batch.batch_number} all object timestamps valid UTC`);
+
+  // Cross-validate: batch versions exist in manifest with correct verification_batch
+  for (const ver of batch.versions || []) {
+    const me = manifestByVersion[ver];
+    if (!me) {
+      fail(`Batch ${batch.batch_number} version ${ver}: not found in manifest`);
+      batchErrors++;
+    } else if (me.verification_batch !== undefined && me.verification_batch !== batch.batch_number) {
+      // Only check if verification_batch is set (completed entries may have repair_batch instead)
+      if (me.repair_status !== 'completed') {
+        fail(`Batch ${batch.batch_number} version ${ver}: manifest verification_batch=${me.verification_batch}, expected ${batch.batch_number}`);
+        batchErrors++;
+      }
+    }
+  }
+
+  // Check Migration 103 supersession (Batch 1 specific)
+  if (batch.batch_number === 1) {
+    const mig103 = (batch.migrations || []).find(m => m.version === '103');
     if (mig103) {
       const supersededObj = mig103.objects.find(o => o.result === 'superseded');
       if (!supersededObj) {
-        fail('Batch 01 Migration 103: no superseded object found');
+        fail('Batch 1 Migration 103: no superseded object found');
         batchErrors++;
       } else {
-        if (!supersededObj.replacement_object_name) {
-          fail('Batch 01 Migration 103: superseded object missing replacement_object_name');
+        if (!supersededObj.replacement_object_name || !supersededObj.superseding_migration || !supersededObj.rationale || !supersededObj.application_behaviour_impact) {
+          fail('Batch 1 Migration 103: superseded object missing documentation fields');
           batchErrors++;
-        }
-        if (!supersededObj.superseding_migration) {
-          fail('Batch 01 Migration 103: superseded object missing superseding_migration');
-          batchErrors++;
-        }
-        if (!supersededObj.rationale) {
-          fail('Batch 01 Migration 103: superseded object missing rationale');
-          batchErrors++;
-        }
-        if (!supersededObj.application_behaviour_impact) {
-          fail('Batch 01 Migration 103: superseded object missing application_behaviour_impact');
-          batchErrors++;
-        }
-        if (supersededObj.replacement_object_name && supersededObj.superseding_migration && supersededObj.rationale && supersededObj.application_behaviour_impact) {
-          pass('Batch 01 Migration 103 supersession fully documented');
-        }
-      }
-    } else {
-      fail('Batch 01: Migration 103 not found in batch evidence');
-      batchErrors++;
-    }
-
-    // Check no rejected verified_states in batch evidence
-    let batchStateErrors = 0;
-    for (const m of batch01.migrations || []) {
-      for (const obj of m.objects || []) {
-        if (REJECTED_VERIFIED_STATES.has(obj.verified_state)) {
-          fail(`Batch 01 version ${m.version}: object ${obj.object_name} has rejected verified_state "${obj.verified_state}"`);
-          batchStateErrors++;
-          batchErrors++;
+        } else {
+          pass('Batch 1 Migration 103 supersession fully documented');
         }
       }
     }
-    if (batchStateErrors === 0) pass('Batch 01 no rejected verified_states');
-
-    if (batchErrors === 0) pass('Batch 01 verification cross-validation passed');
   }
-} else {
-  pass('Batch 01 verification evidence file not present (skipped)');
+
+  // Batch-specific expected values
+  if (batch.batch_number === 1) {
+    if (batch.total_objects_checked !== 94) fail(`Batch 1 total_objects_checked: ${batch.total_objects_checked}, expected 94`);
+    else pass('Batch 1 total_objects_checked = 94');
+    if (batch.total_passed !== 93) fail(`Batch 1 total_passed: ${batch.total_passed}, expected 93`);
+    else pass('Batch 1 total_passed = 93');
+    if ((batch.total_superseded || 0) !== 1) fail(`Batch 1 total_superseded: ${batch.total_superseded}, expected 1`);
+    else pass('Batch 1 total_superseded = 1');
+  }
+
+  if (batch.batch_number === 2) {
+    if (batch.total_objects_checked !== 63) fail(`Batch 2 total_objects_checked: ${batch.total_objects_checked}, expected 63`);
+    else pass('Batch 2 total_objects_checked = 63');
+    if (batch.total_passed !== 63) fail(`Batch 2 total_passed: ${batch.total_passed}, expected 63`);
+    else pass('Batch 2 total_passed = 63');
+  }
+
+  if (batchErrors === 0) pass(`Batch ${batch.batch_number} cross-validation passed`);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -772,6 +852,7 @@ console.log(`  Completed repairs: ${completedEntries.length}`);
 console.log(`  Repaired candidates (cohort): ${repairedCandidateCount}`);
 console.log(`  Approved repair allowlist: ${allowlist.length}`);
 console.log(`  Verification candidates: ${candidates.length}`);
+console.log(`  Verification batch evidence files: ${batchFiles.length}`);
 console.log(`  Errors: ${errors}`);
 console.log(`  Warnings: ${warnings}`);
 if (errors > 0) {

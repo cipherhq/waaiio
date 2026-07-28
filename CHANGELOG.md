@@ -7,6 +7,21 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-28
 
+### Operations: Batch 2 migration production verification evidence (15 versions)
+- `docs/migrations/evidence/batch-02-production-verification.json` — Sanitized production evidence for 15 migrations (121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138). 63 metadata checks, all passed.
+- `docs/migrations/evidence/batch-02-production-verification.md` — Verification summary.
+- `docs/migrations/101-246-production-reconciliation.json` — 15 entries updated from PENDING to VERIFIED_APPLIED_UNTRACKED with evidence and approved_for_repair. New counts: 23 ALIGNED, 15 VERIFIED, 94 PENDING, 12 NV, 2 SUPERSEDED.
+- `docs/migrations/101-246-repair-allowlist.json` — Populated with 15 Batch 2 versions and production_evidence_digest.
+- `docs/migrations/101-246-verification-candidates.json` — 15 Batch 2 versions removed. 94 candidates remain.
+- `scripts/validate-migration-repair-allowlist.mjs` — Generalized for multi-batch discovery: auto-discovers batch evidence files, cross-validates no duplicate versions or batch numbers, validates each batch individually with batch-specific expected values.
+- `lib/__tests__/migration-repair-validator.test.ts` — Added 13 Batch 2 / multi-batch regression tests: duplicate versions across batches, duplicate batch numbers, version missing from manifest, verification_batch mismatch, candidate still present, approved missing from allowlist, allowlist not in approved set, object-count mismatch, failed object, invalid UTC timestamp, checksum mismatch, digest mismatch, real Batch 1 + Batch 2 integration test.
+- `docs/migrations/101-246-repair-runbook.md` — Batch 2 marked verification COMPLETE, repair NOT STARTED. 94 candidates remain for Batches 3-9.
+- `docs/MIGRATION_REGISTRY.md` — 15 Batch 2 versions added as verified and approved for repair. 94 candidates remaining.
+- `docs/engineering-status.json`, `docs/ENGINEERING_STATUS.md` — OPS-001 updated with Batch 2 verification completion.
+- Read-only metadata verification occurred. No production write, repair, or deployment.
+  - **Affects:** Migration repair process, Issue #53 tracking, OPS-001 milestone
+  - **Could break:** Nothing — documentation, tooling, and metadata only. No migration SQL modified.
+
 ### Operations: Batch 1 migration-history repair recorded (15 versions)
 - `docs/migrations/evidence/batch-01-repair.json` — Sanitized repair evidence for 15 migrations (102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 120).
 - `docs/migrations/evidence/batch-01-repair.md` — Repair summary.

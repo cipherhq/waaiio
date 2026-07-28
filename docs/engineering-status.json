@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
-  "last_reconciled_main_sha": "1501eb825ff8c5d5a94373b6daa8166a471be48f",
-  "last_reconciled_at": "2026-07-28T13:41:06Z",
+  "last_reconciled_main_sha": "bb4a4e98582205efa75c68db2ae70c97c5393e8d",
+  "last_reconciled_at": "2026-07-28T14:57:20Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -253,7 +253,7 @@
       "pr_numbers": [56, 58, 59, 62, 63, 65],
       "implementation_sha": null,
       "reviewed_sha": null,
-      "merge_sha": "1501eb825ff8c5d5a94373b6daa8166a471be48f",
+      "merge_sha": "bb4a4e98582205efa75c68db2ae70c97c5393e8d",
       "deployed_sha": null,
       "environment": "production",
       "production_verified_at": null,
@@ -298,16 +298,22 @@
         "All 15 versions appear exactly once in remote schema_migrations",
         "No migration SQL executed. No schema or data change. No deployment",
         "Active repair allowlist cleared to empty",
-        "Repair evidence recorded: docs/migrations/evidence/batch-01-repair.json"
+        "Repair evidence recorded: docs/migrations/evidence/batch-01-repair.json",
+        "Batch 2 production verification complete: 15 versions (121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138)",
+        "63 metadata checks: 63 passed, 0 failed, 0 superseded",
+        "Active repair allowlist now contains 15 Batch 2 versions with production_evidence_digest",
+        "94 candidates remain for verification in Batches 3-9",
+        "No migration repair executed — repair blocked until evidence PR merges",
+        "Read-only metadata verification occurred 2026-07-28"
       ],
       "blockers": [
-        "Batch 1 repair evidence PR must merge before Batch 2 verification can begin",
-        "109 migration repair candidates awaiting verification (Batches 2-9)",
+        "Batch 2 evidence PR must merge before Batch 2 repair can begin",
+        "94 migration repair candidates awaiting verification (Batches 3-9)",
         "12 NOT_VERIFIABLE_SAFELY migrations require new evidence before disposition",
         "2 SUPERSEDED migrations (122, 130) require final disposition decision"
       ],
-      "next_action": "Begin Batch 2 read-only verification after Batch 1 repair evidence PR merges",
-      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migrations 115, 119, 199, 200, 244, 294, 295, 296, 297 production-verified. Migrations 176, 181, 182 individually verified and recorded. Migration 115 fully satisfied (completed by Migration 297, PR #63). Batch 1 verification complete (15 versions, 94 object checks). Batch 1 repair complete (15 versions, remote count 103->118, 101-246 tracked 8->23). Active repair allowlist cleared. 109 candidates remain for Batches 2-9. 12 NOT_VERIFIABLE_SAFELY and 2 SUPERSEDED migrations excluded from repair."
+      "next_action": "Merge Batch 2 evidence PR, then execute Batch 2 repair",
+      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migrations 115, 119, 199, 200, 244, 294, 295, 296, 297 production-verified. Migrations 176, 181, 182 individually verified and recorded. Migration 115 fully satisfied (completed by Migration 297, PR #63). Batch 1 verification and repair complete (15 versions, remote count 103->118, 101-246 tracked 8->23). Batch 2 verification complete (15 versions, 63 object checks, all passed). Batch 2 repair not started. 94 candidates remain for Batches 3-9. 12 NOT_VERIFIABLE_SAFELY and 2 SUPERSEDED migrations excluded from repair."
     }
   ]
 }
