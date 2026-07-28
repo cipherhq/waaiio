@@ -1,21 +1,18 @@
 #!/usr/bin/env node
 /**
  * Validates the migration reconciliation manifest, repair allowlist,
- * and verification candidates against repository migration files.
+ * verification candidates, and repair evidence against repository migration files.
  *
- * Key invariants:
+ * Progressive invariants after Batch 1 repair:
  * - Manifest has exactly 146 entries (one per version 101-246)
- * - PENDING + VERIFIED_APPLIED_UNTRACKED = 124 (progressive batches)
- * - ALIGNED_TRACKED = 8, NOT_VERIFIABLE_SAFELY = 12, SUPERSEDED = 2
- * - No candidate may enter the repair allowlist without production_verified evidence_source
- * - The approved repair allowlist must equal the exact set of manifest entries with
- *   repair_eligible=true and repair_status=approved_for_repair
- * - Every approved entry must have verified production evidence with digests
- * - Verification candidates = exact PENDING set
- * - Superseded objects must document replacement and impact
- * - Rejected verified_state values are never allowed in approved evidence
- * - All timestamps must be valid UTC
- * - Batch evidence files must cross-validate against manifest
+ * - ALIGNED_TRACKED = 23 (8 original + 15 repaired)
+ * - VERIFIED_APPLIED_UNTRACKED = 0
+ * - PENDING_PRODUCTION_REVERIFICATION = 109
+ * - NOT_VERIFIABLE_SAFELY = 12, SUPERSEDED = 2
+ * - Active repair allowlist = 0
+ * - Verification candidates = 109 (exact PENDING set)
+ * - The 124-candidate cohort: PENDING + VERIFIED + repaired candidates = 124
+ * - Completed repair entries cross-validate against batch evidence
  *
  * Does not connect to Supabase or any external service.
  */
@@ -27,7 +24,8 @@ const ALLOWLIST_PATH = resolve('docs/migrations/101-246-repair-allowlist.json');
 const MANIFEST_PATH = resolve('docs/migrations/101-246-production-reconciliation.json');
 const CANDIDATES_PATH = resolve('docs/migrations/101-246-verification-candidates.json');
 const MIGRATIONS_DIR = resolve('supabase/migrations');
-const BATCH_01_PATH = resolve('docs/migrations/evidence/batch-01-production-verification.json');
+const BATCH_01_VERIFICATION_PATH = resolve('docs/migrations/evidence/batch-01-production-verification.json');
+const BATCH_01_REPAIR_PATH = resolve('docs/migrations/evidence/batch-01-repair.json');
 
 const VALID_CLASSIFICATIONS = new Set([
   'ALIGNED_TRACKED',
@@ -48,10 +46,10 @@ const VALID_SUPERSEDED_STATES = new Set([
 ]);
 
 const EXPECTED_MANIFEST_COUNT = 146;
-const EXPECTED_ALIGNED = 8;
+const EXPECTED_ALIGNED = 23;
 const EXPECTED_NV = 12;
 const EXPECTED_SUPERSEDED = 2;
-const EXPECTED_PENDING_PLUS_VERIFIED = 124; // PENDING + VERIFIED = 124 (progressive)
+const EXPECTED_CANDIDATE_COHORT = 124; // PENDING + VERIFIED + repaired candidates = 124
 
 let errors = 0;
 let warnings = 0;
@@ -190,11 +188,16 @@ const verifiedCount = counts['VERIFIED_APPLIED_UNTRACKED'] || 0;
 if (alignedCount !== EXPECTED_ALIGNED) fail(`ALIGNED_TRACKED: ${alignedCount}, expected ${EXPECTED_ALIGNED}`);
 else pass(`ALIGNED_TRACKED: ${alignedCount}`);
 
-// Progressive: PENDING + VERIFIED must equal 124
-if (pendingCount + verifiedCount !== EXPECTED_PENDING_PLUS_VERIFIED) {
-  fail(`PENDING (${pendingCount}) + VERIFIED (${verifiedCount}) = ${pendingCount + verifiedCount}, expected ${EXPECTED_PENDING_PLUS_VERIFIED}`);
+// Progressive: PENDING + VERIFIED + repaired candidates = 124
+const repairedCandidateCount = manifest.filter(e =>
+  e.current_classification === 'ALIGNED_TRACKED' &&
+  e.repair_status === 'completed' &&
+  e.original_classification === 'VERIFIED_APPLIED_UNTRACKED'
+).length;
+if (pendingCount + verifiedCount + repairedCandidateCount !== EXPECTED_CANDIDATE_COHORT) {
+  fail(`PENDING (${pendingCount}) + VERIFIED (${verifiedCount}) + repaired candidates (${repairedCandidateCount}) = ${pendingCount + verifiedCount + repairedCandidateCount}, expected ${EXPECTED_CANDIDATE_COHORT}`);
 } else {
-  pass(`PENDING (${pendingCount}) + VERIFIED (${verifiedCount}) = ${EXPECTED_PENDING_PLUS_VERIFIED}`);
+  pass(`PENDING (${pendingCount}) + VERIFIED (${verifiedCount}) + repaired candidates (${repairedCandidateCount}) = ${EXPECTED_CANDIDATE_COHORT}`);
 }
 
 if (nvCount !== EXPECTED_NV) fail(`NOT_VERIFIABLE_SAFELY: ${nvCount}, expected ${EXPECTED_NV}`);
@@ -203,7 +206,7 @@ else pass(`NOT_VERIFIABLE_SAFELY: ${nvCount}`);
 if (supersededCount !== EXPECTED_SUPERSEDED) fail(`SUPERSEDED: ${supersededCount}, expected ${EXPECTED_SUPERSEDED}`);
 else pass(`SUPERSEDED: ${supersededCount}`);
 
-// ── Approved entries validation ──
+// ── Approved entries validation (repair_eligible=true AND repair_status=approved_for_repair) ──
 const approvedInManifest = manifest.filter(e => e.repair_eligible && e.repair_status === 'approved_for_repair');
 let approvedErrors = 0;
 for (const e of approvedInManifest) {
@@ -219,7 +222,6 @@ for (const e of approvedInManifest) {
     fail(`Version ${e.version}: approved but evidence array is empty`);
     approvedErrors++;
   } else {
-    // Every evidence item must have verified_state, verified_at, and verification_source
     for (const ev of e.evidence) {
       if (!ev.verified_state) {
         fail(`Version ${e.version}: evidence for ${ev.object_name} missing verified_state`);
@@ -233,18 +235,13 @@ for (const e of approvedInManifest) {
         fail(`Version ${e.version}: evidence for ${ev.object_name} missing verification_source`);
         approvedErrors++;
       }
-
-      // 2a: Reject unsafe verified_state values
       if (REJECTED_VERIFIED_STATES.has(ev.verified_state)) {
         fail(`Version ${e.version}: evidence for ${ev.object_name} has rejected verified_state "${ev.verified_state}"`);
         approvedErrors++;
       }
-
-      // 2b: verified_state must satisfy expected_state
       if (ev.verified_state && !REJECTED_VERIFIED_STATES.has(ev.verified_state)) {
         const isSuperseded = VALID_SUPERSEDED_STATES.has(ev.verified_state);
         if (isSuperseded) {
-          // Superseded evidence must have replacement metadata
           if (!ev.replacement_object_name) {
             fail(`Version ${e.version}: superseded object ${ev.object_name} missing replacement_object_name`);
             approvedErrors++;
@@ -261,27 +258,21 @@ for (const e of approvedInManifest) {
             fail(`Version ${e.version}: superseded object ${ev.object_name} missing application_behaviour_impact`);
             approvedErrors++;
           }
-          // Superseded evidence must have valid verified_at
           if (!isValidUTCTimestamp(ev.verified_at)) {
             fail(`Version ${e.version}: superseded object ${ev.object_name} has invalid verified_at timestamp "${ev.verified_at}"`);
             approvedErrors++;
           }
         } else {
-          // Non-superseded: verified_state must equal expected_state
           if (ev.verified_state !== ev.expected_state) {
             fail(`Version ${e.version}: evidence for ${ev.object_name} has verified_state "${ev.verified_state}" but expected_state "${ev.expected_state}"`);
             approvedErrors++;
           }
         }
       }
-
-      // 2c: UTC timestamp validation for verified_at
       if (ev.verified_at && !isValidUTCTimestamp(ev.verified_at)) {
         fail(`Version ${e.version}: evidence for ${ev.object_name} has non-UTC timestamp "${ev.verified_at}"`);
         approvedErrors++;
       }
-
-      // 2e: Reject failed/ambiguous results
       if (ev.result === 'failed') {
         fail(`Version ${e.version}: evidence for ${ev.object_name} has result "failed" — cannot be approved`);
         approvedErrors++;
@@ -296,8 +287,6 @@ for (const e of approvedInManifest) {
     fail(`Version ${e.version}: approved but classification=${e.current_classification}`);
     approvedErrors++;
   }
-
-  // 2c: UTC timestamp validation for last_verified_at
   if (e.last_verified_at && !isValidUTCTimestamp(e.last_verified_at)) {
     fail(`Version ${e.version}: last_verified_at is not a valid UTC timestamp "${e.last_verified_at}"`);
     approvedErrors++;
@@ -305,7 +294,71 @@ for (const e of approvedInManifest) {
 }
 if (approvedErrors === 0) pass(`All ${approvedInManifest.length} approved entries correctly configured with production evidence`);
 
-// Pending verification entries must have evidence_source=sql_derived and repair_eligible=false
+// ── Completed repair entries validation ──
+console.log('\n--- Completed Repair Checks ---\n');
+
+const completedEntries = manifest.filter(e => e.repair_status === 'completed');
+// Batch-repaired entries: completed entries with a repair_batch (went through the batch repair process)
+const batchRepairedEntries = completedEntries.filter(e => Number.isInteger(e.repair_batch) && e.repair_batch >= 1);
+// Individually-repaired entries: completed entries without a repair_batch (repaired before batch process)
+const individuallyRepairedEntries = completedEntries.filter(e => !Number.isInteger(e.repair_batch) || e.repair_batch < 1);
+
+let completedErrors = 0;
+
+// All completed entries must share these properties
+for (const e of completedEntries) {
+  if (e.current_classification !== 'ALIGNED_TRACKED') {
+    fail(`Version ${e.version}: completed but current_classification=${e.current_classification} (expected ALIGNED_TRACKED)`);
+    completedErrors++;
+  }
+  if (e.remote_tracked !== true) {
+    fail(`Version ${e.version}: completed but remote_tracked=${e.remote_tracked} (expected true)`);
+    completedErrors++;
+  }
+  if (e.repair_eligible !== false) {
+    fail(`Version ${e.version}: completed but repair_eligible=${e.repair_eligible} (expected false)`);
+    completedErrors++;
+  }
+  if (allowlist.some(a => a.version === e.version)) {
+    fail(`Version ${e.version}: completed but still present in active allowlist`);
+    completedErrors++;
+  }
+}
+
+// Batch-repaired entries have stricter requirements
+for (const e of batchRepairedEntries) {
+  if (e.original_classification !== 'VERIFIED_APPLIED_UNTRACKED') {
+    fail(`Version ${e.version}: batch-repaired but original_classification=${e.original_classification} (expected VERIFIED_APPLIED_UNTRACKED)`);
+    completedErrors++;
+  }
+  if (e.confidence !== 'HIGH') {
+    fail(`Version ${e.version}: batch-repaired but confidence=${e.confidence} (expected HIGH)`);
+    completedErrors++;
+  }
+  if (e.evidence_source !== 'production_verified') {
+    fail(`Version ${e.version}: batch-repaired but evidence_source=${e.evidence_source} (expected production_verified)`);
+    completedErrors++;
+  }
+  if (!e.repaired_at) {
+    fail(`Version ${e.version}: batch-repaired but missing repaired_at`);
+    completedErrors++;
+  } else if (!isValidUTCTimestamp(e.repaired_at)) {
+    fail(`Version ${e.version}: batch-repaired but repaired_at is not valid UTC: "${e.repaired_at}"`);
+    completedErrors++;
+  }
+  if (!e.repair_evidence_path || typeof e.repair_evidence_path !== 'string') {
+    fail(`Version ${e.version}: batch-repaired but missing or invalid repair_evidence_path`);
+    completedErrors++;
+  }
+  if (!e.repair_evidence_digest) {
+    fail(`Version ${e.version}: batch-repaired but missing repair_evidence_digest`);
+    completedErrors++;
+  }
+}
+
+if (completedErrors === 0) pass(`All ${completedEntries.length} completed entries correctly configured (${batchRepairedEntries.length} batch-repaired, ${individuallyRepairedEntries.length} individually-repaired)`);
+
+// ── Pending entries validation ──
 const pendingEntries = manifest.filter(e => e.current_classification === 'PENDING_PRODUCTION_REVERIFICATION');
 let pendingErrors = 0;
 for (const e of pendingEntries) {
@@ -323,17 +376,6 @@ for (const e of pendingEntries) {
   }
 }
 if (pendingErrors === 0) pass(`All ${pendingEntries.length} PENDING entries correctly configured`);
-
-// Completed entries have production_verified evidence
-const completedEntries = manifest.filter(e => e.repair_status === 'completed');
-let completedErrors = 0;
-for (const e of completedEntries) {
-  if (e.evidence_source !== 'production_verified') {
-    fail(`Version ${e.version}: completed but evidence_source=${e.evidence_source}`);
-    completedErrors++;
-  }
-}
-if (completedErrors === 0) pass(`All ${completedEntries.length} completed entries have production-verified evidence`);
 
 // ══════════════════════════════════════════════════════════════
 // ALLOWLIST CHECKS
@@ -362,7 +404,7 @@ if (allowlistNotApproved.length === 0 && approvedNotAllowlist.length === 0) {
   pass('Allowlist and approved manifest versions match exactly');
 }
 
-// Verify allowlist production_evidence_digest recomputes correctly
+// Verify allowlist production_evidence_digest recomputes correctly (if non-empty)
 const manifestByVersion = {};
 manifest.forEach(e => { manifestByVersion[e.version] = e; });
 let digestErrors = 0;
@@ -373,7 +415,6 @@ for (const entry of allowlist) {
     digestErrors++;
     continue;
   }
-  // Recompute digest
   const canonical = JSON.stringify({
     version: me.version,
     filename: me.filename,
@@ -388,17 +429,14 @@ for (const entry of allowlist) {
     fail(`Allowlist version ${entry.version}: digest mismatch (expected ${expectedDigest}, got ${entry.production_evidence_digest})`);
     digestErrors++;
   }
-  // Verify checksum matches manifest
   if (entry.checksum !== me.checksum) {
     fail(`Allowlist version ${entry.version}: checksum mismatch with manifest`);
     digestErrors++;
   }
-  // Verify filename matches manifest
   if (entry.filename !== me.filename) {
     fail(`Allowlist version ${entry.version}: filename mismatch with manifest`);
     digestErrors++;
   }
-  // Verify confidence
   if (entry.confidence !== 'HIGH') {
     fail(`Allowlist version ${entry.version}: confidence=${entry.confidence}, expected HIGH`);
     digestErrors++;
@@ -451,7 +489,6 @@ for (const entry of candidates) {
   const sha256 = createHash('sha256').update(content).digest('hex');
   if (entry.checksum !== sha256) { fail(`Candidate ${entry.version}: checksum mismatch`); candErrors++; }
 
-  // Verify digest recomputes
   const me = manifestByVersion[entry.version];
   if (me) {
     const canonical = JSON.stringify({
@@ -470,23 +507,22 @@ for (const entry of candidates) {
 if (candErrors === 0) pass(`All ${candidates.length} candidate checksums and digests verified`);
 
 // ══════════════════════════════════════════════════════════════
-// BATCH EVIDENCE CROSS-VALIDATION
+// BATCH EVIDENCE CROSS-VALIDATION (Verification)
 // ══════════════════════════════════════════════════════════════
-console.log('\n--- Batch Evidence Cross-Validation ---\n');
+console.log('\n--- Batch 1 Verification Evidence Cross-Validation ---\n');
 
-if (existsSync(BATCH_01_PATH)) {
+if (existsSync(BATCH_01_VERIFICATION_PATH)) {
   let batch01;
   try {
-    batch01 = JSON.parse(readFileSync(BATCH_01_PATH, 'utf-8'));
-    pass('Batch 01 evidence is valid JSON');
+    batch01 = JSON.parse(readFileSync(BATCH_01_VERIFICATION_PATH, 'utf-8'));
+    pass('Batch 01 verification evidence is valid JSON');
   } catch (e) {
-    fail('Batch 01 evidence is invalid JSON: ' + e.message);
+    fail('Batch 01 verification evidence is invalid JSON: ' + e.message);
   }
 
   if (batch01) {
     let batchErrors = 0;
 
-    // Check main_sha
     if (batch01.main_sha !== '761fdf8895079488ead7f8e4d5e359e4262a89ae') {
       fail(`Batch 01 main_sha mismatch: ${batch01.main_sha}`);
       batchErrors++;
@@ -494,7 +530,6 @@ if (existsSync(BATCH_01_PATH)) {
       pass('Batch 01 main_sha correct');
     }
 
-    // Check batch_number
     if (batch01.batch_number !== 1) {
       fail(`Batch 01 batch_number: ${batch01.batch_number}, expected 1`);
       batchErrors++;
@@ -502,7 +537,6 @@ if (existsSync(BATCH_01_PATH)) {
       pass('Batch 01 batch_number = 1');
     }
 
-    // Check versions
     const expectedBatch1Versions = ['102','103','104','106','108','109','110','111','112','113','114','116','117','118','120'];
     const batch1VersionsMatch = JSON.stringify(batch01.versions) === JSON.stringify(expectedBatch1Versions);
     if (!batch1VersionsMatch) {
@@ -512,7 +546,6 @@ if (existsSync(BATCH_01_PATH)) {
       pass('Batch 01 versions = exact 15 versions');
     }
 
-    // Check totals
     if (batch01.total_objects_checked !== 94) {
       fail(`Batch 01 total_objects_checked: ${batch01.total_objects_checked}, expected 94`);
       batchErrors++;
@@ -541,7 +574,6 @@ if (existsSync(BATCH_01_PATH)) {
       pass('Batch 01 total_failed = 0');
     }
 
-    // Check all classifications = VERIFIED_APPLIED_UNTRACKED
     if (batch01.classifications) {
       let classErrors = 0;
       for (const [ver, cls] of Object.entries(batch01.classifications)) {
@@ -554,7 +586,6 @@ if (existsSync(BATCH_01_PATH)) {
       if (classErrors === 0) pass('Batch 01 all classifications = VERIFIED_APPLIED_UNTRACKED');
     }
 
-    // Check checksums match repository
     let checksumErrors = 0;
     for (const m of batch01.migrations || []) {
       const repoFile = migrationFiles.find(f => f.startsWith(m.version + '_'));
@@ -568,19 +599,6 @@ if (existsSync(BATCH_01_PATH)) {
       }
     }
     if (checksumErrors === 0) pass('Batch 01 all checksums match repository');
-
-    // Check evidence versions = allowlist versions
-    const batch1VersionSet = new Set(batch01.versions);
-    const allowlistVersionSet = new Set(allowlist.map(e => e.version));
-    const batch1NotAllowlist = [...batch1VersionSet].filter(v => !allowlistVersionSet.has(v));
-    const allowlistNotBatch1Extra = [...allowlistVersionSet].filter(v => !batch1VersionSet.has(v));
-    // Batch 1 versions should be a subset of (or equal to) allowlist versions
-    if (batch1NotAllowlist.length > 0) {
-      fail(`Batch 01 versions not in allowlist: ${batch1NotAllowlist.join(', ')}`);
-      batchErrors++;
-    } else {
-      pass('Batch 01 evidence versions present in allowlist');
-    }
 
     // Check Migration 103 contains supersession documentation
     const mig103 = (batch01.migrations || []).find(m => m.version === '103');
@@ -628,10 +646,118 @@ if (existsSync(BATCH_01_PATH)) {
     }
     if (batchStateErrors === 0) pass('Batch 01 no rejected verified_states');
 
-    if (batchErrors === 0) pass('Batch 01 cross-validation passed');
+    if (batchErrors === 0) pass('Batch 01 verification cross-validation passed');
   }
 } else {
-  pass('Batch 01 evidence file not present (skipped)');
+  pass('Batch 01 verification evidence file not present (skipped)');
+}
+
+// ══════════════════════════════════════════════════════════════
+// BATCH 1 REPAIR EVIDENCE CROSS-VALIDATION
+// ══════════════════════════════════════════════════════════════
+console.log('\n--- Batch 1 Repair Evidence Cross-Validation ---\n');
+
+if (existsSync(BATCH_01_REPAIR_PATH)) {
+  let repairData;
+  try {
+    repairData = JSON.parse(readFileSync(BATCH_01_REPAIR_PATH, 'utf-8'));
+    pass('Batch 01 repair evidence is valid JSON');
+  } catch (e) {
+    fail('Batch 01 repair evidence is invalid JSON: ' + e.message);
+  }
+
+  if (repairData) {
+    let repairErrors = 0;
+
+    // Build lookup for repair results
+    const repairResultsByVersion = {};
+    repairData.repair_results.forEach(r => { repairResultsByVersion[String(r.version)] = r; });
+
+    // Cross-validate each completed entry against repair evidence
+    for (const entry of completedEntries) {
+      if (entry.repair_batch !== 1) continue;
+
+      const repairResult = repairResultsByVersion[entry.version];
+      if (!repairResult) {
+        fail(`Version ${entry.version}: completed with repair_batch=1 but absent from repair evidence`);
+        repairErrors++;
+        continue;
+      }
+
+      // Verify exit_status = 0
+      if (repairResult.exit_status !== 0) {
+        fail(`Version ${entry.version}: repair exit_status=${repairResult.exit_status} (expected 0)`);
+        repairErrors++;
+      }
+
+      // Verify version_tracked = true
+      if (repairResult.version_tracked !== true) {
+        fail(`Version ${entry.version}: repair version_tracked=${repairResult.version_tracked} (expected true)`);
+        repairErrors++;
+      }
+
+      // Verify version, filename, checksum match between manifest and repair evidence
+      const repairFileInfo = repairData.migration_files[entry.version];
+      if (repairFileInfo) {
+        if (repairFileInfo.filename !== entry.filename) {
+          fail(`Version ${entry.version}: repair evidence filename mismatch`);
+          repairErrors++;
+        }
+        if (repairFileInfo.checksum !== entry.checksum) {
+          fail(`Version ${entry.version}: repair evidence checksum mismatch`);
+          repairErrors++;
+        }
+      } else {
+        fail(`Version ${entry.version}: not found in repair evidence migration_files`);
+        repairErrors++;
+      }
+
+      // Verify repair_evidence_digest recomputes correctly
+      if (entry.repair_evidence_digest) {
+        const repairEvidence = {
+          version: entry.version,
+          filename: entry.filename,
+          checksum: entry.checksum,
+          repair_result: repairResult,
+          repair_timestamp: repairData.timestamp_utc,
+          repository_sha: repairData.repository_sha
+        };
+        const expectedDigest = createHash('sha256').update(JSON.stringify(repairEvidence)).digest('hex');
+        if (entry.repair_evidence_digest !== expectedDigest) {
+          fail(`Version ${entry.version}: repair_evidence_digest mismatch (computed ${expectedDigest}, stored ${entry.repair_evidence_digest})`);
+          repairErrors++;
+        }
+      }
+    }
+
+    // Verify before/after count delta
+    if (repairData.post_repair && repairData.pre_repair) {
+      const expectedDelta = repairData.approved_count;
+      const actualDelta = repairData.post_repair.total_remote_count - repairData.pre_repair.total_remote_count;
+      if (actualDelta !== expectedDelta) {
+        fail(`Repair count delta: ${actualDelta}, expected ${expectedDelta}`);
+        repairErrors++;
+      } else {
+        pass(`Repair count delta: +${actualDelta} (103 -> 118)`);
+      }
+    }
+
+    // Verify no unrelated version changed
+    if (repairData.confirmations && !repairData.confirmations.no_unrelated_version_changed) {
+      fail('Repair evidence: unrelated version change detected');
+      repairErrors++;
+    }
+
+    // Verify all approved versions appear exactly once
+    if (repairData.post_repair && !repairData.post_repair.all_approved_appear_exactly_once) {
+      fail('Repair evidence: not all approved versions appear exactly once');
+      repairErrors++;
+    }
+
+    if (repairErrors === 0) pass('Batch 01 repair evidence cross-validation passed');
+  }
+} else {
+  pass('Batch 01 repair evidence file not present (skipped)');
 }
 
 // ── Summary ──
@@ -642,6 +768,8 @@ console.log(`    VERIFIED_APPLIED_UNTRACKED: ${verifiedCount}`);
 console.log(`    PENDING_PRODUCTION_REVERIFICATION: ${pendingCount}`);
 console.log(`    NOT_VERIFIABLE_SAFELY: ${nvCount}`);
 console.log(`    SUPERSEDED: ${supersededCount}`);
+console.log(`  Completed repairs: ${completedEntries.length}`);
+console.log(`  Repaired candidates (cohort): ${repairedCandidateCount}`);
 console.log(`  Approved repair allowlist: ${allowlist.length}`);
 console.log(`  Verification candidates: ${candidates.length}`);
 console.log(`  Errors: ${errors}`);

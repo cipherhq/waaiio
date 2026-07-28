@@ -7,6 +7,24 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-28
 
+### Operations: Batch 1 migration-history repair recorded (15 versions)
+- `docs/migrations/evidence/batch-01-repair.json` — Sanitized repair evidence for 15 migrations (102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 120).
+- `docs/migrations/evidence/batch-01-repair.md` — Repair summary.
+- `docs/migrations/101-246-production-reconciliation.json` — 15 entries updated from VERIFIED_APPLIED_UNTRACKED to ALIGNED_TRACKED with repair_status=completed. New counts: 23 ALIGNED, 0 VERIFIED, 109 PENDING, 12 NV, 2 SUPERSEDED.
+- `docs/migrations/101-246-repair-allowlist.json` — Emptied (active allowlist = 0).
+- `scripts/validate-migration-repair-allowlist.mjs` — Updated for progressive repair validation: PENDING + VERIFIED + repaired candidates = 124; validates completed repair entries, repair evidence digests, cross-validates against batch-01-repair.json.
+- `lib/__tests__/migration-repair-validator.test.ts` — Added 14 regression tests for completed repair entry validation, repair evidence cross-validation, and real Batch 1 repair evidence check.
+- `docs/migrations/101-246-repair-runbook.md` — Batch 1 marked COMPLETE (both verification and repair). 8 verification batches remain.
+- `docs/MIGRATION_REGISTRY.md` — 15 Batch 1 versions now tracked. 109 candidates remaining.
+- `docs/engineering-status.json`, `docs/ENGINEERING_STATUS.md` — OPS-001 updated with Batch 1 repair completion.
+- `scripts/filter-secret-scan-false-positives.mjs` — Extended exempt keys to include `repair_evidence_digest`.
+- `lib/__tests__/secret-scanner-migration-json.test.ts` — Updated tests for `repair_evidence_digest` key exemption.
+- Remote count: 103 -> 118 (+15). 101-246 tracked: 8 -> 23 (+15).
+- No migration SQL executed. No schema change. No deployment.
+- Read-only metadata verification occurred during prior evidence step.
+  - **Affects:** Migration repair process, Issue #53 tracking, OPS-001 milestone
+  - **Could break:** Nothing — documentation, tooling, and metadata only. No migration SQL modified. No production write, repair, or deployment occurred in this commit.
+
 ### Operations: Batch 1 migration production verification evidence
 - `docs/migrations/evidence/batch-01-production-verification.json` — Sanitized production evidence for 15 migrations (102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 120). 94 metadata checks (93 passed, 1 superseded).
 - `docs/migrations/evidence/batch-01-production-verification.md` — Verification summary.
