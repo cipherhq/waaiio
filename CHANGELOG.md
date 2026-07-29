@@ -7,6 +7,15 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-29
 
+### Database: Migration 298 — complete Migration 167 historical backfill (proposed, not deployed)
+- `supabase/migrations/298_complete_order_payment_backfill.sql` — Guarded, idempotent backfill for 11 legacy payment rows where order_id was null but metadata.order_id contained a valid canonical UUID matching an existing order.
+- PR #72 (merged) fixed all five active gateway write paths. Production smoke verified zero new linkage failures.
+- Migration 298 updates only `payments.order_id`. It does not modify `business_id`, `metadata`, or any other field.
+- Migration 298 has NOT been applied to production. The 11 historical rows remain unchanged.
+- Batch 5 remains blocked. Issue #53 remains open.
+  - **Affects:** 11 legacy payment rows (order_id linkage only)
+  - **Could break:** Nothing until deliberately applied. Fail-closed preflight aborts on any unexpected state.
+
 ### Operations: Batch 4 migration production verification recorded (15 versions)
 - `docs/migrations/evidence/batch-04-production-verification.json` — Verification evidence for 15 versions (154-171). 55 object checks: 53 passed, 2 superseded, 0 failed, 0 ambiguous.
 - `docs/migrations/evidence/batch-04-production-verification.md` — Verification summary.

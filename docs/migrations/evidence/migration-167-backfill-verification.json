@@ -1,0 +1,21 @@
+{
+  "task_identifier": "migration-167-backfill-verification",
+  "repository_sha": "7c099ad7c2b654cb2d6f5356e75c3a7639c78237",
+  "linked_project_ref": "cxcmiqotkowhxinjbytg",
+  "migration_version": 167,
+  "verification_timestamp": "2026-07-29T04:21:48.741960+00:00",
+  "query_category": "aggregate_read_only",
+  "table": "public.payments",
+  "metadata_order_id_rows": 38,
+  "pending_backfill_rows": 11,
+  "populated_order_id_rows": 27,
+  "durable_backfill_satisfied": false,
+  "no_record_contents_returned": true,
+  "no_write_query_executed": true,
+  "no_migration_sql_executed": true,
+  "no_migration_history_changed": true,
+  "no_schema_changed": true,
+  "no_deployment_occurred": true,
+  "no_token_recorded": true,
+  "batch_5_not_started": true
+}

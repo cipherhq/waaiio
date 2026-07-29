@@ -16,6 +16,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 | Version | Name | Status | PR | Notes |
 |---------|------|--------|----|-------|
+| 298 | `complete_order_payment_backfill` | Proposed (not deployed) | — | Forward fix: completes Migration 167 historical order_id backfill for 11 verified legacy rows. Guarded, idempotent, fail-closed. Updates only payments.order_id. Does not modify business_id. PR #72 fixed active write paths. |
 | 297 | `complete_migration_115_trigger` | Applied to production (verified) | #63 | Forward fix: creates missing properties_updated_at trigger on public.properties, completing Migration 115's schema intent. Uses existing update_updated_at() function. Idempotent. No data backfill required. Production-verified 2026-07-28. |
 | 296 | `restrict_sensitive_rpc_execution` | Applied to production (verified) | #62 | Forward fix: revokes pre-existing direct anon/authenticated EXECUTE grants on 7 SECURITY DEFINER RPCs (book_slot_atomic, restore_stock, restore_variant_stock, restore_tickets_sold, redeem_loyalty_points, increment_campaign_donation, upsert_customer_profile). All confirmed service-role-only via application caller audit. |
 | 295 | `restrict_recurring_charge_rpc_execute` | Applied to production (verified) | #61 | Forward fix: revokes pre-existing direct anon/authenticated EXECUTE grants on process_recurring_charge that survived Migration 244's REVOKE FROM PUBLIC |
@@ -100,7 +101,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 **Batch 3 repair summary:** 15 versions (139-153) now tracked in remote schema_migrations. Remote count 133 -> 148 (+15). 101-246 tracked count 38 -> 53 (+15).
 **Batch 4 verification summary:** 15 versions (154-171) production-verified. 55 checks (53 passed, 2 superseded). Repair pending. 64 candidates remain for future verification batches.
 
-**Next available version:** 298
+**Next available version:** 299
 
 ## Reservation Process
 
