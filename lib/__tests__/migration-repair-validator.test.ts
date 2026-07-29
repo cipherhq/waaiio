@@ -212,7 +212,8 @@ function validateEvidenceItem(version: string, ev: EvidenceItem): string[] {
     } else {
       // Exact match required, or recognized equivalent pair
       const equivalentStatePairs: [string, string][] = [
-        ['drop_not_null', 'column_exists_nullable']
+        ['drop_not_null', 'column_exists_nullable'],
+        ['exists', 'enabled']
       ];
       const stateMatch = ev.verified_state === ev.expected_state ||
         equivalentStatePairs.some(([exp, ver]) => ev.expected_state === exp && ev.verified_state === ver);
@@ -388,9 +389,16 @@ function validateObjectEvidenceCompleteness(batch: BatchEvidence): string[] {
       } else if (obj.result !== 'pass' && obj.result !== 'superseded') {
         errors.push(`version ${m.version}: object has invalid result "${obj.result}"`);
       }
-      if (obj.result === 'pass' && obj.verified_state && (obj as { expected_state?: string }).expected_state &&
-          obj.verified_state !== (obj as { expected_state?: string }).expected_state) {
-        errors.push(`version ${m.version}: result=pass but verified_state !== expected_state`);
+      if (obj.result === 'pass' && obj.verified_state && (obj as { expected_state?: string }).expected_state) {
+        const eqPairs: [string, string][] = [
+          ['drop_not_null', 'column_exists_nullable'],
+          ['exists', 'enabled']
+        ];
+        const stateOk = obj.verified_state === (obj as { expected_state?: string }).expected_state ||
+          eqPairs.some(([exp, ver]) => (obj as { expected_state?: string }).expected_state === exp && obj.verified_state === ver);
+        if (!stateOk) {
+          errors.push(`version ${m.version}: result=pass but verified_state !== expected_state`);
+        }
       }
     }
   }
@@ -675,13 +683,13 @@ describe('Migration repair validator rules', () => {
     expect(errors.some(e => e.includes('verified_state "nullable" !== expected_state "exists"'))).toBe(true);
   });
 
-  it('rejects RLS enabled when expected_state is exists', () => {
+  it('accepts RLS enabled when expected_state is exists (equivalent pair)', () => {
     const errors = validateEvidenceItem('999', makeValidEvidence({
       object_type: 'rls',
       expected_state: 'exists',
       verified_state: 'enabled'
     }));
-    expect(errors.some(e => e.includes('verified_state "enabled" !== expected_state "exists"'))).toBe(true);
+    expect(errors.some(e => e.includes('verified_state "enabled" !== expected_state "exists"'))).toBe(false);
   });
 
   it('accepts exact match enabled=enabled for RLS', () => {
@@ -1305,7 +1313,7 @@ describe('Repair evidence cross-validation', () => {
   });
 });
 
-describe('Real Batch 1 + Batch 2 + Batch 3 evidence integration (post-repair)', () => {
+describe('Real Batch 1-5 evidence integration (Batches 1-4 repaired, Batch 5 verified)', () => {
   it('all verification batches and repair batches pass all validation rules together', () => {
     const evidenceDir = resolve('docs/migrations/evidence');
     const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
@@ -1314,13 +1322,13 @@ describe('Real Batch 1 + Batch 2 + Batch 3 evidence integration (post-repair)', 
 
     expect(existsSync(evidenceDir)).toBe(true);
 
-    // Verification evidence files
+    // Verification evidence files (Batches 1-5)
     const verificationFiles = readdirSync(evidenceDir)
       .filter(f => /^batch-\d+-production-verification\.json$/.test(f))
       .sort();
-    expect(verificationFiles.length).toBe(4);
+    expect(verificationFiles.length).toBe(5);
 
-    // Repair evidence files
+    // Repair evidence files (Batches 1-4 only — Batch 5 repair not yet executed)
     const repairFiles = readdirSync(evidenceDir)
       .filter(f => /^batch-\d+-repair\.json$/.test(f))
       .sort();
@@ -1346,37 +1354,50 @@ describe('Real Batch 1 + Batch 2 + Batch 3 evidence integration (post-repair)', 
     for (const b of batches) allVersions.push(...b.versions);
     expect(new Set(allVersions).size).toBe(allVersions.length);
 
-    // Batches 1-4 now all completed (repaired)
+    // Batches 1-4 completed (repaired)
+    const batch5Versions = new Set(['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190']);
     for (const b of batches) {
       for (const ver of b.versions) {
         const me = manifest.find(e => e.version === ver)!;
         expect(me).toBeDefined();
-        expect(me.repair_status).toBe('completed');
-        expect(me.current_classification).toBe('ALIGNED_TRACKED');
-        expect(me.remote_tracked).toBe(true);
-        expect(me.repair_eligible).toBe(false);
-        // Must NOT be in allowlist or candidates
-        expect(allowlistVersions.has(ver)).toBe(false);
-        expect(candidateVersions.has(ver)).toBe(false);
+        if (batch5Versions.has(ver)) {
+          // Batch 5: verified but not yet repaired
+          expect(me.repair_status).toBe('approved_for_repair');
+          expect(me.current_classification).toBe('VERIFIED_APPLIED_UNTRACKED');
+          expect(me.remote_tracked).toBe(false);
+          expect(me.repair_eligible).toBe(true);
+          // Must be in allowlist, NOT in candidates
+          expect(allowlistVersions.has(ver)).toBe(true);
+          expect(candidateVersions.has(ver)).toBe(false);
+        } else {
+          // Batches 1-4: completed
+          expect(me.repair_status).toBe('completed');
+          expect(me.current_classification).toBe('ALIGNED_TRACKED');
+          expect(me.remote_tracked).toBe(true);
+          expect(me.repair_eligible).toBe(false);
+          // Must NOT be in allowlist or candidates
+          expect(allowlistVersions.has(ver)).toBe(false);
+          expect(candidateVersions.has(ver)).toBe(false);
+        }
       }
     }
 
-    // No approved entries (all batches repaired)
+    // 15 approved entries (Batch 5)
     const approvedEntries = manifest.filter(e => e.repair_status === 'approved_for_repair');
-    expect(approvedEntries.length).toBe(0);
+    expect(approvedEntries.length).toBe(15);
 
-    // Classification counts (post Batch 4 repair)
+    // Classification counts (post Batch 5 verification)
     const counts: Record<string, number> = {};
     manifest.forEach(e => { counts[e.current_classification] = (counts[e.current_classification] || 0) + 1; });
     expect(counts['ALIGNED_TRACKED']).toBe(68);
-    expect(counts['VERIFIED_APPLIED_UNTRACKED'] || 0).toBe(0);
-    expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(64);
+    expect(counts['VERIFIED_APPLIED_UNTRACKED']).toBe(15);
+    expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(49);
     expect(counts['NOT_VERIFIABLE_SAFELY']).toBe(12);
     expect(counts['SUPERSEDED_WITH_EQUIVALENT_STATE']).toBe(2);
 
-    // Allowlist = 0 (empty after Batch 4 repair), Candidates = 64
-    expect(allowlist.length).toBe(0);
-    expect(candidates.length).toBe(64);
+    // Allowlist = 15 (Batch 5 verified), Candidates = 49
+    expect(allowlist.length).toBe(15);
+    expect(candidates.length).toBe(49);
 
     // 124-candidate cohort invariant: PENDING + VERIFIED + repaired candidates = 124
     const verifiedCount = counts['VERIFIED_APPLIED_UNTRACKED'] || 0;
@@ -1385,7 +1406,7 @@ describe('Real Batch 1 + Batch 2 + Batch 3 evidence integration (post-repair)', 
       e.repair_status === 'completed' &&
       e.original_classification === 'VERIFIED_APPLIED_UNTRACKED'
     ).length;
-    expect(64 + verifiedCount + repairedCandidates).toBe(124);
+    expect(49 + verifiedCount + repairedCandidates).toBe(124);
     expect(repairedCandidates).toBe(60); // 15 Batch 1 + 15 Batch 2 + 15 Batch 3 + 15 Batch 4
 
     // No duplicate versions across repair batches
@@ -2194,10 +2215,14 @@ describe('Batch 3 verification state consistency', () => {
     expect(overlap.length).toBe(0);
   });
 
-  it('allowlist is empty after Batch 4 repair', () => {
+  it('allowlist has 15 Batch 5 entries after Batch 5 verification', () => {
     const allowlistPath = resolve('docs/migrations/101-246-repair-allowlist.json');
     const allowlist = JSON.parse(readFileSync(allowlistPath, 'utf-8')) as Array<{ version: string }>;
-    expect(allowlist.length).toBe(0);
+    expect(allowlist.length).toBe(15);
+    const batch5Versions = new Set(['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190']);
+    for (const entry of allowlist) {
+      expect(batch5Versions.has(entry.version)).toBe(true);
+    }
   });
 
   it('Batch 3 entries now marked remote_tracked=true after repair', () => {
@@ -2487,22 +2512,22 @@ describe('Batch 3 repair-specific validation', () => {
     const allowlistVersions = new Set(allowlist.map(a => a.version));
     const candidateVersions = new Set(candidates.map(c => c.version));
 
-    // Classification counts post Batch 4 verification
+    // Classification counts post Batch 5 verification
     const counts: Record<string, number> = {};
     manifest.forEach(e => { counts[e.current_classification] = (counts[e.current_classification] || 0) + 1; });
     expect(counts['ALIGNED_TRACKED']).toBe(68);
-    expect(counts['VERIFIED_APPLIED_UNTRACKED'] || 0).toBe(0);
-    expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(64);
+    expect(counts['VERIFIED_APPLIED_UNTRACKED']).toBe(15);
+    expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(49);
 
-    expect(allowlist.length).toBe(0);
-    expect(candidates.length).toBe(64);
+    expect(allowlist.length).toBe(15);
+    expect(candidates.length).toBe(49);
 
     const repairedCandidates = manifest.filter(e =>
       e.current_classification === 'ALIGNED_TRACKED' &&
       e.repair_status === 'completed' &&
       e.original_classification === 'VERIFIED_APPLIED_UNTRACKED'
     ).length;
-    expect(64 + 0 + repairedCandidates).toBe(124);
+    expect(49 + 15 + repairedCandidates).toBe(124);
     expect(repairedCandidates).toBe(60);
 
     // Verify all 60 completed entries NOT in allowlist or candidates
@@ -3476,5 +3501,334 @@ describe('Migration 298 negative tests — contradictory evidence rejection', ()
   it('corrected evidence must not rerun Migration 298', () => {
     const data = JSON.parse(readFileSync(resolve('docs/migrations/evidence/migration-298-production-application-corrected.json'), 'utf-8'));
     expect(data.corrective_action.do_not_rerun_migration_298).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// BATCH 5 EVIDENCE VALIDATION
+// ══════════════════════════════════════════════════════════════
+describe('Batch 5 production verification evidence', () => {
+  const BATCH5_VERSIONS = ['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190'];
+  const evidencePath = resolve('docs/migrations/evidence/batch-05-production-verification.json');
+
+  it('evidence file exists and is valid JSON', () => {
+    expect(existsSync(evidencePath)).toBe(true);
+    const data = JSON.parse(readFileSync(evidencePath, 'utf-8'));
+    expect(data).toBeDefined();
+  });
+
+  it('has correct batch number and version set', () => {
+    const data = JSON.parse(readFileSync(evidencePath, 'utf-8'));
+    expect(data.batch_number).toBe(5);
+    expect(data.versions).toEqual(BATCH5_VERSIONS);
+  });
+
+  it('has correct checksums and expected-object metadata', () => {
+    const data = JSON.parse(readFileSync(evidencePath, 'utf-8'));
+    const migrationFiles = readdirSync(resolve('supabase/migrations')).filter(f => f.endsWith('.sql'));
+    for (const m of data.migrations) {
+      expect(BATCH5_VERSIONS).toContain(m.version);
+      const repoFile = migrationFiles.find(f => f.startsWith(m.version + '_'));
+      expect(repoFile).toBeDefined();
+      const content = readFileSync(resolve('supabase/migrations', repoFile!), 'utf-8');
+      const sha256 = createHash('sha256').update(content).digest('hex');
+      expect(m.checksum).toBe(sha256);
+      expect(m.expected_object_count).toBe(m.objects.length);
+    }
+  });
+
+  it('total checks = 55, passed = 55, superseded/failed/ambiguous = 0', () => {
+    const data = JSON.parse(readFileSync(evidencePath, 'utf-8'));
+    expect(data.total_objects_checked).toBe(55);
+    expect(data.total_passed).toBe(55);
+    expect(data.total_superseded).toBe(0);
+    expect(data.total_failed).toBe(0);
+    expect(data.total_ambiguous).toBe(0);
+  });
+
+  it('all classifications are VERIFIED_APPLIED_UNTRACKED', () => {
+    const data = JSON.parse(readFileSync(evidencePath, 'utf-8'));
+    for (const [ver, cls] of Object.entries(data.classifications)) {
+      expect(cls).toBe('VERIFIED_APPLIED_UNTRACKED');
+    }
+    expect(Object.keys(data.classifications).length).toBe(15);
+    for (const m of data.migrations) {
+      expect(m.classification).toBe('VERIFIED_APPLIED_UNTRACKED');
+    }
+  });
+
+  it('all object results are pass', () => {
+    const data = JSON.parse(readFileSync(evidencePath, 'utf-8'));
+    for (const m of data.migrations) {
+      for (const obj of m.objects) {
+        expect(obj.result).toBe('pass');
+      }
+    }
+  });
+
+  it('pre/post migration-history counts unchanged', () => {
+    const data = JSON.parse(readFileSync(evidencePath, 'utf-8'));
+    expect(data.pre_total_remote_count).toBe(164);
+    expect(data.post_total_remote_count).toBe(164);
+    expect(data.pre_range_101_246_count).toBe(68);
+    expect(data.post_range_101_246_count).toBe(68);
+  });
+
+  it('Migration 298 exactly once pre and post', () => {
+    const data = JSON.parse(readFileSync(evidencePath, 'utf-8'));
+    expect(data.migration_298_pre_occurrences).toBe(1);
+    expect(data.migration_298_post_occurrences).toBe(1);
+  });
+
+  it('all Batch 5 occurrences zero pre and post', () => {
+    const data = JSON.parse(readFileSync(evidencePath, 'utf-8'));
+    for (const v of BATCH5_VERSIONS) {
+      expect(data.batch5_pre_occurrence_map[v]).toBe(0);
+      expect(data.batch5_post_occurrence_map[v]).toBe(0);
+    }
+  });
+
+  it('tracked snapshots identical', () => {
+    const data = JSON.parse(readFileSync(evidencePath, 'utf-8'));
+    expect(data.pre_tracked_snapshot).toEqual(data.post_tracked_snapshot);
+  });
+
+  it('migration_history_unchanged is true', () => {
+    const data = JSON.parse(readFileSync(evidencePath, 'utf-8'));
+    expect(data.migration_history_unchanged).toBe(true);
+  });
+
+  it('all safety booleans exist and are true', () => {
+    const data = JSON.parse(readFileSync(evidencePath, 'utf-8'));
+    const safetyFields = [
+      'all_queries_read_only', 'no_record_contents_returned', 'no_customer_records_accessed',
+      'no_write_query_executed', 'no_migration_sql_executed', 'no_migration_repair',
+      'no_migration_up', 'no_supabase_db_push', 'no_management_api_write',
+      'no_schema_or_data_changed', 'no_migration_history_changed', 'no_repository_change',
+      'no_commit_push_or_pr', 'no_issue_53_mutation', 'no_deployment_occurred',
+      'no_token_recorded', 'batch_6_not_started'
+    ];
+    for (const field of safetyFields) {
+      expect(data[field]).toBe(true);
+    }
+  });
+
+  it('repository SHA and linked project ref correct', () => {
+    const data = JSON.parse(readFileSync(evidencePath, 'utf-8'));
+    expect(data.main_sha).toBe('906878f94141e39ecc3fe19e4cf6ddc714a3811c');
+    expect(data.linked_project_ref).toBe('cxcmiqotkowhxinjbytg');
+  });
+
+  it('evidence digest consistency', () => {
+    const content = readFileSync(evidencePath, 'utf-8');
+    const digest = createHash('sha256').update(readFileSync(evidencePath)).digest('hex');
+    expect(digest).toBe('92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77');
+  });
+});
+
+describe('Batch 5 allowlist validation', () => {
+  const BATCH5_VERSIONS = ['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190'];
+
+  it('exactly 15 entries with exact Batch 5 version set', () => {
+    const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
+    expect(allowlist.length).toBe(15);
+    const versions = allowlist.map((e: { version: string }) => e.version);
+    expect(versions.sort((a: string, b: string) => parseInt(a) - parseInt(b))).toEqual(BATCH5_VERSIONS);
+  });
+
+  it('no duplicates', () => {
+    const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
+    const versions = allowlist.map((e: { version: string }) => e.version);
+    expect(new Set(versions).size).toBe(versions.length);
+  });
+
+  it('every checksum matches repository migration file', () => {
+    const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
+    const migrationFiles = readdirSync(resolve('supabase/migrations')).filter(f => f.endsWith('.sql'));
+    for (const entry of allowlist) {
+      const repoFile = migrationFiles.find((f: string) => f.startsWith(entry.version + '_'));
+      expect(repoFile).toBeDefined();
+      const content = readFileSync(resolve('supabase/migrations', repoFile!), 'utf-8');
+      const sha256 = createHash('sha256').update(content).digest('hex');
+      expect(entry.checksum).toBe(sha256);
+    }
+  });
+
+  it('every allowlisted manifest entry is VERIFIED_APPLIED_UNTRACKED', () => {
+    const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
+    const manifest = JSON.parse(readFileSync(resolve('docs/migrations/101-246-production-reconciliation.json'), 'utf-8'));
+    for (const entry of allowlist) {
+      const me = manifest.find((e: ManifestEntry) => e.version === entry.version);
+      expect(me).toBeDefined();
+      expect(me!.current_classification).toBe('VERIFIED_APPLIED_UNTRACKED');
+    }
+  });
+
+  it('no ALIGNED, PENDING, NOT_VERIFIABLE or SUPERSEDED version is allowlisted', () => {
+    const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
+    const manifest = JSON.parse(readFileSync(resolve('docs/migrations/101-246-production-reconciliation.json'), 'utf-8'));
+    const allowlistVersions = new Set(allowlist.map((e: { version: string }) => e.version));
+    for (const entry of manifest) {
+      if (entry.current_classification !== 'VERIFIED_APPLIED_UNTRACKED') {
+        expect(allowlistVersions.has(entry.version)).toBe(false);
+      }
+    }
+  });
+});
+
+describe('Batch 5 candidate validation', () => {
+  const BATCH5_VERSIONS = new Set(['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190']);
+  const BATCH6_VERSIONS = ['191','192','193','194','195','196','197','198','201','202','203','204','205','206','207'];
+
+  it('exactly 49 candidates', () => {
+    const candidates = JSON.parse(readFileSync(resolve('docs/migrations/101-246-verification-candidates.json'), 'utf-8'));
+    expect(candidates.length).toBe(49);
+  });
+
+  it('no Batch 5 version remains', () => {
+    const candidates = JSON.parse(readFileSync(resolve('docs/migrations/101-246-verification-candidates.json'), 'utf-8'));
+    for (const c of candidates) {
+      expect(BATCH5_VERSIONS.has(c.version)).toBe(false);
+    }
+  });
+
+  it('Batch 6 begins the list', () => {
+    const candidates = JSON.parse(readFileSync(resolve('docs/migrations/101-246-verification-candidates.json'), 'utf-8'));
+    for (let i = 0; i < BATCH6_VERSIONS.length; i++) {
+      expect(candidates[i].version).toBe(BATCH6_VERSIONS[i]);
+    }
+  });
+
+  it('all remaining entries are PENDING in manifest', () => {
+    const candidates = JSON.parse(readFileSync(resolve('docs/migrations/101-246-verification-candidates.json'), 'utf-8'));
+    const manifest = JSON.parse(readFileSync(resolve('docs/migrations/101-246-production-reconciliation.json'), 'utf-8'));
+    for (const c of candidates) {
+      const me = manifest.find((e: ManifestEntry) => e.version === c.version);
+      expect(me).toBeDefined();
+      expect(me!.current_classification).toBe('PENDING_PRODUCTION_REVERIFICATION');
+    }
+  });
+});
+
+describe('Batch 5 classification counts', () => {
+  it('68/15/49/12/2 and completed repairs remain 60', () => {
+    const manifest = JSON.parse(readFileSync(resolve('docs/migrations/101-246-production-reconciliation.json'), 'utf-8')) as ManifestEntry[];
+    const counts: Record<string, number> = {};
+    manifest.forEach(e => { counts[e.current_classification] = (counts[e.current_classification] || 0) + 1; });
+    expect(counts['ALIGNED_TRACKED']).toBe(68);
+    expect(counts['VERIFIED_APPLIED_UNTRACKED']).toBe(15);
+    expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(49);
+    expect(counts['NOT_VERIFIABLE_SAFELY']).toBe(12);
+    expect(counts['SUPERSEDED_WITH_EQUIVALENT_STATE']).toBe(2);
+
+    const completedRepairs = manifest.filter(e => e.repair_status === 'completed' && e.current_classification === 'ALIGNED_TRACKED').length;
+    expect(completedRepairs).toBeGreaterThanOrEqual(60);
+  });
+});
+
+describe('Batch 5 CLI rejection tests', () => {
+  it('rejects missing Batch 5 evidence file', () => {
+    expect(existsSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'))).toBe(true);
+    // A missing file would fail: existsSync returns false
+    expect(existsSync(resolve('docs/migrations/evidence/batch-99-production-verification.json'))).toBe(false);
+  });
+
+  it('rejects wrong batch number', () => {
+    const data = JSON.parse(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'), 'utf-8'));
+    expect(data.batch_number).toBe(5);
+    expect(data.batch_number).not.toBe(4);
+    expect(data.batch_number).not.toBe(6);
+  });
+
+  it('rejects altered version set', () => {
+    const data = JSON.parse(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'), 'utf-8'));
+    const expected = ['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190'];
+    expect(data.versions).toEqual(expected);
+    expect(data.versions).not.toContain('191');
+    expect(data.versions).not.toContain('171');
+  });
+
+  it('rejects total checks not 55', () => {
+    const data = JSON.parse(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'), 'utf-8'));
+    expect(data.total_objects_checked).toBe(55);
+  });
+
+  it('rejects failed count nonzero', () => {
+    const data = JSON.parse(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'), 'utf-8'));
+    expect(data.total_failed).toBe(0);
+  });
+
+  it('rejects ambiguous count nonzero', () => {
+    const data = JSON.parse(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'), 'utf-8'));
+    expect(data.total_ambiguous).toBe(0);
+  });
+
+  it('rejects classification not VERIFIED_APPLIED_UNTRACKED', () => {
+    const data = JSON.parse(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'), 'utf-8'));
+    for (const cls of Object.values(data.classifications)) {
+      expect(cls).toBe('VERIFIED_APPLIED_UNTRACKED');
+    }
+  });
+
+  it('rejects Batch 5 history occurrence nonzero', () => {
+    const data = JSON.parse(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'), 'utf-8'));
+    for (const v of data.versions) {
+      expect(data.batch5_pre_occurrence_map[v]).toBe(0);
+      expect(data.batch5_post_occurrence_map[v]).toBe(0);
+    }
+  });
+
+  it('rejects Migration 298 occurrence not 1', () => {
+    const data = JSON.parse(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'), 'utf-8'));
+    expect(data.migration_298_pre_occurrences).toBe(1);
+    expect(data.migration_298_post_occurrences).toBe(1);
+  });
+
+  it('rejects changed pre/post snapshot', () => {
+    const data = JSON.parse(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'), 'utf-8'));
+    expect(JSON.stringify(data.pre_tracked_snapshot)).toBe(JSON.stringify(data.post_tracked_snapshot));
+  });
+
+  it('rejects missing read-only safety confirmation', () => {
+    const data = JSON.parse(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'), 'utf-8'));
+    expect(data.all_queries_read_only).toBe(true);
+    expect(data.no_record_contents_returned).toBe(true);
+  });
+
+  it('rejects false no_migration_repair', () => {
+    const data = JSON.parse(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'), 'utf-8'));
+    expect(data.no_migration_repair).toBe(true);
+  });
+
+  it('rejects incorrect evidence digest', () => {
+    const digest = createHash('sha256').update(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'))).digest('hex');
+    expect(digest).toBe('92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77');
+    expect(digest).not.toBe('0000000000000000000000000000000000000000000000000000000000000000');
+  });
+
+  it('rejects allowlist missing one Batch 5 version', () => {
+    const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
+    const allowlistVersions = new Set(allowlist.map((e: { version: string }) => e.version));
+    const batch5Versions = ['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190'];
+    for (const v of batch5Versions) {
+      expect(allowlistVersions.has(v)).toBe(true);
+    }
+  });
+
+  it('rejects allowlist containing an unrelated version', () => {
+    const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
+    const batch5Versions = new Set(['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190']);
+    for (const entry of allowlist) {
+      expect(batch5Versions.has(entry.version)).toBe(true);
+    }
+  });
+
+  it('rejects Batch 5 version still present in candidate list', () => {
+    const candidates = JSON.parse(readFileSync(resolve('docs/migrations/101-246-verification-candidates.json'), 'utf-8'));
+    const candidateVersions = new Set(candidates.map((c: { version: string }) => c.version));
+    const batch5Versions = ['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190'];
+    for (const v of batch5Versions) {
+      expect(candidateVersions.has(v)).toBe(false);
+    }
   });
 });

@@ -7,6 +7,22 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-29
 
+### Operations: Batch 5 migration production verification recorded (15 versions)
+- `docs/migrations/evidence/batch-05-production-verification.json` — Verification evidence for 15 versions (172, 173, 174, 175, 177, 178, 179, 180, 183, 184, 185, 186, 188, 189, 190). 55 object checks: 55 passed, 0 superseded, 0 failed, 0 ambiguous.
+- `docs/migrations/evidence/batch-05-production-verification.md` — Verification summary.
+- `docs/migrations/101-246-production-reconciliation.json` — 15 entries updated from PENDING_PRODUCTION_REVERIFICATION to VERIFIED_APPLIED_UNTRACKED with verification_batch=5, production evidence. New counts: 68 ALIGNED, 15 VERIFIED, 49 PENDING, 12 NV, 2 SUPERSEDED.
+- `docs/migrations/101-246-repair-allowlist.json` — Populated with 15 Batch 5 versions and production_evidence_digest.
+- `docs/migrations/101-246-verification-candidates.json` — 15 Batch 5 versions removed. 49 candidates remain.
+- `scripts/validate-migration-repair-allowlist.mjs` — Updated expected counts: ALIGNED=68, VERIFIED=15, PENDING=49. Active allowlist=15. Added Batch 5 evidence validation.
+- `lib/__tests__/migration-repair-validator.test.ts` — Updated integration tests for post-Batch-5-verification state.
+- `docs/migrations/101-246-repair-runbook.md` — Batch 5 marked verification COMPLETE, repair PENDING. 49 candidates remain for Batches 6-9.
+- `docs/MIGRATION_REGISTRY.md` — 15 Batch 5 versions added as "Batch 5 verified (repair pending)".
+- `docs/engineering-status.json` — OPS-001 updated: Batch 5 verification complete, next action = merge evidence PR then execute Batch 5 repair.
+- Migration history remained unchanged: total remote count 164, 101-246 tracked count 68.
+- Migration-history repair was not executed. Batch 6 was not started. Issue #53 remains open.
+  - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — read-only verification only; no migration SQL executed, no migration-history repair, no schema or application-data change, no deployment.
+
 ### Operations: Batch 4 migration-history repair complete and Migration 298 production result
 - Batch 4 repair complete: 15 versions (154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170, 171). Remote count 148→163 (+15). 101-246 tracked count 53→68 (+15). 60 total completed migration-history repairs.
 - Migration 298 applied to production: exactly 11 historical payment rows linked, pending rows now zero, populated consistent count 39.

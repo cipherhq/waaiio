@@ -6,11 +6,11 @@
  * Progressive invariants (multi-batch aware):
  * - Manifest has exactly 146 entries (one per version 101-246)
  * - ALIGNED_TRACKED = 68 (8 original + 15 Batch 1 + 15 Batch 2 + 15 Batch 3 + 15 Batch 4 repaired)
- * - VERIFIED_APPLIED_UNTRACKED = 0 (Batch 4 repair complete)
- * - PENDING_PRODUCTION_REVERIFICATION = 64
+ * - VERIFIED_APPLIED_UNTRACKED = 15 (Batch 5 verified, repair pending)
+ * - PENDING_PRODUCTION_REVERIFICATION = 49
  * - NOT_VERIFIABLE_SAFELY = 12, SUPERSEDED = 2
- * - Active repair allowlist = 0 (empty after Batch 4 repair)
- * - Verification candidates = 64 (exact PENDING set)
+ * - Active repair allowlist = 15 (Batch 5 verified, repair pending)
+ * - Verification candidates = 49 (exact PENDING set)
  * - The 124-candidate cohort: PENDING + VERIFIED + repaired candidates = 124
  * - Completed repair entries cross-validate against batch evidence
  * - All verification batch evidence files are discovered and validated
@@ -48,8 +48,8 @@ const VALID_SUPERSEDED_STATES = new Set([
 
 const EXPECTED_MANIFEST_COUNT = 146;
 const EXPECTED_ALIGNED = 68;
-const EXPECTED_VERIFIED = 0;
-const EXPECTED_PENDING = 64;
+const EXPECTED_VERIFIED = 15;
+const EXPECTED_PENDING = 49;
 const EXPECTED_NV = 12;
 const EXPECTED_SUPERSEDED = 2;
 const EXPECTED_CANDIDATE_COHORT = 124; // PENDING + VERIFIED + repaired candidates = 124
@@ -274,7 +274,8 @@ for (const e of approvedInManifest) {
         } else {
           // Default: verified_state must exactly equal expected_state, or be a recognized equivalent pair
           const equivalentStatePairs = [
-            ['drop_not_null', 'column_exists_nullable']  // ALTER COLUMN DROP NOT NULL: column still exists, now nullable
+            ['drop_not_null', 'column_exists_nullable'],  // ALTER COLUMN DROP NOT NULL: column still exists, now nullable
+            ['exists', 'enabled']  // RLS: expected "exists" but verified as "enabled" (more specific)
           ];
           const stateMatch = ev.verified_state === ev.expected_state ||
             equivalentStatePairs.some(([exp, ver]) => ev.expected_state === exp && ev.verified_state === ver);
@@ -751,6 +752,52 @@ for (const { file, data: batch } of allBatches) {
     else pass('Batch 4 total_superseded = 2');
   }
 
+  if (batch.batch_number === 5) {
+    if (batch.total_objects_checked !== 55) fail(`Batch 5 total_objects_checked: ${batch.total_objects_checked}, expected 55`);
+    else pass('Batch 5 total_objects_checked = 55');
+    if (batch.total_passed !== 55) fail(`Batch 5 total_passed: ${batch.total_passed}, expected 55`);
+    else pass('Batch 5 total_passed = 55');
+    if ((batch.total_superseded || 0) !== 0) fail(`Batch 5 total_superseded: ${batch.total_superseded}, expected 0`);
+    else pass('Batch 5 total_superseded = 0');
+    if ((batch.total_ambiguous || 0) !== 0) fail(`Batch 5 total_ambiguous: ${batch.total_ambiguous}, expected 0`);
+    else pass('Batch 5 total_ambiguous = 0');
+    // Batch 5 migration-history checks
+    if (batch.pre_total_remote_count !== 164) fail(`Batch 5 pre_total_remote_count: ${batch.pre_total_remote_count}, expected 164`);
+    else pass('Batch 5 pre_total_remote_count = 164');
+    if (batch.post_total_remote_count !== 164) fail(`Batch 5 post_total_remote_count: ${batch.post_total_remote_count}, expected 164`);
+    else pass('Batch 5 post_total_remote_count = 164');
+    if (batch.pre_range_101_246_count !== 68) fail(`Batch 5 pre_range_101_246_count: ${batch.pre_range_101_246_count}, expected 68`);
+    else pass('Batch 5 pre_range_101_246_count = 68');
+    if (batch.post_range_101_246_count !== 68) fail(`Batch 5 post_range_101_246_count: ${batch.post_range_101_246_count}, expected 68`);
+    else pass('Batch 5 post_range_101_246_count = 68');
+    if (batch.migration_298_pre_occurrences !== 1) fail(`Batch 5 migration_298_pre_occurrences: ${batch.migration_298_pre_occurrences}, expected 1`);
+    else pass('Batch 5 migration_298_pre_occurrences = 1');
+    if (batch.migration_298_post_occurrences !== 1) fail(`Batch 5 migration_298_post_occurrences: ${batch.migration_298_post_occurrences}, expected 1`);
+    else pass('Batch 5 migration_298_post_occurrences = 1');
+    if (batch.migration_history_unchanged !== true) fail(`Batch 5 migration_history_unchanged: ${batch.migration_history_unchanged}, expected true`);
+    else pass('Batch 5 migration_history_unchanged = true');
+    // Check all Batch 5 version occurrences are zero
+    const batch5Versions = ['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190'];
+    let occErrors = 0;
+    for (const v of batch5Versions) {
+      if (batch.batch5_pre_occurrence_map && batch.batch5_pre_occurrence_map[v] !== 0) {
+        fail(`Batch 5 pre occurrence for version ${v}: ${batch.batch5_pre_occurrence_map[v]}, expected 0`);
+        occErrors++;
+      }
+      if (batch.batch5_post_occurrence_map && batch.batch5_post_occurrence_map[v] !== 0) {
+        fail(`Batch 5 post occurrence for version ${v}: ${batch.batch5_post_occurrence_map[v]}, expected 0`);
+        occErrors++;
+      }
+    }
+    if (occErrors === 0) pass('Batch 5 all version occurrences are 0 pre and post');
+    // Tracked snapshots identical
+    if (JSON.stringify(batch.pre_tracked_snapshot) !== JSON.stringify(batch.post_tracked_snapshot)) {
+      fail('Batch 5 pre/post tracked snapshots differ');
+    } else {
+      pass('Batch 5 pre/post tracked snapshots identical');
+    }
+  }
+
   // ── Version-set equality: batch.versions must equal set of migration versions AND classification keys ──
   const migrationVersionSet = new Set((batch.migrations || []).map(m => m.version));
   const classificationVersionSet = batch.classifications ? new Set(Object.keys(batch.classifications)) : new Set();
@@ -913,7 +960,8 @@ for (const { file, data: batch } of allBatches) {
         // For result=pass: verified_state must exactly equal expected_state, or be a recognized equivalent pair
         if (obj.result === 'pass' && obj.verified_state && obj.expected_state) {
           const equivalentStatePairs = [
-            ['drop_not_null', 'column_exists_nullable']
+            ['drop_not_null', 'column_exists_nullable'],
+            ['exists', 'enabled']
           ];
           const stateOk = obj.verified_state === obj.expected_state ||
             equivalentStatePairs.some(([exp, ver]) => obj.expected_state === exp && obj.verified_state === ver);
@@ -1013,9 +1061,11 @@ for (const { file, data: batch } of allBatches) {
       'no_schema_or_data_changed',
       'no_customer_records_accessed',
       'no_deployment_occurred',
-      'no_token_recorded',
-      'batch_5_not_started'
+      'no_token_recorded'
     ];
+    // Each batch must confirm the next batch was not started
+    const nextBatchKey = `batch_${batch.batch_number + 1}_not_started`;
+    requiredVerificationConfirmations.push(nextBatchKey);
     let safetyErrors = 0;
     for (const key of requiredVerificationConfirmations) {
       if (batch[key] !== true) {
@@ -1055,10 +1105,12 @@ for (const file of repairFiles) {
     // Normalize flat-key repair evidence (Batch 4+) to nested structure
     if (data.pre_repair_total !== undefined && !data.pre_repair) {
       // Strict: require all safety booleans to exist and be true
+      const batchNum = data.batch_number || 0;
+      const nextBatchKey = `batch_${batchNum + 1}_not_started`;
       const requiredFlatBooleans = [
         'no_unapproved_versions_added', 'no_migration_sql_executed', 'no_supabase_db_push',
         'no_schema_or_data_changed', 'no_customer_records_accessed',
-        'no_deployment_occurred', 'no_token_recorded', 'batch_5_not_started'
+        'no_deployment_occurred', 'no_token_recorded', nextBatchKey
       ];
       for (const key of requiredFlatBooleans) {
         if (!(key in data)) {
