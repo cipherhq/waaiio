@@ -226,6 +226,7 @@ export async function initializePayment(
       byoBusinessId,
       connectAccountId,
       campaignId: opts.campaignId,
+      businessId: opts.businessId,
       channels,
     }));
 
