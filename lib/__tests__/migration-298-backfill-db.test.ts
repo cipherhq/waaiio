@@ -58,14 +58,15 @@ function validateDatabaseUrl(url: string | undefined): url is string {
   return isLocal && isDedicatedDb && !containsSupabase;
 }
 
-// Fail immediately (not skip) if the URL is unsafe
+// No URL → skip (the dedicated CI step sets it; main-app job does not)
+// Unsafe URL → fail immediately (not skip)
 if (!dbUrl) {
-  describe('Migration 298: Real PostgreSQL backfill tests', () => {
-    it('requires TEST_DATABASE_URL to be set', () => {
-      // In CI this is always set; locally the test is simply not run
-      expect(dbUrl).toBeDefined();
-    });
-  });
+  describe.skip(
+    'Migration 298: Real PostgreSQL backfill tests (TEST_DATABASE_URL not set)',
+    () => {
+      it('skipped — set TEST_DATABASE_URL to enable', () => {});
+    },
+  );
 } else if (!validateDatabaseUrl(dbUrl)) {
   describe('Migration 298: Database URL safety check', () => {
     it('REFUSES to run against an unsafe database URL', () => {
