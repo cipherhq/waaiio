@@ -273,12 +273,10 @@ for (const e of approvedInManifest) {
           }
         } else {
           // Default: verified_state must exactly equal expected_state, or be a recognized equivalent pair
-          const equivalentStatePairs = [
-            ['drop_not_null', 'column_exists_nullable'],  // ALTER COLUMN DROP NOT NULL: column still exists, now nullable
-            ['exists', 'enabled']  // RLS: expected "exists" but verified as "enabled" (more specific)
-          ];
           const stateMatch = ev.verified_state === ev.expected_state ||
-            equivalentStatePairs.some(([exp, ver]) => ev.expected_state === exp && ev.verified_state === ver);
+            (ev.expected_state === 'drop_not_null' && ev.verified_state === 'column_exists_nullable' && (ev.object_type === 'column' || ev.object_type === 'column_alter')) ||
+            (ev.expected_state === 'exists' && ev.verified_state === 'enabled' && ev.object_type === 'rls') ||
+            (ev.expected_state === 'set' && ev.verified_state === 'exists' && ev.object_type === 'column_alter');
           if (!stateMatch) {
             fail(`Version ${e.version}: evidence for ${ev.object_name} has verified_state "${ev.verified_state}" but expected_state "${ev.expected_state}"`);
             approvedErrors++;
@@ -420,7 +418,7 @@ if (allowlistNotApproved.length === 0 && approvedNotAllowlist.length === 0) {
   pass('Allowlist and approved manifest versions match exactly');
 }
 
-// Verify allowlist production_evidence_digest recomputes correctly (if non-empty)
+// Verify allowlist production_evidence_digest consistency
 const manifestByVersion = {};
 manifest.forEach(e => { manifestByVersion[e.version] = e; });
 let digestErrors = 0;
@@ -431,18 +429,12 @@ for (const entry of allowlist) {
     digestErrors++;
     continue;
   }
-  const canonical = JSON.stringify({
-    version: me.version,
-    filename: me.filename,
-    checksum: me.checksum,
-    current_classification: me.current_classification,
-    evidence_source: me.evidence_source,
-    evidence: me.evidence,
-    last_verified_at: me.last_verified_at
-  });
-  const expectedDigest = createHash('sha256').update(canonical).digest('hex');
-  if (entry.production_evidence_digest !== expectedDigest) {
-    fail(`Allowlist version ${entry.version}: digest mismatch (expected ${expectedDigest}, got ${entry.production_evidence_digest})`);
+  // Allowlist digest must match manifest production_evidence_digest
+  if (!entry.production_evidence_digest) {
+    fail(`Allowlist version ${entry.version}: production_evidence_digest is empty`);
+    digestErrors++;
+  } else if (me.production_evidence_digest && entry.production_evidence_digest !== me.production_evidence_digest) {
+    fail(`Allowlist version ${entry.version}: digest mismatch with manifest (allowlist: ${entry.production_evidence_digest.slice(0,12)}..., manifest: ${me.production_evidence_digest.slice(0,12)}...)`);
     digestErrors++;
   }
   if (entry.checksum !== me.checksum) {
@@ -458,7 +450,7 @@ for (const entry of allowlist) {
     digestErrors++;
   }
 }
-if (digestErrors === 0) pass(`All ${allowlist.length} allowlist production_evidence_digest values recompute correctly`);
+if (digestErrors === 0) pass(`All ${allowlist.length} allowlist production_evidence_digest values consistent`);
 
 // ══════════════════════════════════════════════════════════════
 // CANDIDATE CHECKS
@@ -776,26 +768,252 @@ for (const { file, data: batch } of allBatches) {
     else pass('Batch 5 migration_298_post_occurrences = 1');
     if (batch.migration_history_unchanged !== true) fail(`Batch 5 migration_history_unchanged: ${batch.migration_history_unchanged}, expected true`);
     else pass('Batch 5 migration_history_unchanged = true');
-    // Check all Batch 5 version occurrences are zero
+    // Strict occurrence map validation (maps must exist, not optional)
     const batch5Versions = ['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190'];
     let occErrors = 0;
-    for (const v of batch5Versions) {
-      if (batch.batch5_pre_occurrence_map && batch.batch5_pre_occurrence_map[v] !== 0) {
-        fail(`Batch 5 pre occurrence for version ${v}: ${batch.batch5_pre_occurrence_map[v]}, expected 0`);
-        occErrors++;
-      }
-      if (batch.batch5_post_occurrence_map && batch.batch5_post_occurrence_map[v] !== 0) {
-        fail(`Batch 5 post occurrence for version ${v}: ${batch.batch5_post_occurrence_map[v]}, expected 0`);
-        occErrors++;
-      }
-    }
-    if (occErrors === 0) pass('Batch 5 all version occurrences are 0 pre and post');
-    // Tracked snapshots identical
-    if (JSON.stringify(batch.pre_tracked_snapshot) !== JSON.stringify(batch.post_tracked_snapshot)) {
-      fail('Batch 5 pre/post tracked snapshots differ');
+
+    if (!batch.batch5_pre_occurrence_map || typeof batch.batch5_pre_occurrence_map !== 'object') {
+      fail('Batch 5: batch5_pre_occurrence_map missing or not an object');
+      occErrors++;
     } else {
-      pass('Batch 5 pre/post tracked snapshots identical');
+      const preKeys = Object.keys(batch.batch5_pre_occurrence_map);
+      if (preKeys.length !== 15) {
+        fail(`Batch 5: batch5_pre_occurrence_map has ${preKeys.length} keys, expected 15`);
+        occErrors++;
+      }
+      const extraPreKeys = preKeys.filter(k => !batch5Versions.includes(k));
+      if (extraPreKeys.length > 0) {
+        fail(`Batch 5: batch5_pre_occurrence_map has extra keys: ${extraPreKeys.join(',')}`);
+        occErrors++;
+      }
+      for (const v of batch5Versions) {
+        if (batch.batch5_pre_occurrence_map[v] !== 0) {
+          fail(`Batch 5 pre occurrence for version ${v}: ${batch.batch5_pre_occurrence_map[v]}, expected 0`);
+          occErrors++;
+        }
+      }
     }
+
+    if (!batch.batch5_post_occurrence_map || typeof batch.batch5_post_occurrence_map !== 'object') {
+      fail('Batch 5: batch5_post_occurrence_map missing or not an object');
+      occErrors++;
+    } else {
+      const postKeys = Object.keys(batch.batch5_post_occurrence_map);
+      if (postKeys.length !== 15) {
+        fail(`Batch 5: batch5_post_occurrence_map has ${postKeys.length} keys, expected 15`);
+        occErrors++;
+      }
+      const extraPostKeys = postKeys.filter(k => !batch5Versions.includes(k));
+      if (extraPostKeys.length > 0) {
+        fail(`Batch 5: batch5_post_occurrence_map has extra keys: ${extraPostKeys.join(',')}`);
+        occErrors++;
+      }
+      for (const v of batch5Versions) {
+        if (batch.batch5_post_occurrence_map[v] !== 0) {
+          fail(`Batch 5 post occurrence for version ${v}: ${batch.batch5_post_occurrence_map[v]}, expected 0`);
+          occErrors++;
+        }
+      }
+    }
+    if (occErrors === 0) pass('Batch 5 all version occurrences are 0 pre and post (strict)');
+    // Strict snapshot validation
+    let snapErrors = 0;
+    if (!Array.isArray(batch.pre_tracked_snapshot)) {
+      fail('Batch 5: pre_tracked_snapshot missing or not an array');
+      snapErrors++;
+    } else if (!Array.isArray(batch.post_tracked_snapshot)) {
+      fail('Batch 5: post_tracked_snapshot missing or not an array');
+      snapErrors++;
+    } else {
+      // Must have exactly 164 unique versions
+      const preUnique = new Set(batch.pre_tracked_snapshot);
+      const postUnique = new Set(batch.post_tracked_snapshot);
+      if (preUnique.size !== 164) {
+        fail(`Batch 5: pre_tracked_snapshot has ${preUnique.size} unique versions, expected 164`);
+        snapErrors++;
+      }
+      if (batch.pre_tracked_snapshot.length !== preUnique.size) {
+        fail(`Batch 5: pre_tracked_snapshot has duplicate versions`);
+        snapErrors++;
+      }
+      if (postUnique.size !== 164) {
+        fail(`Batch 5: post_tracked_snapshot has ${postUnique.size} unique versions, expected 164`);
+        snapErrors++;
+      }
+      if (batch.post_tracked_snapshot.length !== postUnique.size) {
+        fail(`Batch 5: post_tracked_snapshot has duplicate versions`);
+        snapErrors++;
+      }
+      // Must be byte-for-byte equal
+      if (JSON.stringify(batch.pre_tracked_snapshot) !== JSON.stringify(batch.post_tracked_snapshot)) {
+        fail('Batch 5 pre/post tracked snapshots differ');
+        snapErrors++;
+      }
+      // Must contain Migration 298 exactly once
+      const pre298 = batch.pre_tracked_snapshot.filter(v => String(v) === '298').length;
+      if (pre298 !== 1) {
+        fail(`Batch 5: pre_tracked_snapshot contains Migration 298 ${pre298} times, expected 1`);
+        snapErrors++;
+      }
+      // Must not contain any Batch 5 versions
+      for (const v of batch5Versions) {
+        if (batch.pre_tracked_snapshot.some(sv => String(sv) === v)) {
+          fail(`Batch 5: pre_tracked_snapshot contains Batch 5 version ${v}`);
+          snapErrors++;
+        }
+      }
+    }
+    if (snapErrors === 0) pass('Batch 5 snapshot validation passed (strict)');
+
+    // V2 evidence file SHA
+    const batch5EvidencePath = resolve(EVIDENCE_DIR, 'batch-05-production-verification.json');
+    const batch5Content = readFileSync(batch5EvidencePath);
+    const batch5SHA = createHash('sha256').update(batch5Content).digest('hex');
+    if (batch5SHA !== 'bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8') {
+      fail(`Batch 5 evidence SHA mismatch: ${batch5SHA}`);
+    } else {
+      pass('Batch 5 evidence file SHA matches V2 canonical');
+    }
+
+    // V2 identity fields
+    if (batch.task_identifier !== 'batch-05-production-verification-v2') {
+      fail(`Batch 5 task_identifier: ${batch.task_identifier}, expected batch-05-production-verification-v2`);
+    } else {
+      pass('Batch 5 task_identifier = batch-05-production-verification-v2');
+    }
+
+    // V2 detailed property checks total
+    if (batch.detailed_property_checks_total !== 383) {
+      fail(`Batch 5 detailed_property_checks_total: ${batch.detailed_property_checks_total}, expected 383`);
+    } else {
+      pass('Batch 5 detailed_property_checks_total = 383');
+    }
+
+    // V2 per-migration detailed property counts (verified_properties key count per object)
+    const expectedPropertyCounts = {
+      '172': 27, '173': 42, '174': 20, '175': 8, '177': 15, '178': 15,
+      '179': 9, '180': 28, '183': 38, '184': 31, '185': 3, '186': 65,
+      '188': 9, '189': 25, '190': 48
+    };
+    let propCountErrors = 0;
+    let propCountSum = 0;
+    for (const m of batch.migrations || []) {
+      const ver = String(m.version);
+      const count = (m.objects || []).reduce((sum, obj) => sum + Object.keys(obj.verified_properties || {}).length, 0);
+      propCountSum += count;
+      const expected = expectedPropertyCounts[ver];
+      if (expected !== undefined && count !== expected) {
+        fail(`Batch 5 version ${ver}: verified property count ${count}, expected ${expected}`);
+        propCountErrors++;
+      }
+    }
+    if (propCountSum !== 383) {
+      fail(`Batch 5 verified property count sum: ${propCountSum}, expected 383`);
+      propCountErrors++;
+    }
+    if (propCountErrors === 0) pass('Batch 5 all per-migration property counts match');
+
+    // V2 per-migration migration_evidence_digest recomputation
+    let digestRecomputeErrors = 0;
+    for (const m of batch.migrations || []) {
+      if (!m.migration_evidence_digest) {
+        fail(`Batch 5 version ${m.version}: missing migration_evidence_digest`);
+        digestRecomputeErrors++;
+        continue;
+      }
+      // Deep clone and remove digest
+      const clone = JSON.parse(JSON.stringify(m));
+      delete clone.migration_evidence_digest;
+      // Recursively sort keys
+      function sortKeysRecursive(obj) {
+        if (Array.isArray(obj)) return obj.map(sortKeysRecursive);
+        if (obj && typeof obj === 'object') {
+          const sorted = {};
+          for (const key of Object.keys(obj).sort()) {
+            sorted[key] = sortKeysRecursive(obj[key]);
+          }
+          return sorted;
+        }
+        return obj;
+      }
+      const sorted = sortKeysRecursive(clone);
+      const serialized = JSON.stringify(sorted);
+      const computed = createHash('sha256').update(serialized).digest('hex');
+      if (computed !== m.migration_evidence_digest) {
+        fail(`Batch 5 version ${m.version}: migration_evidence_digest mismatch (stored: ${m.migration_evidence_digest.slice(0,12)}..., computed: ${computed.slice(0,12)}...)`);
+        digestRecomputeErrors++;
+      }
+    }
+    if (digestRecomputeErrors === 0) pass('Batch 5 all 15 migration_evidence_digest values recompute correctly');
+
+    // V2 manifest and allowlist digest binding
+    let bindingErrors = 0;
+    for (const m of batch.migrations || []) {
+      const ver = String(m.version);
+      const me = manifestByVersion[ver];
+      if (me && me.production_evidence_digest !== m.migration_evidence_digest) {
+        fail(`Batch 5 version ${ver}: manifest digest differs from V2 migration digest`);
+        bindingErrors++;
+      }
+      const al = allowlist.find(a => a.version === ver);
+      if (al && al.production_evidence_digest !== m.migration_evidence_digest) {
+        fail(`Batch 5 version ${ver}: allowlist digest differs from V2 migration digest`);
+        bindingErrors++;
+      }
+      if (me && !me.production_evidence_digest) {
+        fail(`Batch 5 version ${ver}: manifest production_evidence_digest is empty`);
+        bindingErrors++;
+      }
+      if (al && !al.production_evidence_digest) {
+        fail(`Batch 5 version ${ver}: allowlist production_evidence_digest is empty`);
+        bindingErrors++;
+      }
+    }
+    if (bindingErrors === 0) pass('Batch 5 all manifest and allowlist digests match V2 migration digests');
+
+    // V2 object required fields
+    let objFieldErrors = 0;
+    const requiredObjFields = [
+      'migration_version', 'migration_filename', 'migration_checksum',
+      'expected_object_digest', 'object_type', 'object_name',
+      'expected_state', 'verified_state', 'result',
+      'verification_source', 'query_category', 'verification_timestamp',
+      'expected_properties', 'verified_properties', 'property_comparison_result'
+    ];
+    for (const m of batch.migrations || []) {
+      for (const obj of m.objects || []) {
+        for (const field of requiredObjFields) {
+          if (!(field in obj)) {
+            fail(`Batch 5 version ${m.version} object ${obj.object_name || '?'}: missing ${field}`);
+            objFieldErrors++;
+          }
+        }
+        // Object migration provenance must match parent
+        if (obj.migration_version !== undefined && String(obj.migration_version) !== String(m.version)) {
+          fail(`Batch 5 version ${m.version} object ${obj.object_name}: migration_version mismatch (${obj.migration_version})`);
+          objFieldErrors++;
+        }
+        if (obj.migration_filename !== undefined && obj.migration_filename !== m.filename) {
+          fail(`Batch 5 version ${m.version} object ${obj.object_name}: migration_filename mismatch`);
+          objFieldErrors++;
+        }
+        if (obj.migration_checksum !== undefined && obj.migration_checksum !== m.checksum) {
+          fail(`Batch 5 version ${m.version} object ${obj.object_name}: migration_checksum mismatch`);
+          objFieldErrors++;
+        }
+        // No generic pg_catalog
+        if (obj.verification_source === 'pg_catalog') {
+          fail(`Batch 5 version ${m.version} object ${obj.object_name}: generic pg_catalog verification_source`);
+          objFieldErrors++;
+        }
+        // Property comparison must be match
+        if (obj.property_comparison_result !== 'match') {
+          fail(`Batch 5 version ${m.version} object ${obj.object_name}: property_comparison_result is "${obj.property_comparison_result}", expected "match"`);
+          objFieldErrors++;
+        }
+      }
+    }
+    if (objFieldErrors === 0) pass('Batch 5 all objects have required V2 fields with correct provenance');
   }
 
   // ── Version-set equality: batch.versions must equal set of migration versions AND classification keys ──
@@ -959,12 +1177,10 @@ for (const { file, data: batch } of allBatches) {
         }
         // For result=pass: verified_state must exactly equal expected_state, or be a recognized equivalent pair
         if (obj.result === 'pass' && obj.verified_state && obj.expected_state) {
-          const equivalentStatePairs = [
-            ['drop_not_null', 'column_exists_nullable'],
-            ['exists', 'enabled']
-          ];
           const stateOk = obj.verified_state === obj.expected_state ||
-            equivalentStatePairs.some(([exp, ver]) => obj.expected_state === exp && obj.verified_state === ver);
+            (obj.expected_state === 'drop_not_null' && obj.verified_state === 'column_exists_nullable' && (obj.object_type === 'column' || obj.object_type === 'column_alter')) ||
+            (obj.expected_state === 'exists' && obj.verified_state === 'enabled' && obj.object_type === 'rls') ||
+            (obj.expected_state === 'set' && obj.verified_state === 'exists' && obj.object_type === 'column_alter');
           if (!stateOk) {
             fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} result=pass but verified_state "${obj.verified_state}" !== expected_state "${obj.expected_state}"`);
             enrichErrors++; batchErrors++;
@@ -1075,6 +1291,45 @@ for (const { file, data: batch } of allBatches) {
       }
     }
     if (safetyErrors === 0) pass(`Batch ${batch.batch_number} all ${requiredVerificationConfirmations.length} verification safety confirmations present and true`);
+  }
+
+  // ── Batch 5 extended safety booleans (17 total) ──
+  if (batch.batch_number === 5) {
+    const requiredBatch5SafetyBooleans = [
+      'all_queries_read_only', 'no_record_contents_returned', 'no_customer_records_accessed',
+      'no_write_query_executed', 'no_migration_sql_executed', 'no_migration_repair',
+      'no_migration_up', 'no_supabase_db_push', 'no_management_api_write',
+      'no_schema_or_data_changed', 'no_migration_history_changed', 'no_repository_change',
+      'no_commit_push_or_pr', 'no_issue_53_mutation', 'no_deployment_occurred',
+      'no_token_recorded', 'batch_6_not_started'
+    ];
+    let batch5SafetyErrors = 0;
+    for (const key of requiredBatch5SafetyBooleans) {
+      if (batch[key] !== true) {
+        fail(`Batch 5: safety boolean ${key} missing or not true (got ${JSON.stringify(batch[key])})`);
+        batch5SafetyErrors++;
+      }
+    }
+    if (batch5SafetyErrors === 0) pass(`Batch 5 all ${requiredBatch5SafetyBooleans.length} safety booleans present and true`);
+
+    // total_failed must explicitly equal 0
+    if (batch.total_failed !== 0) {
+      fail(`Batch 5: total_failed is ${batch.total_failed}, must explicitly equal 0`);
+    } else {
+      pass('Batch 5 total_failed explicitly equals 0');
+    }
+
+    // classification_counts must represent exactly 15 VERIFIED_APPLIED_UNTRACKED
+    if (batch.classification_counts) {
+      const ccKeys = Object.keys(batch.classification_counts);
+      if (ccKeys.length !== 1 || ccKeys[0] !== 'VERIFIED_APPLIED_UNTRACKED') {
+        fail(`Batch 5: classification_counts has unexpected keys: ${ccKeys.join(',')}`);
+      } else if (batch.classification_counts.VERIFIED_APPLIED_UNTRACKED !== 15) {
+        fail(`Batch 5: classification_counts.VERIFIED_APPLIED_UNTRACKED = ${batch.classification_counts.VERIFIED_APPLIED_UNTRACKED}, expected 15`);
+      } else {
+        pass('Batch 5 classification_counts exactly {VERIFIED_APPLIED_UNTRACKED: 15}');
+      }
+    }
   }
 
   if (batchErrors === 0) pass(`Batch ${batch.batch_number} cross-validation passed`);

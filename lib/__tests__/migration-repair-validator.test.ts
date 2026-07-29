@@ -3622,7 +3622,7 @@ describe('Batch 5 production verification evidence', () => {
   it('evidence digest consistency', () => {
     const content = readFileSync(evidencePath, 'utf-8');
     const digest = createHash('sha256').update(readFileSync(evidencePath)).digest('hex');
-    expect(digest).toBe('92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77');
+    expect(digest).toBe('bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8');
   });
 });
 
@@ -3802,7 +3802,7 @@ describe('Batch 5 CLI rejection tests', () => {
 
   it('rejects incorrect evidence digest', () => {
     const digest = createHash('sha256').update(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'))).digest('hex');
-    expect(digest).toBe('92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77');
+    expect(digest).toBe('bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8');
     expect(digest).not.toBe('0000000000000000000000000000000000000000000000000000000000000000');
   });
 
@@ -3831,4 +3831,678 @@ describe('Batch 5 CLI rejection tests', () => {
       expect(candidateVersions.has(v)).toBe(false);
     }
   });
+});
+
+// ══════════════════════════════════════════════════════════════
+// CLI REJECTION TESTS FOR V2 EVIDENCE
+// ══════════════════════════════════════════════════════════════
+
+describe('CLI rejection tests for V2 evidence', () => {
+  const { execSync } = require('child_process');
+  const { mkdirSync, cpSync, rmSync, writeFileSync } = require('fs');
+  const { join } = require('path');
+  const os = require('os');
+
+  const VALIDATOR_SCRIPT = resolve('scripts/validate-migration-repair-allowlist.mjs');
+  const SRC_DOCS_MIGRATIONS = resolve('docs/migrations');
+  const SRC_SUPABASE_MIGRATIONS = resolve('supabase/migrations');
+
+  const EVIDENCE_FILE = 'batch-05-production-verification.json';
+  const MANIFEST_FILE = '101-246-production-reconciliation.json';
+  const ALLOWLIST_FILE = '101-246-repair-allowlist.json';
+
+  function createTestFixture(): string {
+    const tmpDir = join(os.tmpdir(), `v2-validator-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    mkdirSync(join(tmpDir, 'docs', 'migrations', 'evidence'), { recursive: true });
+    mkdirSync(join(tmpDir, 'supabase', 'migrations'), { recursive: true });
+
+    cpSync(join(SRC_DOCS_MIGRATIONS, MANIFEST_FILE), join(tmpDir, 'docs', 'migrations', MANIFEST_FILE));
+    cpSync(join(SRC_DOCS_MIGRATIONS, ALLOWLIST_FILE), join(tmpDir, 'docs', 'migrations', ALLOWLIST_FILE));
+    cpSync(join(SRC_DOCS_MIGRATIONS, '101-246-verification-candidates.json'), join(tmpDir, 'docs', 'migrations', '101-246-verification-candidates.json'));
+
+    const evidenceDir = join(SRC_DOCS_MIGRATIONS, 'evidence');
+    if (existsSync(evidenceDir)) {
+      for (const f of readdirSync(evidenceDir)) {
+        cpSync(join(evidenceDir, f), join(tmpDir, 'docs', 'migrations', 'evidence', f));
+      }
+    }
+
+    for (const f of readdirSync(SRC_SUPABASE_MIGRATIONS).filter((f: string) => f.endsWith('.sql'))) {
+      cpSync(join(SRC_SUPABASE_MIGRATIONS, f), join(tmpDir, 'supabase', 'migrations', f));
+    }
+
+    return tmpDir;
+  }
+
+  function runValidatorInFixture(cwd: string): { exitCode: number; output: string } {
+    try {
+      const output = execSync(`node "${VALIDATOR_SCRIPT}"`, { cwd, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] });
+      return { exitCode: 0, output };
+    } catch (err: unknown) {
+      const e = err as { status?: number; stdout?: string; stderr?: string };
+      return { exitCode: e.status || 1, output: (e.stdout || '') + (e.stderr || '') };
+    }
+  }
+
+  function cleanupFixture(tmpDir: string) {
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+
+  function evidencePath(tmpDir: string): string {
+    return join(tmpDir, 'docs', 'migrations', 'evidence', EVIDENCE_FILE);
+  }
+
+  function manifestPath(tmpDir: string): string {
+    return join(tmpDir, 'docs', 'migrations', MANIFEST_FILE);
+  }
+
+  function allowlistPath(tmpDir: string): string {
+    return join(tmpDir, 'docs', 'migrations', ALLOWLIST_FILE);
+  }
+
+  function readEvidence(tmpDir: string) {
+    return JSON.parse(readFileSync(evidencePath(tmpDir), 'utf-8'));
+  }
+
+  function writeEvidence(tmpDir: string, data: unknown) {
+    writeFileSync(evidencePath(tmpDir), JSON.stringify(data, null, 2));
+  }
+
+  function readManifest(tmpDir: string) {
+    return JSON.parse(readFileSync(manifestPath(tmpDir), 'utf-8'));
+  }
+
+  function writeManifest(tmpDir: string, data: unknown) {
+    writeFileSync(manifestPath(tmpDir), JSON.stringify(data, null, 2));
+  }
+
+  function readAllowlist(tmpDir: string) {
+    return JSON.parse(readFileSync(allowlistPath(tmpDir), 'utf-8'));
+  }
+
+  function writeAllowlist(tmpDir: string, data: unknown) {
+    writeFileSync(allowlistPath(tmpDir), JSON.stringify(data, null, 2));
+  }
+
+  // Test 1: V2 evidence SHA mismatch
+  it('rejects when V2 evidence SHA mismatches', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      d.superseded_temporary_evidence_sha256 = 'aa' + d.superseded_temporary_evidence_sha256.slice(2);
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/sha256|SHA|digest|mismatch/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 2: Wrong task identifier
+  it('rejects when task_identifier is wrong', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      d.task_identifier = 'batch-05-production-verification-v1';
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/task_identifier/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 3: Wrong superseded V1 SHA
+  it('rejects when superseded_temporary_evidence_sha256 is wrong', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      d.superseded_temporary_evidence_sha256 = '0000000000000000000000000000000000000000000000000000000000000000';
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/superseded|sha256|SHA|digest|mismatch/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 4: Missing detailed_property_checks_total
+  it('rejects when detailed_property_checks_total is missing', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.detailed_property_checks_total;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/detailed_property_checks_total/);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 5: Detailed property total changed from 383
+  it('rejects when detailed_property_checks_total differs from 383', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      d.detailed_property_checks_total = 384;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/detailed_property_checks_total|383|384/);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 6: One per-migration property count changed
+  it('rejects when one per-migration property count is wrong', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      // Add a fake property to the first object of the first migration
+      const obj = d.migrations[0].objects[0];
+      if (obj.verified_properties) {
+        obj.verified_properties.fake_extra_prop = 'bad';
+      }
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/property|digest|mismatch/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 7: Missing migration_evidence_digest
+  it('rejects when migration_evidence_digest is missing', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.migrations[0].migration_evidence_digest;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/migration_evidence_digest/);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 8: Incorrect migration_evidence_digest
+  it('rejects when migration_evidence_digest is incorrect', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      d.migrations[0].migration_evidence_digest = 'aa' + d.migrations[0].migration_evidence_digest.slice(2);
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/migration_evidence_digest|digest.*mismatch/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 9: Empty allowlist production_evidence_digest
+  it('rejects when allowlist production_evidence_digest is empty', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const a = readAllowlist(tmpDir);
+      const entry172 = a.find((e: { version: string }) => e.version === '172');
+      if (entry172) {
+        entry172.production_evidence_digest = '';
+      }
+      writeAllowlist(tmpDir, a);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/digest|172/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 10: Manifest digest differs from V2 digest
+  it('rejects when manifest production_evidence_digest differs from V2', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const m = readManifest(tmpDir);
+      const batch5Entry = m.find((e: ManifestEntry) => e.version === '172' && e.current_classification === 'VERIFIED_APPLIED_UNTRACKED');
+      if (batch5Entry) {
+        // Change the evidence to invalidate the digest
+        batch5Entry.evidence[0].verified_at = '2020-01-01T00:00:00Z';
+      }
+      writeManifest(tmpDir, m);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/digest|mismatch|172/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 11: Allowlist digest differs from V2 digest
+  it('rejects when allowlist production_evidence_digest differs from V2', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const a = readAllowlist(tmpDir);
+      const entry172 = a.find((e: { version: string }) => e.version === '172');
+      if (entry172) {
+        entry172.production_evidence_digest = 'aa' + entry172.production_evidence_digest.slice(2);
+      }
+      writeAllowlist(tmpDir, a);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/digest.*mismatch|mismatch.*digest|172/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 12: Missing object migration_version
+  it('rejects when object migration_version is missing', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.migrations[0].objects[0].migration_version;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/migration_version/);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 13: Missing object migration_filename
+  it('rejects when object migration_filename is missing', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.migrations[0].objects[0].migration_filename;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/migration_filename/);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 14: Missing object migration_checksum
+  it('rejects when object migration_checksum is missing', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.migrations[0].objects[0].migration_checksum;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/migration_checksum/);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 15: Missing expected_object_digest from migration and its objects
+  it('rejects when expected_object_digest is missing from a migration and its objects', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.migrations[0].expected_object_digest;
+      for (const obj of d.migrations[0].objects) {
+        delete obj.expected_object_digest;
+      }
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/expected_object_digest|digest/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 16: Missing expected_properties
+  it('rejects when expected_properties is missing from an object', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.migrations[0].objects[0].expected_properties;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/expected_properties/);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 17: Missing verified_properties
+  it('rejects when verified_properties is missing from an object', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.migrations[0].objects[0].verified_properties;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/verified_properties/);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 18: Missing property_comparison_result
+  it('rejects when property_comparison_result is missing from an object', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.migrations[0].objects[0].property_comparison_result;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/property_comparison_result/);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 19: Generic verification_source pg_catalog
+  it('rejects when verification_source is generic pg_catalog', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      d.migrations[0].objects[0].verification_source = 'pg_catalog';
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/pg_catalog|verification_source/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 20: Missing batch5_pre_occurrence_map
+  it('rejects when batch5_pre_occurrence_map is missing', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.batch5_pre_occurrence_map;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/batch5_pre_occurrence_map|pre occurrence|occurrence/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 21: Missing batch5_post_occurrence_map
+  it('rejects when batch5_post_occurrence_map is missing', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.batch5_post_occurrence_map;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/batch5_post_occurrence_map|post occurrence|occurrence/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 22: Pre-occurrence map missing one version
+  it('rejects when pre-occurrence map is missing one version', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.batch5_pre_occurrence_map['172'];
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/172|occurrence|pre_occurrence/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 23: Post-occurrence map containing extra version
+  it('rejects when post-occurrence map contains an extra version', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      d.batch5_post_occurrence_map['999'] = 0;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/999|occurrence|extra|post_occurrence/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 24: One occurrence changed from 0 to 1
+  it('rejects when one occurrence is changed from 0 to 1', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      d.batch5_pre_occurrence_map['172'] = 1;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/172|occurrence|expected 0/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 25: Missing pre_tracked_snapshot
+  it('rejects when pre_tracked_snapshot is missing', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.pre_tracked_snapshot;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/pre_tracked_snapshot|snapshot/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 26: Missing post_tracked_snapshot
+  it('rejects when post_tracked_snapshot is missing', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.post_tracked_snapshot;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/post_tracked_snapshot|snapshot/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 27: Snapshot length not 164
+  it('rejects when snapshot length is not 164', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      d.pre_tracked_snapshot.push('999');
+      d.post_tracked_snapshot.push('999');
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/snapshot|164|165/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 28: Duplicate snapshot version
+  it('rejects when snapshot has a duplicate version', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      // Replace the last element with a duplicate of the first
+      const first = d.pre_tracked_snapshot[0];
+      d.pre_tracked_snapshot[d.pre_tracked_snapshot.length - 1] = first;
+      d.post_tracked_snapshot[d.post_tracked_snapshot.length - 1] = first;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/duplicate|snapshot/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 29: Batch 5 version present in snapshot
+  it('rejects when a Batch 5 version is present in snapshot', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      // Replace one snapshot entry with Batch 5 version 172
+      d.pre_tracked_snapshot[d.pre_tracked_snapshot.length - 1] = '172';
+      d.post_tracked_snapshot[d.post_tracked_snapshot.length - 1] = '172';
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/172|batch.*5.*version.*snapshot|snapshot.*batch.*5/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 30: Migration 298 absent from snapshot
+  it('rejects when migration 298 is absent from snapshot', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      d.pre_tracked_snapshot = d.pre_tracked_snapshot.filter((v: string) => v !== '298');
+      d.post_tracked_snapshot = d.post_tracked_snapshot.filter((v: string) => v !== '298');
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/298|snapshot/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 31: Missing each newly required safety boolean
+  it('rejects when no_record_contents_returned safety boolean is missing', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      delete d.no_record_contents_returned;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/no_record_contents_returned/);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 32: One newly required safety boolean set false
+  it('rejects when no_write_query_executed safety boolean is false', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      d.no_write_query_executed = false;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/no_write_query_executed/);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 33: Non-RLS object using exists->enabled is rejected
+  it('rejects when a non-RLS object uses exists->enabled equivalence', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      // Find a column object and change its states to exists->enabled (invalid for non-RLS)
+      const colObj = d.migrations[0].objects[0]; // This is a column object
+      colObj.expected_state = 'exists';
+      colObj.verified_state = 'enabled';
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/verified_state|expected_state|enabled|mismatch/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 34: RLS object using exists->enabled remains accepted (positive unit test)
+  it('accepts RLS object using exists->enabled equivalence via unit validation', () => {
+    // The exists->enabled pair is a recognized equivalent in the validator logic.
+    // We verify at the unit level because changing evidence objects would invalidate
+    // migration_evidence_digest, causing a cascade failure unrelated to the state check.
+    const rlsEvidence: EvidenceItem = {
+      object_type: 'rls',
+      object_name: 'test_table',
+      expected_state: 'exists',
+      verified_state: 'enabled',
+      verification_source: 'pg_class',
+      verified_at: '2026-07-29T22:09:39.973603+00:00',
+      result: 'pass'
+    };
+    const errors = validateEvidenceItem('999', rlsEvidence);
+    // The equivalent pair exists->enabled should not produce a state mismatch error
+    const stateMismatchErrors = errors.filter(e => e.includes('verified_state') && e.includes('expected_state'));
+    expect(stateMismatchErrors).toHaveLength(0);
+  });
+
+  // Test 35: Column-alter drop_not_null->column_exists_nullable remains accepted (positive test)
+  it('accepts column-alter drop_not_null->column_exists_nullable equivalence', () => {
+    const tmpDir = createTestFixture();
+    try {
+      // This tests that the existing batch-04 evidence with drop_not_null->column_exists_nullable passes
+      // The unmodified fixture should pass the validator
+      const { exitCode } = runValidatorInFixture(tmpDir);
+      expect(exitCode).toBe(0);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 36: Non-column object using drop_not_null->column_exists_nullable is rejected
+  it('rejects when a non-column object uses drop_not_null->column_exists_nullable', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      // Find an RLS object and change its states to drop_not_null->column_exists_nullable (invalid for non-column)
+      let found = false;
+      for (const mig of d.migrations) {
+        for (const obj of mig.objects) {
+          if (obj.object_type === 'rls') {
+            obj.expected_state = 'drop_not_null';
+            obj.verified_state = 'column_exists_nullable';
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
+      }
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/verified_state|expected_state|column_exists_nullable|drop_not_null|mismatch/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
 });

@@ -91,7 +91,9 @@ This runbook governs the controlled verification and repair of 124 migration-his
 - **Versions:** 172, 173, 174, 175, 177, 178, 179, 180, 183, 184, 185, 186, 188, 189, 190
 - **Object checks:** 55 (55 passed, 0 superseded, 0 failed, 0 ambiguous)
 - **Verification evidence:** `docs/migrations/evidence/batch-05-production-verification.json`
-- **Evidence digest:** `92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77`
+- **Evidence digest (V2):** `bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8`
+- **Detailed property checks:** 383 (55 objects, all verified)
+- **Superseded V1 digest:** `92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77`
 - **Total remote count:** 164 (unchanged)
 - **101-246 tracked count:** 68 (unchanged — Batch 5 versions remain untracked pending repair)
 - All Batch 5 versions have 0 occurrences in remote schema_migrations

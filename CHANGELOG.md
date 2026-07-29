@@ -7,19 +7,22 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-29
 
-### Operations: Batch 5 migration production verification recorded (15 versions)
-- `docs/migrations/evidence/batch-05-production-verification.json` — Verification evidence for 15 versions (172, 173, 174, 175, 177, 178, 179, 180, 183, 184, 185, 186, 188, 189, 190). 55 object checks: 55 passed, 0 superseded, 0 failed, 0 ambiguous.
-- `docs/migrations/evidence/batch-05-production-verification.md` — Verification summary.
-- `docs/migrations/101-246-production-reconciliation.json` — 15 entries updated from PENDING_PRODUCTION_REVERIFICATION to VERIFIED_APPLIED_UNTRACKED with verification_batch=5, production evidence. New counts: 68 ALIGNED, 15 VERIFIED, 49 PENDING, 12 NV, 2 SUPERSEDED.
-- `docs/migrations/101-246-repair-allowlist.json` — Populated with 15 Batch 5 versions and production_evidence_digest.
-- `docs/migrations/101-246-verification-candidates.json` — 15 Batch 5 versions removed. 49 candidates remain.
-- `scripts/validate-migration-repair-allowlist.mjs` — Updated expected counts: ALIGNED=68, VERIFIED=15, PENDING=49. Active allowlist=15. Added Batch 5 evidence validation.
-- `lib/__tests__/migration-repair-validator.test.ts` — Updated integration tests for post-Batch-5-verification state.
-- `docs/migrations/101-246-repair-runbook.md` — Batch 5 marked verification COMPLETE, repair PENDING. 49 candidates remain for Batches 6-9.
-- `docs/MIGRATION_REGISTRY.md` — 15 Batch 5 versions added as "Batch 5 verified (repair pending)".
-- `docs/engineering-status.json` — OPS-001 updated: Batch 5 verification complete, next action = merge evidence PR then execute Batch 5 repair.
-- Migration history remained unchanged: total remote count 164, 101-246 tracked count 68.
+### Operations: Batch 5 V2 canonical evidence and independent-review corrections
+- V2 canonical evidence replaces V1 temporary evidence. V1 SHA: `92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77`. V2 SHA: `bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8`.
+- `docs/migrations/evidence/batch-05-production-verification.json` — V2 evidence with 55 objects, 383 detailed property checks, 15 per-migration evidence digests, occurrence maps, tracked snapshots, and 17 safety booleans.
+- `docs/migrations/evidence/batch-05-production-verification.md` — Updated summary with V2 lineage, per-migration property counts.
+- `docs/migrations/101-246-production-reconciliation.json` — Restored from base to remove unrelated serialization churn (em dash unicode escaping). Batch 5 entries updated with V2 migration_evidence_digest bindings and specific verification sources.
+- `docs/migrations/101-246-repair-allowlist.json` — All 15 production_evidence_digest values replaced with V2 migration_evidence_digest.
+- `scripts/validate-migration-repair-allowlist.mjs` — V2 evidence SHA validation, per-migration digest recomputation, occurrence map and snapshot strict validation, RLS-only exists→enabled equivalence, 17 safety boolean checks.
+- `lib/__tests__/migration-repair-validator.test.ts` — 36 CLI rejection tests added covering V2 integrity, digest binding, occurrence maps, snapshots, safety booleans, RLS equivalence restriction.
+- Unrelated reconciliation formatting churn (literal em dashes rewritten as JSON unicode escapes) removed.
+- Migration history remained unchanged: total remote count 164, 101-246 tracked count 68. 60 completed repairs. 49 candidates remain. 15 Batch 5 versions approved for repair.
 - Migration-history repair was not executed. Batch 6 was not started. Issue #53 remains open.
+  - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — evidence and governance corrections only; no production access, no migration SQL, no deployment.
+
+### Operations: Batch 5 migration production verification recorded (15 versions)
+- Initial V1 temporary verification evidence recorded. Superseded by V2 canonical evidence above.
   - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
   - **Could break:** Nothing — read-only verification only; no migration SQL executed, no migration-history repair, no schema or application-data change, no deployment.
 

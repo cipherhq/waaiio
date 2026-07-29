@@ -1,8 +1,11 @@
 {
+  "task_identifier": "batch-05-production-verification-v2",
+  "supersedes_temporary_evidence_path": "/tmp/waaiio-batch-05-production-verification.json",
+  "superseded_temporary_evidence_sha256": "92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77",
   "main_sha": "906878f94141e39ecc3fe19e4cf6ddc714a3811c",
   "linked_project_ref": "cxcmiqotkowhxinjbytg",
   "batch_number": 5,
-  "verification_timestamp": "2026-07-29T20:29:01.725537+00:00",
+  "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
   "versions": [
     "172",
     "173",
@@ -21,6 +24,7 @@
     "190"
   ],
   "total_objects_checked": 55,
+  "detailed_property_checks_total": 383,
   "total_passed": 55,
   "total_superseded": 0,
   "total_failed": 0,
@@ -55,41 +59,105 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "172",
+          "migration_filename": "172_recurring_billing.sql",
+          "migration_checksum": "667e071f5e6af1ba6ba25eb7f40b24823a456b1676a0939458eb10fe2c77d927",
+          "expected_object_digest": "3cbaf54cf0fec55c41af8fc8e99c3f91b07d40a276cf74db3407b31048cc7672",
           "object_type": "column",
           "object_name": "subscriptions.stripe_subscription_id",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "subscriptions",
+            "column": "stripe_subscription_id"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "subscriptions",
+            "column": "stripe_subscription_id",
+            "data_type": "text",
+            "udt_name": "text",
+            "is_nullable": "YES",
+            "column_default": null,
+            "is_identity": "NO",
+            "is_generated": "NEVER"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "172",
+          "migration_filename": "172_recurring_billing.sql",
+          "migration_checksum": "667e071f5e6af1ba6ba25eb7f40b24823a456b1676a0939458eb10fe2c77d927",
+          "expected_object_digest": "3cbaf54cf0fec55c41af8fc8e99c3f91b07d40a276cf74db3407b31048cc7672",
           "object_type": "column",
           "object_name": "subscriptions.stripe_customer_id",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "subscriptions",
+            "column": "stripe_customer_id"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "subscriptions",
+            "column": "stripe_customer_id",
+            "data_type": "text",
+            "udt_name": "text",
+            "is_nullable": "YES",
+            "column_default": null,
+            "is_identity": "NO",
+            "is_generated": "NEVER"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "172",
+          "migration_filename": "172_recurring_billing.sql",
+          "migration_checksum": "667e071f5e6af1ba6ba25eb7f40b24823a456b1676a0939458eb10fe2c77d927",
+          "expected_object_digest": "3cbaf54cf0fec55c41af8fc8e99c3f91b07d40a276cf74db3407b31048cc7672",
           "object_type": "column",
           "object_name": "subscriptions.billing_interval",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "subscriptions",
+            "column": "billing_interval"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "subscriptions",
+            "column": "billing_interval",
+            "data_type": "text",
+            "udt_name": "text",
+            "is_nullable": "YES",
+            "column_default": "'month'::text",
+            "is_identity": "NO",
+            "is_generated": "NEVER"
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 3,
       "passed": 3,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "6425db951dbb939523af2bdfcbeaeb19fe588d68b334f5755957228d514fb47b"
     },
     {
       "version": "173",
@@ -100,41 +168,117 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "173",
+          "migration_filename": "173_restore_stock_rpc.sql",
+          "migration_checksum": "ba93897303a12d06c03d221b3fe62c02e613f38f524679ac7ad10fee7d6a3579",
+          "expected_object_digest": "a61b0f4a6d76d900f47b2f48e9392ebebf0675064bd7b348845733a4bcb35779",
           "object_type": "function",
           "object_name": "restore_stock",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_proc",
+          "query_category": "function_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "function": "restore_stock"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "function": "restore_stock",
+            "identity_arguments": "p_product_id uuid, qty integer",
+            "return_type": "void",
+            "language": "plpgsql",
+            "security_definer": true,
+            "volatility": "v",
+            "parallel_safety": "u",
+            "leakproof": false,
+            "config": null,
+            "def_hash": "a0c1dee29309a315b43dde2da6f1977cdce16aa77788a4cf2db2f4b22a7f761a",
+            "anon_exec": false,
+            "auth_exec": false,
+            "svc_exec": true
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "173",
+          "migration_filename": "173_restore_stock_rpc.sql",
+          "migration_checksum": "ba93897303a12d06c03d221b3fe62c02e613f38f524679ac7ad10fee7d6a3579",
+          "expected_object_digest": "a61b0f4a6d76d900f47b2f48e9392ebebf0675064bd7b348845733a4bcb35779",
           "object_type": "function",
           "object_name": "restore_variant_stock",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_proc",
+          "query_category": "function_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "function": "restore_variant_stock"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "function": "restore_variant_stock",
+            "identity_arguments": "p_variant_id uuid, qty integer",
+            "return_type": "void",
+            "language": "plpgsql",
+            "security_definer": true,
+            "volatility": "v",
+            "parallel_safety": "u",
+            "leakproof": false,
+            "config": null,
+            "def_hash": "bcf31b0f45588a5677543a0ccb9f8ff34f0d3e64f438ea6334bb1105c9c54dc4",
+            "anon_exec": false,
+            "auth_exec": false,
+            "svc_exec": true
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "173",
+          "migration_filename": "173_restore_stock_rpc.sql",
+          "migration_checksum": "ba93897303a12d06c03d221b3fe62c02e613f38f524679ac7ad10fee7d6a3579",
+          "expected_object_digest": "a61b0f4a6d76d900f47b2f48e9392ebebf0675064bd7b348845733a4bcb35779",
           "object_type": "function",
           "object_name": "restore_tickets_sold",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_proc",
+          "query_category": "function_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "function": "restore_tickets_sold"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "function": "restore_tickets_sold",
+            "identity_arguments": "p_event_id uuid, qty integer",
+            "return_type": "void",
+            "language": "plpgsql",
+            "security_definer": true,
+            "volatility": "v",
+            "parallel_safety": "u",
+            "leakproof": false,
+            "config": null,
+            "def_hash": "3ad8d63ac98b6afa961678f16ff028656573d2b30c281cc63663d720d2eebd1b",
+            "anon_exec": false,
+            "auth_exec": false,
+            "svc_exec": true
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 3,
       "passed": 3,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "79b50d4fb214411461d36040da170ba7a900ebb9e56b7e43bb7ae4f28615a647"
     },
     {
       "version": "174",
@@ -145,31 +289,76 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "174",
+          "migration_filename": "174_contract_references.sql",
+          "migration_checksum": "591c490498a065d904f4a819a649262993142df1626b43e30224f4b400616b22",
+          "expected_object_digest": "cc51ca0756103415c0b8ea5ee4112aa3644bd77aaa0708c767a18660070e4d33",
           "object_type": "column",
           "object_name": "contracts.reference_code",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "contracts",
+            "column": "reference_code"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "contracts",
+            "column": "reference_code",
+            "data_type": "character varying",
+            "udt_name": "varchar",
+            "is_nullable": "YES",
+            "column_default": null,
+            "is_identity": "NO",
+            "is_generated": "NEVER",
+            "character_maximum_length": 20
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "174",
+          "migration_filename": "174_contract_references.sql",
+          "migration_checksum": "591c490498a065d904f4a819a649262993142df1626b43e30224f4b400616b22",
+          "expected_object_digest": "cc51ca0756103415c0b8ea5ee4112aa3644bd77aaa0708c767a18660070e4d33",
           "object_type": "column",
           "object_name": "contract_signers.signature_reference",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "contract_signers",
+            "column": "signature_reference"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "contract_signers",
+            "column": "signature_reference",
+            "data_type": "character varying",
+            "udt_name": "varchar",
+            "is_nullable": "YES",
+            "column_default": null,
+            "is_identity": "NO",
+            "is_generated": "NEVER",
+            "character_maximum_length": 20
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 2,
       "passed": 2,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "638d01403f92548a43277cb342b9fc12ca7e825d9cbaa9197f011efe366f0b67"
     },
     {
       "version": "175",
@@ -180,21 +369,42 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "175",
+          "migration_filename": "175_public_property_read.sql",
+          "migration_checksum": "04b5d050dffbfc68ffd98ffb1c6e9da6b04a298be19df9d5ba38feeaddf65fef",
+          "expected_object_digest": "75a8055e9512d9cda45bf01975bdd80b1142523cc81af704d1c2889dd5ef1db4",
           "object_type": "policy",
-          "object_name": "public_read_active_properties",
+          "object_name": "public_read_active_properties ON properties",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_policies",
+          "query_category": "policy_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "properties",
+            "policy": "public_read_active_properties"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "properties",
+            "policy": "public_read_active_properties",
+            "permissive": "PERMISSIVE",
+            "command": "SELECT",
+            "roles": "{anon,authenticated}",
+            "using_hash": "d2a67af4cacf5aae43b112e35267db5dab01ad300ed5693402a6581071c28192",
+            "check_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 1,
       "passed": 1,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "d480bb8f80233b5392f150afd07c2fe56e2910210f727c7d616f0e629bd7e297"
     },
     {
       "version": "177",
@@ -205,61 +415,132 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "177",
+          "migration_filename": "177_add_missing_capability_types.sql",
+          "migration_checksum": "d6c1f57ad7db3c81f7dca50acc5cc0a83841a2808b0857cdf1489f003fc11139",
+          "expected_object_digest": "4306268b5bdde51acd5497d2139780fa7e5c4f25f680c17ccca79c17d3b7cc76",
           "object_type": "enum_value",
           "object_name": "capability_type.table_reservation",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_enum",
+          "query_category": "enum_detail_select",
+          "expected_properties": {
+            "type": "capability_type",
+            "label": "table_reservation"
+          },
+          "verified_properties": {
+            "type": "capability_type",
+            "label": "table_reservation",
+            "sort_order": 26
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "177",
+          "migration_filename": "177_add_missing_capability_types.sql",
+          "migration_checksum": "d6c1f57ad7db3c81f7dca50acc5cc0a83841a2808b0857cdf1489f003fc11139",
+          "expected_object_digest": "4306268b5bdde51acd5497d2139780fa7e5c4f25f680c17ccca79c17d3b7cc76",
           "object_type": "enum_value",
           "object_name": "capability_type.estimates",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_enum",
+          "query_category": "enum_detail_select",
+          "expected_properties": {
+            "type": "capability_type",
+            "label": "estimates"
+          },
+          "verified_properties": {
+            "type": "capability_type",
+            "label": "estimates",
+            "sort_order": 27
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "177",
+          "migration_filename": "177_add_missing_capability_types.sql",
+          "migration_checksum": "d6c1f57ad7db3c81f7dca50acc5cc0a83841a2808b0857cdf1489f003fc11139",
+          "expected_object_digest": "4306268b5bdde51acd5497d2139780fa7e5c4f25f680c17ccca79c17d3b7cc76",
           "object_type": "enum_value",
           "object_name": "capability_type.packages",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_enum",
+          "query_category": "enum_detail_select",
+          "expected_properties": {
+            "type": "capability_type",
+            "label": "packages"
+          },
+          "verified_properties": {
+            "type": "capability_type",
+            "label": "packages",
+            "sort_order": 28
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "177",
+          "migration_filename": "177_add_missing_capability_types.sql",
+          "migration_checksum": "d6c1f57ad7db3c81f7dca50acc5cc0a83841a2808b0857cdf1489f003fc11139",
+          "expected_object_digest": "4306268b5bdde51acd5497d2139780fa7e5c4f25f680c17ccca79c17d3b7cc76",
           "object_type": "enum_value",
           "object_name": "capability_type.class_booking",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_enum",
+          "query_category": "enum_detail_select",
+          "expected_properties": {
+            "type": "capability_type",
+            "label": "class_booking"
+          },
+          "verified_properties": {
+            "type": "capability_type",
+            "label": "class_booking",
+            "sort_order": 29
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "177",
+          "migration_filename": "177_add_missing_capability_types.sql",
+          "migration_checksum": "d6c1f57ad7db3c81f7dca50acc5cc0a83841a2808b0857cdf1489f003fc11139",
+          "expected_object_digest": "4306268b5bdde51acd5497d2139780fa7e5c4f25f680c17ccca79c17d3b7cc76",
           "object_type": "enum_value",
           "object_name": "capability_type.multi_location",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_enum",
+          "query_category": "enum_detail_select",
+          "expected_properties": {
+            "type": "capability_type",
+            "label": "multi_location"
+          },
+          "verified_properties": {
+            "type": "capability_type",
+            "label": "multi_location",
+            "sort_order": 30
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 5,
       "passed": 5,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "a5d2f39b4b3700fcab1a98630ab4856372b55e5516c16f84462ea6ef43434285"
     },
     {
       "version": "178",
@@ -270,31 +551,70 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "178",
+          "migration_filename": "178_capability_sort_order.sql",
+          "migration_checksum": "8278eb0deadaecf1a458e60a30819767b02b94e320608fb8ec9077edd7aa15f7",
+          "expected_object_digest": "bbec1a8c4ddb2b46eeb8757a9de63eebcffd38d4f99a93028cc6b4e57ef6f013",
           "object_type": "column",
           "object_name": "business_capabilities.sort_order",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "business_capabilities",
+            "column": "sort_order"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "business_capabilities",
+            "column": "sort_order",
+            "data_type": "integer",
+            "udt_name": "int4",
+            "is_nullable": "YES",
+            "column_default": "0",
+            "is_identity": "NO",
+            "is_generated": "NEVER",
+            "numeric_precision": 32
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "178",
+          "migration_filename": "178_capability_sort_order.sql",
+          "migration_checksum": "8278eb0deadaecf1a458e60a30819767b02b94e320608fb8ec9077edd7aa15f7",
+          "expected_object_digest": "bbec1a8c4ddb2b46eeb8757a9de63eebcffd38d4f99a93028cc6b4e57ef6f013",
           "object_type": "index",
           "object_name": "idx_business_capabilities_sort_order",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_indexes",
+          "query_category": "index_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "index": "idx_business_capabilities_sort_order"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "business_capabilities",
+            "index": "idx_business_capabilities_sort_order",
+            "def_hash": "cf137c7550c92d86a5baed69638edfcaf16c76d79cb55d180823af4fa8daefe1",
+            "indexdef": "CREATE INDEX idx_business_capabilities_sort_order ON public.business_capabilities USING btree (business_id, sort_order, capability) WHERE (is_enabled = true)"
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 2,
       "passed": 2,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "e3204e6c3e77f5a801e4250a97556cd6c36c5803e32281a88dc6ff31f80f0b61"
     },
     {
       "version": "179",
@@ -305,21 +625,43 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "179",
+          "migration_filename": "179_capability_custom_label.sql",
+          "migration_checksum": "cb4aa8ab67001e653821f0673dc0f66decce5afd1b575ae56a824cb32912dbf9",
+          "expected_object_digest": "9602c15fd721319488b34102e3ddbe9b5fdb3dbc5de85a2463cab40ef548c577",
           "object_type": "column",
           "object_name": "business_capabilities.custom_label",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "business_capabilities",
+            "column": "custom_label"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "business_capabilities",
+            "column": "custom_label",
+            "data_type": "text",
+            "udt_name": "text",
+            "is_nullable": "YES",
+            "column_default": null,
+            "is_identity": "NO",
+            "is_generated": "NEVER"
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 1,
       "passed": 1,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "235e7137efa16f78ed0b40d3f775fb675e280565574f4e9431f023a82f1492a5"
     },
     {
       "version": "180",
@@ -330,71 +672,167 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "180",
+          "migration_filename": "180_api_keys_external_booking.sql",
+          "migration_checksum": "27fe71fd4fd0cfb12b97f8f4bd7322720a6de9b91ffa826aeba21afb8b036408",
+          "expected_object_digest": "f92033d612fb279e6600f922225ce547ce954de0e67438447a1615ca8aae9c1a",
           "object_type": "table",
           "object_name": "api_keys",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_class",
+          "query_category": "table_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "api_keys"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "api_keys",
+            "exists": true,
+            "columns_summary": "id uuid, business_id uuid, key_hash text, key_prefix text, name text, created_at timestamp with time zone, last_used_at timestamp with time zone, revoked_at timestamp with time zone"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "180",
+          "migration_filename": "180_api_keys_external_booking.sql",
+          "migration_checksum": "27fe71fd4fd0cfb12b97f8f4bd7322720a6de9b91ffa826aeba21afb8b036408",
+          "expected_object_digest": "f92033d612fb279e6600f922225ce547ce954de0e67438447a1615ca8aae9c1a",
           "object_type": "index",
           "object_name": "idx_api_keys_hash",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_indexes",
+          "query_category": "index_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "index": "idx_api_keys_hash"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "api_keys",
+            "index": "idx_api_keys_hash",
+            "def_hash": "cff0f6d3b7cda6a510c84719234f5286b31f0337aa7e21eb41243c643bb98b03",
+            "indexdef": "CREATE INDEX idx_api_keys_hash ON public.api_keys USING btree (key_hash) WHERE (revoked_at IS NULL)"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "180",
+          "migration_filename": "180_api_keys_external_booking.sql",
+          "migration_checksum": "27fe71fd4fd0cfb12b97f8f4bd7322720a6de9b91ffa826aeba21afb8b036408",
+          "expected_object_digest": "f92033d612fb279e6600f922225ce547ce954de0e67438447a1615ca8aae9c1a",
           "object_type": "index",
           "object_name": "idx_api_keys_business",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_indexes",
+          "query_category": "index_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "index": "idx_api_keys_business"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "api_keys",
+            "index": "idx_api_keys_business",
+            "def_hash": "6ebda2762487909235b7d238325db4dec1c3a3f0195d525888135b9d0cdbcd2b",
+            "indexdef": "CREATE INDEX idx_api_keys_business ON public.api_keys USING btree (business_id)"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "180",
+          "migration_filename": "180_api_keys_external_booking.sql",
+          "migration_checksum": "27fe71fd4fd0cfb12b97f8f4bd7322720a6de9b91ffa826aeba21afb8b036408",
+          "expected_object_digest": "f92033d612fb279e6600f922225ce547ce954de0e67438447a1615ca8aae9c1a",
           "object_type": "policy",
-          "object_name": "owners_manage_api_keys",
+          "object_name": "owners_manage_api_keys ON api_keys",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_policies",
+          "query_category": "policy_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "api_keys",
+            "policy": "owners_manage_api_keys"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "api_keys",
+            "policy": "owners_manage_api_keys",
+            "permissive": "PERMISSIVE",
+            "command": "ALL",
+            "roles": "{public}",
+            "using_hash": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
+            "check_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "180",
+          "migration_filename": "180_api_keys_external_booking.sql",
+          "migration_checksum": "27fe71fd4fd0cfb12b97f8f4bd7322720a6de9b91ffa826aeba21afb8b036408",
+          "expected_object_digest": "f92033d612fb279e6600f922225ce547ce954de0e67438447a1615ca8aae9c1a",
           "object_type": "enum_value",
           "object_name": "booking_channel.api",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_enum",
+          "query_category": "enum_detail_select",
+          "expected_properties": {
+            "type": "booking_channel",
+            "label": "api"
+          },
+          "verified_properties": {
+            "type": "booking_channel",
+            "label": "api",
+            "sort_order": 3
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "180",
+          "migration_filename": "180_api_keys_external_booking.sql",
+          "migration_checksum": "27fe71fd4fd0cfb12b97f8f4bd7322720a6de9b91ffa826aeba21afb8b036408",
+          "expected_object_digest": "f92033d612fb279e6600f922225ce547ce954de0e67438447a1615ca8aae9c1a",
           "object_type": "rls",
           "object_name": "api_keys",
-          "expected_state": "exists",
+          "expected_state": "enabled",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "enabled",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_class",
+          "query_category": "rls_detail_select",
+          "expected_properties": {
+            "table": "api_keys",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table": "api_keys",
+            "relrowsecurity": true,
+            "relforcerowsecurity": false
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 6,
       "passed": 6,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "5229d2cb6afb52a66820f23c6fcfe04878711ee7f926aa2f4619efd78b8eafcd"
     },
     {
       "version": "183",
@@ -405,71 +843,172 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "183",
+          "migration_filename": "183_check_constraints_and_cascade_fixes.sql",
+          "migration_checksum": "b394ff2190cd0d82cf1241ad36c4ce5ab5d226b2683e2f7cb7d156c3f980c2e5",
+          "expected_object_digest": "a747d9ed5d5796bb670b56703234dec04c9e3549d2eaeffc6c24ef9495debe7b",
           "object_type": "index",
           "object_name": "idx_orders_business_status",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_indexes",
+          "query_category": "index_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "index": "idx_orders_business_status"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "orders",
+            "index": "idx_orders_business_status",
+            "def_hash": "358f6e065bbe4d825e0f2156412acaf0324ae78e32219ed88831b22be6dfbb48",
+            "indexdef": "CREATE INDEX idx_orders_business_status ON public.orders USING btree (business_id, status) WHERE (deleted_at IS NULL)"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "183",
+          "migration_filename": "183_check_constraints_and_cascade_fixes.sql",
+          "migration_checksum": "b394ff2190cd0d82cf1241ad36c4ce5ab5d226b2683e2f7cb7d156c3f980c2e5",
+          "expected_object_digest": "a747d9ed5d5796bb670b56703234dec04c9e3549d2eaeffc6c24ef9495debe7b",
           "object_type": "constraint",
           "object_name": "chk_payments_amount_nonneg",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_detail_select",
+          "expected_properties": {
+            "constraint": "chk_payments_amount_nonneg"
+          },
+          "verified_properties": {
+            "constraint": "chk_payments_amount_nonneg",
+            "type": "c",
+            "validated": true,
+            "deferrable": false,
+            "deferred": false,
+            "definition": "CHECK ((amount >= 0))",
+            "def_hash": "bbdf2827ed95d20a9fc3fc674fa69eb73c81fb2491b10ca43b3d0e59b99c3b6f",
+            "table": "payments"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "183",
+          "migration_filename": "183_check_constraints_and_cascade_fixes.sql",
+          "migration_checksum": "b394ff2190cd0d82cf1241ad36c4ce5ab5d226b2683e2f7cb7d156c3f980c2e5",
+          "expected_object_digest": "a747d9ed5d5796bb670b56703234dec04c9e3549d2eaeffc6c24ef9495debe7b",
           "object_type": "constraint",
           "object_name": "chk_platform_fees_amount_nonneg",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_detail_select",
+          "expected_properties": {
+            "constraint": "chk_platform_fees_amount_nonneg"
+          },
+          "verified_properties": {
+            "constraint": "chk_platform_fees_amount_nonneg",
+            "type": "c",
+            "validated": true,
+            "deferrable": false,
+            "deferred": false,
+            "definition": "CHECK (((transaction_amount >= 0) AND (fee_total >= 0)))",
+            "def_hash": "aa0e38265d5413edc1cdb639791de047d5f68ea1cf1191064c1997eddce9ecc9",
+            "table": "platform_fees"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "183",
+          "migration_filename": "183_check_constraints_and_cascade_fixes.sql",
+          "migration_checksum": "b394ff2190cd0d82cf1241ad36c4ce5ab5d226b2683e2f7cb7d156c3f980c2e5",
+          "expected_object_digest": "a747d9ed5d5796bb670b56703234dec04c9e3549d2eaeffc6c24ef9495debe7b",
           "object_type": "constraint",
           "object_name": "chk_payouts_amount_nonneg",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_detail_select",
+          "expected_properties": {
+            "constraint": "chk_payouts_amount_nonneg"
+          },
+          "verified_properties": {
+            "constraint": "chk_payouts_amount_nonneg",
+            "type": "c",
+            "validated": true,
+            "deferrable": false,
+            "deferred": false,
+            "definition": "CHECK (((gross_amount >= (0)::numeric) AND (net_amount >= (0)::numeric)))",
+            "def_hash": "f9964f1b60d0332ca6e6d6826c58558c9301709fffed51a6bcdcbe633eb8f84d",
+            "table": "business_payouts"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "183",
+          "migration_filename": "183_check_constraints_and_cascade_fixes.sql",
+          "migration_checksum": "b394ff2190cd0d82cf1241ad36c4ce5ab5d226b2683e2f7cb7d156c3f980c2e5",
+          "expected_object_digest": "a747d9ed5d5796bb670b56703234dec04c9e3549d2eaeffc6c24ef9495debe7b",
           "object_type": "constraint",
           "object_name": "refund_requests_payment_id_fkey",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_detail_select",
+          "expected_properties": {
+            "constraint": "refund_requests_payment_id_fkey"
+          },
+          "verified_properties": {
+            "constraint": "refund_requests_payment_id_fkey",
+            "type": "f",
+            "validated": true,
+            "deferrable": false,
+            "deferred": false,
+            "definition": "FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE RESTRICT",
+            "def_hash": "9c4ce2be95ab05d789e38ec28f3b770fc69bed4405c6a0f39c5dbd4640d61860",
+            "table": "refund_requests"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "183",
+          "migration_filename": "183_check_constraints_and_cascade_fixes.sql",
+          "migration_checksum": "b394ff2190cd0d82cf1241ad36c4ce5ab5d226b2683e2f7cb7d156c3f980c2e5",
+          "expected_object_digest": "a747d9ed5d5796bb670b56703234dec04c9e3549d2eaeffc6c24ef9495debe7b",
           "object_type": "index",
           "object_name": "idx_subscriptions_restaurant",
           "expected_state": "dropped",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "dropped",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_indexes",
+          "query_category": "index_absence_select",
+          "expected_properties": {
+            "index": "idx_subscriptions_restaurant",
+            "expected": "absent"
+          },
+          "verified_properties": {
+            "absent": true
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 6,
       "passed": 6,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "6a5efa43e5cc89329827d894b0acb715fb5ebed311d49d55f3f627f42d986adf"
     },
     {
       "version": "184",
@@ -480,51 +1019,128 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "184",
+          "migration_filename": "184_campaign_soft_delete.sql",
+          "migration_checksum": "aa68afe1e7040b656dbb461bcc6c9cb917511f3ba48a6faafe8a9c4eb291bf0c",
+          "expected_object_digest": "a82443d9e9fc5620990e84a4b10b9029275803cfb6dff1ddbf2ab6b534068a63",
           "object_type": "column",
           "object_name": "campaigns.deleted_at",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "campaigns",
+            "column": "deleted_at"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "campaigns",
+            "column": "deleted_at",
+            "data_type": "timestamp with time zone",
+            "udt_name": "timestamptz",
+            "is_nullable": "YES",
+            "column_default": null,
+            "is_identity": "NO",
+            "is_generated": "NEVER"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "184",
+          "migration_filename": "184_campaign_soft_delete.sql",
+          "migration_checksum": "aa68afe1e7040b656dbb461bcc6c9cb917511f3ba48a6faafe8a9c4eb291bf0c",
+          "expected_object_digest": "a82443d9e9fc5620990e84a4b10b9029275803cfb6dff1ddbf2ab6b534068a63",
           "object_type": "column",
           "object_name": "campaigns.deleted_by",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "campaigns",
+            "column": "deleted_by"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "campaigns",
+            "column": "deleted_by",
+            "data_type": "uuid",
+            "udt_name": "uuid",
+            "is_nullable": "YES",
+            "column_default": null,
+            "is_identity": "NO",
+            "is_generated": "NEVER"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "184",
+          "migration_filename": "184_campaign_soft_delete.sql",
+          "migration_checksum": "aa68afe1e7040b656dbb461bcc6c9cb917511f3ba48a6faafe8a9c4eb291bf0c",
+          "expected_object_digest": "a82443d9e9fc5620990e84a4b10b9029275803cfb6dff1ddbf2ab6b534068a63",
           "object_type": "index",
           "object_name": "idx_campaigns_active",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_indexes",
+          "query_category": "index_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "index": "idx_campaigns_active"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "campaigns",
+            "index": "idx_campaigns_active",
+            "def_hash": "21a91c77be9fa78eebf4c6589e50edbd6b4d60f4cc08ecf5f10e28645f3d7f27",
+            "indexdef": "CREATE INDEX idx_campaigns_active ON public.campaigns USING btree (business_id) WHERE (deleted_at IS NULL)"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "184",
+          "migration_filename": "184_campaign_soft_delete.sql",
+          "migration_checksum": "aa68afe1e7040b656dbb461bcc6c9cb917511f3ba48a6faafe8a9c4eb291bf0c",
+          "expected_object_digest": "a82443d9e9fc5620990e84a4b10b9029275803cfb6dff1ddbf2ab6b534068a63",
           "object_type": "constraint",
           "object_name": "campaign_donations_campaign_id_fkey",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_detail_select",
+          "expected_properties": {
+            "constraint": "campaign_donations_campaign_id_fkey"
+          },
+          "verified_properties": {
+            "constraint": "campaign_donations_campaign_id_fkey",
+            "type": "f",
+            "validated": true,
+            "deferrable": false,
+            "deferred": false,
+            "definition": "FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE RESTRICT",
+            "def_hash": "4a232fad10b8fda65edfb0b3f214060e53c1c90d710b3fd43a921d3af95f6c74",
+            "table": "campaign_donations"
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 4,
       "passed": 4,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "3d18e7a55f4312bfd44fb2334f7835be340c50d393de79457fc2ab57a4c08c1f"
     },
     {
       "version": "185",
@@ -535,21 +1151,36 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "185",
+          "migration_filename": "185_add_dashboard_booking_channel.sql",
+          "migration_checksum": "eb5d1797082624e3b00a8009e1516ddfa47bb5b8c65f177c7794b2597629bfc1",
+          "expected_object_digest": "b1eadab50a639b50ee46c071487ae76dbc4e80b8bea0689fa6aa2cf1f96c5302",
           "object_type": "enum_value",
           "object_name": "booking_channel.dashboard",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_enum",
+          "query_category": "enum_detail_select",
+          "expected_properties": {
+            "type": "booking_channel",
+            "label": "dashboard"
+          },
+          "verified_properties": {
+            "type": "booking_channel",
+            "label": "dashboard",
+            "sort_order": 4
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 1,
       "passed": 1,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "1cd876291cbe1e4b175c0789296308de42ef32721d0dbeb644adbb47bede8144"
     },
     {
       "version": "186",
@@ -560,131 +1191,332 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "186",
+          "migration_filename": "186_waivers.sql",
+          "migration_checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
+          "expected_object_digest": "bc64dd10a46a07442af48661756128c3d045c577752d8b34e19a980d780ff145",
           "object_type": "table",
           "object_name": "waiver_templates",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_class",
+          "query_category": "table_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "waiver_templates"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "waiver_templates",
+            "exists": true,
+            "columns_summary": "id uuid, business_id uuid, title character varying(300), body text, fields jsonb, is_active boolean, require_before_booking boolean, token character varying(32), created_at timestamp with time zone, updated_at timestamp with time zone, pdf_url text"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "186",
+          "migration_filename": "186_waivers.sql",
+          "migration_checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
+          "expected_object_digest": "bc64dd10a46a07442af48661756128c3d045c577752d8b34e19a980d780ff145",
           "object_type": "table",
           "object_name": "signed_waivers",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_class",
+          "query_category": "table_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "signed_waivers"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "signed_waivers",
+            "exists": true,
+            "columns_summary": "id uuid, template_id uuid, business_id uuid, customer_name character varying(200), customer_phone character varying(30), customer_email character varying(200), signature_url text, signed_at timestamp with time zone, pdf_url text, metadata jsonb, audit_trail jsonb, created_at timestamp with time zone, access_token character varying(32)"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "186",
+          "migration_filename": "186_waivers.sql",
+          "migration_checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
+          "expected_object_digest": "bc64dd10a46a07442af48661756128c3d045c577752d8b34e19a980d780ff145",
           "object_type": "index",
           "object_name": "idx_waiver_templates_business",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_indexes",
+          "query_category": "index_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "index": "idx_waiver_templates_business"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "waiver_templates",
+            "index": "idx_waiver_templates_business",
+            "def_hash": "ab9557d0e1c3e0b75122682c8afeebc86cb43f3305e54621038c8b0fbc88b937",
+            "indexdef": "CREATE INDEX idx_waiver_templates_business ON public.waiver_templates USING btree (business_id)"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "186",
+          "migration_filename": "186_waivers.sql",
+          "migration_checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
+          "expected_object_digest": "bc64dd10a46a07442af48661756128c3d045c577752d8b34e19a980d780ff145",
           "object_type": "index",
           "object_name": "idx_signed_waivers_business",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_indexes",
+          "query_category": "index_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "index": "idx_signed_waivers_business"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "signed_waivers",
+            "index": "idx_signed_waivers_business",
+            "def_hash": "46b0966f23ce00648713a32d29ffe402c47d56f312f8280d46852729dbb2b4c1",
+            "indexdef": "CREATE INDEX idx_signed_waivers_business ON public.signed_waivers USING btree (business_id)"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "186",
+          "migration_filename": "186_waivers.sql",
+          "migration_checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
+          "expected_object_digest": "bc64dd10a46a07442af48661756128c3d045c577752d8b34e19a980d780ff145",
           "object_type": "index",
           "object_name": "idx_signed_waivers_template",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_indexes",
+          "query_category": "index_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "index": "idx_signed_waivers_template"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "signed_waivers",
+            "index": "idx_signed_waivers_template",
+            "def_hash": "3c778c3154e35311e684d33a2b64767858b2df081c4cec1a2117acf4f628323a",
+            "indexdef": "CREATE INDEX idx_signed_waivers_template ON public.signed_waivers USING btree (template_id)"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "186",
+          "migration_filename": "186_waivers.sql",
+          "migration_checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
+          "expected_object_digest": "bc64dd10a46a07442af48661756128c3d045c577752d8b34e19a980d780ff145",
           "object_type": "index",
           "object_name": "idx_signed_waivers_phone",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_indexes",
+          "query_category": "index_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "index": "idx_signed_waivers_phone"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "signed_waivers",
+            "index": "idx_signed_waivers_phone",
+            "def_hash": "9b632d48673c011069ca9beb8802dcc254d99a35f81d2bf1783c5801f7ebd367",
+            "indexdef": "CREATE INDEX idx_signed_waivers_phone ON public.signed_waivers USING btree (customer_phone)"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "186",
+          "migration_filename": "186_waivers.sql",
+          "migration_checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
+          "expected_object_digest": "bc64dd10a46a07442af48661756128c3d045c577752d8b34e19a980d780ff145",
           "object_type": "policy",
-          "object_name": "owners_manage_waiver_templates",
+          "object_name": "owners_manage_waiver_templates ON waiver_templates",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_policies",
+          "query_category": "policy_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "waiver_templates",
+            "policy": "owners_manage_waiver_templates"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "waiver_templates",
+            "policy": "owners_manage_waiver_templates",
+            "permissive": "PERMISSIVE",
+            "command": "ALL",
+            "roles": "{public}",
+            "using_hash": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
+            "check_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "186",
+          "migration_filename": "186_waivers.sql",
+          "migration_checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
+          "expected_object_digest": "bc64dd10a46a07442af48661756128c3d045c577752d8b34e19a980d780ff145",
           "object_type": "policy",
-          "object_name": "owners_view_signed_waivers",
+          "object_name": "owners_view_signed_waivers ON signed_waivers",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_policies",
+          "query_category": "policy_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "signed_waivers",
+            "policy": "owners_view_signed_waivers"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "signed_waivers",
+            "policy": "owners_view_signed_waivers",
+            "permissive": "PERMISSIVE",
+            "command": "SELECT",
+            "roles": "{public}",
+            "using_hash": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
+            "check_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "186",
+          "migration_filename": "186_waivers.sql",
+          "migration_checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
+          "expected_object_digest": "bc64dd10a46a07442af48661756128c3d045c577752d8b34e19a980d780ff145",
           "object_type": "policy",
-          "object_name": "service_insert_signed_waivers",
+          "object_name": "service_insert_signed_waivers ON signed_waivers",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_policies",
+          "query_category": "policy_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "signed_waivers",
+            "policy": "service_insert_signed_waivers"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "signed_waivers",
+            "policy": "service_insert_signed_waivers",
+            "permissive": "PERMISSIVE",
+            "command": "INSERT",
+            "roles": "{service_role}",
+            "using_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "check_hash": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "186",
+          "migration_filename": "186_waivers.sql",
+          "migration_checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
+          "expected_object_digest": "bc64dd10a46a07442af48661756128c3d045c577752d8b34e19a980d780ff145",
           "object_type": "trigger",
-          "object_name": "update_waiver_templates_updated_at",
+          "object_name": "update_waiver_templates_updated_at ON waiver_templates",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.triggers",
+          "query_category": "trigger_detail_select",
+          "expected_properties": {
+            "table": "waiver_templates",
+            "trigger": "update_waiver_templates_updated_at"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "waiver_templates",
+            "trigger": "update_waiver_templates_updated_at",
+            "timing": "BEFORE",
+            "event": "UPDATE",
+            "orientation": "ROW",
+            "action": "EXECUTE FUNCTION update_updated_at()"
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "186",
+          "migration_filename": "186_waivers.sql",
+          "migration_checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
+          "expected_object_digest": "bc64dd10a46a07442af48661756128c3d045c577752d8b34e19a980d780ff145",
           "object_type": "rls",
           "object_name": "waiver_templates",
-          "expected_state": "exists",
+          "expected_state": "enabled",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "enabled",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_class",
+          "query_category": "rls_detail_select",
+          "expected_properties": {
+            "table": "waiver_templates",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table": "waiver_templates",
+            "relrowsecurity": true,
+            "relforcerowsecurity": false
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "186",
+          "migration_filename": "186_waivers.sql",
+          "migration_checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
+          "expected_object_digest": "bc64dd10a46a07442af48661756128c3d045c577752d8b34e19a980d780ff145",
           "object_type": "rls",
           "object_name": "signed_waivers",
-          "expected_state": "exists",
+          "expected_state": "enabled",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "enabled",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_class",
+          "query_category": "rls_detail_select",
+          "expected_properties": {
+            "table": "signed_waivers",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table": "signed_waivers",
+            "relrowsecurity": true,
+            "relforcerowsecurity": false
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 12,
       "passed": 12,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "056345253cf6f82c6d1079b27dc1aa8f7c15c6cbda5504e43dc04537a54b38c4"
     },
     {
       "version": "188",
@@ -695,21 +1527,43 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "188",
+          "migration_filename": "188_waiver_template_pdf_url.sql",
+          "migration_checksum": "c5a4c9316d509ae59bed4532f982fb11f2aef8bf78434d6221312357c6ffc512",
+          "expected_object_digest": "af64fefb710f33d80ce2deafc1e365891b27f80a7fb5699eb01627ba806e35d8",
           "object_type": "column",
           "object_name": "waiver_templates.pdf_url",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "waiver_templates",
+            "column": "pdf_url"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "waiver_templates",
+            "column": "pdf_url",
+            "data_type": "text",
+            "udt_name": "text",
+            "is_nullable": "YES",
+            "column_default": null,
+            "is_identity": "NO",
+            "is_generated": "NEVER"
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 1,
       "passed": 1,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "d8ba5ba6b191fa76ed01a83bf6564b939aa2d1e7c76b4e2ee418e85b9bae73c8"
     },
     {
       "version": "189",
@@ -720,41 +1574,102 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "189",
+          "migration_filename": "189_waiver_access_token.sql",
+          "migration_checksum": "691cca513115647777b0e36d916d1cb603e336c0a0918485a98688bb7002e0a5",
+          "expected_object_digest": "2660091c7a62628610d44c4b110cb6b4d9dce8d48223c93692f44bff203aeaa3",
           "object_type": "column",
           "object_name": "signed_waivers.access_token",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "signed_waivers",
+            "column": "access_token"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "signed_waivers",
+            "column": "access_token",
+            "data_type": "character varying",
+            "udt_name": "varchar",
+            "is_nullable": "YES",
+            "column_default": "substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 16)",
+            "is_identity": "NO",
+            "is_generated": "NEVER",
+            "character_maximum_length": 32
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "189",
+          "migration_filename": "189_waiver_access_token.sql",
+          "migration_checksum": "691cca513115647777b0e36d916d1cb603e336c0a0918485a98688bb7002e0a5",
+          "expected_object_digest": "2660091c7a62628610d44c4b110cb6b4d9dce8d48223c93692f44bff203aeaa3",
           "object_type": "column_alter",
           "object_name": "waiver_templates.token",
-          "expected_state": "exists",
+          "expected_state": "set",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "waiver_templates",
+            "column": "token"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "waiver_templates",
+            "column": "token",
+            "data_type": "character varying",
+            "udt_name": "varchar",
+            "is_nullable": "NO",
+            "column_default": "substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 16)",
+            "is_identity": "NO",
+            "is_generated": "NEVER",
+            "character_maximum_length": 32
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "189",
+          "migration_filename": "189_waiver_access_token.sql",
+          "migration_checksum": "691cca513115647777b0e36d916d1cb603e336c0a0918485a98688bb7002e0a5",
+          "expected_object_digest": "2660091c7a62628610d44c4b110cb6b4d9dce8d48223c93692f44bff203aeaa3",
           "object_type": "index",
           "object_name": "idx_signed_waivers_access_token",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_indexes",
+          "query_category": "index_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "index": "idx_signed_waivers_access_token"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "signed_waivers",
+            "index": "idx_signed_waivers_access_token",
+            "def_hash": "ee28d6b178fd1121eaaa6adb1d2b390757cc929e742399b516767bbdc2563d79",
+            "indexdef": "CREATE INDEX idx_signed_waivers_access_token ON public.signed_waivers USING btree (access_token)"
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 3,
       "passed": 3,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "553f11501247dd09107da308a2ee9b01106ef08da0ac25834903136be8264391"
     },
     {
       "version": "190",
@@ -765,67 +1680,194 @@
       "classification": "VERIFIED_APPLIED_UNTRACKED",
       "objects": [
         {
+          "migration_version": "190",
+          "migration_filename": "190_gateway_fees_and_custom_overrides.sql",
+          "migration_checksum": "cd2d5b7f3d4b3d25966415f8556d461e2304ef31a42695dd2c6e82714e126a46",
+          "expected_object_digest": "177f1920e00d9a1aa75b998af5ecc00a6d184b11dd006e4cf09cb8b76949ca89",
           "object_type": "column",
           "object_name": "platform_fees.gateway_fee",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "platform_fees",
+            "column": "gateway_fee"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "platform_fees",
+            "column": "gateway_fee",
+            "data_type": "integer",
+            "udt_name": "int4",
+            "is_nullable": "NO",
+            "column_default": "0",
+            "is_identity": "NO",
+            "is_generated": "NEVER",
+            "numeric_precision": 32
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "190",
+          "migration_filename": "190_gateway_fees_and_custom_overrides.sql",
+          "migration_checksum": "cd2d5b7f3d4b3d25966415f8556d461e2304ef31a42695dd2c6e82714e126a46",
+          "expected_object_digest": "177f1920e00d9a1aa75b998af5ecc00a6d184b11dd006e4cf09cb8b76949ca89",
           "object_type": "column",
           "object_name": "businesses.custom_fee_percentage",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "businesses",
+            "column": "custom_fee_percentage"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "businesses",
+            "column": "custom_fee_percentage",
+            "data_type": "numeric",
+            "udt_name": "numeric",
+            "is_nullable": "YES",
+            "column_default": null,
+            "is_identity": "NO",
+            "is_generated": "NEVER",
+            "numeric_precision": 5
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "190",
+          "migration_filename": "190_gateway_fees_and_custom_overrides.sql",
+          "migration_checksum": "cd2d5b7f3d4b3d25966415f8556d461e2304ef31a42695dd2c6e82714e126a46",
+          "expected_object_digest": "177f1920e00d9a1aa75b998af5ecc00a6d184b11dd006e4cf09cb8b76949ca89",
           "object_type": "column",
           "object_name": "businesses.custom_fee_flat",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "businesses",
+            "column": "custom_fee_flat"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "businesses",
+            "column": "custom_fee_flat",
+            "data_type": "integer",
+            "udt_name": "int4",
+            "is_nullable": "YES",
+            "column_default": null,
+            "is_identity": "NO",
+            "is_generated": "NEVER",
+            "numeric_precision": 32
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "190",
+          "migration_filename": "190_gateway_fees_and_custom_overrides.sql",
+          "migration_checksum": "cd2d5b7f3d4b3d25966415f8556d461e2304ef31a42695dd2c6e82714e126a46",
+          "expected_object_digest": "177f1920e00d9a1aa75b998af5ecc00a6d184b11dd006e4cf09cb8b76949ca89",
           "object_type": "column",
           "object_name": "payments.gateway_fee",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "information_schema.columns",
+          "query_category": "column_detail_select",
+          "expected_properties": {
+            "schema": "public",
+            "table": "payments",
+            "column": "gateway_fee"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "payments",
+            "column": "gateway_fee",
+            "data_type": "integer",
+            "udt_name": "int4",
+            "is_nullable": "NO",
+            "column_default": "0",
+            "is_identity": "NO",
+            "is_generated": "NEVER",
+            "numeric_precision": 32
+          },
+          "property_comparison_result": "match"
         },
         {
+          "migration_version": "190",
+          "migration_filename": "190_gateway_fees_and_custom_overrides.sql",
+          "migration_checksum": "cd2d5b7f3d4b3d25966415f8556d461e2304ef31a42695dd2c6e82714e126a46",
+          "expected_object_digest": "177f1920e00d9a1aa75b998af5ecc00a6d184b11dd006e4cf09cb8b76949ca89",
           "object_type": "constraint",
           "object_name": "chk_platform_fees_gateway_fee_nonneg",
           "expected_state": "exists",
+          "verification_timestamp": "2026-07-29T22:09:39.973603+00:00",
           "verified_state": "exists",
           "result": "pass",
-          "verification_source": "pg_catalog",
-          "query_category": "metadata_select",
-          "verification_timestamp": "2026-07-29T20:29:01.725537+00:00"
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_detail_select",
+          "expected_properties": {
+            "constraint": "chk_platform_fees_gateway_fee_nonneg"
+          },
+          "verified_properties": {
+            "constraint": "chk_platform_fees_gateway_fee_nonneg",
+            "type": "c",
+            "validated": true,
+            "deferrable": false,
+            "deferred": false,
+            "definition": "CHECK ((gateway_fee >= 0))",
+            "def_hash": "08df889d3b0600d14f419c888e3bb92ae8c7402bcff1e9f069f0642c8e41ae81",
+            "table": "platform_fees"
+          },
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 5,
       "passed": 5,
       "superseded": 0,
       "failed": 0,
-      "ambiguous": 0
+      "ambiguous": 0,
+      "migration_evidence_digest": "c73d9f02eec95d833a2dc08995f126f23d31592cff1ef2e792d4138ebdb73cd4"
     }
   ],
   "pre_total_remote_count": 164,
+  "post_total_remote_count": 164,
   "pre_range_101_246_count": 68,
+  "post_range_101_246_count": 68,
   "migration_298_pre_occurrences": 1,
+  "migration_298_post_occurrences": 1,
   "batch5_pre_occurrence_map": {
+    "172": 0,
+    "173": 0,
+    "174": 0,
+    "175": 0,
+    "177": 0,
+    "178": 0,
+    "179": 0,
+    "180": 0,
+    "183": 0,
+    "184": 0,
+    "185": 0,
+    "186": 0,
+    "188": 0,
+    "189": 0,
+    "190": 0
+  },
+  "batch5_post_occurrence_map": {
     "172": 0,
     "173": 0,
     "174": 0,
@@ -1008,43 +2050,6 @@
     "297",
     "298"
   ],
-  "all_queries_read_only": true,
-  "no_record_contents_returned": true,
-  "no_customer_records_accessed": true,
-  "no_write_query_executed": true,
-  "no_migration_sql_executed": true,
-  "no_migration_repair": true,
-  "no_migration_up": true,
-  "no_supabase_db_push": true,
-  "no_management_api_write": true,
-  "no_schema_or_data_changed": true,
-  "no_migration_history_changed": true,
-  "no_repository_change": true,
-  "no_commit_push_or_pr": true,
-  "no_issue_53_mutation": true,
-  "no_deployment_occurred": true,
-  "no_token_recorded": true,
-  "batch_6_not_started": true,
-  "post_total_remote_count": 164,
-  "post_range_101_246_count": 68,
-  "migration_298_post_occurrences": 1,
-  "batch5_post_occurrence_map": {
-    "172": 0,
-    "173": 0,
-    "174": 0,
-    "175": 0,
-    "177": 0,
-    "178": 0,
-    "179": 0,
-    "180": 0,
-    "183": 0,
-    "184": 0,
-    "185": 0,
-    "186": 0,
-    "188": 0,
-    "189": 0,
-    "190": 0
-  },
   "post_tracked_snapshot": [
     "001",
     "002",
@@ -1211,5 +2216,22 @@
     "297",
     "298"
   ],
-  "migration_history_unchanged": true
+  "migration_history_unchanged": true,
+  "all_queries_read_only": true,
+  "no_record_contents_returned": true,
+  "no_customer_records_accessed": true,
+  "no_write_query_executed": true,
+  "no_migration_sql_executed": true,
+  "no_migration_repair": true,
+  "no_migration_up": true,
+  "no_supabase_db_push": true,
+  "no_management_api_write": true,
+  "no_schema_or_data_changed": true,
+  "no_migration_history_changed": true,
+  "no_repository_change": true,
+  "no_commit_push_or_pr": true,
+  "no_issue_53_mutation": true,
+  "no_deployment_occurred": true,
+  "no_token_recorded": true,
+  "batch_6_not_started": true
 }

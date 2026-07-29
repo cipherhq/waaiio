@@ -2841,7 +2841,7 @@
         "replacement_object_name": "trg_bot_session_deactivate ON bot_sessions (re-created in same migration)",
         "superseding_migration": "147_auto_last_active_on_deactivate.sql",
         "rationale": "Migration 147 uses DROP IF EXISTS + CREATE pattern to replace the trigger definition. The DROP step is superseded by the CREATE in the same migration.",
-        "application_behaviour_impact": "None \u2014 trigger exists with intended function update_last_active_on_deactivate. Behaviour matches intent."
+        "application_behaviour_impact": "None — trigger exists with intended function update_last_active_on_deactivate. Behaviour matches intent."
       }
     ],
     "missing_effects": [],
@@ -3354,7 +3354,7 @@
         "replacement_object_name": "trg_generate_event_slug ON events (re-created in same migration)",
         "superseding_migration": "149_public_event_booking_slugs.sql",
         "rationale": "Migration 149 uses DROP IF EXISTS + CREATE pattern to replace the trigger. The DROP is superseded by the re-creation in the same migration.",
-        "application_behaviour_impact": "None \u2014 trigger exists with intended function generate_event_slug. Behaviour matches intent."
+        "application_behaviour_impact": "None — trigger exists with intended function generate_event_slug. Behaviour matches intent."
       }
     ],
     "missing_effects": [],
@@ -3774,7 +3774,7 @@
         "replacement_implementation_migration": "176_buffer_time_atomic.sql",
         "obsolete_overload_removal_migration": "245_fix_book_slot_atomic_overloads.sql",
         "rationale": "Migration 176 created the current 26-argument implementation preserving all parameters from earlier migrations (p_location_id from 155, p_appointment_id from 166) plus p_buffer_minutes and p_duration. Migration 245 removed the obsolete 23- and 24-argument overloads, leaving only the 26-argument implementation.",
-        "application_behaviour_impact": "None \u2014 all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
+        "application_behaviour_impact": "None — all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
       }
     ],
     "missing_effects": [],
@@ -4202,7 +4202,7 @@
         "replacement_implementation_migration": "176_buffer_time_atomic.sql",
         "obsolete_overload_removal_migration": "245_fix_book_slot_atomic_overloads.sql",
         "rationale": "Migration 176 created the current 26-argument implementation preserving all parameters from earlier migrations (p_location_id from 155, p_appointment_id from 166) plus p_buffer_minutes and p_duration. Migration 245 removed the obsolete 23- and 24-argument overloads, leaving only the 26-argument implementation.",
-        "application_behaviour_impact": "None \u2014 all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
+        "application_behaviour_impact": "None — all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
       }
     ],
     "missing_effects": [],
@@ -4577,30 +4577,33 @@
         "object_name": "subscriptions.stripe_subscription_id",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "column",
         "object_name": "subscriptions.stripe_customer_id",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "column",
         "object_name": "subscriptions.billing_interval",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -4609,11 +4612,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "6425db951dbb939523af2bdfcbeaeb19fe588d68b334f5755957228d514fb47b"
   },
   {
     "version": "173",
@@ -4628,30 +4631,33 @@
         "object_name": "restore_stock",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "function_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "function",
         "object_name": "restore_variant_stock",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "function_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "function",
         "object_name": "restore_tickets_sold",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "function_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -4660,11 +4666,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "79b50d4fb214411461d36040da170ba7a900ebb9e56b7e43bb7ae4f28615a647"
   },
   {
     "version": "174",
@@ -4679,20 +4685,22 @@
         "object_name": "contracts.reference_code",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "column",
         "object_name": "contract_signers.signature_reference",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -4701,11 +4709,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "638d01403f92548a43277cb342b9fc12ca7e825d9cbaa9197f011efe366f0b67"
   },
   {
     "version": "175",
@@ -4717,13 +4725,14 @@
     "evidence": [
       {
         "object_type": "policy",
-        "object_name": "public_read_active_properties",
+        "object_name": "public_read_active_properties ON properties",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "policy_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -4732,11 +4741,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "d480bb8f80233b5392f150afd07c2fe56e2910210f727c7d616f0e629bd7e297"
   },
   {
     "version": "176",
@@ -4793,50 +4802,55 @@
         "object_name": "capability_type.table_reservation",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_enum",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "enum_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "enum_value",
         "object_name": "capability_type.estimates",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_enum",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "enum_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "enum_value",
         "object_name": "capability_type.packages",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_enum",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "enum_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "enum_value",
         "object_name": "capability_type.class_booking",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_enum",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "enum_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "enum_value",
         "object_name": "capability_type.multi_location",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_enum",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "enum_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -4845,11 +4859,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "a5d2f39b4b3700fcab1a98630ab4856372b55e5516c16f84462ea6ef43434285"
   },
   {
     "version": "178",
@@ -4864,20 +4878,22 @@
         "object_name": "business_capabilities.sort_order",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "index",
         "object_name": "idx_business_capabilities_sort_order",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "index_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -4886,11 +4902,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "e3204e6c3e77f5a801e4250a97556cd6c36c5803e32281a88dc6ff31f80f0b61"
   },
   {
     "version": "179",
@@ -4905,10 +4921,11 @@
         "object_name": "business_capabilities.custom_label",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -4917,11 +4934,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "235e7137efa16f78ed0b40d3f775fb675e280565574f4e9431f023a82f1492a5"
   },
   {
     "version": "180",
@@ -4936,60 +4953,66 @@
         "object_name": "api_keys",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "table_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "index",
         "object_name": "idx_api_keys_hash",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "index_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "index",
         "object_name": "idx_api_keys_business",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "index_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "policy",
-        "object_name": "owners_manage_api_keys",
+        "object_name": "owners_manage_api_keys ON api_keys",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "policy_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "enum_value",
         "object_name": "booking_channel.api",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_enum",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "enum_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "rls",
         "object_name": "api_keys",
-        "expected_state": "exists",
+        "expected_state": "enabled",
         "verified_state": "enabled",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "rls_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -4998,11 +5021,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "5229d2cb6afb52a66820f23c6fcfe04878711ee7f926aa2f4619efd78b8eafcd"
   },
   {
     "version": "181",
@@ -5185,60 +5208,66 @@
         "object_name": "idx_orders_business_status",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "index_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "constraint",
         "object_name": "chk_payments_amount_nonneg",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_constraint",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "constraint_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "constraint",
         "object_name": "chk_platform_fees_amount_nonneg",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_constraint",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "constraint_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "constraint",
         "object_name": "chk_payouts_amount_nonneg",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_constraint",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "constraint_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "constraint",
         "object_name": "refund_requests_payment_id_fkey",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_constraint",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "constraint_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "index",
         "object_name": "idx_subscriptions_restaurant",
         "expected_state": "dropped",
         "verified_state": "dropped",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "index_absence_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -5247,11 +5276,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "6a5efa43e5cc89329827d894b0acb715fb5ebed311d49d55f3f627f42d986adf"
   },
   {
     "version": "184",
@@ -5266,40 +5295,44 @@
         "object_name": "campaigns.deleted_at",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "column",
         "object_name": "campaigns.deleted_by",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "index",
         "object_name": "idx_campaigns_active",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "index_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "constraint",
         "object_name": "campaign_donations_campaign_id_fkey",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_constraint",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "constraint_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -5308,11 +5341,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "3d18e7a55f4312bfd44fb2334f7835be340c50d393de79457fc2ab57a4c08c1f"
   },
   {
     "version": "185",
@@ -5327,10 +5360,11 @@
         "object_name": "booking_channel.dashboard",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_enum",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "enum_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -5339,11 +5373,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "1cd876291cbe1e4b175c0789296308de42ef32721d0dbeb644adbb47bede8144"
   },
   {
     "version": "186",
@@ -5358,120 +5392,132 @@
         "object_name": "waiver_templates",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "table_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "table",
         "object_name": "signed_waivers",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "table_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "index",
         "object_name": "idx_waiver_templates_business",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "index_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "index",
         "object_name": "idx_signed_waivers_business",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "index_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "index",
         "object_name": "idx_signed_waivers_template",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "index_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "index",
         "object_name": "idx_signed_waivers_phone",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "index_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "policy",
-        "object_name": "owners_manage_waiver_templates",
+        "object_name": "owners_manage_waiver_templates ON waiver_templates",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "policy_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "policy",
-        "object_name": "owners_view_signed_waivers",
+        "object_name": "owners_view_signed_waivers ON signed_waivers",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "policy_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "policy",
-        "object_name": "service_insert_signed_waivers",
+        "object_name": "service_insert_signed_waivers ON signed_waivers",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "policy_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "trigger",
-        "object_name": "update_waiver_templates_updated_at",
+        "object_name": "update_waiver_templates_updated_at ON waiver_templates",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.triggers",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "trigger_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "rls",
         "object_name": "waiver_templates",
-        "expected_state": "exists",
+        "expected_state": "enabled",
         "verified_state": "enabled",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "rls_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "rls",
         "object_name": "signed_waivers",
-        "expected_state": "exists",
+        "expected_state": "enabled",
         "verified_state": "enabled",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "rls_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -5480,11 +5526,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "056345253cf6f82c6d1079b27dc1aa8f7c15c6cbda5504e43dc04537a54b38c4"
   },
   {
     "version": "187",
@@ -5525,10 +5571,11 @@
         "object_name": "waiver_templates.pdf_url",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -5537,11 +5584,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "d8ba5ba6b191fa76ed01a83bf6564b939aa2d1e7c76b4e2ee418e85b9bae73c8"
   },
   {
     "version": "189",
@@ -5556,30 +5603,33 @@
         "object_name": "signed_waivers.access_token",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "column_alter",
         "object_name": "waiver_templates.token",
-        "expected_state": "exists",
+        "expected_state": "set",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "index",
         "object_name": "idx_signed_waivers_access_token",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "index_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -5588,11 +5638,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "553f11501247dd09107da308a2ee9b01106ef08da0ac25834903136be8264391"
   },
   {
     "version": "190",
@@ -5607,50 +5657,55 @@
         "object_name": "platform_fees.gateway_fee",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "column",
         "object_name": "businesses.custom_fee_percentage",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "column",
         "object_name": "businesses.custom_fee_flat",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "column",
         "object_name": "payments.gateway_fee",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "column_detail_select",
+        "property_comparison_result": "match"
       },
       {
         "object_type": "constraint",
         "object_name": "chk_platform_fees_gateway_fee_nonneg",
         "expected_state": "exists",
         "verified_state": "exists",
-        "verification_source": "pg_catalog",
-        "verified_at": "2026-07-29T20:29:01.725537+00:00",
+        "verification_source": "pg_constraint",
+        "verified_at": "2026-07-29T22:09:39.973603+00:00",
         "result": "pass",
-        "query_category": "metadata_select"
+        "query_category": "constraint_detail_select",
+        "property_comparison_result": "match"
       }
     ],
     "missing_effects": [],
@@ -5659,11 +5714,11 @@
     "repair_status": "approved_for_repair",
     "confidence": "HIGH",
     "recommended_action": "migration_history_repair_only",
-    "last_verified_at": "2026-07-29T20:29:01.725537+00:00",
+    "last_verified_at": "2026-07-29T22:09:39.973603+00:00",
     "evidence_source": "production_verified",
     "verification_batch": 5,
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": ""
+    "production_evidence_digest": "c73d9f02eec95d833a2dc08995f126f23d31592cff1ef2e792d4138ebdb73cd4"
   },
   {
     "version": "191",

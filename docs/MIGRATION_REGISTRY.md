@@ -194,7 +194,7 @@ Per Issue #53 preflight findings:
 
 Of the 146 migrations in the 101-246 range:
 - **68 aligned/tracked:** Batches 1-4 repaired (60 versions) + 8 individually tracked (115, 119, 176, 181, 182, 199, 200, 244)
-- **15 verified and pending repair:** Batch 5 (172, 173, 174, 175, 177, 178, 179, 180, 183, 184, 185, 186, 188, 189, 190) — 55/55 object checks passed, 0 failed, 0 ambiguous. Evidence: `docs/migrations/evidence/batch-05-production-verification.json` (digest: `92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77`). No migration SQL executed. No schema or data change. Not yet remotely tracked. Batch 6 not started.
+- **15 verified and pending repair:** Batch 5 (172, 173, 174, 175, 177, 178, 179, 180, 183, 184, 185, 186, 188, 189, 190) — 55/55 object checks passed, 383 detailed property checks, 0 failed, 0 ambiguous. Evidence: `docs/migrations/evidence/batch-05-production-verification.json` (V2 digest: `bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8`). No migration SQL executed. No schema or data change. Not yet remotely tracked. Batch 6 not started.
 - **49 remaining candidates pending verification:** Batches 6-9 per verification candidates (`docs/migrations/101-246-verification-candidates.json`)
 - **12 not verifiable safely:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 superseded:** 122 (by 233), 130 (by 233)
