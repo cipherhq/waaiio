@@ -3010,6 +3010,259 @@ describe('Validator CLI rejection tests (table-driven)', () => {
       },
       expectedDiagnostic: /no_supabase_db_push.*not boolean true/,
     },
+    // ── Migration 298 evidence CLI rejection cases ──
+    {
+      name: 'corrected Migration 298 evidence file missing',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        if (existsSync(p)) rmSync(p);
+      },
+      expectedDiagnostic: /Migration 298 corrected evidence file missing/,
+    },
+    {
+      name: 'original Migration 298 evidence file missing',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-original.json');
+        if (existsSync(p)) rmSync(p);
+      },
+      expectedDiagnostic: /Migration 298 original evidence file missing/,
+    },
+    {
+      name: 'original SHA mismatch in corrected evidence',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.original_evidence_sha256 = 'aaaa' + d.original_evidence_sha256.slice(4);
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /original_evidence_sha256 recomputes/,
+    },
+    {
+      name: 'corrected manual_sql_execution_occurred missing',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        delete d.manual_sql_execution_occurred;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /manual_sql_execution_occurred/,
+    },
+    {
+      name: 'corrected manual_sql_execution_occurred false',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.manual_sql_execution_occurred = false;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /manual_sql_execution_occurred/,
+    },
+    {
+      name: 'corrected migration_repair_occurred false',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.migration_repair_occurred = false;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /migration_repair_occurred/,
+    },
+    {
+      name: 'corrected approved_procedure_followed true',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.actual_execution.approved_procedure_followed = true;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /approved_procedure_followed/,
+    },
+    {
+      name: 'corrected procedure_deviation_recorded false',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.actual_execution.procedure_deviation_recorded = false;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /procedure_deviation_recorded/,
+    },
+    {
+      name: 'corrected required_action_was_stop false',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.dry_run.required_action_was_stop = false;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /required_action_was_stop/,
+    },
+    {
+      name: 'corrected migration_up_linked_used true',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.actual_execution.migration_up_linked_used = true;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /migration_up_linked_used/,
+    },
+    {
+      name: 'corrected repaired_version not 298',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.actual_execution.repaired_version = 299;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /repaired_version/,
+    },
+    {
+      name: 'corrected exact_new_history_versions not [298]',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.post_application_history.exact_new_history_versions = [298, 299];
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /exact_new_history_versions/,
+    },
+    {
+      name: 'corrected pending rows nonzero',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.current_pending_rows = 3;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /current_pending_rows/,
+    },
+    {
+      name: 'corrected populated matches not 39',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.populated_metadata_match_rows = 38;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /populated_metadata_match_rows/,
+    },
+    {
+      name: 'corrected migration_298_occurrences zero (unapplied)',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.post_application_history.migration_298_occurrences = 0;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /Migration 298 not marked unapplied/,
+    },
+    {
+      name: 'corrected migration_result_verified false',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.migration_result_verified = false;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /migration_result_verified/,
+    },
+    {
+      name: 'corrected batch_5_not_started false',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.batch_5_not_started = false;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /batch_5_not_started/,
+    },
+    {
+      name: 'original no longer records Management API SQL',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-original.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.application.command_category = 'supabase_migration_up';
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /command_category.*supabase_management_api_sql/,
+    },
+    {
+      name: 'original no longer records migration repair',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-original.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.application.migration_history_recorded_via = 'supabase_migration_up';
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /migration_history_recorded_via.*supabase_migration_repair/,
+    },
+    // ── Batch 4 flat-evidence strict boolean CLI rejection cases ──
+    {
+      name: 'Batch 4 flat evidence missing no_unapproved_versions_added',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-04-repair.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        delete d.no_unapproved_versions_added;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /no_unapproved_versions_added/,
+    },
+    {
+      name: 'Batch 4 flat evidence missing no_migration_sql_executed',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-04-repair.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        delete d.no_migration_sql_executed;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /no_migration_sql_executed/,
+    },
+    {
+      name: 'Batch 4 flat evidence false no_supabase_db_push',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-04-repair.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.no_supabase_db_push = false;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /no_supabase_db_push.*must be boolean true/,
+    },
+    {
+      name: 'Batch 4 flat evidence altered new_versions_added',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-04-repair.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.new_versions_added = [...d.new_versions_added, 999];
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /new_versions_added|derived added/,
+    },
+    {
+      name: 'Batch 4 flat evidence removed approved version from post snapshot',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-04-repair.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        // Remove the first approved version from post snapshot
+        const first = String(d.approved_versions[0]);
+        d.post_repair_tracked_snapshot = d.post_repair_tracked_snapshot.filter((v: string | number) => String(v) !== first);
+        d.post_repair_range_101_246 = d.post_repair_range_101_246 - 1;
+        d.post_repair_total = d.post_repair_total - 1;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /snapshot-derived|added versions|total count delta/,
+    },
+    {
+      name: 'Batch 4 flat evidence unrelated added version in post snapshot',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-04-repair.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.post_repair_tracked_snapshot.push('999');
+        d.post_repair_total = d.post_repair_total + 1;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /snapshot-derived|added versions|total count delta|post_total/,
+    },
   ];
 
   it('unmodified fixtures pass the real validator', () => {

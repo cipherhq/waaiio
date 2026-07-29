@@ -85,7 +85,7 @@ This runbook governs the controlled verification and repair of 124 migration-his
 - Migration 298 must not be rerun.
 - **PROCEDURE DEVIATION:** `supabase migration up --linked --dry-run` showed 79 migrations. The approved procedure required stopping. Instead, Migration 298 SQL was executed through the Supabase Management API SQL method and recorded using `supabase migration repair --status applied 298`. The production result is verified correct, but the approved execution procedure was not followed.
 - **Canonical evidence:** `docs/migrations/evidence/migration-298-production-application-corrected.json`
-- **Superseded original evidence:** `docs/migrations/evidence/migration-298-production-application-original.json` (preserved; contained inaccurate safety confirmations)
+- **Superseded original evidence:** `docs/migrations/evidence/migration-298-production-application-original.json` (preserved as initial report; accurately recorded methods but did not explicitly classify the dry-run stop violation as a procedure deviation)
 
 ### Batches 5-9 — Verification: NOT STARTED
 - 64 candidates remain across 5 batches (Batches 5-9)

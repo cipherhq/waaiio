@@ -1054,6 +1054,19 @@ for (const file of repairFiles) {
     let data = JSON.parse(readFileSync(filePath, 'utf-8'));
     // Normalize flat-key repair evidence (Batch 4+) to nested structure
     if (data.pre_repair_total !== undefined && !data.pre_repair) {
+      // Strict: require all safety booleans to exist and be true
+      const requiredFlatBooleans = [
+        'no_unapproved_versions_added', 'no_migration_sql_executed', 'no_supabase_db_push',
+        'no_schema_or_data_changed', 'no_customer_records_accessed',
+        'no_deployment_occurred', 'no_token_recorded', 'batch_5_not_started'
+      ];
+      for (const key of requiredFlatBooleans) {
+        if (!(key in data)) {
+          fail(`Flat repair evidence ${file}: missing required boolean field "${key}"`);
+        } else if (data[key] !== true) {
+          fail(`Flat repair evidence ${file}: "${key}" must be boolean true (got: ${JSON.stringify(data[key])})`);
+        }
+      }
       // Convert object-keyed migration_filenames to array ordered by approved_versions
       let migFilenamesArray = data.migration_filenames;
       if (migFilenamesArray && !Array.isArray(migFilenamesArray)) {
@@ -1061,6 +1074,26 @@ for (const file of repairFiles) {
       }
       // Convert string snapshots to integers
       const toIntArray = (arr) => Array.isArray(arr) ? arr.map(v => typeof v === 'string' ? parseInt(v, 10) : v) : arr;
+      // Derive exactly-once and no-unrelated-change from structural evidence, not just a single boolean
+      const approvedVersionSet = new Set(data.approved_versions.map(String));
+      const resultVersionSet = new Set(data.repair_results.map(r => String(r.version)));
+      const preSnap = toIntArray(data.pre_repair_tracked_snapshot || []);
+      const postSnap = toIntArray(data.post_repair_tracked_snapshot || []);
+      const preSnapSet = new Set(preSnap.map(String));
+      const postSnapSet = new Set(postSnap.map(String));
+      const snapAdded = [...postSnapSet].filter(v => !preSnapSet.has(v));
+      const snapRemoved = [...preSnapSet].filter(v => !postSnapSet.has(v));
+      const newVersions = (data.new_versions_added || []).map(String);
+      const derivedExactlyOnce = (
+        approvedVersionSet.size === resultVersionSet.size &&
+        [...approvedVersionSet].every(v => resultVersionSet.has(v)) &&
+        data.repair_results.every(r => r.exit_status === 0 && r.version_tracked === true) &&
+        snapAdded.length === approvedVersionSet.size &&
+        snapAdded.every(v => approvedVersionSet.has(v)) &&
+        newVersions.length === approvedVersionSet.size &&
+        newVersions.every(v => approvedVersionSet.has(v))
+      );
+      const derivedNoUnrelated = snapRemoved.length === 0;
       data = {
         ...data,
         timestamp_utc: data.repair_timestamp || data.timestamp_utc,
@@ -1076,11 +1109,11 @@ for (const file of repairFiles) {
           tracked_version_snapshot: toIntArray(data.post_repair_tracked_snapshot),
           new_versions_added: data.new_versions_added || [],
           lost_versions: [],
-          all_approved_appear_exactly_once: data.no_unapproved_versions_added
+          all_approved_appear_exactly_once: derivedExactlyOnce
         },
         confirmations: {
-          every_approved_version_appears_exactly_once: data.no_unapproved_versions_added !== false,
-          no_unrelated_version_changed: data.no_unapproved_versions_added !== false,
+          every_approved_version_appears_exactly_once: derivedExactlyOnce,
+          no_unrelated_version_changed: derivedNoUnrelated,
           no_migration_sql_executed: data.no_migration_sql_executed === true,
           no_schema_or_application_data_changed: data.no_schema_or_data_changed === true,
           no_customer_record_contents_accessed: data.no_customer_records_accessed === true,
@@ -1747,6 +1780,112 @@ for (const { file, batchNumber, data: repairData } of allRepairBatches) {
   }
 
   if (repairErrors === 0) pass(`Repair Batch ${batchNumber} cross-validation passed`);
+}
+
+// ══════════════════════════════════════════════════════════════
+// MIGRATION 298 EVIDENCE VALIDATION
+// ══════════════════════════════════════════════════════════════
+console.log('\n--- Migration 298 Evidence Validation ---\n');
+
+const M298_ORIGINAL_PATH = resolve(EVIDENCE_DIR, 'migration-298-production-application-original.json');
+const M298_CORRECTED_PATH = resolve(EVIDENCE_DIR, 'migration-298-production-application-corrected.json');
+
+if (!existsSync(M298_ORIGINAL_PATH)) {
+  fail('Migration 298 original evidence file missing');
+} else {
+  pass('Migration 298 original evidence file exists');
+}
+if (!existsSync(M298_CORRECTED_PATH)) {
+  fail('Migration 298 corrected evidence file missing');
+} else {
+  pass('Migration 298 corrected evidence file exists');
+}
+
+if (existsSync(M298_ORIGINAL_PATH) && existsSync(M298_CORRECTED_PATH)) {
+  let m298Orig, m298Corr;
+  try {
+    m298Orig = JSON.parse(readFileSync(M298_ORIGINAL_PATH, 'utf-8'));
+    pass('Migration 298 original evidence is valid JSON');
+  } catch (e) {
+    fail('Migration 298 original evidence is invalid JSON: ' + e.message);
+  }
+  try {
+    m298Corr = JSON.parse(readFileSync(M298_CORRECTED_PATH, 'utf-8'));
+    pass('Migration 298 corrected evidence is valid JSON');
+  } catch (e) {
+    fail('Migration 298 corrected evidence is invalid JSON: ' + e.message);
+  }
+
+  if (m298Orig && m298Corr) {
+    let m298Errors = 0;
+    const m298Check = (cond, msg) => { if (!cond) { fail(msg); m298Errors++; } else { pass(msg); } };
+
+    // ── Original report validation ──
+    m298Check(m298Orig.task_identifier === 'migration-298-production-application', 'Original: task_identifier correct');
+    m298Check(m298Orig.repository_sha === '6ceb7fae6e67a389af24424775b50e06e6c57858', 'Original: repository_sha correct');
+    m298Check(m298Orig.migration_version === 298, 'Original: migration_version = 298');
+    m298Check(m298Orig.dry_run?.pending_migration_count === 79, 'Original: dry_run.pending_migration_count = 79');
+    m298Check(m298Orig.dry_run?.migration_298_only === false, 'Original: dry_run.migration_298_only = false');
+    m298Check(m298Orig.application?.command_category === 'supabase_management_api_sql', 'Original: application.command_category = supabase_management_api_sql');
+    m298Check(m298Orig.application?.migration_history_recorded_via === 'supabase_migration_repair', 'Original: application.migration_history_recorded_via = supabase_migration_repair');
+    m298Check(m298Orig.application?.migration_298_applied === true, 'Original: application.migration_298_applied = true');
+    m298Check(m298Orig.post_application?.migration_298_occurrences === 1, 'Original: post_application.migration_298_occurrences = 1');
+    m298Check(m298Orig.post_application?.current_pending_rows === 0, 'Original: post_application.current_pending_rows = 0');
+    m298Check(m298Orig.post_application?.populated_metadata_match_rows === 39, 'Original: post_application.populated_metadata_match_rows = 39');
+    m298Check(m298Orig.no_migration_repair_for_other_versions === true, 'Original: no_migration_repair_for_other_versions = true');
+    m298Check(m298Orig.no_manual_sql_execution_beyond_298 === true, 'Original: no_manual_sql_execution_beyond_298 = true');
+    m298Check(m298Orig.batch_5_not_started === true, 'Original: batch_5_not_started = true');
+
+    // ── Corrected report validation ──
+    m298Check(m298Corr.task_identifier === 'migration-298-production-application-corrected', 'Corrected: task_identifier correct');
+    m298Check(m298Corr.repository_sha === '6ceb7fae6e67a389af24424775b50e06e6c57858', 'Corrected: repository_sha correct');
+    m298Check(m298Corr.linked_project_ref === 'cxcmiqotkowhxinjbytg', 'Corrected: linked_project_ref correct');
+    m298Check(m298Corr.migration_version === 298, 'Corrected: migration_version = 298');
+    m298Check(m298Corr.migration_filename === '298_complete_order_payment_backfill.sql', 'Corrected: migration_filename correct');
+    m298Check(m298Corr.dry_run?.approved_gate_passed === false, 'Corrected: dry_run.approved_gate_passed = false');
+    m298Check(m298Corr.dry_run?.required_action_was_stop === true, 'Corrected: dry_run.required_action_was_stop = true');
+    m298Check(typeof m298Corr.dry_run?.result === 'string' && m298Corr.dry_run.result.includes('79'), 'Corrected: dry_run.result contains "79"');
+    m298Check(m298Corr.actual_execution?.migration_sql_execution_method === 'supabase_management_api_sql', 'Corrected: actual_execution.migration_sql_execution_method correct');
+    m298Check(m298Corr.actual_execution?.migration_up_linked_used === false, 'Corrected: actual_execution.migration_up_linked_used = false');
+    m298Check(m298Corr.actual_execution?.migration_repair_used === true, 'Corrected: actual_execution.migration_repair_used = true');
+    m298Check(m298Corr.actual_execution?.repaired_version === 298, 'Corrected: actual_execution.repaired_version = 298');
+    m298Check(m298Corr.actual_execution?.approved_procedure_followed === false, 'Corrected: actual_execution.approved_procedure_followed = false');
+    m298Check(m298Corr.actual_execution?.procedure_deviation_recorded === true, 'Corrected: actual_execution.procedure_deviation_recorded = true');
+    m298Check(m298Corr.manual_sql_execution_occurred === true, 'Corrected: manual_sql_execution_occurred = true');
+    m298Check(m298Corr.migration_repair_occurred === true, 'Corrected: migration_repair_occurred = true');
+    m298Check(m298Corr.pre_application_history?.total_remote_migration_count === 163, 'Corrected: pre count = 163');
+    m298Check(m298Corr.post_application_history?.total_remote_migration_count === 164, 'Corrected: post count = 164');
+    m298Check(m298Corr.post_application_history?.tracked_101_246_count === 68, 'Corrected: tracked 101-246 = 68');
+    m298Check(JSON.stringify(m298Corr.post_application_history?.exact_new_history_versions) === '[298]', 'Corrected: exact_new_history_versions = [298]');
+    m298Check(m298Corr.exactly_11_rows_corrected === true, 'Corrected: exactly_11_rows_corrected = true');
+    m298Check(m298Corr.current_pending_rows === 0, 'Corrected: current_pending_rows = 0');
+    m298Check(m298Corr.populated_metadata_match_rows === 39, 'Corrected: populated_metadata_match_rows = 39');
+    m298Check(m298Corr.populated_metadata_mismatch_rows === 0, 'Corrected: populated_metadata_mismatch_rows = 0');
+    m298Check(m298Corr.historical_payment_business_ids_remain_null === true, 'Corrected: business IDs remain null');
+    m298Check(m298Corr.referenced_order_business_ids_non_null === true, 'Corrected: referenced order business IDs non-null');
+    m298Check(m298Corr.migration_result_verified === true, 'Corrected: migration_result_verified = true');
+    m298Check(m298Corr.issue_53_remains_open === true, 'Corrected: issue_53_remains_open = true');
+    m298Check(m298Corr.batch_5_not_started === true, 'Corrected: batch_5_not_started = true');
+    m298Check(m298Corr.corrective_action?.do_not_rerun_migration_298 === true, 'Corrected: do_not_rerun = true');
+
+    // ── Evidence lineage validation ──
+    const origContent = readFileSync(M298_ORIGINAL_PATH);
+    const origHash = createHash('sha256').update(origContent).digest('hex');
+    m298Check(m298Corr.original_evidence_sha256 === origHash, 'Lineage: original_evidence_sha256 recomputes correctly');
+    m298Check(typeof m298Corr.original_evidence_path === 'string' &&
+      m298Corr.original_evidence_path.includes('migration-298-production-application'),
+      'Lineage: original_evidence_path references the preserved original');
+    m298Check(m298Orig.migration_file_sha256 === m298Corr.migration_file_sha256,
+      'Lineage: migration_file_sha256 agrees between original and corrected');
+
+    // ── Neither file may claim Migration 298 is pending or unapplied ──
+    m298Check(m298Orig.post_application?.migration_298_occurrences !== 0,
+      'Original: Migration 298 not marked unapplied');
+    m298Check(m298Corr.post_application_history?.migration_298_occurrences !== 0,
+      'Corrected: Migration 298 not marked unapplied');
+
+    if (m298Errors === 0) pass('Migration 298 evidence cross-validation passed');
+  }
 }
 
 // ── Summary ──

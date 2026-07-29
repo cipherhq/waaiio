@@ -12,8 +12,8 @@
 
 ## Evidence Lineage
 
-- The **original execution report** (`migration-298-production-application-original.json`) contained inaccurate safety confirmations. It is preserved in this directory but is **superseded**.
-- The **corrected forensic JSON** (`migration-298-production-application-corrected.json`) is the **canonical** evidence for Migration 298's production application.
+- The **original execution report** (`migration-298-production-application-original.json`) accurately recorded the Management API SQL and migration-repair methods used, but did not explicitly classify the approved dry-run stop violation as a procedure deviation. It is preserved as the initial report and **superseded** by the corrected forensic evidence for canonical governance purposes.
+- The **corrected forensic JSON** (`migration-298-production-application-corrected.json`) is the **canonical** evidence for Migration 298's production application, including the explicit procedure-deviation classification.
 
 ## Procedure Deviation
 
