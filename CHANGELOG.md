@@ -7,12 +7,20 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-29
 
-### Database: Migration 298 — complete Migration 167 historical backfill (proposed, not deployed)
-- `supabase/migrations/298_complete_order_payment_backfill.sql` — Guarded, idempotent backfill for 11 legacy payment rows where order_id was null but metadata.order_id contained a valid canonical UUID matching an existing order.
-- PR #72 (merged) fixed all five active gateway write paths. Production smoke verified zero new linkage failures.
-- Migration 298 updates only `payments.order_id`. It does not modify `business_id`, `metadata`, or any other field.
+### Database: Migration 298 — hardened execution safety (proposed, not deployed)
+- Global re-verification confirmed all 11 pending rows unchanged since original verification. Zero new pending rows appeared after PR #72 fixed the write paths.
+- **Safety hardening applied:**
+  - Removed all `(TRIM(p.metadata->>'order_id'))::uuid` casts — now uses safe text comparison (`o.id::text = TRIM(...)`) throughout
+  - Added table locks: `SHARE ROW EXCLUSIVE` on payments, `ACCESS SHARE` on orders
+  - Added timestamp boundary enforcement: only rows created before `2026-07-29T04:21:48Z` may be updated
+  - Ownership guard repeated in actual UPDATE: `business_id IS NULL OR business_id IS NOT DISTINCT FROM o.business_id`
+  - Strengthened postconditions
+  - Added real PostgreSQL behavioural tests (`migration-298-backfill-db.test.ts`, 12 test cases)
+  - Added CI step for Migration 298 database tests
+  - Recorded re-verification evidence and remediation decision evidence
 - Migration 298 has NOT been applied to production. The 11 historical rows remain unchanged.
 - Batch 5 remains blocked. Issue #53 remains open.
+  - **Files:** `supabase/migrations/298_complete_order_payment_backfill.sql`, `lib/__tests__/migration-298-backfill.test.ts`, `lib/__tests__/migration-298-backfill-db.test.ts`, `.github/workflows/ci.yml`, `docs/migrations/evidence/migration-298-*`
   - **Affects:** 11 legacy payment rows (order_id linkage only)
   - **Could break:** Nothing until deliberately applied. Fail-closed preflight aborts on any unexpected state.
 

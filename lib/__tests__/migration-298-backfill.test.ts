@@ -28,11 +28,23 @@ describe('Migration 298 structure', () => {
 
   it('declares all required variables', () => {
     expect(sql).toContain('v_pending_count');
+    expect(sql).toContain('v_null_created_at_count');
+    expect(sql).toContain('v_post_boundary_count');
     expect(sql).toContain('v_invalid_uuid_count');
     expect(sql).toContain('v_missing_order_count');
     expect(sql).toContain('v_cross_business_count');
     expect(sql).toContain('v_updated_count');
     expect(sql).toContain('v_remaining_count');
+  });
+
+  it('locks tables at the start of the DO block', () => {
+    expect(norm).toContain('lock table public.payments in share row exclusive mode');
+    expect(norm).toContain('lock table public.orders in access share mode');
+  });
+
+  it('declares a timestamp boundary variable', () => {
+    expect(sql).toContain('v_verification_boundary TIMESTAMPTZ');
+    expect(sql).toContain("'2026-07-29T04:21:48.741960+00:00'");
   });
 });
 
@@ -92,7 +104,18 @@ describe('Migration 298 fail-closed preflight', () => {
   it('aborts on cross-business ownership conflict', () => {
     expect(norm).toContain('v_cross_business_count');
     expect(norm).toContain('p.business_id is not null');
-    expect(norm).toContain('p.business_id != o.business_id');
+    expect(norm).toContain('p.business_id is distinct from o.business_id');
+  });
+
+  it('aborts when pending rows have NULL created_at', () => {
+    expect(norm).toContain('v_null_created_at_count');
+    expect(norm).toContain('if v_null_created_at_count > 0 then');
+  });
+
+  it('aborts when pending rows were created after the verification boundary', () => {
+    expect(norm).toContain('v_post_boundary_count');
+    expect(norm).toContain('created_at > v_verification_boundary');
+    expect(norm).toContain('if v_post_boundary_count > 0 then');
   });
 
   it('allows null payment business_id (missing, not conflicting)', () => {
@@ -125,16 +148,27 @@ describe('Migration 298 update scope', () => {
     expect(updateStmt.toLowerCase()).not.toContain('set metadata');
   });
 
-  it('uses a guarded join to public.orders', () => {
+  it('uses safe text comparison (no metadata UUID cast)', () => {
     expect(norm).toContain('from public.orders o');
-    expect(norm).toContain('o.id = (trim(p.metadata');
+    expect(norm).toContain("o.id::text = trim(p.metadata->>'order_id')");
   });
 
-  it('does not directly cast unvalidated text to uuid', () => {
-    // The uuid cast only appears after regex validation has passed
-    const beforeUpdate = sql.substring(0, sql.indexOf('UPDATE public.payments'));
-    // Check that UUID regex validation precedes the update
-    expect(beforeUpdate).toContain("'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'");
+  it('contains NO ::uuid casts of metadata values', () => {
+    // There must be no casting of metadata text to uuid anywhere
+    expect(sql).not.toContain("metadata->>'order_id'))::uuid");
+    expect(sql).not.toMatch(/metadata.*::uuid/);
+  });
+
+  it('includes ownership guard in UPDATE clause', () => {
+    const updateSection = sql.substring(sql.indexOf('UPDATE public.payments'));
+    const updateNorm = updateSection.replace(/\s+/g, ' ').toLowerCase();
+    expect(updateNorm).toContain('p.business_id is null or p.business_id is not distinct from o.business_id');
+  });
+
+  it('includes timestamp boundary in UPDATE clause', () => {
+    const updateSection = sql.substring(sql.indexOf('UPDATE public.payments'));
+    const updateNorm = updateSection.replace(/\s+/g, ' ').toLowerCase();
+    expect(updateNorm).toContain('p.created_at <= v_verification_boundary');
   });
 
   it('does not overwrite existing order_id', () => {
