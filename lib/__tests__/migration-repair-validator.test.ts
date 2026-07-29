@@ -3148,14 +3148,14 @@ describe('Validator CLI rejection tests (table-driven)', () => {
       expectedDiagnostic: /populated_metadata_match_rows/,
     },
     {
-      name: 'corrected migration_298_occurrences zero (unapplied)',
+      name: 'corrected post migration_298_occurrences zero',
       mutate: (tmpDir) => {
         const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
         const d = JSON.parse(readFileSync(p, 'utf-8'));
         d.post_application_history.migration_298_occurrences = 0;
         writeFileSync(p, JSON.stringify(d, null, 2));
       },
-      expectedDiagnostic: /Migration 298 not marked unapplied/,
+      expectedDiagnostic: /post_application_history\.migration_298_occurrences.*= 1/,
     },
     {
       name: 'corrected migration_result_verified false',
@@ -3262,6 +3262,47 @@ describe('Validator CLI rejection tests (table-driven)', () => {
         writeFileSync(p, JSON.stringify(d, null, 2));
       },
       expectedDiagnostic: /snapshot-derived|added versions|total count delta|post_total/,
+    },
+    // ── Exact Migration 298 occurrence and lineage CLI rejection cases ──
+    {
+      name: 'corrected pre migration_298_occurrences changed from 0 to 1',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.pre_application_history.migration_298_occurrences = 1;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /pre_application_history\.migration_298_occurrences.*= 0/,
+    },
+    {
+      name: 'corrected post migration_298_occurrences changed from 1 to 2',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.post_application_history.migration_298_occurrences = 2;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /post_application_history\.migration_298_occurrences.*= 1/,
+    },
+    {
+      name: 'corrected original_evidence_path changed to corrected path',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.original_evidence_path = '/tmp/waaiio-migration-298-production-application-corrected.json';
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /original_evidence_path/,
+    },
+    {
+      name: 'corrected original_evidence_path changed to unrelated path',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'migration-298-production-application-corrected.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.original_evidence_path = '/tmp/something-else.json';
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /original_evidence_path/,
     },
   ];
 

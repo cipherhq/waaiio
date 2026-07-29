@@ -1872,17 +1872,18 @@ if (existsSync(M298_ORIGINAL_PATH) && existsSync(M298_CORRECTED_PATH)) {
     const origContent = readFileSync(M298_ORIGINAL_PATH);
     const origHash = createHash('sha256').update(origContent).digest('hex');
     m298Check(m298Corr.original_evidence_sha256 === origHash, 'Lineage: original_evidence_sha256 recomputes correctly');
-    m298Check(typeof m298Corr.original_evidence_path === 'string' &&
-      m298Corr.original_evidence_path.includes('migration-298-production-application'),
-      'Lineage: original_evidence_path references the preserved original');
+    m298Check(m298Corr.original_evidence_path === '/tmp/waaiio-migration-298-production-application.json',
+      'Lineage: original_evidence_path is exactly /tmp/waaiio-migration-298-production-application.json');
     m298Check(m298Orig.migration_file_sha256 === m298Corr.migration_file_sha256,
       'Lineage: migration_file_sha256 agrees between original and corrected');
 
-    // ── Neither file may claim Migration 298 is pending or unapplied ──
-    m298Check(m298Orig.post_application?.migration_298_occurrences !== 0,
-      'Original: Migration 298 not marked unapplied');
-    m298Check(m298Corr.post_application_history?.migration_298_occurrences !== 0,
-      'Corrected: Migration 298 not marked unapplied');
+    // ── Exact Migration 298 occurrence counts ──
+    m298Check(m298Orig.post_application?.migration_298_occurrences === 1,
+      'Original: post_application.migration_298_occurrences = 1');
+    m298Check(m298Corr.pre_application_history?.migration_298_occurrences === 0,
+      'Corrected: pre_application_history.migration_298_occurrences = 0');
+    m298Check(m298Corr.post_application_history?.migration_298_occurrences === 1,
+      'Corrected: post_application_history.migration_298_occurrences = 1');
 
     if (m298Errors === 0) pass('Migration 298 evidence cross-validation passed');
   }

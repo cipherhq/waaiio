@@ -53,6 +53,17 @@ PR #21 (`fix/combined-18-19-20`, head `22168545`) contains tested but unmerged f
 2. **Resolve Meta WABA billing** — required before AUTH-000 production verification
 3. **Continue controlled FIN-LEGACY extraction** — payout idempotency, atomic claims, OAuth reconstruction in future milestones
 
+## OPS-001 Current State
+
+- Batch 4 verification and migration-history repair are complete.
+- 60 migration-history repairs are complete across Batches 1-4.
+- 64 production-verification candidates remain across Batches 5-9.
+- Migration 298 is applied and forensically verified. Exactly 11 historical payment rows were linked. Pending linkage rows are zero.
+- Migration 298 was executed using Management API SQL and recorded using migration repair. The approved dry-run stop condition was violated.
+- Corrected forensic evidence is canonical for the procedure-deviation conclusion.
+- Issue #53 remains open. Batch 5 has not started.
+- Next action: Batch 5 read-only production verification.
+
 ## Updating This Ledger
 
 Every milestone PR must update `docs/engineering-status.json` when:
