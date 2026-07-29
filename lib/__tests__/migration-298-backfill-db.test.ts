@@ -4,15 +4,24 @@
  * Verifies that Migration 298 correctly backfills payments.order_id from
  * metadata->>'order_id' for exactly 11 verified legacy rows, and that all
  * safety guards (count check, UUID validation, timestamp boundary, ownership
- * guard, postconditions) function correctly.
+ * guard, postconditions, immutability snapshot) function correctly.
  *
- * Requires TEST_DATABASE_URL environment variable (NOT staging or production).
+ * SAFETY REQUIREMENTS:
+ *   - TEST_DATABASE_URL must point to localhost or 127.0.0.1
+ *   - Database name must be exactly waaiio_m298_test (or end in _m298_test)
+ *   - Must NOT contain any Supabase production hostname
+ *   - The test suite will FAIL (not skip) if these checks are violated
+ *
+ * CI:
+ *   The GitHub Actions workflow creates a dedicated waaiio_m298_test database
+ *   for this test file only. It is dropped after the test completes.
  *
  * Local:
- *   docker run --rm -d --name m298-test -p 54324:5432 -e POSTGRES_PASSWORD=test postgres:16
- *   TEST_DATABASE_URL=postgresql://postgres:test@localhost:54324/postgres npx vitest run lib/__tests__/migration-298-backfill-db.test.ts
+ *   createdb waaiio_m298_test
+ *   TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m298_test \
+ *     npx vitest run lib/__tests__/migration-298-backfill-db.test.ts
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -22,14 +31,54 @@ const MIGRATION_PATH = path.resolve(
 );
 const dbUrl = process.env.TEST_DATABASE_URL;
 
+// ══════════════════════════════════════════════════════════════
+// DATABASE URL SAFETY GUARD
+// ══════════════════════════════════════════════════════════════
+
+function validateDatabaseUrl(url: string | undefined): url is string {
+  if (!url) return false;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+
+  const hostname = parsed.hostname;
+  const isLocal =
+    hostname === 'localhost' || hostname === '127.0.0.1';
+
+  // Extract database name from path (e.g., /waaiio_m298_test → waaiio_m298_test)
+  const dbName = parsed.pathname.replace(/^\//, '');
+  const isDedicatedDb = dbName === 'waaiio_m298_test' || dbName.endsWith('_m298_test');
+
+  const containsSupabase = url.includes('supabase.co') || url.includes('supabase.in');
+
+  return isLocal && isDedicatedDb && !containsSupabase;
+}
+
+// Fail immediately (not skip) if the URL is unsafe
 if (!dbUrl) {
-  describe.skip(
-    'Migration 298: Real PostgreSQL backfill tests (TEST_DATABASE_URL not set)',
-    () => {
-      it('skipped — set TEST_DATABASE_URL to enable', () => {});
-    },
-  );
+  describe('Migration 298: Real PostgreSQL backfill tests', () => {
+    it('requires TEST_DATABASE_URL to be set', () => {
+      // In CI this is always set; locally the test is simply not run
+      expect(dbUrl).toBeDefined();
+    });
+  });
+} else if (!validateDatabaseUrl(dbUrl)) {
+  describe('Migration 298: Database URL safety check', () => {
+    it('REFUSES to run against an unsafe database URL', () => {
+      throw new Error(
+        `TEST_DATABASE_URL is unsafe for destructive operations. ` +
+        `Required: hostname=localhost|127.0.0.1, database name ending in _m298_test, ` +
+        `no Supabase production hostname. Got: ${dbUrl.replace(/\/\/[^@]*@/, '//***@')}`,
+      );
+    });
+  });
 } else {
+  // ── URL validated — proceed with tests ──
+
   function runSQL(sql: string): {
     stdout: string;
     stderr: string;
@@ -42,11 +91,12 @@ if (!dbUrl) {
         timeout: 15000,
       });
       return { stdout: stdout.trim(), stderr: '', exitCode: 0 };
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const e = err as { stdout?: string; stderr?: string; status?: number };
       return {
-        stdout: err.stdout?.trim() || '',
-        stderr: err.stderr?.trim() || '',
-        exitCode: err.status || 1,
+        stdout: (e.stdout ?? '').trim(),
+        stderr: (e.stderr ?? '').trim(),
+        exitCode: e.status ?? 1,
       };
     }
   }
@@ -69,8 +119,8 @@ if (!dbUrl) {
   const BEFORE_BOUNDARY = '2026-07-28T00:00:00+00:00';
   const AFTER_BOUNDARY = '2026-07-30T00:00:00+00:00';
 
-  function createSchema() {
-    runSQL(`
+  function createSchema(): void {
+    const result = runSQL(`
       CREATE TABLE IF NOT EXISTS public.orders (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         business_id UUID,
@@ -84,13 +134,19 @@ if (!dbUrl) {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    if (result.exitCode !== 0) {
+      throw new Error(`Schema creation failed: ${result.stderr}`);
+    }
   }
 
-  function dropSchema() {
-    runSQL(`
+  function dropSchema(): void {
+    const result = runSQL(`
       DROP TABLE IF EXISTS public.payments CASCADE;
       DROP TABLE IF EXISTS public.orders CASCADE;
     `);
+    if (result.exitCode !== 0) {
+      throw new Error(`Schema drop failed: ${result.stderr}`);
+    }
   }
 
   /**
@@ -107,7 +163,7 @@ if (!dbUrl) {
       missingOrder?: number; // index of payment whose order to NOT insert
       crossBusinessAt?: number; // index of payment to give mismatching business_id
     },
-  ) {
+  ): void {
     const payBizId = opts?.paymentBusinessId ?? null;
     const orderBizId = opts?.orderBusinessId ?? BIZ_ID_A;
     const createdAt = opts?.createdAt ?? BEFORE_BOUNDARY;
@@ -118,15 +174,18 @@ if (!dbUrl) {
 
       // Skip order insertion for missing order test
       if (opts?.missingOrder !== i) {
-        runSQL(`
+        const orderResult = runSQL(`
           INSERT INTO public.orders (id, business_id, created_at)
           VALUES ('${orderId}', ${orderBizId ? `'${orderBizId}'` : 'NULL'}, '${createdAt}');
         `);
+        if (orderResult.exitCode !== 0) {
+          throw new Error(`Order insert failed at index ${i}: ${orderResult.stderr}`);
+        }
       }
 
-      let metaOrderId = orderId;
+      let metaOrderId: string = orderId;
       if (opts?.invalidUuid === i) {
-        metaOrderId = 'not-a-valid-uuid-at-all' as any;
+        metaOrderId = 'not-a-valid-uuid-at-all';
       }
 
       let thisBizId = payBizId;
@@ -134,7 +193,7 @@ if (!dbUrl) {
         thisBizId = BIZ_ID_B;
       }
 
-      runSQL(`
+      const payResult = runSQL(`
         INSERT INTO public.payments (id, order_id, business_id, metadata, created_at)
         VALUES (
           '${paymentId}',
@@ -144,6 +203,9 @@ if (!dbUrl) {
           '${createdAt}'
         );
       `);
+      if (payResult.exitCode !== 0) {
+        throw new Error(`Payment insert failed at index ${i}: ${payResult.stderr}`);
+      }
     }
   }
 
@@ -154,6 +216,8 @@ if (!dbUrl) {
     });
 
     afterEach(() => {
+      // Clean up triggers that tests may have installed
+      runSQL(`DROP FUNCTION IF EXISTS _m298_test_trigger_fn() CASCADE;`);
       dropSchema();
     });
 
@@ -196,7 +260,30 @@ if (!dbUrl) {
       expect(updated.stdout).toBe('11');
     });
 
-    // ── Test 3: Cross-business mismatch ──
+    // ── Test 3: Null business_id snapshot immutability ──
+
+    it('preserves all non-order_id columns for null-business-id rows', () => {
+      insertTestData(11, { paymentBusinessId: null });
+
+      // Snapshot all columns except order_id before migration
+      const beforeSnapshot = runSQL(`
+        SELECT jsonb_agg(to_jsonb(p) - 'order_id' ORDER BY p.id)::text
+        FROM public.payments p;
+      `);
+
+      const result = runSQL(migrationSql);
+      expect(result.exitCode).toBe(0);
+
+      // Same snapshot after migration
+      const afterSnapshot = runSQL(`
+        SELECT jsonb_agg(to_jsonb(p) - 'order_id' ORDER BY p.id)::text
+        FROM public.payments p;
+      `);
+
+      expect(afterSnapshot.stdout).toBe(beforeSnapshot.stdout);
+    });
+
+    // ── Test 4: Cross-business mismatch ──
 
     it('aborts on cross-business ownership conflict with zero changes', () => {
       // 10 valid + 1 cross-business mismatch
@@ -217,7 +304,7 @@ if (!dbUrl) {
       expect(updated.stdout).toBe('0');
     });
 
-    // ── Test 4: Invalid UUID metadata ──
+    // ── Test 5: Invalid UUID metadata ──
 
     it('aborts when metadata contains invalid UUID', () => {
       insertTestData(11, {
@@ -235,7 +322,7 @@ if (!dbUrl) {
       expect(updated.stdout).toBe('0');
     });
 
-    // ── Test 5: Missing order ──
+    // ── Test 6: Missing order ──
 
     it('aborts when metadata order_id references non-existent order', () => {
       insertTestData(11, {
@@ -253,7 +340,7 @@ if (!dbUrl) {
       expect(updated.stdout).toBe('0');
     });
 
-    // ── Test 6: Count != 11 ──
+    // ── Test 7: Count != 11 ──
 
     it('aborts when pending count is not 11 (too few)', () => {
       insertTestData(5, { paymentBusinessId: null });
@@ -281,7 +368,7 @@ if (!dbUrl) {
       expect(updated.stdout).toBe('0');
     });
 
-    // ── Test 7: Row created after timestamp boundary ──
+    // ── Test 8: Row created after timestamp boundary ──
 
     it('aborts when a pending row was created after the verification boundary', () => {
       // 10 before boundary, 1 after
@@ -310,7 +397,7 @@ if (!dbUrl) {
       expect(updated.stdout).toBe('0');
     });
 
-    // ── Test 8: Existing non-null order_id never overwritten ──
+    // ── Test 9: Existing non-null order_id never overwritten ──
 
     it('does not overwrite existing non-null order_id', () => {
       // Insert 11 pending rows for the migration
@@ -341,7 +428,7 @@ if (!dbUrl) {
       expect(preserved.stdout).toBe(existingOrderId);
     });
 
-    // ── Test 9: Rows without metadata.order_id are untouched ──
+    // ── Test 10: Rows without metadata.order_id are untouched ──
 
     it('does not touch rows without metadata order_id', () => {
       insertTestData(11, { paymentBusinessId: null });
@@ -363,55 +450,184 @@ if (!dbUrl) {
       expect(untouched.stdout).toBe('t');
     });
 
-    // ── Test 10: Idempotent — second execution succeeds with zero changes ──
+    // ── Test 11: Idempotent — second execution succeeds with zero changes ──
 
     it('second execution succeeds with zero changes (idempotent)', () => {
       insertTestData(11, { paymentBusinessId: null });
 
-      // First run
+      // First run — changes exactly 11 order_id values
       const first = runSQL(migrationSql);
       expect(first.exitCode).toBe(0);
+
+      const afterFirst = runSQL(
+        `SELECT COUNT(*) FROM public.payments WHERE order_id IS NOT NULL;`,
+      );
+      expect(afterFirst.stdout).toBe('11');
 
       // Second run — should exit cleanly (0 pending rows)
       const second = runSQL(migrationSql);
       expect(second.exitCode).toBe(0);
 
       // All 11 still have order_id set
-      const count = runSQL(
+      const afterSecond = runSQL(
         `SELECT COUNT(*) FROM public.payments WHERE order_id IS NOT NULL;`,
       );
-      expect(count.stdout).toBe('11');
+      expect(afterSecond.stdout).toBe('11');
     });
 
-    // ── Test 11: Failure cases leave business_id unchanged ──
+    // ── Test 12: Trigger side-effect detection ──
 
-    it('failure cases leave business_id completely unchanged', () => {
-      // Set up 11 rows but with invalid UUID at index 5 to trigger abort
+    it('aborts when a trigger modifies business_id during order_id update', () => {
+      insertTestData(11, { paymentBusinessId: null });
+
+      // Install a synthetic trigger that changes business_id when order_id changes
+      const triggerResult = runSQL(`
+        CREATE OR REPLACE FUNCTION _m298_test_trigger_fn()
+        RETURNS TRIGGER AS $tr$
+        BEGIN
+          IF NEW.order_id IS DISTINCT FROM OLD.order_id THEN
+            NEW.business_id := 'a2980099-0099-0099-0099-000000000001'::uuid;
+          END IF;
+          RETURN NEW;
+        END;
+        $tr$ LANGUAGE plpgsql;
+
+        CREATE TRIGGER _m298_test_side_effect
+          BEFORE UPDATE ON public.payments
+          FOR EACH ROW
+          EXECUTE FUNCTION _m298_test_trigger_fn();
+      `);
+      expect(triggerResult.exitCode).toBe(0);
+
+      // Run migration — should detect the immutability violation
+      const result = runSQL(migrationSql);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain('immutability violation');
+
+      // Verify complete rollback — zero order_id values changed
+      const updated = runSQL(
+        `SELECT COUNT(*) FROM public.payments WHERE order_id IS NOT NULL;`,
+      );
+      expect(updated.stdout).toBe('0');
+    });
+
+    // ── Test 13: Trigger side-effect on metadata ──
+
+    it('aborts when a trigger modifies metadata during order_id update', () => {
+      insertTestData(11, { paymentBusinessId: null });
+
+      // Trigger that adds a key to metadata when order_id changes
+      const triggerResult = runSQL(`
+        CREATE OR REPLACE FUNCTION _m298_test_trigger_fn()
+        RETURNS TRIGGER AS $tr$
+        BEGIN
+          IF NEW.order_id IS DISTINCT FROM OLD.order_id THEN
+            NEW.metadata := NEW.metadata || '{"_migrated": true}'::jsonb;
+          END IF;
+          RETURN NEW;
+        END;
+        $tr$ LANGUAGE plpgsql;
+
+        CREATE TRIGGER _m298_test_side_effect
+          BEFORE UPDATE ON public.payments
+          FOR EACH ROW
+          EXECUTE FUNCTION _m298_test_trigger_fn();
+      `);
+      expect(triggerResult.exitCode).toBe(0);
+
+      const result = runSQL(migrationSql);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain('immutability violation');
+
+      // Verify complete rollback
+      const updated = runSQL(
+        `SELECT COUNT(*) FROM public.payments WHERE order_id IS NOT NULL;`,
+      );
+      expect(updated.stdout).toBe('0');
+
+      // Verify metadata unchanged (no _migrated key)
+      const metadataCheck = runSQL(`
+        SELECT COUNT(*) FROM public.payments
+        WHERE metadata ? '_migrated';
+      `);
+      expect(metadataCheck.stdout).toBe('0');
+    });
+
+    // ── Test 14: Failure cases leave all rows byte-for-byte equivalent ──
+
+    it('failure cases preserve all target row data exactly', () => {
+      // Set up 11 rows with invalid UUID at index 5 to trigger abort
       insertTestData(11, {
         paymentBusinessId: BIZ_ID_A,
         orderBusinessId: BIZ_ID_A,
         invalidUuid: 5,
       });
 
-      // Record business_ids before
-      const beforeBizIds = runSQL(`
-        SELECT business_id::text FROM public.payments ORDER BY id;
+      // Full snapshot before
+      const beforeSnapshot = runSQL(`
+        SELECT jsonb_agg(to_jsonb(p) ORDER BY p.id)::text
+        FROM public.payments p;
       `);
 
       const result = runSQL(migrationSql);
       expect(result.exitCode).not.toBe(0);
 
-      // Verify business_ids unchanged
-      const afterBizIds = runSQL(`
-        SELECT business_id::text FROM public.payments ORDER BY id;
+      // Full snapshot after — must be identical
+      const afterSnapshot = runSQL(`
+        SELECT jsonb_agg(to_jsonb(p) ORDER BY p.id)::text
+        FROM public.payments p;
       `);
-      expect(afterBizIds.stdout).toBe(beforeBizIds.stdout);
+      expect(afterSnapshot.stdout).toBe(beforeSnapshot.stdout);
+    });
+  });
 
-      // Verify zero order_ids set
-      const updated = runSQL(
-        `SELECT COUNT(*) FROM public.payments WHERE order_id IS NOT NULL;`,
-      );
-      expect(updated.stdout).toBe('0');
+  // ══════════════════════════════════════════════════════════════
+  // DATABASE URL SAFETY GUARD — unit tests
+  // ══════════════════════════════════════════════════════════════
+
+  describe('Migration 298: Database URL safety guard', () => {
+    it('accepts localhost with waaiio_m298_test', () => {
+      expect(
+        validateDatabaseUrl('postgresql://postgres:postgres@localhost:5432/waaiio_m298_test'),
+      ).toBe(true);
+    });
+
+    it('accepts 127.0.0.1 with waaiio_m298_test', () => {
+      expect(
+        validateDatabaseUrl('postgresql://postgres:postgres@127.0.0.1:5432/waaiio_m298_test'),
+      ).toBe(true);
+    });
+
+    it('accepts custom database name ending in _m298_test', () => {
+      expect(
+        validateDatabaseUrl('postgresql://postgres:postgres@localhost:5432/my_m298_test'),
+      ).toBe(true);
+    });
+
+    it('rejects Supabase production URL', () => {
+      expect(
+        validateDatabaseUrl('postgresql://postgres:pass@db.cxcmiqotkowhxinjbytg.supabase.co:5432/postgres'),
+      ).toBe(false);
+    });
+
+    it('rejects non-local hostname', () => {
+      expect(
+        validateDatabaseUrl('postgresql://postgres:pass@db.example.com:5432/waaiio_m298_test'),
+      ).toBe(false);
+    });
+
+    it('rejects wrong database name', () => {
+      expect(
+        validateDatabaseUrl('postgresql://postgres:postgres@localhost:5432/waaiio_test'),
+      ).toBe(false);
+    });
+
+    it('rejects undefined URL', () => {
+      expect(validateDatabaseUrl(undefined)).toBe(false);
+    });
+
+    it('rejects empty string', () => {
+      expect(validateDatabaseUrl('')).toBe(false);
     });
   });
 } // end of if (dbUrl)

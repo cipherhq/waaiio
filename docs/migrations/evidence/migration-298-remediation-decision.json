@@ -20,7 +20,7 @@
     },
     {
       "file": "migration-298-preapply-reverification.json",
-      "evidence_digest": "406139437d41b0f39ce1cc2d1e8038195ce64ca42b4356198f5f3144546632e0"
+      "evidence_digest": "99aee5557fb051a5b4c3aea3b63b0881709ec08a383d5a6328bb53c03f288db3"
     }
   ],
   "verified_pending_rows": 11,

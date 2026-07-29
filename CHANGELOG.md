@@ -7,20 +7,19 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-29
 
-### Database: Migration 298 — hardened execution safety (proposed, not deployed)
-- Global re-verification confirmed all 11 pending rows unchanged since original verification. Zero new pending rows appeared after PR #72 fixed the write paths.
-- **Safety hardening applied:**
-  - Removed all `(TRIM(p.metadata->>'order_id'))::uuid` casts — now uses safe text comparison (`o.id::text = TRIM(...)`) throughout
-  - Added table locks: `SHARE ROW EXCLUSIVE` on payments, `ACCESS SHARE` on orders
-  - Added timestamp boundary enforcement: only rows created before `2026-07-29T04:21:48Z` may be updated
-  - Ownership guard repeated in actual UPDATE: `business_id IS NULL OR business_id IS NOT DISTINCT FROM o.business_id`
-  - Strengthened postconditions
-  - Added real PostgreSQL behavioural tests (`migration-298-backfill-db.test.ts`, 12 test cases)
-  - Added CI step for Migration 298 database tests
-  - Recorded re-verification evidence and remediation decision evidence
+### Database: Migration 298 — independent review corrections (proposed, not deployed)
+- Corrected re-verification evidence: replaced malformed timestamp with valid ISO-8601 (`2026-07-29T12:29:12.573836+00:00`). Updated evidence digest in remediation-decision.
+- **Lock order corrected:** orders locked in SHARE MODE first, then payments in SHARE ROW EXCLUSIVE MODE. Orders first because the application's normal write order is order-then-payment, reducing deadlock risk. SHARE on orders prevents concurrent INSERT/UPDATE/DELETE (not just DDL).
+- **Complete-row immutability assertion:** captures a deterministic JSONB snapshot of all target payment columns (excluding order_id) before and after the UPDATE. Compares using IS DISTINCT FROM. Proves no trigger, side effect, or rule changed business_id, metadata, amount, currency, status, gateway, references, timestamps, or any other column.
+- **Removed unused `v_business_id_changed` variable** — replaced by the real snapshot-based immutability check.
+- **Strengthened postconditions:** (1) exactly 11 rows updated, (2) all target IDs have non-null order_id, (3) order_id::text matches trimmed metadata order ID, (4) zero pending rows with valid metadata order_id remain, (5) before/after snapshots excluding order_id are identical.
+- **Isolated CI database:** Migration 298 behavioural tests now run in a dedicated `waaiio_m298_test` database, not the shared `waaiio_test`. Database created and dropped per test run.
+- **Database URL safety guard:** test suite refuses to execute (fails, not skips) unless TEST_DATABASE_URL is localhost/127.0.0.1, database name ends in `_m298_test`, and URL contains no Supabase production hostname.
+- **Expanded real PostgreSQL tests:** null-business-id column snapshot preservation, trigger side-effect detection (business_id and metadata mutations), full transaction rollback on trigger violation, failure-case byte-for-byte row preservation, idempotency (first run changes 11, second run changes 0), unsafe database URL rejection.
+- **Static tests:** lock order assertion proves orders lock appears before payments lock. Immutability snapshot structure validated.
 - Migration 298 has NOT been applied to production. The 11 historical rows remain unchanged.
 - Batch 5 remains blocked. Issue #53 remains open.
-  - **Files:** `supabase/migrations/298_complete_order_payment_backfill.sql`, `lib/__tests__/migration-298-backfill.test.ts`, `lib/__tests__/migration-298-backfill-db.test.ts`, `.github/workflows/ci.yml`, `docs/migrations/evidence/migration-298-*`
+  - **Files:** `supabase/migrations/298_complete_order_payment_backfill.sql`, `lib/__tests__/migration-298-backfill.test.ts`, `lib/__tests__/migration-298-backfill-db.test.ts`, `.github/workflows/ci.yml`, `docs/migrations/evidence/migration-298-preapply-reverification.json`, `docs/migrations/evidence/migration-298-remediation-decision.json`
   - **Affects:** 11 legacy payment rows (order_id linkage only)
   - **Could break:** Nothing until deliberately applied. Fail-closed preflight aborts on any unexpected state.
 

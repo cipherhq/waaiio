@@ -33,13 +33,28 @@ describe('Migration 298 structure', () => {
     expect(sql).toContain('v_invalid_uuid_count');
     expect(sql).toContain('v_missing_order_count');
     expect(sql).toContain('v_cross_business_count');
+    expect(sql).toContain('v_target_ids');
+    expect(sql).toContain('v_target_count');
+    expect(sql).toContain('v_before_snapshot');
+    expect(sql).toContain('v_after_snapshot');
     expect(sql).toContain('v_updated_count');
     expect(sql).toContain('v_remaining_count');
   });
 
-  it('locks tables at the start of the DO block', () => {
-    expect(norm).toContain('lock table public.payments in share row exclusive mode');
-    expect(norm).toContain('lock table public.orders in access share mode');
+  it('does not declare unused v_business_id_changed', () => {
+    expect(sql).not.toContain('v_business_id_changed');
+  });
+
+  it('locks orders in SHARE MODE before payments in SHARE ROW EXCLUSIVE MODE', () => {
+    const ordersLockPos = norm.indexOf(
+      'lock table public.orders in share mode',
+    );
+    const paymentsLockPos = norm.indexOf(
+      'lock table public.payments in share row exclusive mode',
+    );
+    expect(ordersLockPos).toBeGreaterThan(-1);
+    expect(paymentsLockPos).toBeGreaterThan(-1);
+    expect(ordersLockPos).toBeLessThan(paymentsLockPos);
   });
 
   it('declares a timestamp boundary variable', () => {
@@ -130,6 +145,46 @@ describe('Migration 298 fail-closed preflight', () => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// IMMUTABILITY SNAPSHOT
+// ══════════════════════════════════════════════════════════════
+
+describe('Migration 298 immutability snapshot', () => {
+  it('captures target IDs before update', () => {
+    expect(norm).toContain('v_target_ids');
+    expect(norm).toContain('array_agg(p.id order by p.id)');
+  });
+
+  it('asserts exactly 11 target IDs captured', () => {
+    expect(norm).toContain('if v_target_count != 11 then');
+  });
+
+  it('captures before snapshot excluding order_id', () => {
+    expect(norm).toContain("to_jsonb(p) - 'order_id'");
+    expect(norm).toContain('v_before_snapshot');
+  });
+
+  it('captures after snapshot excluding order_id', () => {
+    // v_after_snapshot is assigned after the UPDATE
+    const updatePos = norm.indexOf('update public.payments');
+    const afterSnapshotPos = norm.indexOf(
+      'into v_after_snapshot',
+      updatePos,
+    );
+    expect(afterSnapshotPos).toBeGreaterThan(updatePos);
+  });
+
+  it('compares snapshots using IS DISTINCT FROM', () => {
+    expect(norm).toContain(
+      'v_before_snapshot is distinct from v_after_snapshot',
+    );
+  });
+
+  it('raises exception on immutability violation', () => {
+    expect(norm).toContain('immutability violation');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
 // UPDATE SCOPE
 // ══════════════════════════════════════════════════════════════
 
@@ -188,9 +243,26 @@ describe('Migration 298 first-run assertions', () => {
     expect(norm).toContain('if v_updated_count != 11 then');
   });
 
+  it('verifies all target IDs have non-null order_id', () => {
+    expect(norm).toContain('v_verified_order_id_count');
+    expect(norm).toContain("id = any(v_target_ids)");
+  });
+
+  it('verifies order_id matches trimmed metadata', () => {
+    expect(norm).toContain(
+      "p.order_id::text = trim(p.metadata->>'order_id')",
+    );
+  });
+
   it('verifies zero eligible rows remain after update', () => {
     expect(norm).toContain('v_remaining_count');
     expect(norm).toContain('if v_remaining_count > 0 then');
+  });
+
+  it('verifies before/after snapshots are identical', () => {
+    expect(norm).toContain(
+      'v_before_snapshot is distinct from v_after_snapshot',
+    );
   });
 });
 

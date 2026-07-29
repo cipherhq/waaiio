@@ -391,16 +391,27 @@ jobs:
           fi
           echo "✅ Migration 297 trigger tests complete — zero skips, zero failures."
 
-      - name: Migration 298 backfill tests
+      - name: Migration 298 backfill tests (dedicated database)
         env:
           PGHOST: localhost
           PGPORT: 5432
           PGUSER: postgres
           PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
         run: |
-          echo "Running Migration 298 real PostgreSQL backfill tests..."
+          set -e
+
+          # Create a dedicated database — never use the shared waaiio_test
+          dropdb --if-exists waaiio_m298_test
+          createdb waaiio_m298_test
+
+          cleanup() {
+            dropdb --if-exists waaiio_m298_test
+          }
+          trap cleanup EXIT
+
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m298_test
+
+          echo "Running Migration 298 real PostgreSQL backfill tests (waaiio_m298_test)..."
           set +e
           OUTPUT=$(npx vitest run lib/__tests__/migration-298-backfill-db.test.ts 2>&1)
           TEST_EXIT=$?

@@ -2,8 +2,9 @@
   "task_identifier": "migration-298-preapply-reverification",
   "repository_sha": "c1158b725b7ea0e01f065a20342182477ca8ba88",
   "linked_project_ref": "cxcmiqotkowhxinjbytg",
-  "original_verification_timestamp": "2026-07-29T04:21:48.741960+00:00",
-  "reverification_timestamp": "2026-07-29T11:54:35.6N+00:00",
+  "migration_version": 298,
+  "original_verification_boundary": "2026-07-29T04:21:48.741960+00:00",
+  "reverification_timestamp": "2026-07-29T12:29:12.573836+00:00",
   "aggregate_counts": {
     "current_pending_rows": 11,
     "pending_created_at_or_before_original_verification": 11,
@@ -20,8 +21,7 @@
     "populated_metadata_match_rows": 28,
     "populated_metadata_mismatch_rows": 0
   },
-  "existing_11_row_design_still_supported": true,
-  "populated_metadata_match_note": "Increased from 27 to 28 since original verification. The additional row is the PR #72 production smoke test order, which correctly populated both order_id column and metadata.order_id. This confirms the application fix is working. The 11 pending rows are unchanged.",
+  "eleven_row_design_supported": true,
   "no_record_identifiers_returned": true,
   "no_customer_contents_returned": true,
   "no_write_query_executed": true,
