@@ -1,0 +1,46 @@
+{
+  "task_identifier": "migration-298-remediation-decision",
+  "repository_base_sha": "c1158b725b7ea0e01f065a20342182477ca8ba88",
+  "linked_project_ref": "cxcmiqotkowhxinjbytg",
+  "decision_timestamp": "2026-07-29T12:06:37.000Z",
+  "migration_version": 298,
+  "decision": "approved_for_guarded_order_id_only_remediation",
+  "source_evidence": [
+    {
+      "file": "migration-167-backfill-verification.json",
+      "evidence_digest": "b8279693cb37e005f9bcaffc62d14ac4de596328ffd71868274cf5daf0568486"
+    },
+    {
+      "file": "migration-167-backfill-integrity.json",
+      "evidence_digest": "78cc58c7a78f1f44e7ccb417f3911e202e2cab75faa1d882d9af86bc9cd372f7"
+    },
+    {
+      "file": "pr-72-production-payment-linkage-smoke.json",
+      "evidence_digest": "b7ef2532d228d45943f9ddc2372b81a70966e9218a86785310f0b0de9246deb2"
+    },
+    {
+      "file": "migration-298-preapply-reverification.json",
+      "evidence_digest": "99aee5557fb051a5b4c3aea3b63b0881709ec08a383d5a6328bb53c03f288db3"
+    }
+  ],
+  "verified_pending_rows": 11,
+  "all_pending_rows_preceded_original_verification": true,
+  "new_pending_rows_after_original_verification": 0,
+  "canonical_uuid_rows": 11,
+  "matching_existing_order_rows": 11,
+  "invalid_uuid_rows": 0,
+  "missing_order_rows": 0,
+  "cross_business_conflicts": 0,
+  "payment_business_id_null_rows": 11,
+  "order_business_id_null_rows": 0,
+  "populated_metadata_mismatch_rows": 0,
+  "active_write_defect_fixed_by_pr_72": true,
+  "production_smoke_passed": true,
+  "rationale": "All 11 pending rows predated original verification. Zero new pending rows appeared after PR #72 fixed the write path. All metadata order_id values are canonical UUIDs referencing existing orders. No cross-business conflicts. Payment business_id is null for all 11 (not conflicting). Migration 298 updates only payments.order_id using safe text comparison.",
+  "permitted_change": "payments.order_id only",
+  "payment_business_ownership_not_inferred": true,
+  "migration_298_not_applied": true,
+  "batch_5_not_started": true,
+  "decision_reaffirmed_at": "2026-07-29T16:19:30.465Z",
+  "decision_basis_status": "reaffirmed_after_corrected_reverification"
+}

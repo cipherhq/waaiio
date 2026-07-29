@@ -8,7 +8,7 @@
  * Reads unified diff from stdin, applies the secret pattern, then exempts
  * only lines where:
  * - The current file is docs/migrations/*.json or docs/migrations/evidence/*.json
- * - The line is a JSON property with key "checksum", "local_checksum", "evidence_digest", "production_evidence_digest", "migration_checksum", or "expected_object_digest"
+ * - The line is a JSON property with key "checksum", "local_checksum", "evidence_digest", "production_evidence_digest", "migration_checksum", "expected_object_digest", or "previous_evidence_sha256"
  * - The value is exactly a 64-character lowercase hexadecimal string
  *
  * Outputs only genuine (non-exempt) matches, one per line, prefixed with filename.
@@ -21,7 +21,7 @@ if (!combinedPattern) {
 }
 
 const secretRegex = new RegExp(combinedPattern, 'i');
-const exemptKeyRegex = /^\+\s*"(checksum|local_checksum|evidence_digest|production_evidence_digest|repair_evidence_digest|migration_checksum|expected_object_digest)"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$/;
+const exemptKeyRegex = /^\+\s*"(checksum|local_checksum|evidence_digest|production_evidence_digest|repair_evidence_digest|migration_checksum|expected_object_digest|previous_evidence_sha256)"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$/;
 const migrationJsonPath = /^docs\/migrations\/(evidence\/)?[^/]+\.json$/;
 
 let currentFile = '';

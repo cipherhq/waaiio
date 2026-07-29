@@ -1,0 +1,42 @@
+{
+  "task_identifier": "migration-167-backfill-integrity-assessment",
+  "repository_sha": "7c099ad7c2b654cb2d6f5356e75c3a7639c78237",
+  "linked_project_ref": "cxcmiqotkowhxinjbytg",
+  "migration_version": 167,
+  "previous_evidence_path": "/tmp/waaiio-migration-167-backfill-verification.json",
+  "previous_evidence_sha256": "b8279693cb37e005f9bcaffc62d14ac4de596328ffd71868274cf5daf0568486",
+  "verification_timestamp": "2026-07-29T04:27:45.844771+00:00",
+  "schema_column_presence": {
+    "payments.order_id": true,
+    "payments.metadata": true,
+    "payments.business_id": true,
+    "orders.id": true,
+    "orders.business_id": true
+  },
+  "aggregate_counts": {
+    "pending_backfill_rows": 11,
+    "canonical_uuid_rows": 11,
+    "invalid_uuid_rows": 0,
+    "matching_existing_order_rows": 11,
+    "valid_uuid_missing_order_rows": 0,
+    "same_business_match_rows": 0,
+    "cross_business_match_rows": 0,
+    "payments_business_id_null_rows": 11,
+    "orders_business_id_null_rows": 0,
+    "null_business_id_prevents_match": 11,
+    "populated_metadata_match_rows": 27,
+    "populated_metadata_mismatch_rows": 0
+  },
+  "assessment_notes": "All 11 pending rows have valid canonical UUIDs that match existing orders. However, all 11 have payments.business_id IS NULL, preventing same-business confirmation. cross_business_match_rows is 0 (no cross-tenant risk detected). The 27 already-populated rows show 100% metadata-to-column consistency (0 mismatches).",
+  "remediation_design_safe": false,
+  "remediation_blocked_by": "same_business_match_rows=0 (expected 11) because payments.business_id is NULL for all 11 pending rows",
+  "no_record_contents_returned": true,
+  "no_write_query_executed": true,
+  "no_migration_sql_executed": true,
+  "no_migration_history_changed": true,
+  "no_schema_changed": true,
+  "no_repository_change": true,
+  "no_deployment_occurred": true,
+  "no_token_recorded": true,
+  "batch_5_not_started": true
+}

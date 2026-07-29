@@ -7,6 +7,24 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-29
 
+### Database: Migration 298 — independent review corrections (proposed, not deployed)
+- Corrected re-verification evidence: replaced malformed timestamp with valid ISO-8601 (`2026-07-29T12:29:12.573836+00:00`). Updated evidence digest in remediation-decision.
+- **Lock order corrected:** orders locked in SHARE MODE first, then payments in SHARE ROW EXCLUSIVE MODE. Orders first because the application's normal write order is order-then-payment, reducing deadlock risk. SHARE on orders prevents concurrent INSERT/UPDATE/DELETE (not just DDL).
+- **Complete-row immutability assertion:** captures a deterministic JSONB snapshot of all target payment columns (excluding order_id) before and after the UPDATE. Compares using IS DISTINCT FROM. Proves no trigger, side effect, or rule changed business_id, metadata, amount, currency, status, gateway, references, timestamps, or any other column.
+- **Removed unused `v_business_id_changed` variable** — replaced by the real snapshot-based immutability check.
+- **Strengthened postconditions:** (1) exactly 11 rows updated, (2) all target IDs have non-null order_id, (3) order_id::text matches trimmed metadata order ID, (4) zero pending rows with valid metadata order_id remain, (5) before/after snapshots excluding order_id are identical.
+- **Isolated CI database:** Migration 298 behavioural tests now run in a dedicated `waaiio_m298_test` database, not the shared `waaiio_test`. Database created and dropped per test run.
+- **Database URL safety guard:** test suite refuses to execute (fails, not skips) unless TEST_DATABASE_URL is localhost/127.0.0.1, database name ends in `_m298_test`, and URL contains no Supabase production hostname.
+- **Expanded real PostgreSQL tests:** null-business-id column snapshot preservation, trigger side-effect detection (business_id and metadata mutations), full transaction rollback on trigger violation, failure-case byte-for-byte row preservation, idempotency (first run changes 11, second run changes 0), unsafe database URL rejection.
+- **Static tests:** lock order assertion proves orders lock appears before payments lock. Immutability snapshot structure validated.
+- **Non-null order ownership enforced:** Migration 298 now aborts if any referenced order has NULL business_id. The `o.business_id IS NOT NULL` predicate is required in target capture, UPDATE join, and postcondition checks. Remediation decision reaffirmed after corrected re-verification.
+- **Synthetic test hostname:** Replaced real project ref in database URL safety test with `db.synthetic-project.supabase.co`.
+- Migration 298 has NOT been applied to production. The 11 historical rows remain unchanged.
+- Batch 5 remains blocked. Issue #53 remains open.
+  - **Files:** `supabase/migrations/298_complete_order_payment_backfill.sql`, `lib/__tests__/migration-298-backfill.test.ts`, `lib/__tests__/migration-298-backfill-db.test.ts`, `.github/workflows/ci.yml`, `docs/migrations/evidence/migration-298-preapply-reverification.json`, `docs/migrations/evidence/migration-298-remediation-decision.json`
+  - **Affects:** 11 legacy payment rows (order_id linkage only)
+  - **Could break:** Nothing until deliberately applied. Fail-closed preflight aborts on any unexpected state.
+
 ### Operations: Batch 4 migration production verification recorded (15 versions)
 - `docs/migrations/evidence/batch-04-production-verification.json` — Verification evidence for 15 versions (154-171). 55 object checks: 53 passed, 2 superseded, 0 failed, 0 ambiguous.
 - `docs/migrations/evidence/batch-04-production-verification.md` — Verification summary.
