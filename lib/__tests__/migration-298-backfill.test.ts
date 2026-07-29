@@ -142,6 +142,33 @@ describe('Migration 298 fail-closed preflight', () => {
     );
     expect(crossBusinessBlock).toContain('p.business_id IS NOT NULL');
   });
+
+  it('declares v_null_order_business_count variable', () => {
+    expect(norm).toContain('v_null_order_business_count integer');
+  });
+
+  it('checks for null order business_id before update', () => {
+    expect(norm).toContain('o.business_id is null');
+    expect(norm).toContain('if v_null_order_business_count > 0');
+  });
+
+  it('aborts with clear message when order has null business_id', () => {
+    expect(sql).toContain('NULL business_id. Ownership cannot be verified');
+  });
+
+  it('requires o.business_id IS NOT NULL in target capture', () => {
+    const start = norm.indexOf('array_agg(p.id order by p.id)');
+    const end = norm.indexOf('v_target_count :=', start);
+    const targetCapture = norm.substring(start, end);
+    expect(targetCapture).toContain('o.business_id is not null');
+  });
+
+  it('requires o.business_id IS NOT NULL in UPDATE', () => {
+    const start = norm.indexOf('update public.payments p');
+    const end = norm.indexOf('get diagnostics');
+    const updateBlock = norm.substring(start, end);
+    expect(updateBlock).toContain('o.business_id is not null');
+  });
 });
 
 // ══════════════════════════════════════════════════════════════

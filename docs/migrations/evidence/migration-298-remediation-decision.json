@@ -40,5 +40,7 @@
   "permitted_change": "payments.order_id only",
   "payment_business_ownership_not_inferred": true,
   "migration_298_not_applied": true,
-  "batch_5_not_started": true
+  "batch_5_not_started": true,
+  "decision_reaffirmed_at": "2026-07-29T16:19:30.465Z",
+  "decision_basis_status": "reaffirmed_after_corrected_reverification"
 }

@@ -341,6 +341,25 @@ if (!dbUrl) {
       expect(updated.stdout).toBe('0');
     });
 
+    // ── Test: Null order business_id ──
+
+    it('aborts when a referenced order has NULL business_id', () => {
+      // Insert 11 rows, but make one order have NULL business_id
+      insertTestData(11, { paymentBusinessId: null });
+      // Set one order's business_id to NULL
+      runSQL(`UPDATE public.orders SET business_id = NULL WHERE id = (SELECT id FROM public.orders LIMIT 1);`);
+
+      const result = runSQL(migrationSql);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain('NULL business_id');
+
+      // Zero rows changed
+      const updated = runSQL(
+        `SELECT COUNT(*) FROM public.payments WHERE order_id IS NOT NULL;`,
+      );
+      expect(updated.stdout).toBe('0');
+    });
+
     // ── Test 7: Count != 11 ──
 
     it('aborts when pending count is not 11 (too few)', () => {
@@ -607,7 +626,7 @@ if (!dbUrl) {
 
     it('rejects Supabase production URL', () => {
       expect(
-        validateDatabaseUrl('postgresql://postgres:pass@db.cxcmiqotkowhxinjbytg.supabase.co:5432/postgres'),
+        validateDatabaseUrl('postgresql://postgres:pass@db.synthetic-project.supabase.co:5432/postgres'),
       ).toBe(false);
     });
 

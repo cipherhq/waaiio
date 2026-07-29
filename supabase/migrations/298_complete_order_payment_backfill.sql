@@ -52,6 +52,7 @@ DECLARE
   v_invalid_uuid_count INTEGER;
   v_missing_order_count INTEGER;
   v_cross_business_count INTEGER;
+  v_null_order_business_count INTEGER;
   v_target_ids UUID[];
   v_target_count INTEGER;
   v_before_snapshot JSONB;
@@ -153,6 +154,21 @@ BEGIN
     RAISE EXCEPTION 'Migration 298 ABORTED: % payments have business_id conflicting with the referenced order.', v_cross_business_count;
   END IF;
 
+  -- ── Validate all referenced orders have non-null business_id ──
+  SELECT COUNT(*) INTO v_null_order_business_count
+  FROM public.payments p
+  JOIN public.orders o ON o.id::text = TRIM(p.metadata->>'order_id')
+  WHERE p.order_id IS NULL
+    AND p.metadata->>'order_id' IS NOT NULL
+    AND TRIM(p.metadata->>'order_id') != ''
+    AND TRIM(p.metadata->>'order_id') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    AND p.created_at <= v_verification_boundary
+    AND o.business_id IS NULL;
+
+  IF v_null_order_business_count > 0 THEN
+    RAISE EXCEPTION 'Migration 298 ABORTED: % referenced orders have NULL business_id. Ownership cannot be verified.', v_null_order_business_count;
+  END IF;
+
   -- ── Capture target IDs and pre-update snapshot ──
   -- Uses the same complete eligibility predicates as the UPDATE.
   SELECT ARRAY_AGG(p.id ORDER BY p.id)
@@ -165,11 +181,13 @@ BEGIN
     AND EXISTS (
       SELECT 1 FROM public.orders o
       WHERE o.id::text = TRIM(p.metadata->>'order_id')
+        AND o.business_id IS NOT NULL
     )
     AND p.created_at <= v_verification_boundary
     AND (p.business_id IS NULL OR p.business_id IS NOT DISTINCT FROM (
       SELECT o.business_id FROM public.orders o
       WHERE o.id::text = TRIM(p.metadata->>'order_id')
+        AND o.business_id IS NOT NULL
     ));
 
   v_target_count := COALESCE(array_length(v_target_ids, 1), 0);
@@ -195,6 +213,7 @@ BEGIN
     AND TRIM(p.metadata->>'order_id') != ''
     AND TRIM(p.metadata->>'order_id') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
     AND o.id::text = TRIM(p.metadata->>'order_id')
+    AND o.business_id IS NOT NULL
     AND p.created_at <= v_verification_boundary
     AND (p.business_id IS NULL OR p.business_id IS NOT DISTINCT FROM o.business_id);
 
@@ -235,6 +254,7 @@ BEGIN
     AND EXISTS (
       SELECT 1 FROM public.orders o
       WHERE o.id::text = TRIM(p.metadata->>'order_id')
+        AND o.business_id IS NOT NULL
     );
 
   IF v_remaining_count > 0 THEN

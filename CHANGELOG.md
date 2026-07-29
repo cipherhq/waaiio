@@ -17,6 +17,8 @@ If something breaks, check this log to find what changed and when.
 - **Database URL safety guard:** test suite refuses to execute (fails, not skips) unless TEST_DATABASE_URL is localhost/127.0.0.1, database name ends in `_m298_test`, and URL contains no Supabase production hostname.
 - **Expanded real PostgreSQL tests:** null-business-id column snapshot preservation, trigger side-effect detection (business_id and metadata mutations), full transaction rollback on trigger violation, failure-case byte-for-byte row preservation, idempotency (first run changes 11, second run changes 0), unsafe database URL rejection.
 - **Static tests:** lock order assertion proves orders lock appears before payments lock. Immutability snapshot structure validated.
+- **Non-null order ownership enforced:** Migration 298 now aborts if any referenced order has NULL business_id. The `o.business_id IS NOT NULL` predicate is required in target capture, UPDATE join, and postcondition checks. Remediation decision reaffirmed after corrected re-verification.
+- **Synthetic test hostname:** Replaced real project ref in database URL safety test with `db.synthetic-project.supabase.co`.
 - Migration 298 has NOT been applied to production. The 11 historical rows remain unchanged.
 - Batch 5 remains blocked. Issue #53 remains open.
   - **Files:** `supabase/migrations/298_complete_order_payment_backfill.sql`, `lib/__tests__/migration-298-backfill.test.ts`, `lib/__tests__/migration-298-backfill-db.test.ts`, `.github/workflows/ci.yml`, `docs/migrations/evidence/migration-298-preapply-reverification.json`, `docs/migrations/evidence/migration-298-remediation-decision.json`
