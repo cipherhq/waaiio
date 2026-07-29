@@ -6,11 +6,11 @@
  * Progressive invariants (multi-batch aware):
  * - Manifest has exactly 146 entries (one per version 101-246)
  * - ALIGNED_TRACKED = 53 (8 original + 15 Batch 1 repaired + 15 Batch 2 repaired + 15 Batch 3 repaired)
- * - VERIFIED_APPLIED_UNTRACKED = 0 (all verified batches now repaired)
- * - PENDING_PRODUCTION_REVERIFICATION = 79
+ * - VERIFIED_APPLIED_UNTRACKED = 15 (Batch 4 verified, awaiting repair)
+ * - PENDING_PRODUCTION_REVERIFICATION = 64
  * - NOT_VERIFIABLE_SAFELY = 12, SUPERSEDED = 2
- * - Active repair allowlist = 0 (all batches repaired)
- * - Verification candidates = 79 (exact PENDING set)
+ * - Active repair allowlist = 15 (Batch 4 verified)
+ * - Verification candidates = 64 (exact PENDING set)
  * - The 124-candidate cohort: PENDING + VERIFIED + repaired candidates = 124
  * - Completed repair entries cross-validate against batch evidence
  * - All verification batch evidence files are discovered and validated
@@ -48,8 +48,8 @@ const VALID_SUPERSEDED_STATES = new Set([
 
 const EXPECTED_MANIFEST_COUNT = 146;
 const EXPECTED_ALIGNED = 53;
-const EXPECTED_VERIFIED = 0;
-const EXPECTED_PENDING = 79;
+const EXPECTED_VERIFIED = 15;
+const EXPECTED_PENDING = 64;
 const EXPECTED_NV = 12;
 const EXPECTED_SUPERSEDED = 2;
 const EXPECTED_CANDIDATE_COHORT = 124; // PENDING + VERIFIED + repaired candidates = 124
@@ -272,8 +272,12 @@ for (const e of approvedInManifest) {
             approvedErrors++;
           }
         } else {
-          // Default: verified_state must exactly equal expected_state
-          const stateMatch = ev.verified_state === ev.expected_state;
+          // Default: verified_state must exactly equal expected_state, or be a recognized equivalent pair
+          const equivalentStatePairs = [
+            ['drop_not_null', 'column_exists_nullable']  // ALTER COLUMN DROP NOT NULL: column still exists, now nullable
+          ];
+          const stateMatch = ev.verified_state === ev.expected_state ||
+            equivalentStatePairs.some(([exp, ver]) => ev.expected_state === exp && ev.verified_state === ver);
           if (!stateMatch) {
             fail(`Version ${e.version}: evidence for ${ev.object_name} has verified_state "${ev.verified_state}" but expected_state "${ev.expected_state}"`);
             approvedErrors++;
@@ -738,6 +742,15 @@ for (const { file, data: batch } of allBatches) {
     else pass('Batch 3 total_superseded = 3');
   }
 
+  if (batch.batch_number === 4) {
+    if (batch.total_objects_checked !== 55) fail(`Batch 4 total_objects_checked: ${batch.total_objects_checked}, expected 55`);
+    else pass('Batch 4 total_objects_checked = 55');
+    if (batch.total_passed !== 53) fail(`Batch 4 total_passed: ${batch.total_passed}, expected 53`);
+    else pass('Batch 4 total_passed = 53');
+    if ((batch.total_superseded || 0) !== 2) fail(`Batch 4 total_superseded: ${batch.total_superseded}, expected 2`);
+    else pass('Batch 4 total_superseded = 2');
+  }
+
   // ── Version-set equality: batch.versions must equal set of migration versions AND classification keys ──
   const migrationVersionSet = new Set((batch.migrations || []).map(m => m.version));
   const classificationVersionSet = batch.classifications ? new Set(Object.keys(batch.classifications)) : new Set();
@@ -897,10 +910,17 @@ for (const { file, data: batch } of allBatches) {
           fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} has invalid result "${obj.result}" (must be "pass" or "superseded")`);
           enrichErrors++; batchErrors++;
         }
-        // For result=pass: verified_state must exactly equal expected_state
-        if (obj.result === 'pass' && obj.verified_state && obj.expected_state && obj.verified_state !== obj.expected_state) {
-          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} result=pass but verified_state "${obj.verified_state}" !== expected_state "${obj.expected_state}"`);
-          enrichErrors++; batchErrors++;
+        // For result=pass: verified_state must exactly equal expected_state, or be a recognized equivalent pair
+        if (obj.result === 'pass' && obj.verified_state && obj.expected_state) {
+          const equivalentStatePairs = [
+            ['drop_not_null', 'column_exists_nullable']
+          ];
+          const stateOk = obj.verified_state === obj.expected_state ||
+            equivalentStatePairs.some(([exp, ver]) => obj.expected_state === exp && obj.verified_state === ver);
+          if (!stateOk) {
+            fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} result=pass but verified_state "${obj.verified_state}" !== expected_state "${obj.expected_state}"`);
+            enrichErrors++; batchErrors++;
+          }
         }
       }
     }
@@ -981,6 +1001,30 @@ for (const { file, data: batch } of allBatches) {
       }
     }
     if (crossErrors === 0) pass(`Batch ${batch.batch_number} manifest cross-validation passed`);
+  }
+
+  // ── Safety confirmations (verification evidence, Batch 4+) ──
+  if (batch.batch_number >= 4) {
+    const requiredVerificationConfirmations = [
+      'all_queries_read_only',
+      'no_migration_repair',
+      'no_migration_sql_executed',
+      'no_supabase_db_push',
+      'no_schema_or_data_changed',
+      'no_customer_records_accessed',
+      'no_deployment_occurred',
+      'no_token_recorded',
+      'batch_5_not_started'
+    ];
+    let safetyErrors = 0;
+    for (const key of requiredVerificationConfirmations) {
+      if (batch[key] !== true) {
+        fail(`Batch ${batch.batch_number}: safety confirmation ${key} missing or not boolean true (got ${JSON.stringify(batch[key])})`);
+        safetyErrors++;
+        batchErrors++;
+      }
+    }
+    if (safetyErrors === 0) pass(`Batch ${batch.batch_number} all ${requiredVerificationConfirmations.length} verification safety confirmations present and true`);
   }
 
   if (batchErrors === 0) pass(`Batch ${batch.batch_number} cross-validation passed`);
