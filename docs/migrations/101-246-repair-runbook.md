@@ -20,11 +20,11 @@ This runbook governs the controlled verification and repair of 124 migration-his
 ## Current State
 
 - **53 ALIGNED_TRACKED:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 176, 181, 182, 199, 200, 244
-- **0 VERIFIED_APPLIED_UNTRACKED:** (all verified batches now repaired)
-- **79 PENDING_PRODUCTION_REVERIFICATION:** require read-only verification
+- **15 VERIFIED_APPLIED_UNTRACKED:** 154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170, 171
+- **64 PENDING_PRODUCTION_REVERIFICATION:** require read-only verification
 - **12 NOT_VERIFIABLE_SAFELY:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 SUPERSEDED:** 122, 130
-- **Active repair allowlist: 0** (all batches repaired)
+- **Active repair allowlist: 15** (Batch 4 verified, awaiting repair)
 
 ## Batch Status
 
@@ -63,9 +63,21 @@ This runbook governs the controlled verification and repair of 124 migration-his
 - All 15 versions appear exactly once in remote schema_migrations
 - No migration SQL executed. No schema or data change. No deployment.
 
-### Batches 4-9 — Verification: NOT STARTED
-- 79 candidates remain across 6 batches
-- Verification will proceed after Batch 3 evidence PR is merged
+### Batch 4 — Verification: COMPLETE | Repair: PENDING
+- **Versions:** 154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170, 171
+- **Object checks:** 55 (53 passed, 2 superseded, 0 failed, 0 ambiguous)
+- **Superseded objects:**
+  - Migration 155: `book_slot_atomic` function (superseded by Migration 176 which preserves all params including p_location_id)
+  - Migration 166: `book_slot_atomic` function (superseded by Migration 176 which preserves all params including p_appointment_id)
+- **Verification evidence:** `docs/migrations/evidence/batch-04-production-verification.json`
+- **Repair evidence:** pending
+- **Active repair allowlist:** 15 versions
+- No migration SQL executed. No schema or data change. No deployment.
+- Next: independent review and merge of evidence PR, then separately approved migration-history repair.
+
+### Batches 5-9 — Verification: NOT STARTED
+- 64 candidates remain across 5 batches
+- Verification will proceed after Batch 4 repair is complete
 
 ## Step 1 — Read-Only Production Verification
 

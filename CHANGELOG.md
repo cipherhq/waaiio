@@ -5,6 +5,22 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-29
+
+### Operations: Batch 4 migration production verification recorded (15 versions)
+- `docs/migrations/evidence/batch-04-production-verification.json` — Verification evidence for 15 versions (154-171). 55 object checks: 53 passed, 2 superseded, 0 failed, 0 ambiguous.
+- `docs/migrations/evidence/batch-04-production-verification.md` — Verification summary.
+- `docs/migrations/101-246-production-reconciliation.json` — 15 entries updated from PENDING_PRODUCTION_REVERIFICATION to VERIFIED_APPLIED_UNTRACKED with verification_batch=4, production evidence. New counts: 53 ALIGNED, 15 VERIFIED, 64 PENDING, 12 NV, 2 SUPERSEDED.
+- `docs/migrations/101-246-repair-allowlist.json` — Populated with 15 Batch 4 versions and production_evidence_digest.
+- `docs/migrations/101-246-verification-candidates.json` — 15 Batch 4 versions removed. 64 candidates remain.
+- `scripts/validate-migration-repair-allowlist.mjs` — Updated expected counts: ALIGNED=53, VERIFIED=15, PENDING=64. Active allowlist=15. Added Batch 4 evidence validation.
+- `lib/__tests__/migration-repair-validator.test.ts` — Updated integration tests for post-Batch-4-verification state.
+- `docs/migrations/101-246-repair-runbook.md` — Batch 4 marked verification COMPLETE, repair PENDING. 64 candidates remain for Batches 5-9.
+- `docs/MIGRATION_REGISTRY.md` — 15 Batch 4 versions added as "Batch 4 verified (untracked)".
+- `docs/engineering-status.json` — OPS-001 updated: Batch 4 verification complete, next action = merge evidence PR then execute Batch 4 repair.
+  - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — read-only verification only; no migration SQL executed, no migration-history repair, no schema or application-data change, no deployment.
+
 ## 2026-07-28
 
 ### Operations: Batch 3 migration-history repair recorded (15 versions)

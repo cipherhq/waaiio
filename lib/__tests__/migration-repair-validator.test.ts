@@ -1314,7 +1314,7 @@ describe('Real Batch 1 + Batch 2 + Batch 3 evidence integration (post-repair)', 
     const verificationFiles = readdirSync(evidenceDir)
       .filter(f => /^batch-\d+-production-verification\.json$/.test(f))
       .sort();
-    expect(verificationFiles.length).toBe(3);
+    expect(verificationFiles.length).toBe(4);
 
     // Repair evidence files
     const repairFiles = readdirSync(evidenceDir)
@@ -1342,38 +1342,47 @@ describe('Real Batch 1 + Batch 2 + Batch 3 evidence integration (post-repair)', 
     for (const b of batches) allVersions.push(...b.versions);
     expect(new Set(allVersions).size).toBe(allVersions.length);
 
-    // All three batches now completed (repaired)
+    // Batches 1-3 now completed (repaired), Batch 4 verified but unrepaired
     for (const b of batches) {
       for (const ver of b.versions) {
         const me = manifest.find(e => e.version === ver)!;
         expect(me).toBeDefined();
-        expect(me.repair_status).toBe('completed');
-        expect(me.current_classification).toBe('ALIGNED_TRACKED');
-        expect(me.remote_tracked).toBe(true);
-        expect(me.repair_eligible).toBe(false);
-
-        // Must NOT be in allowlist or candidates
-        expect(allowlistVersions.has(ver)).toBe(false);
-        expect(candidateVersions.has(ver)).toBe(false);
+        if (b.batch_number <= 3) {
+          expect(me.repair_status).toBe('completed');
+          expect(me.current_classification).toBe('ALIGNED_TRACKED');
+          expect(me.remote_tracked).toBe(true);
+          expect(me.repair_eligible).toBe(false);
+          // Must NOT be in allowlist or candidates
+          expect(allowlistVersions.has(ver)).toBe(false);
+          expect(candidateVersions.has(ver)).toBe(false);
+        } else if (b.batch_number === 4) {
+          expect(me.repair_status).toBe('approved_for_repair');
+          expect(me.current_classification).toBe('VERIFIED_APPLIED_UNTRACKED');
+          expect(me.remote_tracked).toBe(false);
+          expect(me.repair_eligible).toBe(true);
+          // Must be in allowlist, NOT in candidates
+          expect(allowlistVersions.has(ver)).toBe(true);
+          expect(candidateVersions.has(ver)).toBe(false);
+        }
       }
     }
 
     // No approved entries (all batches repaired)
     const approvedEntries = manifest.filter(e => e.repair_status === 'approved_for_repair');
-    expect(approvedEntries.length).toBe(0);
+    expect(approvedEntries.length).toBe(15); // Batch 4 verified, awaiting repair
 
-    // Classification counts (post Batch 3 repair)
+    // Classification counts (post Batch 4 verification, pre Batch 4 repair)
     const counts: Record<string, number> = {};
     manifest.forEach(e => { counts[e.current_classification] = (counts[e.current_classification] || 0) + 1; });
     expect(counts['ALIGNED_TRACKED']).toBe(53);
-    expect(counts['VERIFIED_APPLIED_UNTRACKED'] || 0).toBe(0);
-    expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(79);
+    expect(counts['VERIFIED_APPLIED_UNTRACKED']).toBe(15);
+    expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(64);
     expect(counts['NOT_VERIFIABLE_SAFELY']).toBe(12);
     expect(counts['SUPERSEDED_WITH_EQUIVALENT_STATE']).toBe(2);
 
-    // Allowlist = 0 (all repaired), Candidates = 79
-    expect(allowlist.length).toBe(0);
-    expect(candidates.length).toBe(79);
+    // Allowlist = 15 (Batch 4 verified), Candidates = 64
+    expect(allowlist.length).toBe(15);
+    expect(candidates.length).toBe(64);
 
     // 124-candidate cohort invariant: PENDING + VERIFIED + repaired candidates = 124
     const verifiedCount = counts['VERIFIED_APPLIED_UNTRACKED'] || 0;
@@ -1382,7 +1391,7 @@ describe('Real Batch 1 + Batch 2 + Batch 3 evidence integration (post-repair)', 
       e.repair_status === 'completed' &&
       e.original_classification === 'VERIFIED_APPLIED_UNTRACKED'
     ).length;
-    expect(79 + verifiedCount + repairedCandidates).toBe(124);
+    expect(64 + verifiedCount + repairedCandidates).toBe(124);
     expect(repairedCandidates).toBe(45); // 15 Batch 1 + 15 Batch 2 + 15 Batch 3
 
     // No duplicate versions across repair batches
@@ -2185,10 +2194,14 @@ describe('Batch 3 verification state consistency', () => {
     expect(overlap.length).toBe(0);
   });
 
-  it('allowlist is empty after Batch 3 repair', () => {
+  it('allowlist contains 15 Batch 4 versions after Batch 4 verification', () => {
     const allowlistPath = resolve('docs/migrations/101-246-repair-allowlist.json');
     const allowlist = JSON.parse(readFileSync(allowlistPath, 'utf-8')) as Array<{ version: string }>;
-    expect(allowlist.length).toBe(0);
+    expect(allowlist.length).toBe(15);
+    const batch4Versions = new Set(['154','155','156','157','158','159','161','162','165','166','167','168','169','170','171']);
+    for (const entry of allowlist) {
+      expect(batch4Versions.has(entry.version)).toBe(true);
+    }
   });
 
   it('Batch 3 entries now marked remote_tracked=true after repair', () => {
@@ -2218,10 +2231,13 @@ describe('Batch 3 verification state consistency', () => {
     }
   });
 
-  it('allowlist is empty after Batch 3 repair', () => {
+  it('allowlist contains Batch 4 versions after Batch 4 verification', () => {
     const allowlistPath = resolve('docs/migrations/101-246-repair-allowlist.json');
     const allowlist = JSON.parse(readFileSync(allowlistPath, 'utf-8')) as Array<{ version: string }>;
-    expect(allowlist.length).toBe(0);
+    expect(allowlist.length).toBe(15);
+    const batch4Versions = new Set(['154','155','156','157','158','159','161','162','165','166','167','168','169','170','171']);
+    const nonBatch4 = allowlist.filter(a => !batch4Versions.has(a.version));
+    expect(nonBatch4.length).toBe(0);
   });
 
   it('real Batch 3 verification evidence passes all checks', () => {
@@ -2470,22 +2486,22 @@ describe('Batch 3 repair-specific validation', () => {
     const allowlistVersions = new Set(allowlist.map(a => a.version));
     const candidateVersions = new Set(candidates.map(c => c.version));
 
-    // Classification counts post Batch 3 repair
+    // Classification counts post Batch 4 verification
     const counts: Record<string, number> = {};
     manifest.forEach(e => { counts[e.current_classification] = (counts[e.current_classification] || 0) + 1; });
     expect(counts['ALIGNED_TRACKED']).toBe(53);
-    expect(counts['VERIFIED_APPLIED_UNTRACKED'] || 0).toBe(0);
-    expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(79);
+    expect(counts['VERIFIED_APPLIED_UNTRACKED']).toBe(15);
+    expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(64);
 
-    expect(allowlist.length).toBe(0);
-    expect(candidates.length).toBe(79);
+    expect(allowlist.length).toBe(15);
+    expect(candidates.length).toBe(64);
 
     const repairedCandidates = manifest.filter(e =>
       e.current_classification === 'ALIGNED_TRACKED' &&
       e.repair_status === 'completed' &&
       e.original_classification === 'VERIFIED_APPLIED_UNTRACKED'
     ).length;
-    expect(79 + 0 + repairedCandidates).toBe(124);
+    expect(64 + 15 + repairedCandidates).toBe(124);
     expect(repairedCandidates).toBe(45);
 
     // Verify all 45 completed entries NOT in allowlist or candidates

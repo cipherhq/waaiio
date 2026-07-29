@@ -78,11 +78,27 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 141 | `fix_atomic_booking_enum_casts` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 | 140 | `fix_atomic_booking_for_update` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 | 139 | `fix_atomic_booking_type_cast` | Batch 3 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
+| 171 | `subscription_payments` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 170 | `subscription_expired_status` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 169 | `scheduled_broadcasts` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 168 | `multi_agent_chat` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 167 | `order_payment_fixes` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 166 | `fix_appointment_booking` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 165 | `auto_customer_profile` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 162 | `pre_booking_questions_and_followup` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 161 | `admin_roles_finance_operations` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 159 | `payout_dedup_constraint` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 158 | `platform_fee_dedup_and_campaign_atomic` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 157 | `atomic_loyalty_points_redemption` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 156 | `atomic_form_response_count` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 155 | `class_booking_multi_location` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
+| 154 | `service_packages` | Batch 4 verified (untracked) | — | Production verified 2026-07-29. Repair pending. |
 | 102 | `service_availability` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 
 **Batch 1 repair summary:** 15 versions (102-120) now tracked in remote schema_migrations.
 **Batch 2 repair summary:** 15 versions (121-138) now tracked in remote schema_migrations. Remote count 118 -> 133 (+15). 101-246 tracked count 23 -> 38 (+15).
-**Batch 3 repair summary:** 15 versions (139-153) now tracked in remote schema_migrations. Remote count 133 -> 148 (+15). 101-246 tracked count 38 -> 53 (+15). 79 candidates remain for future verification batches.
+**Batch 3 repair summary:** 15 versions (139-153) now tracked in remote schema_migrations. Remote count 133 -> 148 (+15). 101-246 tracked count 38 -> 53 (+15).
+**Batch 4 verification summary:** 15 versions (154-171) production-verified. 55 checks (53 passed, 2 superseded). Repair pending. 64 candidates remain for future verification batches.
 
 **Next available version:** 298
 
@@ -161,8 +177,8 @@ Per Issue #53 preflight findings:
 ## Remaining Untracked Migrations (101-246)
 
 Of the 146 migrations in the 101-246 range:
-- **38 aligned/tracked:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138, 176, 181, 182, 199, 200, 244
-- **15 verified and pending repair:** 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153 (Batch 3)
-- **79 remaining candidates pending verification:** Batches 4-9 per verification candidates (`docs/migrations/101-246-verification-candidates.json`)
+- **53 aligned/tracked:** Batches 1-3 repaired (45 versions) + 8 individually tracked (115, 119, 176, 181, 182, 199, 200, 244)
+- **15 verified and pending repair:** 154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170, 171 (Batch 4)
+- **64 remaining candidates pending verification:** Batches 5-9 per verification candidates (`docs/migrations/101-246-verification-candidates.json`)
 - **12 not verifiable safely:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 superseded:** 122 (by 233), 130 (by 233)

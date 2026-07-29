@@ -1,1 +1,107 @@
-[]
+[
+  {
+    "version": "154",
+    "filename": "154_service_packages.sql",
+    "checksum": "99b5ac5d7d9f4dd557c1c333aa6d94de1e1d8ae2d6b9d2bf958e692b3d4a903b",
+    "production_evidence_digest": "a8af927fda17a781337aaa28bf652118c9cda952ebde153e80f70680fd7fa9eb",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "155",
+    "filename": "155_class_booking_multi_location.sql",
+    "checksum": "564f80df7c4f6366cf7683b2ca4272c342d12b44163fbf549c51af4b451c1eba",
+    "production_evidence_digest": "865c5c791bca870de83be170fd857d321ecee76a23fc6039c90e105d493b3555",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "156",
+    "filename": "156_atomic_form_response_count.sql",
+    "checksum": "717cfc4b4446a5da3855f440735181df69e7e48f40f36a2c8817d4fa4b7ce292",
+    "production_evidence_digest": "c0a03f10e15d75ae4ae6b4de0d60cc20b10543086a6e1f89e5d3c57022e341b2",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "157",
+    "filename": "157_atomic_loyalty_points_redemption.sql",
+    "checksum": "739eac917bde2d9d7bc75594fd1ab72e00d5b0bcd6f8c5af8902929086fa974c",
+    "production_evidence_digest": "49e510814b796fc43e5d98488473bb7c737353d29a9548a8e22b5d2735549258",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "158",
+    "filename": "158_platform_fee_dedup_and_campaign_atomic.sql",
+    "checksum": "259000cae546dce106ffdcb20bf59075df48061d4801624bdae1ef14fbf98c40",
+    "production_evidence_digest": "9110c707cf2e02ccfdd5edf39edc9fb9ab88cf12eda37729e88990c72a6f8c33",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "159",
+    "filename": "159_payout_dedup_constraint.sql",
+    "checksum": "e9fc375a8e18aee5ade2689d7ab1b07785504d3871d1acec446b1d7311f90757",
+    "production_evidence_digest": "8004ae59e3ae165bfec8622554196f5b707852be0c0725ad8f84dd5869a74e34",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "161",
+    "filename": "161_admin_roles_finance_operations.sql",
+    "checksum": "a5dc18e09487487dd93fe54d14d9d699009084f9e1c30490f1ee2dbc7ac09801",
+    "production_evidence_digest": "d525db16fb014b1ad8ecca3a405861ca0ea1d2bdd7c27ee39818c030d416343b",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "162",
+    "filename": "162_pre_booking_questions_and_followup.sql",
+    "checksum": "7015e13add3b61414b3ed93c5c53b2ec535f2d0779e68e7e88be325177b520aa",
+    "production_evidence_digest": "ac5097e1d67a85ef91dbb40e75e2e092bfba4fa9bee0c5aa9d4f263cc30dd8ae",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "165",
+    "filename": "165_auto_customer_profile.sql",
+    "checksum": "b4f6b802febf13da42de1bc984fc5ef4d5b6f85cd3b2f4e7be1db9a235bf5bf5",
+    "production_evidence_digest": "2634b6396e45df449ab4617c97767d6ec367316d001314a6386062c686f70633",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "166",
+    "filename": "166_fix_appointment_booking.sql",
+    "checksum": "ddf3b1d855fcdb8f3fd999727fc2687aa144973b27ce211825e6ac8e64452fdf",
+    "production_evidence_digest": "d059cb6724b16d28e301ee98ea2f6d28f06ea21b3fbcc6744bea13e25285cfc6",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "167",
+    "filename": "167_order_payment_fixes.sql",
+    "checksum": "ad766ed7e38e2d41855fbb60538d9cc0d13594d1ef1076e87c5a13956cf5c8ea",
+    "production_evidence_digest": "0789c88ee96d2b3483b35ee852df41e243139d1322827aa7e47ca746e3ca1f61",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "168",
+    "filename": "168_multi_agent_chat.sql",
+    "checksum": "f70876f23866eccfe10437005c2c274ebabe18c7edd2ca81aafb95bd76fab4e3",
+    "production_evidence_digest": "8fc3b82a3ae44b730aa4acf4391f21b6ca33cbdbe7b74e3bb5715aef0dedf037",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "169",
+    "filename": "169_scheduled_broadcasts.sql",
+    "checksum": "4bfa23534ffa93c4df495b3a49d743940cdf69f49400fe0bfb773eac20dce2f7",
+    "production_evidence_digest": "6a1603fdab64a3a4753eef1aceea1a708d73cca7299e59fa4e12ec98207cec42",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "170",
+    "filename": "170_subscription_expired_status.sql",
+    "checksum": "6705ee553032de632888f9a2bed2b2f73e752da2f313b960c70ed6d8543cc6c0",
+    "production_evidence_digest": "b6153f369720a69cf00b1c6c551f3478a3645205b88202f06855189ce60ced61",
+    "confidence": "HIGH"
+  },
+  {
+    "version": "171",
+    "filename": "171_subscription_payments.sql",
+    "checksum": "0e408b7bb01d815ab95b7c1cabfbe872d30e144c3a7554aca46e5bc6e4b621b8",
+    "production_evidence_digest": "da81f364498bb9bc3c52e02ab2c70f65224a7e7fc8967e4a205806b03fb6d6e4",
+    "confidence": "HIGH"
+  }
+]

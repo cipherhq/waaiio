@@ -6,11 +6,11 @@
  * Progressive invariants (multi-batch aware):
  * - Manifest has exactly 146 entries (one per version 101-246)
  * - ALIGNED_TRACKED = 53 (8 original + 15 Batch 1 repaired + 15 Batch 2 repaired + 15 Batch 3 repaired)
- * - VERIFIED_APPLIED_UNTRACKED = 0 (all verified batches now repaired)
- * - PENDING_PRODUCTION_REVERIFICATION = 79
+ * - VERIFIED_APPLIED_UNTRACKED = 15 (Batch 4 verified, awaiting repair)
+ * - PENDING_PRODUCTION_REVERIFICATION = 64
  * - NOT_VERIFIABLE_SAFELY = 12, SUPERSEDED = 2
- * - Active repair allowlist = 0 (all batches repaired)
- * - Verification candidates = 79 (exact PENDING set)
+ * - Active repair allowlist = 15 (Batch 4 verified)
+ * - Verification candidates = 64 (exact PENDING set)
  * - The 124-candidate cohort: PENDING + VERIFIED + repaired candidates = 124
  * - Completed repair entries cross-validate against batch evidence
  * - All verification batch evidence files are discovered and validated
@@ -48,8 +48,8 @@ const VALID_SUPERSEDED_STATES = new Set([
 
 const EXPECTED_MANIFEST_COUNT = 146;
 const EXPECTED_ALIGNED = 53;
-const EXPECTED_VERIFIED = 0;
-const EXPECTED_PENDING = 79;
+const EXPECTED_VERIFIED = 15;
+const EXPECTED_PENDING = 64;
 const EXPECTED_NV = 12;
 const EXPECTED_SUPERSEDED = 2;
 const EXPECTED_CANDIDATE_COHORT = 124; // PENDING + VERIFIED + repaired candidates = 124
@@ -736,6 +736,15 @@ for (const { file, data: batch } of allBatches) {
     else pass('Batch 3 total_passed = 88');
     if ((batch.total_superseded || 0) !== 3) fail(`Batch 3 total_superseded: ${batch.total_superseded}, expected 3`);
     else pass('Batch 3 total_superseded = 3');
+  }
+
+  if (batch.batch_number === 4) {
+    if (batch.total_objects_checked !== 55) fail(`Batch 4 total_objects_checked: ${batch.total_objects_checked}, expected 55`);
+    else pass('Batch 4 total_objects_checked = 55');
+    if (batch.total_passed !== 53) fail(`Batch 4 total_passed: ${batch.total_passed}, expected 53`);
+    else pass('Batch 4 total_passed = 53');
+    if ((batch.total_superseded || 0) !== 2) fail(`Batch 4 total_superseded: ${batch.total_superseded}, expected 2`);
+    else pass('Batch 4 total_superseded = 2');
   }
 
   // ── Version-set equality: batch.versions must equal set of migration versions AND classification keys ──
