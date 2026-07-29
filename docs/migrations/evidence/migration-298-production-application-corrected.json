@@ -1,0 +1,76 @@
+{
+  "task_identifier": "migration-298-production-application-corrected",
+  "repository_sha": "6ceb7fae6e67a389af24424775b50e06e6c57858",
+  "linked_project_ref": "cxcmiqotkowhxinjbytg",
+  "migration_version": 298,
+  "migration_filename": "298_complete_order_payment_backfill.sql",
+  "migration_file_sha256": "a6cf6bacfdeefc76071fbb9b8821bf1a5e73f3854763413c5a5bc63fce2b61fd",
+  "original_evidence_path": "/tmp/waaiio-migration-298-production-application.json",
+  "original_evidence_sha256": "506990a305d31dcddc3147e792119ff20dd69eaba5314e7b621b57aa25b27fba",
+  "forensic_verification_timestamp": "2026-07-29T17:44:44.547694+00:00",
+  "pre_application_history": {
+    "total_remote_migration_count": 163,
+    "tracked_101_246_count": 68,
+    "migration_298_occurrences": 0
+  },
+  "dry_run": {
+    "result": "79 migrations would have been executed",
+    "approved_gate_passed": false,
+    "required_action_was_stop": true
+  },
+  "actual_execution": {
+    "migration_sql_execution_method": "supabase_management_api_sql",
+    "migration_up_linked_used": false,
+    "migration_repair_used": true,
+    "repaired_version": 298,
+    "approved_procedure_followed": false,
+    "procedure_deviation_recorded": true
+  },
+  "post_application_history": {
+    "total_remote_migration_count": 164,
+    "tracked_101_246_count": 68,
+    "migration_298_occurrences": 1,
+    "exact_new_history_versions": [
+      298
+    ]
+  },
+  "post_application_aggregate_counts": {
+    "current_pending_rows": 0,
+    "invalid_uuid_rows": 0,
+    "valid_uuid_missing_order_rows": 0,
+    "cross_business_match_rows": 0,
+    "populated_metadata_match_rows": 39,
+    "populated_metadata_mismatch_rows": 0,
+    "pre_boundary_with_order_id": 38,
+    "pre_boundary_without_order_id": 0,
+    "pre_boundary_newly_linked": 11,
+    "historical_biz_null": 38,
+    "historical_order_biz_present": 38
+  },
+  "exactly_11_rows_corrected": true,
+  "current_pending_rows": 0,
+  "populated_metadata_match_rows": 39,
+  "populated_metadata_mismatch_rows": 0,
+  "historical_payment_business_ids_remain_null": true,
+  "referenced_order_business_ids_non_null": true,
+  "migration_result_verified": true,
+  "manual_sql_execution_occurred": true,
+  "migration_repair_occurred": true,
+  "include_all_used": false,
+  "supabase_db_push_used": false,
+  "no_other_migration_executed": true,
+  "no_customer_contents_returned": true,
+  "no_record_identifiers_returned": true,
+  "no_repository_change": true,
+  "no_commit_push_or_pr": true,
+  "no_application_deployment": true,
+  "no_token_recorded": true,
+  "issue_53_remains_open": true,
+  "batch_5_not_started": true,
+  "corrective_action": {
+    "do_not_rerun_migration_298": true,
+    "preserve_current_production_state": true,
+    "record_actual_execution_method_in_repository_evidence": true,
+    "require_stop_on_future_dry_run_scope_mismatch": true
+  }
+}

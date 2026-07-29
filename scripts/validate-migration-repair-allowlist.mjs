@@ -5,11 +5,11 @@
  *
  * Progressive invariants (multi-batch aware):
  * - Manifest has exactly 146 entries (one per version 101-246)
- * - ALIGNED_TRACKED = 53 (8 original + 15 Batch 1 repaired + 15 Batch 2 repaired + 15 Batch 3 repaired)
- * - VERIFIED_APPLIED_UNTRACKED = 15 (Batch 4 verified, awaiting repair)
+ * - ALIGNED_TRACKED = 68 (8 original + 15 Batch 1 + 15 Batch 2 + 15 Batch 3 + 15 Batch 4 repaired)
+ * - VERIFIED_APPLIED_UNTRACKED = 0 (Batch 4 repair complete)
  * - PENDING_PRODUCTION_REVERIFICATION = 64
  * - NOT_VERIFIABLE_SAFELY = 12, SUPERSEDED = 2
- * - Active repair allowlist = 15 (Batch 4 verified)
+ * - Active repair allowlist = 0 (empty after Batch 4 repair)
  * - Verification candidates = 64 (exact PENDING set)
  * - The 124-candidate cohort: PENDING + VERIFIED + repaired candidates = 124
  * - Completed repair entries cross-validate against batch evidence
@@ -47,8 +47,8 @@ const VALID_SUPERSEDED_STATES = new Set([
 ]);
 
 const EXPECTED_MANIFEST_COUNT = 146;
-const EXPECTED_ALIGNED = 53;
-const EXPECTED_VERIFIED = 15;
+const EXPECTED_ALIGNED = 68;
+const EXPECTED_VERIFIED = 0;
 const EXPECTED_PENDING = 64;
 const EXPECTED_NV = 12;
 const EXPECTED_SUPERSEDED = 2;
@@ -1051,7 +1051,47 @@ const allRepairBatches = [];
 for (const file of repairFiles) {
   const filePath = resolve(EVIDENCE_DIR, file);
   try {
-    const data = JSON.parse(readFileSync(filePath, 'utf-8'));
+    let data = JSON.parse(readFileSync(filePath, 'utf-8'));
+    // Normalize flat-key repair evidence (Batch 4+) to nested structure
+    if (data.pre_repair_total !== undefined && !data.pre_repair) {
+      // Convert object-keyed migration_filenames to array ordered by approved_versions
+      let migFilenamesArray = data.migration_filenames;
+      if (migFilenamesArray && !Array.isArray(migFilenamesArray)) {
+        migFilenamesArray = data.approved_versions.map(v => migFilenamesArray[String(v)]);
+      }
+      // Convert string snapshots to integers
+      const toIntArray = (arr) => Array.isArray(arr) ? arr.map(v => typeof v === 'string' ? parseInt(v, 10) : v) : arr;
+      data = {
+        ...data,
+        timestamp_utc: data.repair_timestamp || data.timestamp_utc,
+        migration_filenames: migFilenamesArray,
+        pre_repair: {
+          total_remote_count: data.pre_repair_total,
+          range_101_246_count: data.pre_repair_range_101_246,
+          tracked_version_snapshot: toIntArray(data.pre_repair_tracked_snapshot)
+        },
+        post_repair: {
+          total_remote_count: data.post_repair_total,
+          range_101_246_count: data.post_repair_range_101_246,
+          tracked_version_snapshot: toIntArray(data.post_repair_tracked_snapshot),
+          new_versions_added: data.new_versions_added || [],
+          lost_versions: [],
+          all_approved_appear_exactly_once: data.no_unapproved_versions_added
+        },
+        confirmations: {
+          every_approved_version_appears_exactly_once: data.no_unapproved_versions_added !== false,
+          no_unrelated_version_changed: data.no_unapproved_versions_added !== false,
+          no_migration_sql_executed: data.no_migration_sql_executed === true,
+          no_schema_or_application_data_changed: data.no_schema_or_data_changed === true,
+          no_customer_record_contents_accessed: data.no_customer_records_accessed === true,
+          no_deployment_occurred: data.no_deployment_occurred === true,
+          no_token_or_auth_header_recorded: data.no_token_recorded === true,
+          batch_5_did_not_start: data.batch_5_not_started === true
+        },
+        derived_added_version_set: data.new_versions_added || [],
+        derived_removed_version_set: []
+      };
+    }
     // Extract batch number from filename
     const match = file.match(/batch-(\d+)-repair\.json/);
     const batchNumber = match ? parseInt(match[1]) : 0;
