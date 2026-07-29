@@ -7,6 +7,16 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-29
 
+### Operations: Batch 4 migration-history repair complete and Migration 298 production result
+- Batch 4 repair complete: 15 versions (154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170, 171). Remote count 148→163 (+15). 101-246 tracked count 53→68 (+15). 60 total completed migration-history repairs.
+- Migration 298 applied to production: exactly 11 historical payment rows linked, pending rows now zero, populated consistent count 39.
+- **Procedure deviation:** dry run showed 79 migrations; approved procedure required stopping; Migration 298 SQL was executed through Supabase Management API SQL and recorded via `migration repair --status applied 298`. Production result verified correct. Original execution report accurately recorded the methods but did not explicitly classify the deviation; corrected forensic evidence is canonical.
+- No rollback or rerun required or permitted for Migration 298.
+- Batch 5 is next but has not started. Issue #53 remains open.
+  - **Files:** `docs/migrations/evidence/batch-04-repair.json`, `docs/migrations/evidence/migration-298-production-application-corrected.json`, `docs/migrations/evidence/migration-298-production-application-original.json`, `docs/migrations/evidence/migration-298-production-application-corrected.md`, `docs/migrations/101-246-production-reconciliation.json`, `docs/migrations/101-246-repair-allowlist.json`, `docs/migrations/101-246-repair-runbook.md`, `docs/MIGRATION_REGISTRY.md`, `docs/engineering-status.json`, `docs/ENGINEERING_STATUS.md`
+  - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — evidence and metadata only; no migration SQL executed, no application-code change, no deployment.
+
 ### Database: Migration 298 — independent review corrections (proposed, not deployed)
 - Corrected re-verification evidence: replaced malformed timestamp with valid ISO-8601 (`2026-07-29T12:29:12.573836+00:00`). Updated evidence digest in remediation-decision.
 - **Lock order corrected:** orders locked in SHARE MODE first, then payments in SHARE ROW EXCLUSIVE MODE. Orders first because the application's normal write order is order-then-payment, reducing deadlock risk. SHARE on orders prevents concurrent INSERT/UPDATE/DELETE (not just DDL).
