@@ -272,8 +272,12 @@ for (const e of approvedInManifest) {
             approvedErrors++;
           }
         } else {
-          // Default: verified_state must exactly equal expected_state
-          const stateMatch = ev.verified_state === ev.expected_state;
+          // Default: verified_state must exactly equal expected_state, or be a recognized equivalent pair
+          const equivalentStatePairs = [
+            ['drop_not_null', 'column_exists_nullable']  // ALTER COLUMN DROP NOT NULL: column still exists, now nullable
+          ];
+          const stateMatch = ev.verified_state === ev.expected_state ||
+            equivalentStatePairs.some(([exp, ver]) => ev.expected_state === exp && ev.verified_state === ver);
           if (!stateMatch) {
             fail(`Version ${e.version}: evidence for ${ev.object_name} has verified_state "${ev.verified_state}" but expected_state "${ev.expected_state}"`);
             approvedErrors++;
@@ -906,10 +910,17 @@ for (const { file, data: batch } of allBatches) {
           fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} has invalid result "${obj.result}" (must be "pass" or "superseded")`);
           enrichErrors++; batchErrors++;
         }
-        // For result=pass: verified_state must exactly equal expected_state
-        if (obj.result === 'pass' && obj.verified_state && obj.expected_state && obj.verified_state !== obj.expected_state) {
-          fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} result=pass but verified_state "${obj.verified_state}" !== expected_state "${obj.expected_state}"`);
-          enrichErrors++; batchErrors++;
+        // For result=pass: verified_state must exactly equal expected_state, or be a recognized equivalent pair
+        if (obj.result === 'pass' && obj.verified_state && obj.expected_state) {
+          const equivalentStatePairs = [
+            ['drop_not_null', 'column_exists_nullable']
+          ];
+          const stateOk = obj.verified_state === obj.expected_state ||
+            equivalentStatePairs.some(([exp, ver]) => obj.expected_state === exp && obj.verified_state === ver);
+          if (!stateOk) {
+            fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} result=pass but verified_state "${obj.verified_state}" !== expected_state "${obj.expected_state}"`);
+            enrichErrors++; batchErrors++;
+          }
         }
       }
     }
@@ -990,6 +1001,30 @@ for (const { file, data: batch } of allBatches) {
       }
     }
     if (crossErrors === 0) pass(`Batch ${batch.batch_number} manifest cross-validation passed`);
+  }
+
+  // ── Safety confirmations (verification evidence, Batch 4+) ──
+  if (batch.batch_number >= 4) {
+    const requiredVerificationConfirmations = [
+      'all_queries_read_only',
+      'no_migration_repair',
+      'no_migration_sql_executed',
+      'no_supabase_db_push',
+      'no_schema_or_data_changed',
+      'no_customer_records_accessed',
+      'no_deployment_occurred',
+      'no_token_recorded',
+      'batch_5_not_started'
+    ];
+    let safetyErrors = 0;
+    for (const key of requiredVerificationConfirmations) {
+      if (batch[key] !== true) {
+        fail(`Batch ${batch.batch_number}: safety confirmation ${key} missing or not boolean true (got ${JSON.stringify(batch[key])})`);
+        safetyErrors++;
+        batchErrors++;
+      }
+    }
+    if (safetyErrors === 0) pass(`Batch ${batch.batch_number} all ${requiredVerificationConfirmations.length} verification safety confirmations present and true`);
   }
 
   if (batchErrors === 0) pass(`Batch ${batch.batch_number} cross-validation passed`);

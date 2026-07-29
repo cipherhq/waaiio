@@ -21,6 +21,16 @@ If something breaks, check this log to find what changed and when.
   - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
   - **Could break:** Nothing — read-only verification only; no migration SQL executed, no migration-history repair, no schema or application-data change, no deployment.
 
+### Operations: Batch 4 verification evidence corrections
+- `docs/engineering-status.json` — Restored from base commit; only OPS-001 Batch 4 changes applied. Removed global reformatting and em dash escaping.
+- Migration 166 nullability: changed from ambiguous `expected_state: "drop"` / `verified_state: "drop"` to `expected_state: "drop_not_null"` / `verified_state: "column_exists_nullable"` with structured nullability fields. Column was NOT dropped; only NOT NULL constraint was removed.
+- book_slot_atomic lineage: corrected superseding_migration from 176 to 245. Migration 176 is the replacement implementation (26-arg); Migration 245 removed the obsolete 23- and 24-arg overloads. Added `replacement_implementation_migration` and `obsolete_overload_removal_migration` fields.
+- Added missing safety booleans: `no_migration_sql_executed`, `no_supabase_db_push` to Batch 4 evidence.
+- Validator: added verification evidence safety boolean validation (Batch 4+) with CLI rejection tests.
+- Recomputed all 15 production_evidence_digest values after evidence corrections.
+  - **Affects:** All Batch 4 evidence files, allowlist, reconciliation manifest, validator
+  - **Could break:** Nothing — evidence correction only; no production access, no migration SQL, no deployment.
+
 ## 2026-07-28
 
 ### Operations: Batch 3 migration-history repair recorded (15 versions)

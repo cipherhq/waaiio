@@ -67,8 +67,8 @@ This runbook governs the controlled verification and repair of 124 migration-his
 - **Versions:** 154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170, 171
 - **Object checks:** 55 (53 passed, 2 superseded, 0 failed, 0 ambiguous)
 - **Superseded objects:**
-  - Migration 155: `book_slot_atomic` function (superseded by Migration 176 which preserves all params including p_location_id)
-  - Migration 166: `book_slot_atomic` function (superseded by Migration 176 which preserves all params including p_appointment_id)
+  - Migration 155: `book_slot_atomic` function (23-argument overload; replacement implementation in Migration 176, obsolete overload removed by Migration 245)
+  - Migration 166: `book_slot_atomic` function (24-argument overload; replacement implementation in Migration 176, obsolete overload removed by Migration 245)
 - **Verification evidence:** `docs/migrations/evidence/batch-04-production-verification.json`
 - **Repair evidence:** pending
 - **Active repair allowlist:** 15 versions

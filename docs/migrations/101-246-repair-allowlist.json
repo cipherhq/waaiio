@@ -10,7 +10,7 @@
     "version": "155",
     "filename": "155_class_booking_multi_location.sql",
     "checksum": "564f80df7c4f6366cf7683b2ca4272c342d12b44163fbf549c51af4b451c1eba",
-    "production_evidence_digest": "865c5c791bca870de83be170fd857d321ecee76a23fc6039c90e105d493b3555",
+    "production_evidence_digest": "879541415935b6c10e24912c52bd53c2cd5aac95caff24a24dd051b602dfdf91",
     "confidence": "HIGH"
   },
   {
@@ -66,7 +66,7 @@
     "version": "166",
     "filename": "166_fix_appointment_booking.sql",
     "checksum": "ddf3b1d855fcdb8f3fd999727fc2687aa144973b27ce211825e6ac8e64452fdf",
-    "production_evidence_digest": "d059cb6724b16d28e301ee98ea2f6d28f06ea21b3fbcc6744bea13e25285cfc6",
+    "production_evidence_digest": "20649ec017094880724fb89edcc8c80d70dc9b8b4062d5d9d955530ccb075923",
     "confidence": "HIGH"
   },
   {

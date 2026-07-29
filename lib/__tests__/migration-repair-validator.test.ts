@@ -210,8 +210,12 @@ function validateEvidenceItem(version: string, ev: EvidenceItem): string[] {
       if (!ev.rationale) errors.push(`Version ${version}: superseded ${ev.object_name} missing rationale`);
       if (!ev.application_behaviour_impact) errors.push(`Version ${version}: superseded ${ev.object_name} missing application_behaviour_impact`);
     } else {
-      // Exact match required — no broad state satisfaction
-      const stateMatch = ev.verified_state === ev.expected_state;
+      // Exact match required, or recognized equivalent pair
+      const equivalentStatePairs: [string, string][] = [
+        ['drop_not_null', 'column_exists_nullable']
+      ];
+      const stateMatch = ev.verified_state === ev.expected_state ||
+        equivalentStatePairs.some(([exp, ver]) => ev.expected_state === exp && ev.verified_state === ver);
       if (!stateMatch) {
         errors.push(`Version ${version}: verified_state "${ev.verified_state}" !== expected_state "${ev.expected_state}"`);
       }
@@ -2988,6 +2992,26 @@ describe('Validator CLI rejection tests (table-driven)', () => {
         writeFileSync(p, JSON.stringify(d, null, 2));
       },
       expectedDiagnostic: /exactly-once/i,
+    },
+    {
+      name: 'missing verification safety confirmation (Batch 4)',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-04-production-verification.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        delete d.no_migration_sql_executed;
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /no_migration_sql_executed.*missing|missing.*no_migration_sql_executed/,
+    },
+    {
+      name: 'non-boolean verification safety confirmation (Batch 4)',
+      mutate: (tmpDir) => {
+        const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-04-production-verification.json');
+        const d = JSON.parse(readFileSync(p, 'utf-8'));
+        d.no_supabase_db_push = 'yes';
+        writeFileSync(p, JSON.stringify(d, null, 2));
+      },
+      expectedDiagnostic: /no_supabase_db_push.*not boolean true/,
     },
   ];
 
