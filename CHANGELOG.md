@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-29
 
+### Operations: Batch 5 function def_hash fix and real property comparison
+- Fixed Migration 173 expected def_hash: replaced MD5 (32-char) with SHA-256 (64-char) matching production algorithm `encode(sha256(pg_get_functiondef(oid)::bytea), 'hex')`. All 3 function def_hash values now match exactly between expected and verified.
+- Implemented real key-by-key property comparison in validator: resolves every compared_property_paths entry in both expected and verified, computes actual unequal set, validates against declared mismatches.
+- Removed synthetic compared paths (column:name, check_expression) that didn't exist in both property sets. Honest compared-path total is 341 (was 383 with synthetic paths).
+- Migration 173 remains repair-eligible: def_hash matches, only anon_exec and auth_exec differ (approved equivalent_stricter via Migrations 181 and 296).
+  - **Affects:** Evidence integrity, validator accuracy
+  - **Could break:** Nothing — def_hash correction and comparison enforcement only.
+
 ### Operations: Batch 5 V3 expected-state evidence binding
 - V3 canonical evidence enrichment: expected-state derivation from migration SQL and later-migration lineage.
 - V2 production snapshot preserved at `docs/migrations/evidence/batch-05-production-verification-v2.json` (SHA `bf528a88...`).

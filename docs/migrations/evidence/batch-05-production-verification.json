@@ -24,7 +24,7 @@
     "190"
   ],
   "total_objects_checked": 55,
-  "detailed_property_checks_total": 383,
+  "detailed_property_checks_total": 341,
   "total_passed": 55,
   "total_superseded": 0,
   "total_failed": 0,
@@ -241,7 +241,7 @@
             "parallel_safety": "u",
             "leakproof": false,
             "config": null,
-            "def_hash": "04f8c55c7d09397251a7ea1ff7c45a6b",
+            "def_hash": "a0c1dee29309a315b43dde2da6f1977cdce16aa77788a4cf2db2f4b22a7f761a",
             "anon_exec": true,
             "auth_exec": true,
             "svc_exec": true
@@ -335,7 +335,7 @@
             "parallel_safety": "u",
             "leakproof": false,
             "config": null,
-            "def_hash": "f7522c6a4e8ab2ab92c2fd1b68cbbc18",
+            "def_hash": "bcf31b0f45588a5677543a0ccb9f8ff34f0d3e64f438ea6334bb1105c9c54dc4",
             "anon_exec": true,
             "auth_exec": true,
             "svc_exec": true
@@ -429,7 +429,7 @@
             "parallel_safety": "u",
             "leakproof": false,
             "config": null,
-            "def_hash": "4b163244e4f2808250a5619852bdce24",
+            "def_hash": "3ad8d63ac98b6afa961678f16ff028656573d2b30c281cc63663d720d2eebd1b",
             "anon_exec": true,
             "auth_exec": true,
             "svc_exec": true
@@ -507,7 +507,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "bc767885590bb12a033ad5462cc06bd9332a862ec0413ca9c0cec8fcc45913de",
+      "migration_evidence_digest": "8a8e8df1f924c8097a0d4cbdf3d196860a0846dc491d306a1344e241d17a5134",
       "detailed_property_checks_count": 36
     },
     {
@@ -1080,15 +1080,7 @@
           },
           "property_comparison_result": "exact_match",
           "compared_property_paths": [
-            "exists",
-            "column:id",
-            "column:business_id",
-            "column:key_hash",
-            "column:key_prefix",
-            "column:name",
-            "column:created_at",
-            "column:last_used_at",
-            "column:revoked_at"
+            "exists"
           ],
           "property_mismatches": [],
           "comparison_basis": "expected_vs_verified_property_comparison"
@@ -1286,8 +1278,8 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "5847ca83b5a2ae9017943387502e8a9720f551598deb99afe62a6a6868817d9f",
-      "detailed_property_checks_count": 33
+      "migration_evidence_digest": "1e52c562e55ee081bc35f5201c1b49f992395d7126f29b1cd867bdc12977ffd0",
+      "detailed_property_checks_count": 25
     },
     {
       "version": "183",
@@ -1378,8 +1370,7 @@
             "definition",
             "table",
             "type",
-            "validated",
-            "check_expression"
+            "validated"
           ],
           "property_mismatches": [],
           "comparison_basis": "expected_vs_verified_property_comparison"
@@ -1427,8 +1418,7 @@
             "definition",
             "table",
             "type",
-            "validated",
-            "check_expression"
+            "validated"
           ],
           "property_mismatches": [],
           "comparison_basis": "expected_vs_verified_property_comparison"
@@ -1476,8 +1466,7 @@
             "definition",
             "table",
             "type",
-            "validated",
-            "check_expression"
+            "validated"
           ],
           "property_mismatches": [],
           "comparison_basis": "expected_vs_verified_property_comparison"
@@ -1532,11 +1521,7 @@
             "definition",
             "table",
             "type",
-            "validated",
-            "source_columns",
-            "referenced_table",
-            "referenced_columns",
-            "delete_action"
+            "validated"
           ],
           "property_mismatches": [],
           "comparison_basis": "expected_vs_verified_property_comparison"
@@ -1566,11 +1551,7 @@
           },
           "property_comparison_result": "exact_match",
           "compared_property_paths": [
-            "absent",
-            "original_index",
-            "drop_verified",
-            "original_table",
-            "original_schema"
+            "absent"
           ],
           "property_mismatches": [],
           "comparison_basis": "expected_vs_verified_property_comparison"
@@ -1581,8 +1562,8 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "cac9ac6374268d8368c0b49964280a047a47ba18b5027ea117e8eacebd3bd03f",
-      "detailed_property_checks_count": 49
+      "migration_evidence_digest": "b3f715cc75ba9613b154233ac897c9d5cd9e772d279a7d2ea302bf64f53105d4",
+      "detailed_property_checks_count": 38
     },
     {
       "version": "184",
@@ -1776,8 +1757,7 @@
             "definition",
             "table",
             "type",
-            "validated",
-            "delete_action"
+            "validated"
           ],
           "property_mismatches": [],
           "comparison_basis": "expected_vs_verified_property_comparison"
@@ -1788,8 +1768,8 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "e4f05944a7b28ec2d0c546ff56d954ceb71488bdd6f3fa0628f6b4ead63c9563",
-      "detailed_property_checks_count": 30
+      "migration_evidence_digest": "f1d0c0d7b37072728c866506a2199511f795277796e17f74cab8390d17715844",
+      "detailed_property_checks_count": 29
     },
     {
       "version": "185",
@@ -1890,17 +1870,7 @@
             "schema",
             "table",
             "exists",
-            "columns_summary",
-            "column:id",
-            "column:business_id",
-            "column:title",
-            "column:body",
-            "column:fields",
-            "column:is_active",
-            "column:require_before_booking",
-            "column:token",
-            "column:created_at",
-            "column:updated_at"
+            "columns_summary"
           ],
           "property_mismatches": [],
           "comparison_basis": "expected_vs_verified_property_comparison"
@@ -1949,19 +1919,7 @@
             "schema",
             "table",
             "exists",
-            "columns_summary",
-            "column:id",
-            "column:template_id",
-            "column:business_id",
-            "column:customer_name",
-            "column:customer_phone",
-            "column:customer_email",
-            "column:signature_url",
-            "column:signed_at",
-            "column:pdf_url",
-            "column:metadata",
-            "column:audit_trail",
-            "column:created_at"
+            "columns_summary"
           ],
           "property_mismatches": [],
           "comparison_basis": "expected_vs_verified_property_comparison"
@@ -2371,8 +2329,8 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "da04b082c29ed639a966e87c183002a5e3ddbbb62f98d05e43189175e365af15",
-      "detailed_property_checks_count": 86
+      "migration_evidence_digest": "abe9dec49fa525173caca3deb552c530c42ad39f843778dbbe481df65f5ed2ef",
+      "detailed_property_checks_count": 64
     },
     {
       "version": "188",

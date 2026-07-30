@@ -17,7 +17,7 @@
     "repair_action": "migration_history_repair_only",
     "confidence": "HIGH",
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": "bc767885590bb12a033ad5462cc06bd9332a862ec0413ca9c0cec8fcc45913de"
+    "production_evidence_digest": "8a8e8df1f924c8097a0d4cbdf3d196860a0846dc491d306a1344e241d17a5134"
   },
   {
     "version": "174",
@@ -77,7 +77,7 @@
     "repair_action": "migration_history_repair_only",
     "confidence": "HIGH",
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": "5847ca83b5a2ae9017943387502e8a9720f551598deb99afe62a6a6868817d9f"
+    "production_evidence_digest": "1e52c562e55ee081bc35f5201c1b49f992395d7126f29b1cd867bdc12977ffd0"
   },
   {
     "version": "183",
@@ -87,7 +87,7 @@
     "repair_action": "migration_history_repair_only",
     "confidence": "HIGH",
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": "cac9ac6374268d8368c0b49964280a047a47ba18b5027ea117e8eacebd3bd03f"
+    "production_evidence_digest": "b3f715cc75ba9613b154233ac897c9d5cd9e772d279a7d2ea302bf64f53105d4"
   },
   {
     "version": "184",
@@ -97,7 +97,7 @@
     "repair_action": "migration_history_repair_only",
     "confidence": "HIGH",
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": "e4f05944a7b28ec2d0c546ff56d954ceb71488bdd6f3fa0628f6b4ead63c9563"
+    "production_evidence_digest": "f1d0c0d7b37072728c866506a2199511f795277796e17f74cab8390d17715844"
   },
   {
     "version": "185",
@@ -117,7 +117,7 @@
     "repair_action": "migration_history_repair_only",
     "confidence": "HIGH",
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
-    "production_evidence_digest": "da04b082c29ed639a966e87c183002a5e3ddbbb62f98d05e43189175e365af15"
+    "production_evidence_digest": "abe9dec49fa525173caca3deb552c530c42ad39f843778dbbe481df65f5ed2ef"
   },
   {
     "version": "188",

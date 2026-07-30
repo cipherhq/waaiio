@@ -6,7 +6,7 @@
 - **V1 temporary evidence SHA-256:** `92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77`
 - **V2 preserved production snapshot:** `docs/migrations/evidence/batch-05-production-verification-v2.json`
 - **V2 SHA-256:** `bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8`
-- **V3 canonical evidence SHA-256:** `c2c0c052af94ccdb96b3e6e7d798c4c0ee4a0df4f10b4dfec43f2b86c22a5450`
+- **V3 canonical evidence SHA-256:** `8f093426b4688650d4e9da185f82d3d001592b9f3cc9b4b1ed2bdc8553962930`
 - **Evidence file:** `docs/migrations/evidence/batch-05-production-verification.json`
 - **V3 is a repository-only comparison enrichment.** All verified_properties are preserved exactly from V2. No new production access occurred.
 
@@ -21,7 +21,7 @@
 ## Results
 
 - **Total object checks:** 55
-- **Compared leaf-property paths:** 383
+- **Compared leaf-property paths:** 341 (real intersecting properties validated key-by-key)
 - **Exact match:** 52
 - **Equivalent stricter:** 3 (function privileges tightened by Migrations 181 and 296)
 - **Passed:** 55

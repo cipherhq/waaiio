@@ -3622,7 +3622,7 @@ describe('Batch 5 production verification evidence', () => {
   it('evidence digest consistency', () => {
     const content = readFileSync(evidencePath, 'utf-8');
     const digest = createHash('sha256').update(readFileSync(evidencePath)).digest('hex');
-    expect(digest).toBe('c2c0c052af94ccdb96b3e6e7d798c4c0ee4a0df4f10b4dfec43f2b86c22a5450');
+    expect(digest).toBe('8f093426b4688650d4e9da185f82d3d001592b9f3cc9b4b1ed2bdc8553962930');
   });
 });
 
@@ -3802,7 +3802,7 @@ describe('Batch 5 CLI rejection tests', () => {
 
   it('rejects incorrect evidence digest', () => {
     const digest = createHash('sha256').update(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'))).digest('hex');
-    expect(digest).toBe('c2c0c052af94ccdb96b3e6e7d798c4c0ee4a0df4f10b4dfec43f2b86c22a5450');
+    expect(digest).toBe('8f093426b4688650d4e9da185f82d3d001592b9f3cc9b4b1ed2bdc8553962930');
     expect(digest).not.toBe('0000000000000000000000000000000000000000000000000000000000000000');
   });
 
@@ -4504,5 +4504,172 @@ describe('CLI rejection tests for V2 evidence', () => {
     } finally {
       cleanupFixture(tmpDir);
     }
+  }, 30000);
+});
+
+// ══════════════════════════════════════════════════════════════
+// V3 PROPERTY COMPARISON CLI TESTS (8 focused tests)
+// ══════════════════════════════════════════════════════════════
+
+describe('V3 property comparison CLI tests', () => {
+  const { execSync } = require('child_process');
+  const { mkdirSync, cpSync, rmSync, writeFileSync } = require('fs');
+  const { join } = require('path');
+  const os = require('os');
+
+  const VALIDATOR_SCRIPT = resolve('scripts/validate-migration-repair-allowlist.mjs');
+  const SRC_DOCS_MIGRATIONS = resolve('docs/migrations');
+  const SRC_SUPABASE_MIGRATIONS = resolve('supabase/migrations');
+
+  function createTestFixture(): string {
+    const tmpDir = join(os.tmpdir(), `v3-cmp-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    mkdirSync(join(tmpDir, 'docs', 'migrations', 'evidence'), { recursive: true });
+    mkdirSync(join(tmpDir, 'supabase', 'migrations'), { recursive: true });
+    cpSync(join(SRC_DOCS_MIGRATIONS, '101-246-production-reconciliation.json'), join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json'));
+    cpSync(join(SRC_DOCS_MIGRATIONS, '101-246-repair-allowlist.json'), join(tmpDir, 'docs', 'migrations', '101-246-repair-allowlist.json'));
+    cpSync(join(SRC_DOCS_MIGRATIONS, '101-246-verification-candidates.json'), join(tmpDir, 'docs', 'migrations', '101-246-verification-candidates.json'));
+    const evidenceDir = join(SRC_DOCS_MIGRATIONS, 'evidence');
+    if (existsSync(evidenceDir)) {
+      for (const f of readdirSync(evidenceDir)) {
+        cpSync(join(evidenceDir, f), join(tmpDir, 'docs', 'migrations', 'evidence', f));
+      }
+    }
+    for (const f of readdirSync(SRC_SUPABASE_MIGRATIONS).filter((f: string) => f.endsWith('.sql'))) {
+      cpSync(join(SRC_SUPABASE_MIGRATIONS, f), join(tmpDir, 'supabase', 'migrations', f));
+    }
+    return tmpDir;
+  }
+
+  function runValidatorInFixture(cwd: string): { exitCode: number; output: string } {
+    try {
+      const output = execSync(`node "${VALIDATOR_SCRIPT}"`, { cwd, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] });
+      return { exitCode: 0, output };
+    } catch (err: unknown) {
+      const e = err as { status?: number; stdout?: string; stderr?: string };
+      return { exitCode: e.status || 1, output: (e.stdout || '') + (e.stderr || '') };
+    }
+  }
+
+  function cleanupFixture(tmpDir: string) { rmSync(tmpDir, { recursive: true, force: true }); }
+
+  function readEvidence(tmpDir: string) {
+    return JSON.parse(readFileSync(join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-05-production-verification.json'), 'utf-8'));
+  }
+  function writeEvidence(tmpDir: string, data: any) {
+    writeFileSync(join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-05-production-verification.json'), JSON.stringify(data, null, 2) + '\n');
+  }
+
+  // Test 1: exact_match with a changed expected value
+  it('rejects exact_match when expected value differs from verified', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      // Change a column expected data_type to something wrong
+      const m172 = d.migrations.find((m: any) => String(m.version) === '172');
+      m172.objects[0].expected_properties.data_type = 'integer'; // was 'text'
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/exact_match.*values differ|exact_match.*data_type/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test 2: missing expected compared path
+  it('rejects when compared path does not exist in expected_properties', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      const m172 = d.migrations.find((m: any) => String(m.version) === '172');
+      delete m172.objects[0].expected_properties.data_type;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/not in expected_properties|data_type/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test 3: missing verified compared path
+  it('rejects when compared path does not exist in verified_properties', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      const m172 = d.migrations.find((m: any) => String(m.version) === '172');
+      delete m172.objects[0].verified_properties.data_type;
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/not in verified_properties|data_type/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test 4: unreported unequal path (equivalent_stricter)
+  it('rejects equivalent_stricter with undeclared unequal path', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      const m173 = d.migrations.find((m: any) => String(m.version) === '173');
+      // Change an expected value that should match but isn't in mismatches
+      m173.objects[0].expected_properties.language = 'sql'; // was 'plpgsql'
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/undeclared unequal|unpermitted unequal|language/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test 5: equivalent_stricter with wrong lineage
+  it('rejects equivalent_stricter with incorrect lineage', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      const m173 = d.migrations.find((m: any) => String(m.version) === '173');
+      m173.objects[0].later_migration_lineage[0].version = '999';
+      m173.objects[0].later_migration_lineage[0].filename = '999_wrong.sql';
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/lineage.*181|lineage.*296|versions 181 and 296/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test 6: Migration 173 def_hash mismatch
+  it('rejects Migration 173 function with def_hash mismatch', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      const m173 = d.migrations.find((m: any) => String(m.version) === '173');
+      m173.objects[0].expected_properties.def_hash = 'aa' + m173.objects[0].expected_properties.def_hash.slice(2);
+      writeEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/def_hash.*mismatch|undeclared unequal.*def_hash|unpermitted.*def_hash/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test 7: valid exact_match passes (positive test)
+  it('accepts valid exact_match object without modifications', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const { exitCode } = runValidatorInFixture(tmpDir);
+      expect(exitCode).toBe(0);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test 8: valid equivalent_stricter passes (positive test via unmodified fixture)
+  it('accepts valid Migration 173 equivalent_stricter via unmodified fixture', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readEvidence(tmpDir);
+      const m173 = d.migrations.find((m: any) => String(m.version) === '173');
+      // Verify the 3 functions have equivalent_stricter
+      for (const obj of m173.objects) {
+        expect(obj.property_comparison_result).toBe('equivalent_stricter');
+        expect(obj.property_mismatches.length).toBe(2);
+        expect(obj.property_mismatches.map((m: any) => m.path).sort()).toEqual(['anon_exec', 'auth_exec']);
+        expect(obj.expected_properties.def_hash).toBe(obj.verified_properties.def_hash);
+      }
+      const { exitCode } = runValidatorInFixture(tmpDir);
+      expect(exitCode).toBe(0);
+    } finally { cleanupFixture(tmpDir); }
   }, 30000);
 });

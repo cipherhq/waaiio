@@ -869,7 +869,7 @@ for (const { file, data: batch } of allBatches) {
     const batch5EvidencePath = resolve(EVIDENCE_DIR, 'batch-05-production-verification.json');
     const batch5Content = readFileSync(batch5EvidencePath);
     const batch5SHA = createHash('sha256').update(batch5Content).digest('hex');
-    if (batch5SHA !== 'c2c0c052af94ccdb96b3e6e7d798c4c0ee4a0df4f10b4dfec43f2b86c22a5450') {
+    if (batch5SHA !== '8f093426b4688650d4e9da185f82d3d001592b9f3cc9b4b1ed2bdc8553962930') {
       fail(`Batch 5 evidence SHA mismatch: ${batch5SHA}`);
     } else {
       pass('Batch 5 evidence file SHA matches V3 canonical');
@@ -882,15 +882,15 @@ for (const { file, data: batch } of allBatches) {
       pass('Batch 5 task_identifier = batch-05-production-verification-v3');
     }
 
-    // V2 detailed property checks total
-    if (batch.detailed_property_checks_total !== 383) {
-      fail(`Batch 5 detailed_property_checks_total: ${batch.detailed_property_checks_total}, expected 383`);
+    // V3 compared property paths total (341 real intersecting paths across 55 objects)
+    if (batch.detailed_property_checks_total !== 341) {
+      fail(`Batch 5 detailed_property_checks_total: ${batch.detailed_property_checks_total}, expected 341`);
     } else {
-      pass('Batch 5 detailed_property_checks_total = 383');
+      pass('Batch 5 detailed_property_checks_total = 341');
     }
 
-    // V2 per-migration detailed property counts (verified_properties key count per object)
-    const expectedPropertyCounts = {
+    // Preserved V2 snapshot invariant: verified_properties key count per object per migration
+    const expectedVerifiedKeyCounts = {
       '172': 27, '173': 42, '174': 20, '175': 8, '177': 15, '178': 15,
       '179': 9, '180': 28, '183': 38, '184': 31, '185': 3, '186': 65,
       '188': 9, '189': 25, '190': 48
@@ -901,17 +901,17 @@ for (const { file, data: batch } of allBatches) {
       const ver = String(m.version);
       const count = (m.objects || []).reduce((sum, obj) => sum + Object.keys(obj.verified_properties || {}).length, 0);
       propCountSum += count;
-      const expected = expectedPropertyCounts[ver];
+      const expected = expectedVerifiedKeyCounts[ver];
       if (expected !== undefined && count !== expected) {
-        fail(`Batch 5 version ${ver}: verified property count ${count}, expected ${expected}`);
+        fail(`Batch 5 version ${ver}: preserved V2 verified key count ${count}, expected ${expected}`);
         propCountErrors++;
       }
     }
     if (propCountSum !== 383) {
-      fail(`Batch 5 verified property count sum: ${propCountSum}, expected 383`);
+      fail(`Batch 5 preserved V2 verified key sum: ${propCountSum}, expected 383`);
       propCountErrors++;
     }
-    if (propCountErrors === 0) pass('Batch 5 all per-migration property counts match');
+    if (propCountErrors === 0) pass('Batch 5 preserved V2 verified_properties key counts intact');
 
     // V2 per-migration migration_evidence_digest recomputation
     let digestRecomputeErrors = 0;
@@ -1358,59 +1358,188 @@ for (const { file, data: batch } of allBatches) {
       }
       pass('Batch 5 V3 lineage fields verified');
       
-      // V3 compared_property_paths validation
+      // V3 compared_property_paths real value comparison
       let v3CompareErrors = 0;
+
+      // Resolve a dot-separated or plain path in an object
+      function resolvePath(obj, path) {
+        if (path in obj) return { found: true, value: obj[path] };
+        const parts = path.split('.');
+        let cur = obj;
+        for (const p of parts) {
+          if (cur == null || typeof cur !== 'object') return { found: false };
+          if (!(p in cur)) return { found: false };
+          cur = cur[p];
+        }
+        return { found: true, value: cur };
+      }
+
+      // Deterministic deep-equal (handles objects, arrays, primitives)
+      function deepEqual(a, b) {
+        if (a === b) return true;
+        if (a == null || b == null) return a === b;
+        if (typeof a !== typeof b) return false;
+        if (Array.isArray(a)) {
+          if (!Array.isArray(b) || a.length !== b.length) return false;
+          return a.every((v, i) => deepEqual(v, b[i]));
+        }
+        if (typeof a === 'object') {
+          const ka = Object.keys(a).sort();
+          const kb = Object.keys(b).sort();
+          if (ka.length !== kb.length) return false;
+          return ka.every((k, i) => k === kb[i] && deepEqual(a[k], b[k]));
+        }
+        return false;
+      }
+
       for (const m of batch.migrations || []) {
         const ver = String(m.version);
         const storedCount = m.detailed_property_checks_count;
         let actualSum = 0;
-        
+
         for (const obj of m.objects || []) {
-          // Require compared_property_paths
-          if (!Array.isArray(obj.compared_property_paths) || obj.compared_property_paths.length === 0) {
-            fail(`Batch 5 V3 version ${ver} object ${obj.object_name}: missing or empty compared_property_paths`);
-            v3CompareErrors++;
-            continue;
+          const ep = obj.expected_properties || {};
+          const vp = obj.verified_properties || {};
+          const paths = obj.compared_property_paths;
+          const cr = obj.property_comparison_result;
+          const mm = obj.property_mismatches || [];
+
+          // 1. compared_property_paths must be non-empty array
+          if (!Array.isArray(paths) || paths.length === 0) {
+            fail(`Batch 5 V3 ${ver}/${obj.object_name}: compared_property_paths missing or empty`);
+            v3CompareErrors++; continue;
           }
-          actualSum += obj.compared_property_paths.length;
-          
-          // Require non-generic comparison result
-          if (obj.property_comparison_result === 'match') {
-            fail(`Batch 5 V3 version ${ver} object ${obj.object_name}: generic comparison value "match" not allowed`);
+
+          // 2. Reject duplicates
+          if (new Set(paths).size !== paths.length) {
+            fail(`Batch 5 V3 ${ver}/${obj.object_name}: duplicate compared paths`);
             v3CompareErrors++;
           }
-          
-          // For exact_match: property_mismatches must be empty
-          if (obj.property_comparison_result === 'exact_match') {
-            if (Array.isArray(obj.property_mismatches) && obj.property_mismatches.length > 0) {
-              fail(`Batch 5 V3 version ${ver} object ${obj.object_name}: exact_match but property_mismatches non-empty`);
+
+          actualSum += paths.length;
+
+          // 3. Resolve every path in expected and verified; compute actual unequal set
+          const actualUnequal = [];
+          for (const p of paths) {
+            const epRes = resolvePath(ep, p);
+            const vpRes = resolvePath(vp, p);
+            if (!epRes.found) {
+              fail(`Batch 5 V3 ${ver}/${obj.object_name}: compared path "${p}" not in expected_properties`);
+              v3CompareErrors++;
+            }
+            if (!vpRes.found) {
+              fail(`Batch 5 V3 ${ver}/${obj.object_name}: compared path "${p}" not in verified_properties`);
+              v3CompareErrors++;
+            }
+            if (epRes.found && vpRes.found && !deepEqual(epRes.value, vpRes.value)) {
+              actualUnequal.push(p);
+            }
+          }
+
+          // 4. Reject generic comparison result
+          if (cr === 'match') {
+            fail(`Batch 5 V3 ${ver}/${obj.object_name}: generic "match" comparison not allowed`);
+            v3CompareErrors++;
+          }
+
+          // 5. Validate exact_match
+          if (cr === 'exact_match') {
+            if (actualUnequal.length > 0) {
+              fail(`Batch 5 V3 ${ver}/${obj.object_name}: exact_match but values differ at: ${actualUnequal.join(', ')}`);
+              v3CompareErrors++;
+            }
+            if (mm.length > 0) {
+              fail(`Batch 5 V3 ${ver}/${obj.object_name}: exact_match but property_mismatches non-empty`);
               v3CompareErrors++;
             }
           }
-          
-          // For equivalent_stricter: require lineage
-          if (obj.property_comparison_result === 'equivalent_stricter') {
+
+          // 6. Validate equivalent_stricter
+          if (cr === 'equivalent_stricter') {
+            // Mismatch paths must equal actual unequal paths exactly
+            const declaredPaths = new Set(mm.map(x => x.path));
+            const actualPaths = new Set(actualUnequal);
+            for (const p of actualPaths) {
+              if (!declaredPaths.has(p)) {
+                fail(`Batch 5 V3 ${ver}/${obj.object_name}: undeclared unequal path "${p}"`);
+                v3CompareErrors++;
+              }
+            }
+            for (const p of declaredPaths) {
+              if (!actualPaths.has(p)) {
+                fail(`Batch 5 V3 ${ver}/${obj.object_name}: declared mismatch "${p}" but values actually match`);
+                v3CompareErrors++;
+              }
+            }
+
+            // Verify mismatch expected_original and verified_current match actual values
+            for (const mismatch of mm) {
+              const epVal = resolvePath(ep, mismatch.path);
+              const vpVal = resolvePath(vp, mismatch.path);
+              if (epVal.found && !deepEqual(mismatch.expected_original, epVal.value)) {
+                fail(`Batch 5 V3 ${ver}/${obj.object_name}: mismatch "${mismatch.path}" expected_original doesn't match actual expected value`);
+                v3CompareErrors++;
+              }
+              if (vpVal.found && !deepEqual(mismatch.verified_current, vpVal.value)) {
+                fail(`Batch 5 V3 ${ver}/${obj.object_name}: mismatch "${mismatch.path}" verified_current doesn't match actual verified value`);
+                v3CompareErrors++;
+              }
+            }
+
+            // Require lineage
             if (!Array.isArray(obj.later_migration_lineage) || obj.later_migration_lineage.length === 0) {
-              fail(`Batch 5 V3 version ${ver} object ${obj.object_name}: equivalent_stricter without later_migration_lineage`);
+              fail(`Batch 5 V3 ${ver}/${obj.object_name}: equivalent_stricter without later_migration_lineage`);
               v3CompareErrors++;
             } else {
               for (const lin of obj.later_migration_lineage) {
                 if (!lin.version || !lin.filename) {
-                  fail(`Batch 5 V3 version ${ver} object ${obj.object_name}: lineage entry missing version or filename`);
+                  fail(`Batch 5 V3 ${ver}/${obj.object_name}: lineage entry missing version or filename`);
                   v3CompareErrors++;
                 }
               }
             }
+
+            // Migration 173 function-specific checks
+            if (ver === '173' && obj.object_type === 'function') {
+              const permitted = new Set(['anon_exec', 'auth_exec']);
+              for (const p of actualUnequal) {
+                if (!permitted.has(p)) {
+                  fail(`Batch 5 V3 173/${obj.object_name}: unpermitted unequal property "${p}"`);
+                  v3CompareErrors++;
+                }
+              }
+              // svc_exec must be true in both
+              if (ep.svc_exec !== true || vp.svc_exec !== true) {
+                fail(`Batch 5 V3 173/${obj.object_name}: svc_exec must be true in both expected and verified`);
+                v3CompareErrors++;
+              }
+              // def_hash must match exactly
+              if (ep.def_hash !== vp.def_hash) {
+                fail(`Batch 5 V3 173/${obj.object_name}: def_hash mismatch (expected ${(ep.def_hash||'').slice(0,12)}... verified ${(vp.def_hash||'').slice(0,12)}...)`);
+                v3CompareErrors++;
+              }
+              // Lineage must contain exactly 181 and 296
+              const lineageVersions = new Set((obj.later_migration_lineage || []).map(l => l.version));
+              if (!lineageVersions.has('181') || !lineageVersions.has('296') || lineageVersions.size !== 2) {
+                fail(`Batch 5 V3 173/${obj.object_name}: lineage must contain exactly versions 181 and 296`);
+                v3CompareErrors++;
+              }
+              const lineageFilenames = new Set((obj.later_migration_lineage || []).map(l => l.filename));
+              if (!lineageFilenames.has('181_financial_integrity.sql') || !lineageFilenames.has('296_restrict_sensitive_rpc_execution.sql')) {
+                fail(`Batch 5 V3 173/${obj.object_name}: lineage filenames incorrect`);
+                v3CompareErrors++;
+              }
+            }
           }
         }
-        
+
         // Sum must equal stored count
         if (storedCount !== undefined && actualSum !== storedCount) {
-          fail(`Batch 5 V3 version ${ver}: compared_property_paths sum ${actualSum} !== detailed_property_checks_count ${storedCount}`);
+          fail(`Batch 5 V3 ${ver}: compared_property_paths sum ${actualSum} !== detailed_property_checks_count ${storedCount}`);
           v3CompareErrors++;
         }
       }
-      if (v3CompareErrors === 0) pass('Batch 5 V3 compared_property_paths validation passed');
+      if (v3CompareErrors === 0) pass('Batch 5 V3 property comparison validated (values resolved and compared)');
     }
 
   if (batchErrors === 0) pass(`Batch ${batch.batch_number} cross-validation passed`);
