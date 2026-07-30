@@ -1,0 +1,3568 @@
+{
+  "task_identifier": "batch-07-production-verification",
+  "repository_sha": "9c2746253a11122d770bf619b4a96d862413636c",
+  "linked_project_ref": "cxcmiqotkowhxinjbytg",
+  "issue_number": 53,
+  "batch_number": 7,
+  "versions": [
+    "208",
+    "209",
+    "210",
+    "211",
+    "212",
+    "213",
+    "214",
+    "215",
+    "218",
+    "219",
+    "220",
+    "221",
+    "223",
+    "224",
+    "225"
+  ],
+  "candidate_registry_path": "docs/migrations/101-246-verification-candidates.json",
+  "expected_migration_count": 15,
+  "expected_object_count": 83,
+  "actual_object_count": 83,
+  "migration_checksums": {
+    "208": "4e0a153e84f1c3f43ce3ae7f4b3927e07f81caae9a03d4333e7747a8699c9d7a",
+    "209": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+    "210": "62621ccf1143140e8b5f1731365a64ef2447fd0188c55121e033864ba87ad485",
+    "211": "e8768841083c21bb684c24d075d3f24e1611f8a5112c5ecef97e0a7a4d426154",
+    "212": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
+    "213": "2d1781182a47451bf8db666317f7dc4d3e7bacbf106ea380a0044d9f2997ac94",
+    "214": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
+    "215": "adaa51580c8f1da2286202db8927c7b692a49a46b6abed46d5ea69e0d5fb5ca6",
+    "218": "34cab4cb057fe106b780c6df4e12968ba80fbf332d110d6859daea937a20981a",
+    "219": "7fb8e37f7e052a015a44454a692ceb09dccd55a6755179aaa6f7325bcfea6cb7",
+    "220": "38bc5ab211329a3adb0fd0dcf70be7289c3aaff288cc8d07a9793b759fa56092",
+    "221": "c187d35905bbe889863da7bf9deed3fdba653b406d92358f3f13b255f9715848",
+    "223": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+    "224": "f7b3c641978afe2ad35f6dd683a6db84b4c44f3fcb3f204d594b769df777ace5",
+    "225": "0cf4b014929fa2e67b2a1c59bfe01a56d25c8f54f7b510800980adb1829fa3de"
+  },
+  "migrations": [
+    {
+      "migration_version": "208",
+      "migration_filename": "208_payment_channels.sql",
+      "migration_checksum": "4e0a153e84f1c3f43ce3ae7f4b3927e07f81caae9a03d4333e7747a8699c9d7a",
+      "expected_object_digest": "e450042dc77903319bbd40b58097c075ead07c8428b673398b31e71ad9544442",
+      "expected_object_count": 2,
+      "actual_object_count": 2,
+      "objects": [
+        {
+          "migration_version": "208",
+          "migration_filename": "208_payment_channels.sql",
+          "migration_checksum": "4e0a153e84f1c3f43ce3ae7f4b3927e07f81caae9a03d4333e7747a8699c9d7a",
+          "expected_object_digest": "e450042dc77903319bbd40b58097c075ead07c8428b673398b31e71ad9544442",
+          "object_type": "column",
+          "object_name": "businesses.payment_channels",
+          "expected_properties": {
+            "schema": "public",
+            "table": "businesses",
+            "column": "payment_channels",
+            "data_type": "jsonb",
+            "is_nullable": "YES"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "businesses",
+            "column": "payment_channels",
+            "data_type": "jsonb",
+            "is_nullable": "YES",
+            "column_default": null,
+            "udt_name": "jsonb"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "column",
+            "data_type",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Column matches",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "208",
+          "migration_filename": "208_payment_channels.sql",
+          "migration_checksum": "4e0a153e84f1c3f43ce3ae7f4b3927e07f81caae9a03d4333e7747a8699c9d7a",
+          "expected_object_digest": "e450042dc77903319bbd40b58097c075ead07c8428b673398b31e71ad9544442",
+          "object_type": "index",
+          "object_name": "idx_businesses_payment_channels",
+          "expected_properties": {
+            "schema": "public",
+            "table": "businesses",
+            "index_name": "idx_businesses_payment_channels",
+            "is_unique": false,
+            "access_method": "gin"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "businesses",
+            "index_name": "idx_businesses_payment_channels",
+            "is_unique": false,
+            "access_method": "gin",
+            "def_sha256": "06d8de4dcd9241ff3d9839d1d220ddc715aa75709c0018199e4e99f2233bc489"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index exists with GIN access method as specified in migration SQL",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:58.107Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "0bee75d8393438c21593db02338d3ab4f5a9b83af13a75468f6d6e700dafd26b"
+    },
+    {
+      "migration_version": "209",
+      "migration_filename": "209_direct_bank_transfer.sql",
+      "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+      "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+      "expected_object_count": 20,
+      "actual_object_count": 20,
+      "objects": [
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "table",
+          "object_name": "business_bank_accounts",
+          "expected_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "exists": true,
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "exists": true,
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "exists",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Table exists with RLS enabled",
+          "verification_source": "information_schema.columns+pg_class",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "table",
+          "object_name": "pending_transfers",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "exists": true,
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "exists": true,
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "exists",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Table exists with RLS enabled",
+          "verification_source": "information_schema.columns+pg_class",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "column",
+          "object_name": "platform_fees.is_direct_transfer",
+          "expected_properties": {
+            "schema": "public",
+            "table": "platform_fees",
+            "column": "is_direct_transfer",
+            "data_type": "boolean",
+            "is_nullable": "YES"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "platform_fees",
+            "column": "is_direct_transfer",
+            "data_type": "boolean",
+            "is_nullable": "YES",
+            "column_default": "false",
+            "udt_name": "bool"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "column",
+            "data_type",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Column matches",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "rls",
+          "object_name": "business_bank_accounts:rls",
+          "expected_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "relrowsecurity": true,
+            "relforcerowsecurity": false
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "relrowsecurity": true,
+            "relforcerowsecurity": false
+          },
+          "compared_property_paths": [
+            "relrowsecurity"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "RLS enabled as expected",
+          "verification_source": "pg_class",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "rls",
+          "object_name": "pending_transfers:rls",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "relrowsecurity": true,
+            "relforcerowsecurity": false
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "relrowsecurity": true,
+            "relforcerowsecurity": false
+          },
+          "compared_property_paths": [
+            "relrowsecurity"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "RLS enabled as expected",
+          "verification_source": "pg_class",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "policy",
+          "object_name": "business_bank_accounts:Owners manage bank accounts",
+          "expected_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "policy_name": "Owners manage bank accounts",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "policy_name": "Owners manage bank accounts",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL",
+            "roles": "{public}",
+            "using_sha256": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "policy",
+          "object_name": "business_bank_accounts:Resellers manage sub-account bank accounts",
+          "expected_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "policy_name": "Resellers manage sub-account bank accounts",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "policy_name": "Resellers manage sub-account bank accounts",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL",
+            "roles": "{public}",
+            "using_sha256": "fa2838fddf76f5f100ec521e7f5a768048fada58988f03282b937acbc57627c7",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "policy",
+          "object_name": "business_bank_accounts:Service role manages bank accounts",
+          "expected_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "policy_name": "Service role manages bank accounts",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "policy_name": "Service role manages bank accounts",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL",
+            "roles": "{service_role}",
+            "using_sha256": null,
+            "check_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "policy",
+          "object_name": "pending_transfers:Owners manage pending transfers",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "policy_name": "Owners manage pending transfers",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "policy_name": "Owners manage pending transfers",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL",
+            "roles": "{public}",
+            "using_sha256": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "policy",
+          "object_name": "pending_transfers:Service role manages pending transfers",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "policy_name": "Service role manages pending transfers",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "policy_name": "Service role manages pending transfers",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL",
+            "roles": "{service_role}",
+            "using_sha256": null,
+            "check_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "policy",
+          "object_name": "pending_transfers:Admin views pending transfers",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "policy_name": "Admin views pending transfers",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "policy_name": "Admin views pending transfers",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{public}",
+            "using_sha256": "f8876fefedaf6dafb7546b6c158ace60ad2f66549199252168d7131ab34447a5",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "index",
+          "object_name": "idx_business_bank_accounts_business",
+          "expected_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "index_name": "idx_business_bank_accounts_business",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "index_name": "idx_business_bank_accounts_business",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "f41efc8209c7640db64b7a79462fb40267526ef9793d0cf488954652f6969dcd"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "index",
+          "object_name": "idx_pending_transfers_business",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_business",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_business",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "195378fd286798451f3c297e7212c38ec9494647e563487e7e18d7127e0c0853"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "index",
+          "object_name": "idx_pending_transfers_status",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_status",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_status",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "ca3aa4c18b812f357144a504eb4742e056b9e1f2b71028cab525647a3220d924"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "index",
+          "object_name": "idx_pending_transfers_reference",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_reference",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_reference",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "2f7215b7a572c8c1cea41814fdc295cf74b2c0b01f996d2acad91557c1fee6d6"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "index",
+          "object_name": "idx_pending_transfers_expires",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_expires",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_expires",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "7a4ed8a2a16bd2f3ff87fec57e3e7f284be4e738ad068ab120e5ebbfb96212e6"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "index",
+          "object_name": "idx_pending_transfers_booking",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_booking",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_booking",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "13ffc6a5da4acb93073ffc45bf7628dc7c561bb013e55ec074243eee74c0433e"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "index",
+          "object_name": "idx_business_bank_accounts_default",
+          "expected_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "index_name": "idx_business_bank_accounts_default",
+            "is_unique": true,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "index_name": "idx_business_bank_accounts_default",
+            "is_unique": true,
+            "access_method": "btree",
+            "def_sha256": "a05ab6dba791abbd2bb21b71dae7201fda97c2279703bfc101cd1a54d33b2eed"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "trigger",
+          "object_name": "business_bank_accounts:set_business_bank_accounts_updated_at",
+          "expected_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "trigger_name": "set_business_bank_accounts_updated_at",
+            "timing": "BEFORE",
+            "orientation": "ROW"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "trigger_name": "set_business_bank_accounts_updated_at",
+            "timing": "BEFORE",
+            "orientation": "ROW",
+            "def_sha256": "c77dbd4604465505e256ce91ed6a811e88642c146235852ea1c1e68de737e3b4",
+            "action_statement": "EXECUTE FUNCTION update_updated_at()"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "trigger_name",
+            "timing",
+            "orientation"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Trigger matches",
+          "verification_source": "information_schema.triggers",
+          "query_category": "trigger_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "209",
+          "migration_filename": "209_direct_bank_transfer.sql",
+          "migration_checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
+          "expected_object_digest": "78714a65e47fd338a1e765699d083d3f840d381ec9564a533ad29e688f8e3180",
+          "object_type": "trigger",
+          "object_name": "pending_transfers:set_pending_transfers_updated_at",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "trigger_name": "set_pending_transfers_updated_at",
+            "timing": "BEFORE",
+            "orientation": "ROW"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "trigger_name": "set_pending_transfers_updated_at",
+            "timing": "BEFORE",
+            "orientation": "ROW",
+            "def_sha256": "c77dbd4604465505e256ce91ed6a811e88642c146235852ea1c1e68de737e3b4",
+            "action_statement": "EXECUTE FUNCTION update_updated_at()"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "trigger_name",
+            "timing",
+            "orientation"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Trigger matches",
+          "verification_source": "information_schema.triggers",
+          "query_category": "trigger_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "951086e429614d4d8ccce1b3a1aa9a0896818804cc1eff85d10ab36d5e053824"
+    },
+    {
+      "migration_version": "210",
+      "migration_filename": "210_receipt_ocr.sql",
+      "migration_checksum": "62621ccf1143140e8b5f1731365a64ef2447fd0188c55121e033864ba87ad485",
+      "expected_object_digest": "b5ef87f30bc6675ca523b3c66a056ec0e2ab41ee93ce16c21a45a22682bb8686",
+      "expected_object_count": 2,
+      "actual_object_count": 2,
+      "objects": [
+        {
+          "migration_version": "210",
+          "migration_filename": "210_receipt_ocr.sql",
+          "migration_checksum": "62621ccf1143140e8b5f1731365a64ef2447fd0188c55121e033864ba87ad485",
+          "expected_object_digest": "b5ef87f30bc6675ca523b3c66a056ec0e2ab41ee93ce16c21a45a22682bb8686",
+          "object_type": "column",
+          "object_name": "pending_transfers.verified_by_ocr",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "column": "verified_by_ocr",
+            "data_type": "boolean",
+            "is_nullable": "YES"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "column": "verified_by_ocr",
+            "data_type": "boolean",
+            "is_nullable": "YES",
+            "column_default": "false",
+            "udt_name": "bool"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "column",
+            "data_type",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Column matches",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "210",
+          "migration_filename": "210_receipt_ocr.sql",
+          "migration_checksum": "62621ccf1143140e8b5f1731365a64ef2447fd0188c55121e033864ba87ad485",
+          "expected_object_digest": "b5ef87f30bc6675ca523b3c66a056ec0e2ab41ee93ce16c21a45a22682bb8686",
+          "object_type": "index",
+          "object_name": "idx_pending_transfers_ocr",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_ocr",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_ocr",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "b350a2dfce8bc584c2e52685b2c9e7ae25aa99617bf46d236ffa35fe29376960"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "2f98f339925d74a4a3b7c92d1b806e57bc100a9124e134e17c600bdb6bae9885"
+    },
+    {
+      "migration_version": "211",
+      "migration_filename": "211_ocr_result_and_admin_rls.sql",
+      "migration_checksum": "e8768841083c21bb684c24d075d3f24e1611f8a5112c5ecef97e0a7a4d426154",
+      "expected_object_digest": "67e43de77cb0e2ad64896d602649846fe1c58ffc0b98bcc5787e8962be11d008",
+      "expected_object_count": 3,
+      "actual_object_count": 3,
+      "objects": [
+        {
+          "migration_version": "211",
+          "migration_filename": "211_ocr_result_and_admin_rls.sql",
+          "migration_checksum": "e8768841083c21bb684c24d075d3f24e1611f8a5112c5ecef97e0a7a4d426154",
+          "expected_object_digest": "67e43de77cb0e2ad64896d602649846fe1c58ffc0b98bcc5787e8962be11d008",
+          "object_type": "column",
+          "object_name": "pending_transfers.ocr_result",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "column": "ocr_result",
+            "data_type": "jsonb",
+            "is_nullable": "YES"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "column": "ocr_result",
+            "data_type": "jsonb",
+            "is_nullable": "YES",
+            "column_default": null,
+            "udt_name": "jsonb"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "column",
+            "data_type",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Column matches",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "211",
+          "migration_filename": "211_ocr_result_and_admin_rls.sql",
+          "migration_checksum": "e8768841083c21bb684c24d075d3f24e1611f8a5112c5ecef97e0a7a4d426154",
+          "expected_object_digest": "67e43de77cb0e2ad64896d602649846fe1c58ffc0b98bcc5787e8962be11d008",
+          "object_type": "policy",
+          "object_name": "business_bank_accounts:Admin reads bank accounts",
+          "expected_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "policy_name": "Admin reads bank accounts",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "business_bank_accounts",
+            "policy_name": "Admin reads bank accounts",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{public}",
+            "using_sha256": "673a60cffcf4dd2eb7553e79f65ef7a0944f99dd4cc1478102df1b04c7fd0d43",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "211",
+          "migration_filename": "211_ocr_result_and_admin_rls.sql",
+          "migration_checksum": "e8768841083c21bb684c24d075d3f24e1611f8a5112c5ecef97e0a7a4d426154",
+          "expected_object_digest": "67e43de77cb0e2ad64896d602649846fe1c58ffc0b98bcc5787e8962be11d008",
+          "object_type": "policy",
+          "object_name": "pending_transfers:Admin manages pending transfers",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "policy_name": "Admin manages pending transfers",
+            "permissive": "PERMISSIVE",
+            "cmd": "UPDATE"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "policy_name": "Admin manages pending transfers",
+            "permissive": "PERMISSIVE",
+            "cmd": "UPDATE",
+            "roles": "{public}",
+            "using_sha256": "bbffad839d74a0c7dd15c5f7b3a5468c5ba9aa025e55667129a87cb02d6b53c1",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "48a43aec30ea6ba6bb5ae52e33cd00e96138468a6a98bfc570092d5bb92616ec"
+    },
+    {
+      "migration_version": "212",
+      "migration_filename": "212_platform_fee_invoices.sql",
+      "migration_checksum": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
+      "expected_object_digest": "874482199607f988630049a417059a919ebfd0e998f9e3820fe35ec43ce2d7f5",
+      "expected_object_count": 10,
+      "actual_object_count": 10,
+      "objects": [
+        {
+          "migration_version": "212",
+          "migration_filename": "212_platform_fee_invoices.sql",
+          "migration_checksum": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
+          "expected_object_digest": "874482199607f988630049a417059a919ebfd0e998f9e3820fe35ec43ce2d7f5",
+          "object_type": "table",
+          "object_name": "platform_fee_invoices",
+          "expected_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "exists": true,
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "exists": true,
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "exists",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Table exists with RLS enabled",
+          "verification_source": "information_schema.columns+pg_class",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "212",
+          "migration_filename": "212_platform_fee_invoices.sql",
+          "migration_checksum": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
+          "expected_object_digest": "874482199607f988630049a417059a919ebfd0e998f9e3820fe35ec43ce2d7f5",
+          "object_type": "index",
+          "object_name": "idx_pfi_business_period",
+          "expected_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "index_name": "idx_pfi_business_period",
+            "is_unique": true,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "index_name": "idx_pfi_business_period",
+            "is_unique": true,
+            "access_method": "btree",
+            "def_sha256": "9d19700afd022b902118474935599c15d5f11a9b346618f30d1da16ec7867a65"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "212",
+          "migration_filename": "212_platform_fee_invoices.sql",
+          "migration_checksum": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
+          "expected_object_digest": "874482199607f988630049a417059a919ebfd0e998f9e3820fe35ec43ce2d7f5",
+          "object_type": "index",
+          "object_name": "idx_pfi_status",
+          "expected_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "index_name": "idx_pfi_status",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "index_name": "idx_pfi_status",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "c4b3c666fe20e2e63767c12261183b8c1e63578b7bcd4891f9b8f395de5277b2"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "212",
+          "migration_filename": "212_platform_fee_invoices.sql",
+          "migration_checksum": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
+          "expected_object_digest": "874482199607f988630049a417059a919ebfd0e998f9e3820fe35ec43ce2d7f5",
+          "object_type": "index",
+          "object_name": "idx_pfi_due_date",
+          "expected_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "index_name": "idx_pfi_due_date",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "index_name": "idx_pfi_due_date",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "e7f46af9eca95c63becd8e995d4a969c0c737aa3df838bce6be49eceab419d6f"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "212",
+          "migration_filename": "212_platform_fee_invoices.sql",
+          "migration_checksum": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
+          "expected_object_digest": "874482199607f988630049a417059a919ebfd0e998f9e3820fe35ec43ce2d7f5",
+          "object_type": "column",
+          "object_name": "platform_fees.invoiced_at",
+          "expected_properties": {
+            "schema": "public",
+            "table": "platform_fees",
+            "column": "invoiced_at",
+            "data_type": "timestamp with time zone",
+            "is_nullable": "YES"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "platform_fees",
+            "column": "invoiced_at",
+            "data_type": "timestamp with time zone",
+            "is_nullable": "YES",
+            "column_default": null,
+            "udt_name": "timestamptz"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "column",
+            "data_type",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Column matches",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "212",
+          "migration_filename": "212_platform_fee_invoices.sql",
+          "migration_checksum": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
+          "expected_object_digest": "874482199607f988630049a417059a919ebfd0e998f9e3820fe35ec43ce2d7f5",
+          "object_type": "column",
+          "object_name": "platform_fees.invoice_id",
+          "expected_properties": {
+            "schema": "public",
+            "table": "platform_fees",
+            "column": "invoice_id",
+            "data_type": "uuid",
+            "is_nullable": "YES"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "platform_fees",
+            "column": "invoice_id",
+            "data_type": "uuid",
+            "is_nullable": "YES",
+            "column_default": null,
+            "udt_name": "uuid"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "column",
+            "data_type",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Column matches",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "212",
+          "migration_filename": "212_platform_fee_invoices.sql",
+          "migration_checksum": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
+          "expected_object_digest": "874482199607f988630049a417059a919ebfd0e998f9e3820fe35ec43ce2d7f5",
+          "object_type": "rls",
+          "object_name": "platform_fee_invoices:rls",
+          "expected_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "relrowsecurity": true,
+            "relforcerowsecurity": false
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "relrowsecurity": true,
+            "relforcerowsecurity": false
+          },
+          "compared_property_paths": [
+            "relrowsecurity"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "RLS enabled as expected",
+          "verification_source": "pg_class",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "212",
+          "migration_filename": "212_platform_fee_invoices.sql",
+          "migration_checksum": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
+          "expected_object_digest": "874482199607f988630049a417059a919ebfd0e998f9e3820fe35ec43ce2d7f5",
+          "object_type": "policy",
+          "object_name": "platform_fee_invoices:Business owners view fee invoices",
+          "expected_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "policy_name": "Business owners view fee invoices",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "policy_name": "Business owners view fee invoices",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{public}",
+            "using_sha256": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "212",
+          "migration_filename": "212_platform_fee_invoices.sql",
+          "migration_checksum": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
+          "expected_object_digest": "874482199607f988630049a417059a919ebfd0e998f9e3820fe35ec43ce2d7f5",
+          "object_type": "policy",
+          "object_name": "platform_fee_invoices:Admin manages fee invoices",
+          "expected_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "policy_name": "Admin manages fee invoices",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "policy_name": "Admin manages fee invoices",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL",
+            "roles": "{public}",
+            "using_sha256": "bbffad839d74a0c7dd15c5f7b3a5468c5ba9aa025e55667129a87cb02d6b53c1",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "212",
+          "migration_filename": "212_platform_fee_invoices.sql",
+          "migration_checksum": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
+          "expected_object_digest": "874482199607f988630049a417059a919ebfd0e998f9e3820fe35ec43ce2d7f5",
+          "object_type": "policy",
+          "object_name": "platform_fee_invoices:Service role manages fee invoices",
+          "expected_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "policy_name": "Service role manages fee invoices",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "platform_fee_invoices",
+            "policy_name": "Service role manages fee invoices",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL",
+            "roles": "{service_role}",
+            "using_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+            "check_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "b7f56a64740205bedeb3e646c65689e5b625185c274a11e65650fb3a18b3cd53"
+    },
+    {
+      "migration_version": "213",
+      "migration_filename": "213_pending_transfers_campaign_id.sql",
+      "migration_checksum": "2d1781182a47451bf8db666317f7dc4d3e7bacbf106ea380a0044d9f2997ac94",
+      "expected_object_digest": "f715eb5669863855273081ad73f151f201633d032a9a5e6399fa0341236f6ac5",
+      "expected_object_count": 2,
+      "actual_object_count": 2,
+      "objects": [
+        {
+          "migration_version": "213",
+          "migration_filename": "213_pending_transfers_campaign_id.sql",
+          "migration_checksum": "2d1781182a47451bf8db666317f7dc4d3e7bacbf106ea380a0044d9f2997ac94",
+          "expected_object_digest": "f715eb5669863855273081ad73f151f201633d032a9a5e6399fa0341236f6ac5",
+          "object_type": "column",
+          "object_name": "pending_transfers.campaign_id",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "column": "campaign_id",
+            "data_type": "uuid",
+            "is_nullable": "YES"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "column": "campaign_id",
+            "data_type": "uuid",
+            "is_nullable": "YES",
+            "column_default": null,
+            "udt_name": "uuid"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "column",
+            "data_type",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Column matches",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "213",
+          "migration_filename": "213_pending_transfers_campaign_id.sql",
+          "migration_checksum": "2d1781182a47451bf8db666317f7dc4d3e7bacbf106ea380a0044d9f2997ac94",
+          "expected_object_digest": "f715eb5669863855273081ad73f151f201633d032a9a5e6399fa0341236f6ac5",
+          "object_type": "index",
+          "object_name": "idx_pending_transfers_campaign_id",
+          "expected_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_campaign_id",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "pending_transfers",
+            "index_name": "idx_pending_transfers_campaign_id",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "4aff4c5584a053b4ee196452060c19117855f80c17192b409c7b14262aeb90f6"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "b89f4bac33fdbf9bba250d5cf8b2933f5977e75b361c3ad5365442c91ab5ab79"
+    },
+    {
+      "migration_version": "214",
+      "migration_filename": "214_security_rls_fix.sql",
+      "migration_checksum": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
+      "expected_object_digest": "d10e11733fab4aa9e1df99a86c39c2d783439dd19be581d3aaeac638e7325881",
+      "expected_object_count": 10,
+      "actual_object_count": 10,
+      "objects": [
+        {
+          "migration_version": "214",
+          "migration_filename": "214_security_rls_fix.sql",
+          "migration_checksum": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
+          "expected_object_digest": "d10e11733fab4aa9e1df99a86c39c2d783439dd19be581d3aaeac638e7325881",
+          "object_type": "policy",
+          "object_name": "security_sessions:security_sessions_service_all",
+          "expected_properties": {
+            "schema": "public",
+            "table": "security_sessions",
+            "policy_name": "security_sessions_service_all",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "security_sessions",
+            "policy_name": "security_sessions_service_all",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL",
+            "roles": "{service_role}",
+            "using_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+            "check_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "214",
+          "migration_filename": "214_security_rls_fix.sql",
+          "migration_checksum": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
+          "expected_object_digest": "d10e11733fab4aa9e1df99a86c39c2d783439dd19be581d3aaeac638e7325881",
+          "object_type": "policy",
+          "object_name": "security_events:security_events_service_all",
+          "expected_properties": {
+            "schema": "public",
+            "table": "security_events",
+            "policy_name": "security_events_service_all",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "security_events",
+            "policy_name": "security_events_service_all",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL",
+            "roles": "{service_role}",
+            "using_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+            "check_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "214",
+          "migration_filename": "214_security_rls_fix.sql",
+          "migration_checksum": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
+          "expected_object_digest": "d10e11733fab4aa9e1df99a86c39c2d783439dd19be581d3aaeac638e7325881",
+          "object_type": "policy",
+          "object_name": "security_sessions:Users view own sessions",
+          "expected_properties": {
+            "schema": "public",
+            "table": "security_sessions",
+            "policy_name": "Users view own sessions",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "security_sessions",
+            "policy_name": "Users view own sessions",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{public}",
+            "using_sha256": "d234b2aea4e8dd40276f8f9b8238302e3a0796cc3111fe8c14fc455189a7d970",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "214",
+          "migration_filename": "214_security_rls_fix.sql",
+          "migration_checksum": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
+          "expected_object_digest": "d10e11733fab4aa9e1df99a86c39c2d783439dd19be581d3aaeac638e7325881",
+          "object_type": "policy",
+          "object_name": "security_events:Users view own events",
+          "expected_properties": {
+            "schema": "public",
+            "table": "security_events",
+            "policy_name": "Users view own events",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "security_events",
+            "policy_name": "Users view own events",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{public}",
+            "using_sha256": "d234b2aea4e8dd40276f8f9b8238302e3a0796cc3111fe8c14fc455189a7d970",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "214",
+          "migration_filename": "214_security_rls_fix.sql",
+          "migration_checksum": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
+          "expected_object_digest": "d10e11733fab4aa9e1df99a86c39c2d783439dd19be581d3aaeac638e7325881",
+          "object_type": "policy_drop",
+          "object_name": "security_sessions:security_sessions_user_select",
+          "expected_properties": {
+            "action": "DROP POLICY",
+            "table": "security_sessions",
+            "policy": "security_sessions_user_select"
+          },
+          "verified_properties": {
+            "dropped": true,
+            "replaced_by": "Users view own sessions"
+          },
+          "compared_property_paths": [
+            "action"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy correctly dropped and replaced",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "214",
+          "migration_filename": "214_security_rls_fix.sql",
+          "migration_checksum": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
+          "expected_object_digest": "d10e11733fab4aa9e1df99a86c39c2d783439dd19be581d3aaeac638e7325881",
+          "object_type": "policy_drop",
+          "object_name": "security_events:security_events_admin_select",
+          "expected_properties": {
+            "action": "DROP POLICY",
+            "table": "security_events",
+            "policy": "security_events_admin_select"
+          },
+          "verified_properties": {
+            "dropped": true,
+            "replaced_by": "Users view own events"
+          },
+          "compared_property_paths": [
+            "action"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy correctly dropped and replaced",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "214",
+          "migration_filename": "214_security_rls_fix.sql",
+          "migration_checksum": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
+          "expected_object_digest": "d10e11733fab4aa9e1df99a86c39c2d783439dd19be581d3aaeac638e7325881",
+          "object_type": "policy_drop",
+          "object_name": "security_sessions:security_sessions_service_all_original",
+          "expected_properties": {
+            "action": "DROP POLICY",
+            "table": "security_sessions",
+            "policy": "security_sessions_service_all"
+          },
+          "verified_properties": {
+            "dropped_and_recreated": true
+          },
+          "compared_property_paths": [
+            "action"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy dropped and recreated with WITH CHECK",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "214",
+          "migration_filename": "214_security_rls_fix.sql",
+          "migration_checksum": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
+          "expected_object_digest": "d10e11733fab4aa9e1df99a86c39c2d783439dd19be581d3aaeac638e7325881",
+          "object_type": "policy_drop",
+          "object_name": "security_events:security_events_service_all_original",
+          "expected_properties": {
+            "action": "DROP POLICY",
+            "table": "security_events",
+            "policy": "security_events_service_all"
+          },
+          "verified_properties": {
+            "dropped_and_recreated": true
+          },
+          "compared_property_paths": [
+            "action"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy dropped and recreated with WITH CHECK",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "214",
+          "migration_filename": "214_security_rls_fix.sql",
+          "migration_checksum": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
+          "expected_object_digest": "d10e11733fab4aa9e1df99a86c39c2d783439dd19be581d3aaeac638e7325881",
+          "object_type": "policy_drop",
+          "object_name": "security_sessions:Users view own sessions_pre_drop",
+          "expected_properties": {
+            "action": "DROP POLICY IF EXISTS",
+            "table": "security_sessions",
+            "policy": "Users view own sessions"
+          },
+          "verified_properties": {
+            "idempotent": true
+          },
+          "compared_property_paths": [
+            "action"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Idempotent pre-drop before recreation",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "214",
+          "migration_filename": "214_security_rls_fix.sql",
+          "migration_checksum": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
+          "expected_object_digest": "d10e11733fab4aa9e1df99a86c39c2d783439dd19be581d3aaeac638e7325881",
+          "object_type": "policy_drop",
+          "object_name": "security_events:Users view own events_pre_drop",
+          "expected_properties": {
+            "action": "DROP POLICY IF EXISTS",
+            "table": "security_events",
+            "policy": "Users view own events"
+          },
+          "verified_properties": {
+            "idempotent": true
+          },
+          "compared_property_paths": [
+            "action"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Idempotent pre-drop before recreation",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "5e566c4124e8b836b71d4ac3e7a24520742b3eeff2e967f9449e75f7a84adf17"
+    },
+    {
+      "migration_version": "215",
+      "migration_filename": "215_annual_billing.sql",
+      "migration_checksum": "adaa51580c8f1da2286202db8927c7b692a49a46b6abed46d5ea69e0d5fb5ca6",
+      "expected_object_digest": "59c6336d65956ffec783502c0358af2e5724bece8c5076f5d3b353e0accd1f20",
+      "expected_object_count": 1,
+      "actual_object_count": 1,
+      "objects": [
+        {
+          "migration_version": "215",
+          "migration_filename": "215_annual_billing.sql",
+          "migration_checksum": "adaa51580c8f1da2286202db8927c7b692a49a46b6abed46d5ea69e0d5fb5ca6",
+          "expected_object_digest": "59c6336d65956ffec783502c0358af2e5724bece8c5076f5d3b353e0accd1f20",
+          "object_type": "constraint",
+          "object_name": "subscriptions:chk_billing_interval",
+          "expected_properties": {
+            "schema": "public",
+            "table": "subscriptions",
+            "constraint_name": "chk_billing_interval",
+            "constraint_type": "c"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "subscriptions",
+            "constraint_name": "chk_billing_interval",
+            "constraint_type": "c",
+            "is_validated": true,
+            "def_sha256": "5fac7c84b9c237c7c24e7834f0aa445d9436aab219ec94f692677cda48770c0a",
+            "constraint_def": "CHECK ((billing_interval = ANY (ARRAY['month'::text, 'year'::text])))"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "constraint_name",
+            "constraint_type"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Constraint matches",
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "1e107a936188228c2d94fad7e8469948dc7141ffe2a36c9786ba565e61ab52bc"
+    },
+    {
+      "migration_version": "218",
+      "migration_filename": "218_resellers_admin_rls.sql",
+      "migration_checksum": "34cab4cb057fe106b780c6df4e12968ba80fbf332d110d6859daea937a20981a",
+      "expected_object_digest": "af9eb1730f360fbc059b5dac386c783ce8904e3a2f7a02f4fef5dec388ed56d5",
+      "expected_object_count": 1,
+      "actual_object_count": 1,
+      "objects": [
+        {
+          "migration_version": "218",
+          "migration_filename": "218_resellers_admin_rls.sql",
+          "migration_checksum": "34cab4cb057fe106b780c6df4e12968ba80fbf332d110d6859daea937a20981a",
+          "expected_object_digest": "af9eb1730f360fbc059b5dac386c783ce8904e3a2f7a02f4fef5dec388ed56d5",
+          "object_type": "policy",
+          "object_name": "resellers:Admin manages resellers",
+          "expected_properties": {
+            "schema": "public",
+            "table": "resellers",
+            "policy_name": "Admin manages resellers",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "resellers",
+            "policy_name": "Admin manages resellers",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL",
+            "roles": "{public}",
+            "using_sha256": "9dc70a2e397fdc7d377c211013d980ad5a52176401f604d5af2cff6155dfeb9d",
+            "check_sha256": "9dc70a2e397fdc7d377c211013d980ad5a52176401f604d5af2cff6155dfeb9d"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "dc6f0b48d8571d82c88291c5d202b768fddc1bd44c24655e37d0d8bc975d0f77"
+    },
+    {
+      "migration_version": "219",
+      "migration_filename": "219_admin_rls_missing_tables.sql",
+      "migration_checksum": "7fb8e37f7e052a015a44454a692ceb09dccd55a6755179aaa6f7325bcfea6cb7",
+      "expected_object_digest": "c9b240a94dcea8c58202577cef491b7ab1d55fac0e87476663571f9cb48f13c2",
+      "expected_object_count": 5,
+      "actual_object_count": 5,
+      "objects": [
+        {
+          "migration_version": "219",
+          "migration_filename": "219_admin_rls_missing_tables.sql",
+          "migration_checksum": "7fb8e37f7e052a015a44454a692ceb09dccd55a6755179aaa6f7325bcfea6cb7",
+          "expected_object_digest": "c9b240a94dcea8c58202577cef491b7ab1d55fac0e87476663571f9cb48f13c2",
+          "object_type": "policy",
+          "object_name": "event_tickets:Admin reads event tickets",
+          "expected_properties": {
+            "schema": "public",
+            "table": "event_tickets",
+            "policy_name": "Admin reads event tickets",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "event_tickets",
+            "policy_name": "Admin reads event tickets",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{public}"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy confirmed present in production via supplementary query",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:58.107Z"
+        },
+        {
+          "migration_version": "219",
+          "migration_filename": "219_admin_rls_missing_tables.sql",
+          "migration_checksum": "7fb8e37f7e052a015a44454a692ceb09dccd55a6755179aaa6f7325bcfea6cb7",
+          "expected_object_digest": "c9b240a94dcea8c58202577cef491b7ab1d55fac0e87476663571f9cb48f13c2",
+          "object_type": "policy",
+          "object_name": "event_invites:Admin reads event invites",
+          "expected_properties": {
+            "schema": "public",
+            "table": "event_invites",
+            "policy_name": "Admin reads event invites",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "event_invites",
+            "policy_name": "Admin reads event invites",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{public}"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy confirmed present in production via supplementary query",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:58.107Z"
+        },
+        {
+          "migration_version": "219",
+          "migration_filename": "219_admin_rls_missing_tables.sql",
+          "migration_checksum": "7fb8e37f7e052a015a44454a692ceb09dccd55a6755179aaa6f7325bcfea6cb7",
+          "expected_object_digest": "c9b240a94dcea8c58202577cef491b7ab1d55fac0e87476663571f9cb48f13c2",
+          "object_type": "policy",
+          "object_name": "invoices:Admin reads invoices",
+          "expected_properties": {
+            "schema": "public",
+            "table": "invoices",
+            "policy_name": "Admin reads invoices",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "invoices",
+            "policy_name": "Admin reads invoices",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{public}"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy confirmed present in production via supplementary query",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:58.107Z"
+        },
+        {
+          "migration_version": "219",
+          "migration_filename": "219_admin_rls_missing_tables.sql",
+          "migration_checksum": "7fb8e37f7e052a015a44454a692ceb09dccd55a6755179aaa6f7325bcfea6cb7",
+          "expected_object_digest": "c9b240a94dcea8c58202577cef491b7ab1d55fac0e87476663571f9cb48f13c2",
+          "object_type": "policy",
+          "object_name": "parties:Admin reads parties",
+          "expected_properties": {
+            "schema": "public",
+            "table": "parties",
+            "policy_name": "Admin reads parties",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "parties",
+            "policy_name": "Admin reads parties",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{public}"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy confirmed present in production via supplementary query",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:58.107Z"
+        },
+        {
+          "migration_version": "219",
+          "migration_filename": "219_admin_rls_missing_tables.sql",
+          "migration_checksum": "7fb8e37f7e052a015a44454a692ceb09dccd55a6755179aaa6f7325bcfea6cb7",
+          "expected_object_digest": "c9b240a94dcea8c58202577cef491b7ab1d55fac0e87476663571f9cb48f13c2",
+          "object_type": "policy",
+          "object_name": "reservations:Admin reads reservations",
+          "expected_properties": {
+            "schema": "public",
+            "table": "reservations",
+            "policy_name": "Admin reads reservations",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "reservations",
+            "policy_name": "Admin reads reservations",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{public}"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy confirmed present in production via supplementary query",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:58.107Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "9ad6c37e942de108fa5f282b89841e31e39ecc307960423eb593617891f8c2f6"
+    },
+    {
+      "migration_version": "220",
+      "migration_filename": "220_profiles_admin_insert.sql",
+      "migration_checksum": "38bc5ab211329a3adb0fd0dcf70be7289c3aaff288cc8d07a9793b759fa56092",
+      "expected_object_digest": "6384f55a4d7e840d641f6e3d0b47de4b3ee234a206c82ab44192f990b484be8c",
+      "expected_object_count": 1,
+      "actual_object_count": 1,
+      "objects": [
+        {
+          "migration_version": "220",
+          "migration_filename": "220_profiles_admin_insert.sql",
+          "migration_checksum": "38bc5ab211329a3adb0fd0dcf70be7289c3aaff288cc8d07a9793b759fa56092",
+          "expected_object_digest": "6384f55a4d7e840d641f6e3d0b47de4b3ee234a206c82ab44192f990b484be8c",
+          "object_type": "policy",
+          "object_name": "profiles:Admin inserts team profiles",
+          "expected_properties": {
+            "schema": "public",
+            "table": "profiles",
+            "policy_name": "Admin inserts team profiles",
+            "permissive": "PERMISSIVE",
+            "cmd": "INSERT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "profiles",
+            "policy_name": "Admin inserts team profiles",
+            "permissive": "PERMISSIVE",
+            "cmd": "INSERT",
+            "roles": "{public}",
+            "using_sha256": null,
+            "check_sha256": "fd69c4925a244d275290af2da10e755b1a222090c875823103aee6d450552aea"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "4980a7ca7209d008f4bf48cfb4dc864858bd6a61b0095aaccb12301e5d60cc3c"
+    },
+    {
+      "migration_version": "221",
+      "migration_filename": "221_admin_permissions.sql",
+      "migration_checksum": "c187d35905bbe889863da7bf9deed3fdba653b406d92358f3f13b255f9715848",
+      "expected_object_digest": "35aa2ced6c9b2b9af47e5e21c87a8b53f498f5cf755fb9a3f606c1dad522f977",
+      "expected_object_count": 4,
+      "actual_object_count": 4,
+      "objects": [
+        {
+          "migration_version": "221",
+          "migration_filename": "221_admin_permissions.sql",
+          "migration_checksum": "c187d35905bbe889863da7bf9deed3fdba653b406d92358f3f13b255f9715848",
+          "expected_object_digest": "35aa2ced6c9b2b9af47e5e21c87a8b53f498f5cf755fb9a3f606c1dad522f977",
+          "object_type": "table",
+          "object_name": "admin_role_permissions",
+          "expected_properties": {
+            "schema": "public",
+            "table": "admin_role_permissions",
+            "exists": true,
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "admin_role_permissions",
+            "exists": true,
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "exists",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Table exists with RLS enabled",
+          "verification_source": "information_schema.columns+pg_class",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "221",
+          "migration_filename": "221_admin_permissions.sql",
+          "migration_checksum": "c187d35905bbe889863da7bf9deed3fdba653b406d92358f3f13b255f9715848",
+          "expected_object_digest": "35aa2ced6c9b2b9af47e5e21c87a8b53f498f5cf755fb9a3f606c1dad522f977",
+          "object_type": "rls",
+          "object_name": "admin_role_permissions:rls",
+          "expected_properties": {
+            "schema": "public",
+            "table": "admin_role_permissions",
+            "relrowsecurity": true,
+            "relforcerowsecurity": false
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "admin_role_permissions",
+            "relrowsecurity": true,
+            "relforcerowsecurity": false
+          },
+          "compared_property_paths": [
+            "relrowsecurity"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "RLS enabled as expected",
+          "verification_source": "pg_class",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "221",
+          "migration_filename": "221_admin_permissions.sql",
+          "migration_checksum": "c187d35905bbe889863da7bf9deed3fdba653b406d92358f3f13b255f9715848",
+          "expected_object_digest": "35aa2ced6c9b2b9af47e5e21c87a8b53f498f5cf755fb9a3f606c1dad522f977",
+          "object_type": "policy",
+          "object_name": "admin_role_permissions:Admin manages permissions",
+          "expected_properties": {
+            "schema": "public",
+            "table": "admin_role_permissions",
+            "policy_name": "Admin manages permissions",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "admin_role_permissions",
+            "policy_name": "Admin manages permissions",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL",
+            "roles": "{public}",
+            "using_sha256": "9dc70a2e397fdc7d377c211013d980ad5a52176401f604d5af2cff6155dfeb9d",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "221",
+          "migration_filename": "221_admin_permissions.sql",
+          "migration_checksum": "c187d35905bbe889863da7bf9deed3fdba653b406d92358f3f13b255f9715848",
+          "expected_object_digest": "35aa2ced6c9b2b9af47e5e21c87a8b53f498f5cf755fb9a3f606c1dad522f977",
+          "object_type": "policy",
+          "object_name": "admin_role_permissions:Admin roles read permissions",
+          "expected_properties": {
+            "schema": "public",
+            "table": "admin_role_permissions",
+            "policy_name": "Admin roles read permissions",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "admin_role_permissions",
+            "policy_name": "Admin roles read permissions",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{public}",
+            "using_sha256": "673a60cffcf4dd2eb7553e79f65ef7a0944f99dd4cc1478102df1b04c7fd0d43",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "788c6417f561fa2db04ee11c1f6e7b275c4e186fac4918294885fc29d8d5b153"
+    },
+    {
+      "migration_version": "223",
+      "migration_filename": "223_security_fix_exposed_tables.sql",
+      "migration_checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+      "expected_object_digest": "fc1933adf4c5ea65ae324dfe6e97d13f1252510db51f64bff87aff6a3c535450",
+      "expected_object_count": 12,
+      "actual_object_count": 12,
+      "objects": [
+        {
+          "migration_version": "223",
+          "migration_filename": "223_security_fix_exposed_tables.sql",
+          "migration_checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+          "expected_object_digest": "fc1933adf4c5ea65ae324dfe6e97d13f1252510db51f64bff87aff6a3c535450",
+          "object_type": "view",
+          "object_name": "whatsapp_channels_public",
+          "expected_properties": {
+            "schema": "public",
+            "view_name": "whatsapp_channels_public",
+            "exists": true
+          },
+          "verified_properties": {
+            "schema": "public",
+            "view_name": "whatsapp_channels_public",
+            "def_sha256": "ffd2211dbaec9651a04dc37003671b89754163c0e5599db07935eb232278a343",
+            "exists": true
+          },
+          "compared_property_paths": [
+            "schema",
+            "view_name",
+            "exists"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "View exists",
+          "verification_source": "pg_views",
+          "query_category": "view_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z",
+          "lineage": {
+            "later_migration": "293",
+            "later_filename": "293_fix_production_table_exposure.sql",
+            "reason": "Views and grants redefined, policies further restricted"
+          }
+        },
+        {
+          "migration_version": "223",
+          "migration_filename": "223_security_fix_exposed_tables.sql",
+          "migration_checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+          "expected_object_digest": "fc1933adf4c5ea65ae324dfe6e97d13f1252510db51f64bff87aff6a3c535450",
+          "object_type": "grant",
+          "object_name": "view:whatsapp_channels_public:anon:SELECT",
+          "expected_properties": {
+            "schema": "public",
+            "table": "whatsapp_channels_public",
+            "grantee": "anon",
+            "privilege": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "whatsapp_channels_public",
+            "grantee": "anon",
+            "privilege": "SELECT"
+          },
+          "compared_property_paths": [
+            "grantee",
+            "privilege"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "View grant exists",
+          "verification_source": "information_schema.role_table_grants",
+          "query_category": "grant_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "223",
+          "migration_filename": "223_security_fix_exposed_tables.sql",
+          "migration_checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+          "expected_object_digest": "fc1933adf4c5ea65ae324dfe6e97d13f1252510db51f64bff87aff6a3c535450",
+          "object_type": "grant",
+          "object_name": "view:whatsapp_channels_public:authenticated:SELECT",
+          "expected_properties": {
+            "schema": "public",
+            "table": "whatsapp_channels_public",
+            "grantee": "authenticated",
+            "privilege": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "whatsapp_channels_public",
+            "grantee": "authenticated",
+            "privilege": "SELECT"
+          },
+          "compared_property_paths": [
+            "grantee",
+            "privilege"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "View grant exists",
+          "verification_source": "information_schema.role_table_grants",
+          "query_category": "grant_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "223",
+          "migration_filename": "223_security_fix_exposed_tables.sql",
+          "migration_checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+          "expected_object_digest": "fc1933adf4c5ea65ae324dfe6e97d13f1252510db51f64bff87aff6a3c535450",
+          "object_type": "view",
+          "object_name": "businesses_public",
+          "expected_properties": {
+            "schema": "public",
+            "view_name": "businesses_public",
+            "exists": true
+          },
+          "verified_properties": {
+            "schema": "public",
+            "view_name": "businesses_public",
+            "def_sha256": "1a6ad13c8f2c794199622e477ac69d232d6a8edcd382cb9c99642eab61f48ed6",
+            "exists": true
+          },
+          "compared_property_paths": [
+            "schema",
+            "view_name",
+            "exists"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "View exists",
+          "verification_source": "pg_views",
+          "query_category": "view_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z",
+          "lineage": {
+            "later_migration": "293",
+            "later_filename": "293_fix_production_table_exposure.sql",
+            "reason": "Views and grants redefined, policies further restricted"
+          }
+        },
+        {
+          "migration_version": "223",
+          "migration_filename": "223_security_fix_exposed_tables.sql",
+          "migration_checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+          "expected_object_digest": "fc1933adf4c5ea65ae324dfe6e97d13f1252510db51f64bff87aff6a3c535450",
+          "object_type": "grant",
+          "object_name": "view:businesses_public:anon:SELECT",
+          "expected_properties": {
+            "schema": "public",
+            "table": "businesses_public",
+            "grantee": "anon",
+            "privilege": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "businesses_public",
+            "grantee": "anon",
+            "privilege": "SELECT"
+          },
+          "compared_property_paths": [
+            "grantee",
+            "privilege"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "View grant exists",
+          "verification_source": "information_schema.role_table_grants",
+          "query_category": "grant_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "223",
+          "migration_filename": "223_security_fix_exposed_tables.sql",
+          "migration_checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+          "expected_object_digest": "fc1933adf4c5ea65ae324dfe6e97d13f1252510db51f64bff87aff6a3c535450",
+          "object_type": "grant",
+          "object_name": "view:businesses_public:authenticated:SELECT",
+          "expected_properties": {
+            "schema": "public",
+            "table": "businesses_public",
+            "grantee": "authenticated",
+            "privilege": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "businesses_public",
+            "grantee": "authenticated",
+            "privilege": "SELECT"
+          },
+          "compared_property_paths": [
+            "grantee",
+            "privilege"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "View grant exists",
+          "verification_source": "information_schema.role_table_grants",
+          "query_category": "grant_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "223",
+          "migration_filename": "223_security_fix_exposed_tables.sql",
+          "migration_checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+          "expected_object_digest": "fc1933adf4c5ea65ae324dfe6e97d13f1252510db51f64bff87aff6a3c535450",
+          "object_type": "policy",
+          "object_name": "processed_webhook_events:processed_webhook_events_service_only",
+          "expected_properties": {
+            "schema": "public",
+            "table": "processed_webhook_events",
+            "policy_name": "processed_webhook_events_service_only",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "processed_webhook_events",
+            "policy_name": "processed_webhook_events_service_only",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL",
+            "roles": "{service_role}",
+            "using_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+            "check_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z",
+          "lineage": {
+            "later_migration": "293",
+            "later_filename": "293_fix_production_table_exposure.sql",
+            "reason": "Views and grants redefined, policies further restricted"
+          }
+        },
+        {
+          "migration_version": "223",
+          "migration_filename": "223_security_fix_exposed_tables.sql",
+          "migration_checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+          "expected_object_digest": "fc1933adf4c5ea65ae324dfe6e97d13f1252510db51f64bff87aff6a3c535450",
+          "object_type": "policy",
+          "object_name": "businesses:public_read_active_businesses",
+          "expected_properties": {
+            "schema": "public",
+            "table": "businesses",
+            "policy_name": "public_read_active_businesses",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": null,
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [
+            {
+              "path": "existence",
+              "expected": "exists",
+              "actual": "missing"
+            }
+          ],
+          "property_comparison_result": "superseded",
+          "comparison_basis": "Policy dropped/replaced by migration 293",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z",
+          "lineage": {
+            "later_migration": "293",
+            "later_filename": "293_fix_production_table_exposure.sql",
+            "reason": "Policy dropped by 293 and not recreated with that name"
+          }
+        },
+        {
+          "migration_version": "223",
+          "migration_filename": "223_security_fix_exposed_tables.sql",
+          "migration_checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+          "expected_object_digest": "fc1933adf4c5ea65ae324dfe6e97d13f1252510db51f64bff87aff6a3c535450",
+          "object_type": "policy",
+          "object_name": "bot_keywords:bot_keywords_service_read",
+          "expected_properties": {
+            "schema": "public",
+            "table": "bot_keywords",
+            "policy_name": "bot_keywords_service_read",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "bot_keywords",
+            "policy_name": "bot_keywords_service_read",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{service_role}",
+            "using_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "223",
+          "migration_filename": "223_security_fix_exposed_tables.sql",
+          "migration_checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+          "expected_object_digest": "fc1933adf4c5ea65ae324dfe6e97d13f1252510db51f64bff87aff6a3c535450",
+          "object_type": "policy",
+          "object_name": "bot_keywords:bot_keywords_owner_read",
+          "expected_properties": {
+            "schema": "public",
+            "table": "bot_keywords",
+            "policy_name": "bot_keywords_owner_read",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "bot_keywords",
+            "policy_name": "bot_keywords_owner_read",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{authenticated}",
+            "using_sha256": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "223",
+          "migration_filename": "223_security_fix_exposed_tables.sql",
+          "migration_checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+          "expected_object_digest": "fc1933adf4c5ea65ae324dfe6e97d13f1252510db51f64bff87aff6a3c535450",
+          "object_type": "policy_drop",
+          "object_name": "whatsapp_channels:shared_channels_public_read",
+          "expected_properties": {
+            "action": "DROP POLICY",
+            "table": "whatsapp_channels",
+            "policy": "shared_channels_public_read"
+          },
+          "verified_properties": {
+            "dropped": true,
+            "not_present_in_production": true
+          },
+          "compared_property_paths": [
+            "action"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy correctly dropped",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "223",
+          "migration_filename": "223_security_fix_exposed_tables.sql",
+          "migration_checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
+          "expected_object_digest": "fc1933adf4c5ea65ae324dfe6e97d13f1252510db51f64bff87aff6a3c535450",
+          "object_type": "policy_drop",
+          "object_name": "processed_webhook_events:processed_webhook_events_service_all",
+          "expected_properties": {
+            "action": "DROP POLICY",
+            "table": "processed_webhook_events",
+            "policy": "processed_webhook_events_service_all"
+          },
+          "verified_properties": {
+            "dropped": true,
+            "not_present_in_production": true
+          },
+          "compared_property_paths": [
+            "action"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy correctly dropped",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "66fabc6a3eecd03c9bb0e893406f6e82c0ec59a9f5cc90e2e1fe5e186917c1eb"
+    },
+    {
+      "migration_version": "224",
+      "migration_filename": "224_event_tickets_reminder_sent.sql",
+      "migration_checksum": "f7b3c641978afe2ad35f6dd683a6db84b4c44f3fcb3f204d594b769df777ace5",
+      "expected_object_digest": "adbcffc50fa44ec3f7b026d47cab0839cebc0cbb4ab3a3c42bebc390f7488a9d",
+      "expected_object_count": 2,
+      "actual_object_count": 2,
+      "objects": [
+        {
+          "migration_version": "224",
+          "migration_filename": "224_event_tickets_reminder_sent.sql",
+          "migration_checksum": "f7b3c641978afe2ad35f6dd683a6db84b4c44f3fcb3f204d594b769df777ace5",
+          "expected_object_digest": "adbcffc50fa44ec3f7b026d47cab0839cebc0cbb4ab3a3c42bebc390f7488a9d",
+          "object_type": "column",
+          "object_name": "event_tickets.reminder_sent",
+          "expected_properties": {
+            "schema": "public",
+            "table": "event_tickets",
+            "column": "reminder_sent",
+            "data_type": "boolean",
+            "is_nullable": "NO"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "event_tickets",
+            "column": "reminder_sent",
+            "data_type": "boolean",
+            "is_nullable": "NO",
+            "column_default": "false",
+            "udt_name": "bool"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "column",
+            "data_type",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Column matches",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "224",
+          "migration_filename": "224_event_tickets_reminder_sent.sql",
+          "migration_checksum": "f7b3c641978afe2ad35f6dd683a6db84b4c44f3fcb3f204d594b769df777ace5",
+          "expected_object_digest": "adbcffc50fa44ec3f7b026d47cab0839cebc0cbb4ab3a3c42bebc390f7488a9d",
+          "object_type": "index",
+          "object_name": "idx_event_tickets_reminder_pending",
+          "expected_properties": {
+            "schema": "public",
+            "table": "event_tickets",
+            "index_name": "idx_event_tickets_reminder_pending",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "event_tickets",
+            "index_name": "idx_event_tickets_reminder_pending",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "2a73b51c3abeb4f88db18653fc0b7cbe4c6ba76f9d7bbac089f3d49ba75c52d8"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "332faa0e25b765b6d0bfbf3699d229787c8220aa13636a2895d8e36615da0b95"
+    },
+    {
+      "migration_version": "225",
+      "migration_filename": "225_flow_dropoff_analytics.sql",
+      "migration_checksum": "0cf4b014929fa2e67b2a1c59bfe01a56d25c8f54f7b510800980adb1829fa3de",
+      "expected_object_digest": "04805d75c15ec3feecd3d4322d16c316a5e16fda9136c91081932391266a1b11",
+      "expected_object_count": 8,
+      "actual_object_count": 8,
+      "objects": [
+        {
+          "migration_version": "225",
+          "migration_filename": "225_flow_dropoff_analytics.sql",
+          "migration_checksum": "0cf4b014929fa2e67b2a1c59bfe01a56d25c8f54f7b510800980adb1829fa3de",
+          "expected_object_digest": "04805d75c15ec3feecd3d4322d16c316a5e16fda9136c91081932391266a1b11",
+          "object_type": "table",
+          "object_name": "flow_dropoffs",
+          "expected_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "exists": true,
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "exists": true,
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "exists",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Table exists with RLS enabled",
+          "verification_source": "information_schema.columns+pg_class",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "225",
+          "migration_filename": "225_flow_dropoff_analytics.sql",
+          "migration_checksum": "0cf4b014929fa2e67b2a1c59bfe01a56d25c8f54f7b510800980adb1829fa3de",
+          "expected_object_digest": "04805d75c15ec3feecd3d4322d16c316a5e16fda9136c91081932391266a1b11",
+          "object_type": "index",
+          "object_name": "idx_flow_dropoffs_business",
+          "expected_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "index_name": "idx_flow_dropoffs_business",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "index_name": "idx_flow_dropoffs_business",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "d329ece714100bfba4329421a1cb8f81d2ef2cb7106e11f9958bd392b93912d7"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "225",
+          "migration_filename": "225_flow_dropoff_analytics.sql",
+          "migration_checksum": "0cf4b014929fa2e67b2a1c59bfe01a56d25c8f54f7b510800980adb1829fa3de",
+          "expected_object_digest": "04805d75c15ec3feecd3d4322d16c316a5e16fda9136c91081932391266a1b11",
+          "object_type": "index",
+          "object_name": "idx_flow_dropoffs_reason",
+          "expected_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "index_name": "idx_flow_dropoffs_reason",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "index_name": "idx_flow_dropoffs_reason",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "f68a59eadd81f5bca28476ff78e9dadeb1b55ed7d3e46908bb37eba7e1816d78"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "225",
+          "migration_filename": "225_flow_dropoff_analytics.sql",
+          "migration_checksum": "0cf4b014929fa2e67b2a1c59bfe01a56d25c8f54f7b510800980adb1829fa3de",
+          "expected_object_digest": "04805d75c15ec3feecd3d4322d16c316a5e16fda9136c91081932391266a1b11",
+          "object_type": "index",
+          "object_name": "idx_flow_dropoffs_step",
+          "expected_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "index_name": "idx_flow_dropoffs_step",
+            "is_unique": false,
+            "access_method": "btree"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "index_name": "idx_flow_dropoffs_step",
+            "is_unique": false,
+            "access_method": "btree",
+            "def_sha256": "be2fd1ede64246e6d0ad7ff290f49720612a6b2848828543b90a22769fc9a924"
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "index_name",
+            "is_unique",
+            "access_method"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Index matches",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "225",
+          "migration_filename": "225_flow_dropoff_analytics.sql",
+          "migration_checksum": "0cf4b014929fa2e67b2a1c59bfe01a56d25c8f54f7b510800980adb1829fa3de",
+          "expected_object_digest": "04805d75c15ec3feecd3d4322d16c316a5e16fda9136c91081932391266a1b11",
+          "object_type": "rls",
+          "object_name": "flow_dropoffs:rls",
+          "expected_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "relrowsecurity": true,
+            "relforcerowsecurity": false
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "relrowsecurity": true,
+            "relforcerowsecurity": false
+          },
+          "compared_property_paths": [
+            "relrowsecurity"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "RLS enabled as expected",
+          "verification_source": "pg_class",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "225",
+          "migration_filename": "225_flow_dropoff_analytics.sql",
+          "migration_checksum": "0cf4b014929fa2e67b2a1c59bfe01a56d25c8f54f7b510800980adb1829fa3de",
+          "expected_object_digest": "04805d75c15ec3feecd3d4322d16c316a5e16fda9136c91081932391266a1b11",
+          "object_type": "policy",
+          "object_name": "flow_dropoffs:owners_read_own_dropoffs",
+          "expected_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "policy_name": "owners_read_own_dropoffs",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "policy_name": "owners_read_own_dropoffs",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{public}",
+            "using_sha256": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "225",
+          "migration_filename": "225_flow_dropoff_analytics.sql",
+          "migration_checksum": "0cf4b014929fa2e67b2a1c59bfe01a56d25c8f54f7b510800980adb1829fa3de",
+          "expected_object_digest": "04805d75c15ec3feecd3d4322d16c316a5e16fda9136c91081932391266a1b11",
+          "object_type": "policy",
+          "object_name": "flow_dropoffs:service_role_all_dropoffs",
+          "expected_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "policy_name": "service_role_all_dropoffs",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "policy_name": "service_role_all_dropoffs",
+            "permissive": "PERMISSIVE",
+            "cmd": "ALL",
+            "roles": "{public}",
+            "using_sha256": "4bd018f4e5d067b85c224e28ff0652af0a969c5e847376bb2a550453437923a7",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        },
+        {
+          "migration_version": "225",
+          "migration_filename": "225_flow_dropoff_analytics.sql",
+          "migration_checksum": "0cf4b014929fa2e67b2a1c59bfe01a56d25c8f54f7b510800980adb1829fa3de",
+          "expected_object_digest": "04805d75c15ec3feecd3d4322d16c316a5e16fda9136c91081932391266a1b11",
+          "object_type": "policy",
+          "object_name": "flow_dropoffs:admin_read_dropoffs",
+          "expected_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "policy_name": "admin_read_dropoffs",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT"
+          },
+          "verified_properties": {
+            "schema": "public",
+            "table": "flow_dropoffs",
+            "policy_name": "admin_read_dropoffs",
+            "permissive": "PERMISSIVE",
+            "cmd": "SELECT",
+            "roles": "{public}",
+            "using_sha256": "d8fb5e61d1eefe28234ad86732a3ecc821fc02aaf4d4769976028d575d5e3103",
+            "check_sha256": null
+          },
+          "compared_property_paths": [
+            "schema",
+            "table",
+            "policy_name",
+            "permissive",
+            "cmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "Policy matches",
+          "verification_source": "pg_policies",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T12:01:50.515Z"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "migration_evidence_digest": "67534d5cce77813f72c5fb2ab973945c28b96984f0ef48ceba5c9705aac6cc8b"
+    }
+  ],
+  "classification_counts": {
+    "208": "VERIFIED_APPLIED_UNTRACKED",
+    "209": "VERIFIED_APPLIED_UNTRACKED",
+    "210": "VERIFIED_APPLIED_UNTRACKED",
+    "211": "VERIFIED_APPLIED_UNTRACKED",
+    "212": "VERIFIED_APPLIED_UNTRACKED",
+    "213": "VERIFIED_APPLIED_UNTRACKED",
+    "214": "VERIFIED_APPLIED_UNTRACKED",
+    "215": "VERIFIED_APPLIED_UNTRACKED",
+    "218": "VERIFIED_APPLIED_UNTRACKED",
+    "219": "VERIFIED_APPLIED_UNTRACKED",
+    "220": "VERIFIED_APPLIED_UNTRACKED",
+    "221": "VERIFIED_APPLIED_UNTRACKED",
+    "223": "VERIFIED_APPLIED_UNTRACKED",
+    "224": "VERIFIED_APPLIED_UNTRACKED",
+    "225": "VERIFIED_APPLIED_UNTRACKED"
+  },
+  "exact_match_count": 82,
+  "equivalent_stricter_count": 0,
+  "superseded_count": 1,
+  "failed_count": 0,
+  "ambiguous_count": 0,
+  "compared_property_path_count": 341,
+  "pre_verification_history_summary": {
+    "total_remote_count": 179,
+    "range_101_246_count": 83,
+    "migration_298_count": 1
+  },
+  "pre_verification_occurrence_map": {
+    "208": 0,
+    "209": 0,
+    "210": 0,
+    "211": 0,
+    "212": 0,
+    "213": 0,
+    "214": 0,
+    "215": 0,
+    "218": 0,
+    "219": 0,
+    "220": 0,
+    "221": 0,
+    "223": 0,
+    "224": 0,
+    "225": 0
+  },
+  "pre_verification_ordered_snapshot": [
+    "001",
+    "002",
+    "003",
+    "004",
+    "005",
+    "006",
+    "007",
+    "008",
+    "009",
+    "010",
+    "011",
+    "012",
+    "013",
+    "014",
+    "015",
+    "016",
+    "017",
+    "018",
+    "019",
+    "020",
+    "021",
+    "022",
+    "023",
+    "024",
+    "025",
+    "026",
+    "027",
+    "028",
+    "029",
+    "030",
+    "031",
+    "032",
+    "033",
+    "034",
+    "035",
+    "036",
+    "037",
+    "038",
+    "039",
+    "040",
+    "041",
+    "042",
+    "056",
+    "057",
+    "058",
+    "059",
+    "060",
+    "061",
+    "062",
+    "063",
+    "064",
+    "065",
+    "066",
+    "067",
+    "068",
+    "069",
+    "070",
+    "071",
+    "072",
+    "073",
+    "074",
+    "075",
+    "076",
+    "077",
+    "078",
+    "079",
+    "080",
+    "081",
+    "082",
+    "083",
+    "084",
+    "085",
+    "086",
+    "087",
+    "088",
+    "089",
+    "090",
+    "091",
+    "092",
+    "093",
+    "094",
+    "095",
+    "096",
+    "097",
+    "098",
+    "099",
+    "100",
+    "102",
+    "103",
+    "104",
+    "106",
+    "108",
+    "109",
+    "110",
+    "111",
+    "112",
+    "113",
+    "114",
+    "115",
+    "116",
+    "117",
+    "118",
+    "119",
+    "120",
+    "121",
+    "123",
+    "124",
+    "125",
+    "127",
+    "128",
+    "129",
+    "131",
+    "132",
+    "133",
+    "134",
+    "135",
+    "136",
+    "137",
+    "138",
+    "139",
+    "140",
+    "141",
+    "142",
+    "143",
+    "144",
+    "145",
+    "146",
+    "147",
+    "148",
+    "149",
+    "150",
+    "151",
+    "152",
+    "153",
+    "154",
+    "155",
+    "156",
+    "157",
+    "158",
+    "159",
+    "161",
+    "162",
+    "165",
+    "166",
+    "167",
+    "168",
+    "169",
+    "170",
+    "171",
+    "172",
+    "173",
+    "174",
+    "175",
+    "176",
+    "177",
+    "178",
+    "179",
+    "180",
+    "181",
+    "182",
+    "183",
+    "184",
+    "185",
+    "186",
+    "188",
+    "189",
+    "190",
+    "199",
+    "200",
+    "244",
+    "247",
+    "248",
+    "292",
+    "293",
+    "294",
+    "295",
+    "296",
+    "297",
+    "298"
+  ],
+  "safety_confirmations": {
+    "all_queries_read_only": true,
+    "metadata_catalogues_only": true,
+    "no_record_contents_returned": true,
+    "no_customer_records_accessed": true,
+    "no_write_query_executed": true,
+    "no_migration_sql_executed": true,
+    "no_migration_repair": true,
+    "no_migration_up": true,
+    "no_supabase_db_push": true,
+    "no_management_api_write": true,
+    "no_schema_or_data_changed": true,
+    "no_migration_history_changed": true,
+    "no_repository_change": true,
+    "no_commit_push_or_pr": true,
+    "no_issue_53_mutation": true,
+    "no_deployment_occurred": true,
+    "no_token_recorded": true,
+    "later_batches_not_started": true
+  },
+  "verified_at": "2026-07-30T12:01:50.515Z",
+  "post_verification_history_summary": {
+    "total_remote_count": 179,
+    "range_101_246_count": 83,
+    "migration_298_count": 1
+  },
+  "post_verification_ordered_snapshot": [
+    "001",
+    "002",
+    "003",
+    "004",
+    "005",
+    "006",
+    "007",
+    "008",
+    "009",
+    "010",
+    "011",
+    "012",
+    "013",
+    "014",
+    "015",
+    "016",
+    "017",
+    "018",
+    "019",
+    "020",
+    "021",
+    "022",
+    "023",
+    "024",
+    "025",
+    "026",
+    "027",
+    "028",
+    "029",
+    "030",
+    "031",
+    "032",
+    "033",
+    "034",
+    "035",
+    "036",
+    "037",
+    "038",
+    "039",
+    "040",
+    "041",
+    "042",
+    "056",
+    "057",
+    "058",
+    "059",
+    "060",
+    "061",
+    "062",
+    "063",
+    "064",
+    "065",
+    "066",
+    "067",
+    "068",
+    "069",
+    "070",
+    "071",
+    "072",
+    "073",
+    "074",
+    "075",
+    "076",
+    "077",
+    "078",
+    "079",
+    "080",
+    "081",
+    "082",
+    "083",
+    "084",
+    "085",
+    "086",
+    "087",
+    "088",
+    "089",
+    "090",
+    "091",
+    "092",
+    "093",
+    "094",
+    "095",
+    "096",
+    "097",
+    "098",
+    "099",
+    "100",
+    "102",
+    "103",
+    "104",
+    "106",
+    "108",
+    "109",
+    "110",
+    "111",
+    "112",
+    "113",
+    "114",
+    "115",
+    "116",
+    "117",
+    "118",
+    "119",
+    "120",
+    "121",
+    "123",
+    "124",
+    "125",
+    "127",
+    "128",
+    "129",
+    "131",
+    "132",
+    "133",
+    "134",
+    "135",
+    "136",
+    "137",
+    "138",
+    "139",
+    "140",
+    "141",
+    "142",
+    "143",
+    "144",
+    "145",
+    "146",
+    "147",
+    "148",
+    "149",
+    "150",
+    "151",
+    "152",
+    "153",
+    "154",
+    "155",
+    "156",
+    "157",
+    "158",
+    "159",
+    "161",
+    "162",
+    "165",
+    "166",
+    "167",
+    "168",
+    "169",
+    "170",
+    "171",
+    "172",
+    "173",
+    "174",
+    "175",
+    "176",
+    "177",
+    "178",
+    "179",
+    "180",
+    "181",
+    "182",
+    "183",
+    "184",
+    "185",
+    "186",
+    "188",
+    "189",
+    "190",
+    "199",
+    "200",
+    "244",
+    "247",
+    "248",
+    "292",
+    "293",
+    "294",
+    "295",
+    "296",
+    "297",
+    "298"
+  ],
+  "post_verification_occurrence_map": {
+    "208": 0,
+    "209": 0,
+    "210": 0,
+    "211": 0,
+    "212": 0,
+    "213": 0,
+    "214": 0,
+    "215": 0,
+    "218": 0,
+    "219": 0,
+    "220": 0,
+    "221": 0,
+    "223": 0,
+    "224": 0,
+    "225": 0
+  }
+}

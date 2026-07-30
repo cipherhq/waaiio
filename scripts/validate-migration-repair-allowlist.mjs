@@ -48,8 +48,8 @@ const VALID_SUPERSEDED_STATES = new Set([
 
 const EXPECTED_MANIFEST_COUNT = 146;
 const EXPECTED_ALIGNED = 83;
-const EXPECTED_VERIFIED = 0;
-const EXPECTED_PENDING = 49;
+const EXPECTED_VERIFIED = 30;
+const EXPECTED_PENDING = 19;
 const EXPECTED_NV = 12;
 const EXPECTED_SUPERSEDED = 2;
 const EXPECTED_CANDIDATE_COHORT = 124; // PENDING + VERIFIED + repaired candidates = 124
@@ -548,12 +548,19 @@ if (batchFiles.length === 0) {
   pass(`Found ${batchFiles.length} verification batch evidence file(s): ${batchFiles.join(', ')}`);
 }
 
-// Parse all batch evidence
+// Parse all batch evidence (skip Wave 1 format files — validated in dedicated section)
 const allBatches = [];
+const wave1BatchFiles = [];
 for (const file of batchFiles) {
   const filePath = resolve(EVIDENCE_DIR, file);
   try {
     const data = JSON.parse(readFileSync(filePath, 'utf-8'));
+    // Wave 1 evidence uses task_identifier instead of main_sha
+    if (data.task_identifier && !data.main_sha) {
+      wave1BatchFiles.push({ file, data });
+      pass(`${file} is valid JSON (Wave 1 format — validated in dedicated section)`);
+      continue;
+    }
     allBatches.push({ file, data });
     pass(`${file} is valid JSON`);
   } catch (e) {
@@ -2588,6 +2595,266 @@ if (completedEntries.length !== 83) {
   fail(`Total completed entries is ${completedEntries.length}, expected 83`);
 } else {
   pass('Total completed entries = 83');
+}
+
+// ══════════════════════════════════════════════════════════════
+// WAVE 1 (BATCHES 6-7) EVIDENCE VALIDATION
+// ══════════════════════════════════════════════════════════════
+console.log('\n--- Wave 1 Evidence Validation ---\n');
+
+const WAVE1_BATCH6_SHA = '0fc3ff1f5f56644c0570a6f6ff30f7961a873dae29aab02abe7fa83cd3c60cf6';
+const WAVE1_BATCH7_SHA = 'ef3822deec7191c1a6b5fee69afd8c0c97fb588b6458cdc7aa86feeda5b66c00';
+const WAVE1_WAVE_SHA = 'c78e0c2677eb5cbe75ef883b3a5f99c68e97fc1ff6a66e005ac8854c23cbe5a7';
+const WAVE1_BATCH6_VERSIONS = ['191','192','193','194','195','196','197','198','201','202','203','204','205','206','207'];
+const WAVE1_BATCH7_VERSIONS = ['208','209','210','211','212','213','214','215','218','219','220','221','223','224','225'];
+const WAVE1_ALL_VERSIONS = [...WAVE1_BATCH6_VERSIONS, ...WAVE1_BATCH7_VERSIONS];
+
+const WAVE1_B6_PATH = resolve(EVIDENCE_DIR, 'batch-06-production-verification.json');
+const WAVE1_B7_PATH = resolve(EVIDENCE_DIR, 'batch-07-production-verification.json');
+const WAVE1_WAVE_PATH = resolve(EVIDENCE_DIR, 'wave-01-production-verification.json');
+
+// 1. All three evidence files exist
+let wave1Errors = 0;
+function w1fail(msg) { fail(`Wave 1: ${msg}`); wave1Errors++; }
+function w1pass(msg) { pass(`Wave 1: ${msg}`); }
+
+if (!existsSync(WAVE1_B6_PATH)) { w1fail('Batch 6 evidence file missing'); }
+else { w1pass('Batch 6 evidence file exists'); }
+if (!existsSync(WAVE1_B7_PATH)) { w1fail('Batch 7 evidence file missing'); }
+else { w1pass('Batch 7 evidence file exists'); }
+if (!existsSync(WAVE1_WAVE_PATH)) { w1fail('Wave summary evidence file missing'); }
+else { w1pass('Wave summary evidence file exists'); }
+
+if (existsSync(WAVE1_B6_PATH) && existsSync(WAVE1_B7_PATH) && existsSync(WAVE1_WAVE_PATH)) {
+  // 2. Exact SHA values match
+  const b6Content = readFileSync(WAVE1_B6_PATH);
+  const b7Content = readFileSync(WAVE1_B7_PATH);
+  const waveContent = readFileSync(WAVE1_WAVE_PATH);
+  const b6SHA = createHash('sha256').update(b6Content).digest('hex');
+  const b7SHA = createHash('sha256').update(b7Content).digest('hex');
+  const waveSHA = createHash('sha256').update(waveContent).digest('hex');
+
+  if (b6SHA !== WAVE1_BATCH6_SHA) { w1fail(`Batch 6 SHA mismatch: ${b6SHA}`); }
+  else { w1pass('Batch 6 SHA matches'); }
+  if (b7SHA !== WAVE1_BATCH7_SHA) { w1fail(`Batch 7 SHA mismatch: ${b7SHA}`); }
+  else { w1pass('Batch 7 SHA matches'); }
+  if (waveSHA !== WAVE1_WAVE_SHA) { w1fail(`Wave summary SHA mismatch: ${waveSHA}`); }
+  else { w1pass('Wave summary SHA matches'); }
+
+  const b6Data = JSON.parse(b6Content);
+  const b7Data = JSON.parse(b7Content);
+  const waveData = JSON.parse(waveContent);
+
+  // 3-4. Exact version sets
+  if (JSON.stringify(b6Data.versions) !== JSON.stringify(WAVE1_BATCH6_VERSIONS)) { w1fail('Batch 6 version set mismatch'); }
+  else { w1pass('Batch 6 exact version set'); }
+  if (JSON.stringify(b7Data.versions) !== JSON.stringify(WAVE1_BATCH7_VERSIONS)) { w1fail('Batch 7 version set mismatch'); }
+  else { w1pass('Batch 7 exact version set'); }
+
+  // 5-6. Object counts
+  if (b6Data.actual_object_count !== 129) { w1fail(`Batch 6 object count: ${b6Data.actual_object_count}, expected 129`); }
+  else { w1pass('Batch 6 object count = 129'); }
+  if (b7Data.actual_object_count !== 83) { w1fail(`Batch 7 object count: ${b7Data.actual_object_count}, expected 83`); }
+  else { w1pass('Batch 7 object count = 83'); }
+
+  // 7. Combined object count
+  if (waveData.actual_combined_object_count !== 212) { w1fail(`Combined object count: ${waveData.actual_combined_object_count}, expected 212`); }
+  else { w1pass('Combined object count = 212'); }
+
+  // 8-9. Result counts
+  if (b6Data.exact_match_count !== 129 || b6Data.equivalent_stricter_count !== 0 || b6Data.superseded_count !== 0 || b6Data.failed_count !== 0 || b6Data.ambiguous_count !== 0) {
+    w1fail(`Batch 6 result counts: ${b6Data.exact_match_count}/${b6Data.equivalent_stricter_count}/${b6Data.superseded_count}/${b6Data.failed_count}/${b6Data.ambiguous_count}, expected 129/0/0/0/0`);
+  } else { w1pass('Batch 6 result counts = 129/0/0/0/0'); }
+
+  if (b7Data.exact_match_count !== 82 || b7Data.equivalent_stricter_count !== 0 || b7Data.superseded_count !== 1 || b7Data.failed_count !== 0 || b7Data.ambiguous_count !== 0) {
+    w1fail(`Batch 7 result counts: ${b7Data.exact_match_count}/${b7Data.equivalent_stricter_count}/${b7Data.superseded_count}/${b7Data.failed_count}/${b7Data.ambiguous_count}, expected 82/0/1/0/0`);
+  } else { w1pass('Batch 7 result counts = 82/0/1/0/0'); }
+
+  // 10. Compared-path counts
+  if (b6Data.compared_property_path_count !== 550) { w1fail(`Batch 6 compared paths: ${b6Data.compared_property_path_count}, expected 550`); }
+  else { w1pass('Batch 6 compared paths = 550'); }
+  if (b7Data.compared_property_path_count !== 341) { w1fail(`Batch 7 compared paths: ${b7Data.compared_property_path_count}, expected 341`); }
+  else { w1pass('Batch 7 compared paths = 341'); }
+  if (waveData.combined_compared_property_path_count !== 891) { w1fail(`Combined compared paths: ${waveData.combined_compared_property_path_count}, expected 891`); }
+  else { w1pass('Combined compared paths = 891'); }
+
+  // 11-12. Every migration digest recomputes and is non-empty
+  function sortKeysRecursive(obj) {
+    if (Array.isArray(obj)) return obj.map(sortKeysRecursive);
+    if (obj && typeof obj === 'object') {
+      const sorted = {};
+      for (const key of Object.keys(obj).sort()) {
+        sorted[key] = sortKeysRecursive(obj[key]);
+      }
+      return sorted;
+    }
+    return obj;
+  }
+
+  let digestErrors = 0;
+  for (const batchInfo of [{data: b6Data, label: 'B6'}, {data: b7Data, label: 'B7'}]) {
+    for (const m of batchInfo.data.migrations) {
+      if (!m.migration_evidence_digest) {
+        w1fail(`${batchInfo.label} migration ${m.migration_version}: empty digest`);
+        digestErrors++;
+        continue;
+      }
+      const clone = JSON.parse(JSON.stringify(m));
+      delete clone.migration_evidence_digest;
+      const sorted = sortKeysRecursive(clone);
+      const serialized = JSON.stringify(sorted);
+      const computed = createHash('sha256').update(serialized).digest('hex');
+      if (computed !== m.migration_evidence_digest) {
+        w1fail(`${batchInfo.label} migration ${m.migration_version}: digest mismatch (stored: ${m.migration_evidence_digest.slice(0,12)}..., computed: ${computed.slice(0,12)}...)`);
+        digestErrors++;
+      }
+    }
+  }
+  if (digestErrors === 0) w1pass('All 30 migration digests recompute correctly');
+
+  // 13. No failed or ambiguous result
+  let resultErrors = 0;
+  for (const batchInfo of [{data: b6Data, label: 'B6'}, {data: b7Data, label: 'B7'}]) {
+    for (const m of batchInfo.data.migrations) {
+      for (const o of m.objects || []) {
+        if (o.property_comparison_result === 'failed') { w1fail(`${batchInfo.label} ${m.migration_version}: failed result`); resultErrors++; }
+        if (o.property_comparison_result === 'ambiguous') { w1fail(`${batchInfo.label} ${m.migration_version}: ambiguous result`); resultErrors++; }
+      }
+    }
+  }
+  if (resultErrors === 0) w1pass('No failed or ambiguous results');
+
+  // 14. Migration 223 superseded object with Migration 293 lineage
+  const mig223 = b7Data.migrations.find(m => m.migration_version === '223');
+  if (!mig223) { w1fail('Migration 223 not found in Batch 7'); }
+  else {
+    const superseded = mig223.objects.filter(o => o.property_comparison_result === 'superseded');
+    if (superseded.length !== 1) { w1fail(`Migration 223: expected 1 superseded, got ${superseded.length}`); }
+    else {
+      const s = superseded[0];
+      if (!s.object_name || !s.object_name.includes('public_read_active_businesses')) {
+        w1fail(`Migration 223 superseded object name: ${s.object_name}`);
+      }
+      const lineage = s.lineage || {};
+      if (String(lineage.later_migration) !== '293') { w1fail(`Migration 223 superseded lineage: ${lineage.later_migration}`); }
+      else if (!lineage.later_filename || !lineage.later_filename.includes('293_fix_production_table_exposure')) {
+        w1fail(`Migration 223 superseded lineage filename: ${lineage.later_filename}`);
+      } else {
+        w1pass('Migration 223 supersession: businesses:public_read_active_businesses -> Migration 293');
+      }
+    }
+    // Verify no other objects are superseded
+    let otherSuperseded = 0;
+    for (const m of b7Data.migrations) {
+      if (m.migration_version === '223') continue;
+      for (const o of m.objects || []) {
+        if (o.property_comparison_result === 'superseded') { otherSuperseded++; w1fail(`Non-223 superseded: ${m.migration_version}/${o.object_name}`); }
+      }
+    }
+    if (otherSuperseded === 0) w1pass('No other superseded objects outside Migration 223');
+  }
+
+  // 15. Pre/post history snapshots exist and are exactly equal
+  for (const batchInfo of [{data: b6Data, label: 'B6'}, {data: b7Data, label: 'B7'}]) {
+    if (JSON.stringify(batchInfo.data.pre_verification_ordered_snapshot) !== JSON.stringify(batchInfo.data.post_verification_ordered_snapshot)) {
+      w1fail(`${batchInfo.label} pre/post snapshots differ`);
+    } else {
+      w1pass(`${batchInfo.label} pre/post snapshots equal`);
+    }
+  }
+  if (waveData.snapshots_exactly_equal !== true) { w1fail('Wave snapshots_exactly_equal not true'); }
+  else { w1pass('Wave snapshots_exactly_equal = true'); }
+
+  // 16. Counts remain 179/83/1
+  for (const batchInfo of [{data: b6Data, label: 'B6'}, {data: b7Data, label: 'B7'}, {data: waveData, label: 'Wave'}]) {
+    const pre = batchInfo.data.pre_verification_history_summary;
+    if (pre.total_remote_count !== 179) w1fail(`${batchInfo.label} total_remote: ${pre.total_remote_count}`);
+    if (pre.range_101_246_count !== 83) w1fail(`${batchInfo.label} range_count: ${pre.range_101_246_count}`);
+    if (pre.migration_298_count !== 1) w1fail(`${batchInfo.label} m298_count: ${pre.migration_298_count}`);
+  }
+  w1pass('History counts = 179/83/1 in all evidence');
+
+  // 17. All 30 Wave 1 occurrence values remain zero
+  let occErrors = 0;
+  for (const batchInfo of [{data: b6Data, versions: WAVE1_BATCH6_VERSIONS}, {data: b7Data, versions: WAVE1_BATCH7_VERSIONS}]) {
+    const occ = batchInfo.data.pre_verification_occurrence_map || {};
+    for (const v of batchInfo.versions) {
+      if ((occ[v] || 0) !== 0) { w1fail(`Version ${v} occurrence != 0`); occErrors++; }
+    }
+  }
+  if (occErrors === 0) w1pass('All 30 Wave 1 version occurrences = 0');
+
+  // 18. All safety confirmations exist and are true
+  let safetyErrors = 0;
+  for (const batchInfo of [{data: b6Data, label: 'B6'}, {data: b7Data, label: 'B7'}, {data: waveData, label: 'Wave'}]) {
+    for (const [k, v] of Object.entries(batchInfo.data.safety_confirmations || {})) {
+      if (v !== true) { w1fail(`${batchInfo.label} safety ${k}: ${v}`); safetyErrors++; }
+    }
+  }
+  if (safetyErrors === 0) w1pass('All safety confirmations true');
+
+  // 19. Manifest classifications = 83/30/19/12/2
+  // (already checked above in main manifest checks)
+  w1pass('Manifest classifications verified in main checks (83/30/19/12/2)');
+
+  // 20. Batch 6 manifest entries are active and approved
+  let b6ManifestErrors = 0;
+  for (const v of WAVE1_BATCH6_VERSIONS) {
+    const me = manifestByVersion[v];
+    if (!me) { w1fail(`Batch 6 version ${v} not in manifest`); b6ManifestErrors++; continue; }
+    if (me.current_classification !== 'VERIFIED_APPLIED_UNTRACKED') { w1fail(`B6 ${v} classification: ${me.current_classification}`); b6ManifestErrors++; }
+    if (me.repair_eligible !== true) { w1fail(`B6 ${v} repair_eligible: ${me.repair_eligible}`); b6ManifestErrors++; }
+    if (me.repair_status !== 'approved_for_repair') { w1fail(`B6 ${v} repair_status: ${me.repair_status}`); b6ManifestErrors++; }
+    if (me.verification_batch !== 6) { w1fail(`B6 ${v} verification_batch: ${me.verification_batch}`); b6ManifestErrors++; }
+  }
+  if (b6ManifestErrors === 0) w1pass('Batch 6 manifest entries active and approved');
+
+  // 21. Allowlist is exactly the Batch 6 set
+  const allowlistVersionSet = new Set(allowlist.map(e => e.version));
+  const b6Set = new Set(WAVE1_BATCH6_VERSIONS);
+  const allowlistMissing = WAVE1_BATCH6_VERSIONS.filter(v => !allowlistVersionSet.has(v));
+  const allowlistExtra = [...allowlistVersionSet].filter(v => !b6Set.has(v));
+  if (allowlistMissing.length > 0) { w1fail(`Batch 6 versions missing from allowlist: ${allowlistMissing.join(',')}`); }
+  if (allowlistExtra.length > 0) { w1fail(`Non-Batch-6 versions in allowlist: ${allowlistExtra.join(',')}`); }
+  if (allowlist.length !== 15) { w1fail(`Allowlist length: ${allowlist.length}, expected 15`); }
+  if (allowlistMissing.length === 0 && allowlistExtra.length === 0 && allowlist.length === 15) {
+    w1pass('Allowlist is exactly the 15 Batch 6 versions');
+  }
+
+  // 22. Batch 7 manifest entries are verified but inactive
+  let b7ManifestErrors = 0;
+  for (const v of WAVE1_BATCH7_VERSIONS) {
+    const me = manifestByVersion[v];
+    if (!me) { w1fail(`Batch 7 version ${v} not in manifest`); b7ManifestErrors++; continue; }
+    if (me.current_classification !== 'VERIFIED_APPLIED_UNTRACKED') { w1fail(`B7 ${v} classification: ${me.current_classification}`); b7ManifestErrors++; }
+    if (me.repair_eligible !== false) { w1fail(`B7 ${v} repair_eligible: ${me.repair_eligible}`); b7ManifestErrors++; }
+    if (me.verification_batch !== 7) { w1fail(`B7 ${v} verification_batch: ${me.verification_batch}`); b7ManifestErrors++; }
+  }
+  if (b7ManifestErrors === 0) w1pass('Batch 7 manifest entries verified but inactive');
+
+  // 23. No Batch 7 version in allowlist
+  const b7InAllowlist = WAVE1_BATCH7_VERSIONS.filter(v => allowlistVersionSet.has(v));
+  if (b7InAllowlist.length > 0) { w1fail(`Batch 7 versions in allowlist: ${b7InAllowlist.join(',')}`); }
+  else { w1pass('No Batch 7 version in allowlist'); }
+
+  // 24. Candidate file is exactly the 19 Batch 8 and 9 versions
+  const expectedCandidateVersions = ['227','228','229','230','231','232','233','234','235','236','237','238','239','240','241','242','243','245','246'];
+  const actualCandidateVersions = candidates.map(c => c.version);
+  if (JSON.stringify(actualCandidateVersions) !== JSON.stringify(expectedCandidateVersions)) {
+    w1fail(`Candidate versions: ${actualCandidateVersions.join(',')}, expected ${expectedCandidateVersions.join(',')}`);
+  } else { w1pass('Candidate file is exactly the 19 Batch 8-9 versions'); }
+
+  // 25. Completed repair count remains 75
+  if (repairedCandidateCount !== 75) { w1fail(`Completed repair count: ${repairedCandidateCount}, expected 75`); }
+  else { w1pass('Completed repair count = 75'); }
+
+  // Batch 7 cannot become repair active before Batch 6 closeout
+  const b7ActiveInManifest = manifest.filter(e => WAVE1_BATCH7_VERSIONS.includes(e.version) && e.repair_eligible === true);
+  if (b7ActiveInManifest.length > 0) {
+    w1fail(`Batch 7 has ${b7ActiveInManifest.length} repair-eligible entries — must be 0 until Batch 6 closeout`);
+  } else {
+    w1pass('Batch 7 repair-eligible blocked (0 active entries)');
+  }
 }
 
 // ── Summary ──

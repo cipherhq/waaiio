@@ -2841,7 +2841,7 @@
         "replacement_object_name": "trg_bot_session_deactivate ON bot_sessions (re-created in same migration)",
         "superseding_migration": "147_auto_last_active_on_deactivate.sql",
         "rationale": "Migration 147 uses DROP IF EXISTS + CREATE pattern to replace the trigger definition. The DROP step is superseded by the CREATE in the same migration.",
-        "application_behaviour_impact": "None — trigger exists with intended function update_last_active_on_deactivate. Behaviour matches intent."
+        "application_behaviour_impact": "None \u2014 trigger exists with intended function update_last_active_on_deactivate. Behaviour matches intent."
       }
     ],
     "missing_effects": [],
@@ -3354,7 +3354,7 @@
         "replacement_object_name": "trg_generate_event_slug ON events (re-created in same migration)",
         "superseding_migration": "149_public_event_booking_slugs.sql",
         "rationale": "Migration 149 uses DROP IF EXISTS + CREATE pattern to replace the trigger. The DROP is superseded by the re-creation in the same migration.",
-        "application_behaviour_impact": "None — trigger exists with intended function generate_event_slug. Behaviour matches intent."
+        "application_behaviour_impact": "None \u2014 trigger exists with intended function generate_event_slug. Behaviour matches intent."
       }
     ],
     "missing_effects": [],
@@ -3774,7 +3774,7 @@
         "replacement_implementation_migration": "176_buffer_time_atomic.sql",
         "obsolete_overload_removal_migration": "245_fix_book_slot_atomic_overloads.sql",
         "rationale": "Migration 176 created the current 26-argument implementation preserving all parameters from earlier migrations (p_location_id from 155, p_appointment_id from 166) plus p_buffer_minutes and p_duration. Migration 245 removed the obsolete 23- and 24-argument overloads, leaving only the 26-argument implementation.",
-        "application_behaviour_impact": "None — all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
+        "application_behaviour_impact": "None \u2014 all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
       }
     ],
     "missing_effects": [],
@@ -4202,7 +4202,7 @@
         "replacement_implementation_migration": "176_buffer_time_atomic.sql",
         "obsolete_overload_removal_migration": "245_fix_book_slot_atomic_overloads.sql",
         "rationale": "Migration 176 created the current 26-argument implementation preserving all parameters from earlier migrations (p_location_id from 155, p_appointment_id from 166) plus p_buffer_minutes and p_duration. Migration 245 removed the obsolete 23- and 24-argument overloads, leaving only the 26-argument implementation.",
-        "application_behaviour_impact": "None — all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
+        "application_behaviour_impact": "None \u2014 all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
       }
     ],
     "missing_effects": [],
@@ -5800,432 +5800,996 @@
     "filename": "191_scan_to_pay.sql",
     "checksum": "fa2dff768dc89faf148a8e503edc24d49bcc39a1351ee5b828dfc81113574728",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "payment_links",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_payment_links_business",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_payment_links_token",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "owners_manage_payment_links ON payment_links",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "service_insert_payment_links ON payment_links",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "rls",
-        "object_name": "payment_links",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "object_name": "payment_links:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "payment_links:owners_manage_payment_links",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "payment_links:service_insert_payment_links",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "173ffd555d2c3d3cc3a06f7d34f88ceecfdc3d0e5372d8b4f473ae397f0ea53d"
   },
   {
     "version": "192",
     "filename": "192_secure_revenue_rpcs.sql",
     "checksum": "7ceed48188d673cdca26990ee74c4dcd62d95523270f1869db63ab1e6c693d0b",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "function",
-        "object_name": "get_business_revenue",
+        "object_name": "get_business_revenue(p_business_id uuid)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "return_type",
+          "language",
+          "security_type",
+          "identity_args"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_proc"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function",
-        "object_name": "get_order_revenue",
+        "object_name": "get_order_revenue(p_business_id uuid)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "return_type",
+          "language",
+          "security_type",
+          "identity_args"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_proc"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function",
-        "object_name": "get_outstanding_invoices",
+        "object_name": "get_outstanding_invoices(p_business_id uuid)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "return_type",
+          "language",
+          "security_type",
+          "identity_args"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_proc"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON get_business_revenue",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "function:get_business_revenue:authenticated",
+        "verification_source": "information_schema.routine_privileges",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "grant_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "grantee",
+          "privilege"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON get_order_revenue",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "function:get_order_revenue:authenticated",
+        "verification_source": "information_schema.routine_privileges",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "grant_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "grantee",
+          "privilege"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON get_outstanding_invoices",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "function:get_outstanding_invoices:authenticated",
+        "verification_source": "information_schema.routine_privileges",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "grant_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "grantee",
+          "privilege"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "c2ee5459084b2ebea85255df03a8f5110a3e69220e8f8633b076e5f2a1e40af1"
   },
   {
     "version": "193",
     "filename": "193_fix_search_path.sql",
     "checksum": "f88abd11424c6d0cf567886d26457fae31306e782aed64e0bba4f3bf3b4b587a",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "function_config",
         "object_name": "handle_new_user",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "has_search_path_config"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
         "object_name": "is_admin",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "has_search_path_config"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass",
+        "lineage": {
+          "later_migration": "247",
+          "later_filename": "247_admin_role_escalation_fix.sql",
+          "reason": "is_admin and is_admin_or_support redefined in 247"
+        }
       },
       {
         "object_type": "function_config",
         "object_name": "is_support",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "has_search_path_config"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
         "object_name": "is_admin_or_support",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "has_search_path_config"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass",
+        "lineage": {
+          "later_migration": "247",
+          "later_filename": "247_admin_role_escalation_fix.sql",
+          "reason": "is_admin and is_admin_or_support redefined in 247"
+        }
       },
       {
         "object_type": "function_config",
-        "object_name": "check_business_role",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "check_business_role(p_user_id uuid, p_business_id uuid, p_required_roles business_role[])",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
-        "object_name": "decrement_stock",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "decrement_stock(p_product_id uuid, qty integer)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
-        "object_name": "decrement_variant_stock",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "decrement_variant_stock(p_variant_id uuid, qty integer)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
-        "object_name": "reserve_booking_slot",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "reserve_booking_slot(p_business_id uuid, p_date date, p_start_time time without time zone, p_end_time time without time zone, p_staff_id uuid, p_location_id uuid, p_max_bookings integer)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
-        "object_name": "release_booking_slot",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "release_booking_slot(p_business_id uuid, p_date date, p_start_time time without time zone, p_staff_id uuid, p_location_id uuid)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
-        "object_name": "increment_promo_usage",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "increment_promo_usage(p_code_id uuid)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
-        "object_name": "upsert_customer_profile",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "upsert_customer_profile(p_business_id uuid, p_phone text, p_name text, p_booking_amount numeric, p_is_booking boolean, p_is_order boolean)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
-        "object_name": "increment_chat_forwards",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "increment_chat_forwards(p_business_id uuid)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
         "object_name": "reset_low_stock_alerts",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "has_search_path_config"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
-        "object_name": "increment_broadcast_usage",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "increment_broadcast_usage(p_business_id uuid, p_recipient_count integer)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
-        "object_name": "increment_message_usage",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "increment_message_usage(p_business_id uuid, p_direction text, p_is_new_conversation boolean)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
-        "object_name": "check_conversation_limit",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "check_conversation_limit(p_business_id uuid)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
-        "object_name": "increment_ai_usage",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "increment_ai_usage(p_business_id uuid, p_month_key text, p_field text)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
-        "object_name": "increment_form_response_count",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "increment_form_response_count(p_form_id uuid)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "function_config",
-        "object_name": "increment_customer_visit",
-        "expected_state": "search_path_set",
-        "verification_source": "pg_proc"
+        "object_name": "increment_customer_visit(p_business_id uuid, p_phone text, p_amount numeric)",
+        "verification_source": "pg_proc",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "function_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "name",
+          "has_search_path_config",
+          "identity_args"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "628d2d90c0eff414902661418518ee677db58a69124794ad7bc6a65a821d089f"
   },
   {
     "version": "194",
     "filename": "194_blocked_phones_table.sql",
     "checksum": "c29b8b201e5a2121c3f8ab2d8126e2a4b7c014db00a0ad25dedb0ca1b130f83a",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "blocked_phones",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_blocked_phones_business",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_blocked_phones_phone",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "owners_manage_blocked_phones ON blocked_phones",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "service_manage_blocked_phones ON blocked_phones",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "admin_manage_blocked_phones ON blocked_phones",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "rls",
-        "object_name": "blocked_phones",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "object_name": "blocked_phones:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "blocked_phones:owners_manage_blocked_phones",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "blocked_phones:service_manage_blocked_phones",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "blocked_phones:admin_manage_blocked_phones",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "135d3c1e8f8e501f91db93cbf188b739b0e015e4f4efd223e9f551ce383d139d"
   },
   {
     "version": "195",
     "filename": "195_pay_link_limits.sql",
     "checksum": "af190a4ca2f7b8139edd8630bb235b761ec0062bf9ba38175b78426f96639e15",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "column",
         "object_name": "payment_links.expires_at",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "payment_links.max_uses",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "6657698066f8c69aff831e21b6d1b3071b80e49d8dee1c559d06956e56f95bcc"
   },
   {
     "version": "196",
     "filename": "196_waiver_capability_enum.sql",
     "checksum": "b32711f840aa3f31ca833b74fe2ade746e950c4178fc70156ec5d47293ca563f",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "enum_value",
-        "object_name": "capability_type.waiver",
+        "object_name": "capability_type:waiver",
+        "verification_source": "pg_enum",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "enum_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "label_present"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_enum"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "0a7adea707cc826fdb630755b5ce69b0a2381c9e15206145704b865b55fc1073"
   },
   {
     "version": "197",
     "filename": "197_event_refund_policy.sql",
     "checksum": "3c11be96bebdcbd705aa4ee670636f1ae3ed6b06b044392c3b9b0b9d2724d65a",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "column",
         "object_name": "events.refund_policy",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_events_refund_policy",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "31e41f07214654e6d299290a9f417a7b2789298194e8e261a2eb95a7becb59a4"
   },
   {
     "version": "198",
     "filename": "198_party_custom_responses.sql",
     "checksum": "d69eaba79cb470109b30cc2fe273498a8e347f84871a00793d661cebe6bc45e8",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "column",
         "object_name": "parties.rsvp_yes_message",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "parties.rsvp_maybe_message",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "parties.rsvp_no_message",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "parties.followup_message",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "parties.followup_days_before",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "869fcd7a3f43bacb690bbf688dc40e18ee21b7d2f3234074aed943e011030372"
   },
   {
     "version": "199",
@@ -6298,1056 +6862,2627 @@
     "filename": "201_session_security.sql",
     "checksum": "25f0c730eb49c976567b074ccbdf2d74866fa51a31b9cf7f67cf2947845ab80a",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "security_sessions",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "table",
         "object_name": "security_events",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_security_sessions_user",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_security_sessions_session",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_security_events_user",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_security_events_type",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "security_sessions:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "security_events:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "security_sessions:Users view own sessions",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass",
+        "lineage": {
+          "later_migration": "214",
+          "later_filename": "214_security_rls_fix.sql",
+          "reason": "Policies replaced with proper service_role scoping and user-scoped access"
+        }
+      },
+      {
+        "object_type": "policy",
+        "object_name": "security_sessions:security_sessions_service_all",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass",
+        "lineage": {
+          "later_migration": "214",
+          "later_filename": "214_security_rls_fix.sql",
+          "reason": "Policies replaced with proper service_role scoping and user-scoped access"
+        }
+      },
+      {
+        "object_type": "policy",
+        "object_name": "security_events:Users view own events",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass",
+        "lineage": {
+          "later_migration": "214",
+          "later_filename": "214_security_rls_fix.sql",
+          "reason": "Policies replaced with proper service_role scoping and user-scoped access"
+        }
+      },
+      {
+        "object_type": "policy",
+        "object_name": "security_events:security_events_service_all",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass",
+        "lineage": {
+          "later_migration": "214",
+          "later_filename": "214_security_rls_fix.sql",
+          "reason": "Policies replaced with proper service_role scoping and user-scoped access"
+        }
       },
       {
         "object_type": "index",
         "object_name": "idx_profiles_last_login",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "security_sessions_user_select ON security_sessions",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "security_sessions_service_all ON security_sessions",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "security_events_admin_select ON security_events",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "security_events_service_all ON security_events",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "security_sessions",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "security_events",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "e8e1fc9af5f8795307b3d63285118430123801c754a81756633798f614049327"
   },
   {
     "version": "202",
     "filename": "202_balance_reminder_settings.sql",
     "checksum": "5237fe1e126d9b1688c5ab9e4b3455a9851313b1a917f6167d647ebe5bba9c73",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "column",
         "object_name": "whatsapp_config.send_balance_reminders",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "f6e37edc8ad6ed1602f671d695daaaef03dfd5ffdbc8e04c76c99c16f5ef31ea"
   },
   {
     "version": "203",
     "filename": "203_keyword_campaigns.sql",
     "checksum": "5956c2108e200ef1315fdbe17c29f906fd9fafa97ef233aecd67fe517903bb60",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "keyword_campaigns",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "table",
         "object_name": "keyword_campaign_responses",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "keyword_campaigns:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "keyword_campaign_responses:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "keyword_campaigns:owners_manage_campaigns",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "keyword_campaign_responses:owners_read_responses",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "keyword_campaign_responses:service_insert_responses",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "bot_keywords.campaign_id",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "constraint",
+        "object_name": "bot_keywords:bot_keywords_action_type_check",
+        "verification_source": "pg_constraint",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "constraint_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "constraint_name",
+          "constraint_type"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_keyword_campaigns_business",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_keyword_campaigns_active",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_campaign_responses_campaign",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_campaign_responses_business",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_bot_keywords_campaign",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "owners_manage_campaigns ON keyword_campaigns",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "owners_read_responses ON keyword_campaign_responses",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "service_insert_responses ON keyword_campaign_responses",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "keyword_campaigns",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "keyword_campaign_responses",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
-      },
-      {
-        "object_type": "constraint",
-        "object_name": "bot_keywords_action_type_check",
-        "expected_state": "exists",
-        "verification_source": "pg_constraint"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "f18df91eabe25a8099aed2688477819b5fdd6c85f312ec932626cd849b791825"
   },
   {
     "version": "204",
     "filename": "204_party_enhancements.sql",
     "checksum": "0d6dd565d6421185d39f68a593db53a42fcb97e62eac4e79996cab7200fa06d9",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "column",
         "object_name": "parties.max_guests",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "parties.party_type",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "374e14aa35f3514591a5a56cd6784079557f10a9b35efa038c64b5804e469f81"
   },
   {
     "version": "205",
     "filename": "205_resellers.sql",
     "checksum": "57d7ba74df220da2168c3e777edf05e520aaaec22c9a334f9523e26e1f556c5c",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "resellers",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "businesses.reseller_id",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "platform_fees.reseller_id",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "platform_fees.reseller_commission",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "resellers:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "resellers:Resellers manage own record",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "resellers:Service role manages resellers",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "businesses:Resellers view sub-businesses",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "businesses:Resellers update sub-businesses",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_businesses_reseller_id",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_resellers_user_id",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_platform_fees_reseller_id",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Resellers manage own record ON resellers",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Service role manages resellers ON resellers",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Resellers view sub-businesses ON businesses",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Resellers update sub-businesses ON businesses",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "trigger",
-        "object_name": "set_resellers_updated_at ON resellers",
+        "object_name": "resellers:set_resellers_updated_at",
+        "verification_source": "information_schema.triggers",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "trigger_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "trigger_name",
+          "timing",
+          "orientation"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_trigger"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "resellers",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "2e8e8b269bc984d62b16a87c0c72b253eb21c7dd12c46b8357d014a6ede33d52"
   },
   {
     "version": "206",
     "filename": "206_demo_requests.sql",
     "checksum": "c98a3390fc9ccece2589e53a1d61ca871685a2ad97ce039373c6dbf0e9912c08",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "demo_requests",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "demo_requests:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "demo_requests:service_insert_demo_requests",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "demo_requests:admin_select_demo_requests",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "demo_requests:admin_update_demo_requests",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_demo_requests_status",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_demo_requests_created",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_demo_requests_email",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "service_insert_demo_requests ON demo_requests",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "admin_select_demo_requests ON demo_requests",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "admin_update_demo_requests ON demo_requests",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "trigger",
-        "object_name": "set_demo_requests_updated_at ON demo_requests",
+        "object_name": "demo_requests:set_demo_requests_updated_at",
+        "verification_source": "information_schema.triggers",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "trigger_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "trigger_name",
+          "timing",
+          "orientation"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_trigger"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "demo_requests",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "61d8028e49dd10c1407ae56286742778c2f0e8b26f9cc2bf1945e661c433b6af"
   },
   {
     "version": "207",
     "filename": "207_reseller_full.sql",
     "checksum": "c6db6671e65dfdd34ba9a7d39286f65f94ba34d289c236909413dfeb24ce8240",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
-        "object_type": "table",
-        "object_name": "reseller_payouts",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
-      },
-      {
-        "object_type": "table",
-        "object_name": "reseller_invoices",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
-      },
-      {
         "object_type": "column",
         "object_name": "resellers.branding",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "resellers.custom_domain",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "resellers.tier",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "resellers.billing_notes",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "resellers.onboarded_at",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "resellers.invite_token",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "resellers.stripe_customer_id",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "resellers.stripe_subscription_id",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "table",
+        "object_name": "reseller_payouts",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "table",
+        "object_name": "reseller_invoices",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "demo_requests.auto_response_sent",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "reseller_payouts:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "reseller_invoices:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "reseller_payouts:Resellers view own payouts",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "reseller_payouts:Service role manages reseller payouts",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "reseller_payouts:Admin manages reseller payouts",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "reseller_invoices:Resellers view own invoices",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "reseller_invoices:Service role manages reseller invoices",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "reseller_invoices:Admin manages reseller invoices",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_reseller_payouts_reseller",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_reseller_payouts_status",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_reseller_payouts_period",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_reseller_invoices_reseller",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_reseller_invoices_status",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_reseller_invoices_due",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_resellers_custom_domain",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_resellers_tier",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Resellers view own payouts ON reseller_payouts",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Service role manages reseller payouts ON reseller_payouts",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Admin manages reseller payouts ON reseller_payouts",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Resellers view own invoices ON reseller_invoices",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Service role manages reseller invoices ON reseller_invoices",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Admin manages reseller invoices ON reseller_invoices",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "trigger",
-        "object_name": "set_reseller_payouts_updated_at ON reseller_payouts",
+        "object_name": "reseller_payouts:set_reseller_payouts_updated_at",
+        "verification_source": "information_schema.triggers",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "trigger_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "trigger_name",
+          "timing",
+          "orientation"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_trigger"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "trigger",
-        "object_name": "set_reseller_invoices_updated_at ON reseller_invoices",
+        "object_name": "reseller_invoices:set_reseller_invoices_updated_at",
+        "verification_source": "information_schema.triggers",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "trigger_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "trigger_name",
+          "timing",
+          "orientation"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_trigger"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "reseller_payouts",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "reseller_invoices",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 6,
+    "repair_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "e3a56806e54ffb6ab72c163687a50cab0688ea56a83e31b1c6b7048ae80b5223"
   },
   {
     "version": "208",
     "filename": "208_payment_channels.sql",
     "checksum": "4e0a153e84f1c3f43ce3ae7f4b3927e07f81caae9a03d4333e7747a8699c9d7a",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "column",
         "object_name": "businesses.payment_channels",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_businesses_payment_channels",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "0bee75d8393438c21593db02338d3ab4f5a9b83af13a75468f6d6e700dafd26b"
   },
   {
     "version": "209",
     "filename": "209_direct_bank_transfer.sql",
     "checksum": "fe0074e6d9ee89ce7e6b653ccd9c97f7516ca3795c42be0610e96ea78fc7e607",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "business_bank_accounts",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "table",
         "object_name": "pending_transfers",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "column",
         "object_name": "platform_fees.is_direct_transfer",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "business_bank_accounts:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "pending_transfers:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "business_bank_accounts:Owners manage bank accounts",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "business_bank_accounts:Resellers manage sub-account bank accounts",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "business_bank_accounts:Service role manages bank accounts",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "pending_transfers:Owners manage pending transfers",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "pending_transfers:Service role manages pending transfers",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "pending_transfers:Admin views pending transfers",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_business_bank_accounts_business",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_pending_transfers_business",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_pending_transfers_status",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_pending_transfers_reference",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_pending_transfers_expires",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_pending_transfers_booking",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_business_bank_accounts_default",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Owners manage bank accounts ON business_bank_accounts",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Resellers manage sub-account bank accounts ON business_bank_accounts",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Service role manages bank accounts ON business_bank_accounts",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Owners manage pending transfers ON pending_transfers",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Service role manages pending transfers ON pending_transfers",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Admin views pending transfers ON pending_transfers",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "trigger",
-        "object_name": "set_business_bank_accounts_updated_at ON business_bank_accounts",
+        "object_name": "business_bank_accounts:set_business_bank_accounts_updated_at",
+        "verification_source": "information_schema.triggers",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "trigger_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "trigger_name",
+          "timing",
+          "orientation"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_trigger"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "trigger",
-        "object_name": "set_pending_transfers_updated_at ON pending_transfers",
+        "object_name": "pending_transfers:set_pending_transfers_updated_at",
+        "verification_source": "information_schema.triggers",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "trigger_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "trigger_name",
+          "timing",
+          "orientation"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_trigger"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "business_bank_accounts",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "pending_transfers",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "951086e429614d4d8ccce1b3a1aa9a0896818804cc1eff85d10ab36d5e053824"
   },
   {
     "version": "210",
     "filename": "210_receipt_ocr.sql",
     "checksum": "62621ccf1143140e8b5f1731365a64ef2447fd0188c55121e033864ba87ad485",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "column",
         "object_name": "pending_transfers.verified_by_ocr",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_pending_transfers_ocr",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "2f98f339925d74a4a3b7c92d1b806e57bc100a9124e134e17c600bdb6bae9885"
   },
   {
     "version": "211",
     "filename": "211_ocr_result_and_admin_rls.sql",
     "checksum": "e8768841083c21bb684c24d075d3f24e1611f8a5112c5ecef97e0a7a4d426154",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "column",
         "object_name": "pending_transfers.ocr_result",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "policy",
-        "object_name": "Admin reads bank accounts ON business_bank_accounts",
+        "object_name": "business_bank_accounts:Admin reads bank accounts",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "policy",
-        "object_name": "Admin manages pending transfers ON pending_transfers",
+        "object_name": "pending_transfers:Admin manages pending transfers",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "48a43aec30ea6ba6bb5ae52e33cd00e96138468a6a98bfc570092d5bb92616ec"
   },
   {
     "version": "212",
     "filename": "212_platform_fee_invoices.sql",
     "checksum": "e3bb9ed8b4c10e7de5c4a0c29df0c3f2f08e3eeb6d7dde34ffe10428b9865e76",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "platform_fee_invoices",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
-      },
-      {
-        "object_type": "column",
-        "object_name": "platform_fees.invoiced_at",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
-      },
-      {
-        "object_type": "column",
-        "object_name": "platform_fees.invoice_id",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_pfi_business_period",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_pfi_status",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_pfi_due_date",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "policy",
-        "object_name": "Business owners view fee invoices ON platform_fee_invoices",
+        "object_type": "column",
+        "object_name": "platform_fees.invoiced_at",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "policy",
-        "object_name": "Admin manages fee invoices ON platform_fee_invoices",
+        "object_type": "column",
+        "object_name": "platform_fees.invoice_id",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Service role manages fee invoices ON platform_fee_invoices",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "rls",
-        "object_name": "platform_fee_invoices",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "object_name": "platform_fee_invoices:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "platform_fee_invoices:Business owners view fee invoices",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "platform_fee_invoices:Admin manages fee invoices",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "platform_fee_invoices:Service role manages fee invoices",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "b7f56a64740205bedeb3e646c65689e5b625185c274a11e65650fb3a18b3cd53"
   },
   {
     "version": "213",
     "filename": "213_pending_transfers_campaign_id.sql",
     "checksum": "2d1781182a47451bf8db666317f7dc4d3e7bacbf106ea380a0044d9f2997ac94",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "column",
         "object_name": "pending_transfers.campaign_id",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_pending_transfers_campaign_id",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "b89f4bac33fdbf9bba250d5cf8b2933f5977e75b361c3ad5365442c91ab5ab79"
   },
   {
     "version": "214",
     "filename": "214_security_rls_fix.sql",
     "checksum": "ed85757ae30c8d893821b8afdf8412a3fe442f4b3d9a284df5e795d745d0c155",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "policy",
-        "object_name": "security_sessions_service_all ON security_sessions",
+        "object_name": "security_sessions:security_sessions_service_all",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "policy",
-        "object_name": "security_events_service_all ON security_events",
+        "object_name": "security_events:security_events_service_all",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "policy",
-        "object_name": "Users view own sessions ON security_sessions",
+        "object_name": "security_sessions:Users view own sessions",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "policy",
-        "object_name": "Users view own events ON security_events",
+        "object_name": "security_events:Users view own events",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "policy",
-        "object_name": "security_sessions_service_all ON security_sessions",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
+        "object_type": "policy_drop",
+        "object_name": "security_sessions:security_sessions_user_select",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "action"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "policy",
-        "object_name": "security_events_service_all ON security_events",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
+        "object_type": "policy_drop",
+        "object_name": "security_events:security_events_admin_select",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "action"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "policy",
-        "object_name": "security_sessions_user_select ON security_sessions",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
+        "object_type": "policy_drop",
+        "object_name": "security_sessions:security_sessions_service_all_original",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "action"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "policy",
-        "object_name": "Users view own sessions ON security_sessions",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
+        "object_type": "policy_drop",
+        "object_name": "security_events:security_events_service_all_original",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "action"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "policy",
-        "object_name": "Users view own events ON security_events",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
+        "object_type": "policy_drop",
+        "object_name": "security_sessions:Users view own sessions_pre_drop",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "action"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "policy",
-        "object_name": "security_events_admin_select ON security_events",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
+        "object_type": "policy_drop",
+        "object_name": "security_events:Users view own events_pre_drop",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "action"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "5e566c4124e8b836b71d4ac3e7a24520742b3eeff2e967f9449e75f7a84adf17"
   },
   {
     "version": "215",
     "filename": "215_annual_billing.sql",
     "checksum": "adaa51580c8f1da2286202db8927c7b692a49a46b6abed46d5ea69e0d5fb5ca6",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "constraint",
-        "object_name": "chk_billing_interval",
+        "object_name": "subscriptions:chk_billing_interval",
+        "verification_source": "pg_constraint",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "constraint_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "constraint_name",
+          "constraint_type"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_constraint"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "1e107a936188228c2d94fad7e8469948dc7141ffe2a36c9786ba565e61ab52bc"
   },
   {
     "version": "216",
@@ -7388,138 +9523,281 @@
     "filename": "218_resellers_admin_rls.sql",
     "checksum": "34cab4cb057fe106b780c6df4e12968ba80fbf332d110d6859daea937a20981a",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "policy",
-        "object_name": "Admin manages resellers ON resellers",
+        "object_name": "resellers:Admin manages resellers",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "dc6f0b48d8571d82c88291c5d202b768fddc1bd44c24655e37d0d8bc975d0f77"
   },
   {
     "version": "219",
     "filename": "219_admin_rls_missing_tables.sql",
     "checksum": "7fb8e37f7e052a015a44454a692ceb09dccd55a6755179aaa6f7325bcfea6cb7",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "policy",
-        "object_name": "Admin reads event tickets ON event_tickets",
+        "object_name": "event_tickets:Admin reads event tickets",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "policy",
-        "object_name": "Admin reads event invites ON event_invites",
+        "object_name": "event_invites:Admin reads event invites",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "policy",
-        "object_name": "Admin reads invoices ON invoices",
+        "object_name": "invoices:Admin reads invoices",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "policy",
-        "object_name": "Admin reads parties ON parties",
+        "object_name": "parties:Admin reads parties",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "policy",
-        "object_name": "Admin reads reservations ON reservations",
+        "object_name": "reservations:Admin reads reservations",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:58.107Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "9ad6c37e942de108fa5f282b89841e31e39ecc307960423eb593617891f8c2f6"
   },
   {
     "version": "220",
     "filename": "220_profiles_admin_insert.sql",
     "checksum": "38bc5ab211329a3adb0fd0dcf70be7289c3aaff288cc8d07a9793b759fa56092",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "policy",
-        "object_name": "Admin inserts team profiles ON profiles",
+        "object_name": "profiles:Admin inserts team profiles",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "4980a7ca7209d008f4bf48cfb4dc864858bd6a61b0095aaccb12301e5d60cc3c"
   },
   {
     "version": "221",
     "filename": "221_admin_permissions.sql",
     "checksum": "c187d35905bbe889863da7bf9deed3fdba653b406d92358f3f13b255f9715848",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "admin_role_permissions",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Admin manages permissions ON admin_role_permissions",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "Admin roles read permissions ON admin_role_permissions",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "rls",
-        "object_name": "admin_role_permissions",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "object_name": "admin_role_permissions:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "admin_role_permissions:Admin manages permissions",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "admin_role_permissions:Admin roles read permissions",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "788c6417f561fa2db04ee11c1f6e7b275c4e186fac4918294885fc29d8d5b153"
   },
   {
     "version": "222",
@@ -7545,186 +9823,465 @@
     "filename": "223_security_fix_exposed_tables.sql",
     "checksum": "997fa334b553585234724209476a384c4947e030846ba89ca023ae27ec97a7f5",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
-        "object_type": "policy",
-        "object_name": "processed_webhook_events_service_only ON processed_webhook_events",
+        "object_type": "view",
+        "object_name": "whatsapp_channels_public",
+        "verification_source": "pg_views",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "view_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "view_name",
+          "exists"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass",
+        "lineage": {
+          "later_migration": "293",
+          "later_filename": "293_fix_production_table_exposure.sql",
+          "reason": "Views and grants redefined, policies further restricted"
+        }
       },
       {
-        "object_type": "policy",
-        "object_name": "public_read_active_businesses ON businesses",
+        "object_type": "grant",
+        "object_name": "view:whatsapp_channels_public:anon:SELECT",
+        "verification_source": "information_schema.role_table_grants",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "grant_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "grantee",
+          "privilege"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "policy",
-        "object_name": "bot_keywords_service_read ON bot_keywords",
+        "object_type": "grant",
+        "object_name": "view:whatsapp_channels_public:authenticated:SELECT",
+        "verification_source": "information_schema.role_table_grants",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "grant_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "grantee",
+          "privilege"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "policy",
-        "object_name": "bot_keywords_owner_read ON bot_keywords",
+        "object_type": "view",
+        "object_name": "businesses_public",
+        "verification_source": "pg_views",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "view_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "view_name",
+          "exists"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass",
+        "lineage": {
+          "later_migration": "293",
+          "later_filename": "293_fix_production_table_exposure.sql",
+          "reason": "Views and grants redefined, policies further restricted"
+        }
+      },
+      {
+        "object_type": "grant",
+        "object_name": "view:businesses_public:anon:SELECT",
+        "verification_source": "information_schema.role_table_grants",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "grant_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "grantee",
+          "privilege"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "grant",
+        "object_name": "view:businesses_public:authenticated:SELECT",
+        "verification_source": "information_schema.role_table_grants",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "grant_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "grantee",
+          "privilege"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "policy",
-        "object_name": "shared_channels_public_read ON whatsapp_channels",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
+        "object_name": "processed_webhook_events:processed_webhook_events_service_only",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass",
+        "lineage": {
+          "later_migration": "293",
+          "later_filename": "293_fix_production_table_exposure.sql",
+          "reason": "Views and grants redefined, policies further restricted"
+        }
       },
       {
         "object_type": "policy",
-        "object_name": "processed_webhook_events_service_all ON processed_webhook_events",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
+        "object_name": "businesses:public_read_active_businesses",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "superseded",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "superseded_with_stricter_state",
+        "result": "superseded",
+        "superseding_migration": "293",
+        "superseding_filename": "293_fix_production_table_exposure.sql",
+        "rationale": "Policy dropped by 293 and not recreated with that name",
+        "replacement_object_name": "businesses:public_read_active_businesses",
+        "application_behaviour_impact": "Authenticated and service-role application access remains supported",
+        "property_mismatches": [
+          {
+            "path": "existence",
+            "expected": "exists",
+            "actual": "missing"
+          }
+        ],
+        "lineage": {
+          "later_migration": "293",
+          "later_filename": "293_fix_production_table_exposure.sql",
+          "reason": "Policy dropped by 293 and not recreated with that name"
+        }
       },
       {
         "object_type": "policy",
-        "object_name": "public_read_active_businesses ON businesses",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
+        "object_name": "bot_keywords:bot_keywords_service_read",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "policy",
-        "object_name": "bot_keywords_select ON bot_keywords",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
+        "object_name": "bot_keywords:bot_keywords_owner_read",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "policy",
-        "object_name": "bot_keywords_public_read ON bot_keywords",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
+        "object_type": "policy_drop",
+        "object_name": "whatsapp_channels:shared_channels_public_read",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "action"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
-        "object_type": "policy",
-        "object_name": "Allow read access to bot_keywords ON bot_keywords",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "privilege",
-        "object_name": "SELECT ON whatsapp_channels_public TO anon",
-        "expected_state": "granted",
-        "verification_source": "information_schema"
-      },
-      {
-        "object_type": "privilege",
-        "object_name": "SELECT ON businesses_public TO anon",
-        "expected_state": "granted",
-        "verification_source": "information_schema"
+        "object_type": "policy_drop",
+        "object_name": "processed_webhook_events:processed_webhook_events_service_all",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "action"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "66fabc6a3eecd03c9bb0e893406f6e82c0ec59a9f5cc90e2e1fe5e186917c1eb"
   },
   {
     "version": "224",
     "filename": "224_event_tickets_reminder_sent.sql",
     "checksum": "f7b3c641978afe2ad35f6dd683a6db84b4c44f3fcb3f204d594b769df777ace5",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "column",
         "object_name": "event_tickets.reminder_sent",
+        "verification_source": "information_schema.columns",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "column_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "column",
+          "data_type",
+          "is_nullable"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_event_tickets_reminder_pending",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "332faa0e25b765b6d0bfbf3699d229787c8220aa13636a2895d8e36615da0b95"
   },
   {
     "version": "225",
     "filename": "225_flow_dropoff_analytics.sql",
     "checksum": "0cf4b014929fa2e67b2a1c59bfe01a56d25c8f54f7b510800980adb1829fa3de",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "flow_dropoffs",
+        "verification_source": "information_schema.columns+pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "table_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "exists",
+          "rls_enabled"
+        ],
         "expected_state": "exists",
-        "verification_source": "information_schema"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_flow_dropoffs_business",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_flow_dropoffs_reason",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "index",
         "object_name": "idx_flow_dropoffs_step",
+        "verification_source": "pg_indexes",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "index_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "index_name",
+          "is_unique",
+          "access_method"
+        ],
         "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "owners_read_own_dropoffs ON flow_dropoffs",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "service_role_all_dropoffs ON flow_dropoffs",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "admin_read_dropoffs ON flow_dropoffs",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "verified_state": "exists",
+        "result": "pass"
       },
       {
         "object_type": "rls",
-        "object_name": "flow_dropoffs",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "object_name": "flow_dropoffs:rls",
+        "verification_source": "pg_class",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "rls_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "relrowsecurity"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "flow_dropoffs:owners_read_own_dropoffs",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "flow_dropoffs:service_role_all_dropoffs",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "flow_dropoffs:admin_read_dropoffs",
+        "verification_source": "pg_policies",
+        "verified_at": "2026-07-30T12:01:50.515Z",
+        "query_category": "policy_metadata",
+        "property_comparison_result": "exact_match",
+        "compared_property_paths": [
+          "schema",
+          "table",
+          "policy_name",
+          "permissive",
+          "cmd"
+        ],
+        "expected_state": "exists",
+        "verified_state": "exists",
+        "result": "pass"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_6_repair_closeout",
+    "last_verified_at": "2026-07-30T12:01:50.515Z",
+    "evidence_source": "production_verified",
+    "activation_blocked_by_batch": 6,
+    "verification_batch": 7,
+    "production_evidence_path": "docs/migrations/evidence/batch-07-production-verification.json",
+    "production_evidence_digest": "67534d5cce77813f72c5fb2ab973945c28b96984f0ef48ceba5c9705aac6cc8b"
   },
   {
     "version": "226",

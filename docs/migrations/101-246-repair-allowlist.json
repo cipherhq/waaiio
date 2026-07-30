@@ -1,1 +1,167 @@
-[]
+[
+  {
+    "version": "191",
+    "filename": "191_scan_to_pay.sql",
+    "checksum": "fa2dff768dc89faf148a8e503edc24d49bcc39a1351ee5b828dfc81113574728",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "173ffd555d2c3d3cc3a06f7d34f88ceecfdc3d0e5372d8b4f473ae397f0ea53d"
+  },
+  {
+    "version": "192",
+    "filename": "192_secure_revenue_rpcs.sql",
+    "checksum": "7ceed48188d673cdca26990ee74c4dcd62d95523270f1869db63ab1e6c693d0b",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "c2ee5459084b2ebea85255df03a8f5110a3e69220e8f8633b076e5f2a1e40af1"
+  },
+  {
+    "version": "193",
+    "filename": "193_fix_search_path.sql",
+    "checksum": "f88abd11424c6d0cf567886d26457fae31306e782aed64e0bba4f3bf3b4b587a",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "628d2d90c0eff414902661418518ee677db58a69124794ad7bc6a65a821d089f"
+  },
+  {
+    "version": "194",
+    "filename": "194_blocked_phones_table.sql",
+    "checksum": "c29b8b201e5a2121c3f8ab2d8126e2a4b7c014db00a0ad25dedb0ca1b130f83a",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "135d3c1e8f8e501f91db93cbf188b739b0e015e4f4efd223e9f551ce383d139d"
+  },
+  {
+    "version": "195",
+    "filename": "195_pay_link_limits.sql",
+    "checksum": "af190a4ca2f7b8139edd8630bb235b761ec0062bf9ba38175b78426f96639e15",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "6657698066f8c69aff831e21b6d1b3071b80e49d8dee1c559d06956e56f95bcc"
+  },
+  {
+    "version": "196",
+    "filename": "196_waiver_capability_enum.sql",
+    "checksum": "b32711f840aa3f31ca833b74fe2ade746e950c4178fc70156ec5d47293ca563f",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "0a7adea707cc826fdb630755b5ce69b0a2381c9e15206145704b865b55fc1073"
+  },
+  {
+    "version": "197",
+    "filename": "197_event_refund_policy.sql",
+    "checksum": "3c11be96bebdcbd705aa4ee670636f1ae3ed6b06b044392c3b9b0b9d2724d65a",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "31e41f07214654e6d299290a9f417a7b2789298194e8e261a2eb95a7becb59a4"
+  },
+  {
+    "version": "198",
+    "filename": "198_party_custom_responses.sql",
+    "checksum": "d69eaba79cb470109b30cc2fe273498a8e347f84871a00793d661cebe6bc45e8",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "869fcd7a3f43bacb690bbf688dc40e18ee21b7d2f3234074aed943e011030372"
+  },
+  {
+    "version": "201",
+    "filename": "201_session_security.sql",
+    "checksum": "25f0c730eb49c976567b074ccbdf2d74866fa51a31b9cf7f67cf2947845ab80a",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "e8e1fc9af5f8795307b3d63285118430123801c754a81756633798f614049327"
+  },
+  {
+    "version": "202",
+    "filename": "202_balance_reminder_settings.sql",
+    "checksum": "5237fe1e126d9b1688c5ab9e4b3455a9851313b1a917f6167d647ebe5bba9c73",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "f6e37edc8ad6ed1602f671d695daaaef03dfd5ffdbc8e04c76c99c16f5ef31ea"
+  },
+  {
+    "version": "203",
+    "filename": "203_keyword_campaigns.sql",
+    "checksum": "5956c2108e200ef1315fdbe17c29f906fd9fafa97ef233aecd67fe517903bb60",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "f18df91eabe25a8099aed2688477819b5fdd6c85f312ec932626cd849b791825"
+  },
+  {
+    "version": "204",
+    "filename": "204_party_enhancements.sql",
+    "checksum": "0d6dd565d6421185d39f68a593db53a42fcb97e62eac4e79996cab7200fa06d9",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "374e14aa35f3514591a5a56cd6784079557f10a9b35efa038c64b5804e469f81"
+  },
+  {
+    "version": "205",
+    "filename": "205_resellers.sql",
+    "checksum": "57d7ba74df220da2168c3e777edf05e520aaaec22c9a334f9523e26e1f556c5c",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "2e8e8b269bc984d62b16a87c0c72b253eb21c7dd12c46b8357d014a6ede33d52"
+  },
+  {
+    "version": "206",
+    "filename": "206_demo_requests.sql",
+    "checksum": "c98a3390fc9ccece2589e53a1d61ca871685a2ad97ce039373c6dbf0e9912c08",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "61d8028e49dd10c1407ae56286742778c2f0e8b26f9cc2bf1945e661c433b6af"
+  },
+  {
+    "version": "207",
+    "filename": "207_reseller_full.sql",
+    "checksum": "c6db6671e65dfdd34ba9a7d39286f65f94ba34d289c236909413dfeb24ce8240",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 6,
+    "production_evidence_path": "docs/migrations/evidence/batch-06-production-verification.json",
+    "production_evidence_digest": "e3a56806e54ffb6ab72c163687a50cab0688ea56a83e31b1c6b7048ae80b5223"
+  }
+]

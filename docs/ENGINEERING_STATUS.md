@@ -3,7 +3,7 @@
 Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineering-status.json)
 
 **Last reconciled:** 2026-07-30
-**Last reconciled main SHA:** `202cb20160072f4fc42b8314dd6db3b9dfe8727e`
+**Last reconciled main SHA:** `9c2746253a11122d770bf619b4a96d862413636c`
 
 ## Milestone Status
 
@@ -16,7 +16,7 @@ Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineerin
 | FIN-001 | Financial and credential containment | `PRODUCTION_VERIFIED` | #44 | `d886c8d9` |
 | FIN-002 | Atomic payout execution and provider idempotency | `DEPLOYED` | #50 | `7556dec5` |
 | SEC-001 | Remove public access to sensitive platform tables | `PRODUCTION_VERIFIED` | #54 | `90b0f766` |
-| OPS-001 | Migration history alignment (Issue #53) | `IN_PROGRESS` | #56, #58, #59, #62, #63, #64, #65, #66, #67, #68, #69, #70, #71, #72, #73, #74, #75 | `202cb201` |
+| OPS-001 | Migration history alignment (Issue #53) | `IN_PROGRESS` | #56, #58, #59, #62, #63, #64, #65, #66, #67, #68, #69, #70, #71, #72, #73, #74, #75, #76 | `9c274625` |
 
 ## Stage Definitions
 
@@ -49,23 +49,27 @@ PR #21 (`fix/combined-18-19-20`, head `22168545`) contains tested but unmerged f
 
 ## Active Next Actions
 
-1. **OPS-001: Batch 6 read-only production verification** — Batch 5 repair complete (75 total repairs); 49 candidates remain across Batches 6-9; Batch 6 not started
+1. **OPS-001: Batch 6 controlled migration-history repair** — Wave 1 verification complete (Batches 6-7, 30 versions); Batch 6 active in repair allowlist (15 versions); Batch 7 verified but deferred; 19 candidates remain in Batches 8-9
 2. **Resolve Meta WABA billing** — required before AUTH-000 production verification
 3. **Continue controlled FIN-LEGACY extraction** — payout idempotency, atomic claims, OAuth reconstruction in future milestones
 
 ## OPS-001 Current State
 
-- Batches 1-5 verification and migration-history repair are complete. PR #75 merged.
-- Batch 5 production verification (V3 canonical, SHA `8f093426`): 15 versions, 55 objects verified, 341 compared leaf-property paths (52 exact match, 3 equivalent stricter with function privilege lineage), 55/55 passed, 0 failed, 0 ambiguous.
-- Batch 5 migration-history repair complete: remote count 164 → 179 (+15), 101-246 tracked count 68 → 83 (+15).
-- Active repair allowlist is empty (0 versions).
+- Batches 1-5 verification and migration-history repair are complete. PR #76 merged.
+- Accelerated Verification Wave 1 complete: Batches 6 and 7 verified in parallel.
+- Batch 6 (15 versions): 129 objects, 129 exact match, 550 compared paths. Evidence SHA `0fc3ff1f`.
+- Batch 7 (15 versions): 83 objects, 82 exact match, 1 superseded (Migration 223 → 293), 341 compared paths. Evidence SHA `ef3822de`.
+- Wave 1 combined: 30 versions, 212 objects, 211 exact match, 1 superseded, 891 compared paths. Wave SHA `c78e0c26`.
+- Production history unchanged: 179 remote, 83 in range, Migration 298 once.
+- Active repair allowlist: 15 Batch 6 versions (approved for migration-history repair).
+- Batch 7: verified but deferred — repair blocked until Batch 6 closeout.
 - 75 migration-history repairs are complete across Batches 1-5.
-- 49 production-verification candidates remain across Batches 6-9.
+- 19 production-verification candidates remain across Batches 8-9.
 - Migration 298 is applied and forensically verified. Exactly 11 historical payment rows were linked. Pending linkage rows are zero.
 - Migration 298 was executed using Management API SQL and recorded using migration repair. The approved dry-run stop condition was violated.
 - Corrected forensic evidence is canonical for the procedure-deviation conclusion.
-- Issue #53 remains open. Batch 6 has not started.
-- Next action: Batch 6 read-only production verification.
+- Issue #53 remains open. Batches 8 and 9 not started.
+- Next action: Batch 6 controlled migration-history repair.
 
 ## Updating This Ledger
 

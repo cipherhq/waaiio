@@ -20,12 +20,15 @@ This runbook governs the controlled verification and repair of 124 migration-his
 ## Current State
 
 - **83 ALIGNED_TRACKED:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 188, 189, 190, 199, 200, 244
-- **0 VERIFIED_APPLIED_UNTRACKED**
-- **49 PENDING_PRODUCTION_REVERIFICATION:** require read-only verification
+- **30 VERIFIED_APPLIED_UNTRACKED:** Batch 6 (15, active for repair) + Batch 7 (15, deferred)
+- **19 PENDING_PRODUCTION_REVERIFICATION:** Batches 8-9
 - **12 NOT_VERIFIABLE_SAFELY:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 SUPERSEDED:** 122, 130
-- **Active repair allowlist: 0**
+- **Active repair allowlist: 15** (Batch 6 only)
 - **Completed migration-history repairs: 75** (45 Batch 1-3 + 15 Batch 4 + 15 Batch 5)
+- **Batch 7: verified, deferred** — blocked until Batch 6 repair closeout
+- **Batches 8-9: not started**
+- **Next action: Batch 6 controlled repair**
 
 ## Batch Status
 
@@ -101,11 +104,38 @@ This runbook governs the controlled verification and repair of 124 migration-his
 - All 15 versions appear exactly once in remote schema_migrations
 - No migration SQL executed. No schema or data change. No deployment.
 
-### Batches 6-9 — Verification: NOT STARTED
-- 49 candidates remain across 4 batches (Batches 6-9)
-- Verification will proceed now that Batch 5 repair is complete
-- Batch 6 has not started
-- Next action: Batch 6 read-only production verification
+### Wave 1 (Batches 6 and 7) — Verification: COMPLETE
+
+**Wave 1 combined:**
+- **30 migrations, 212 objects, 211 exact matches, 1 superseded, 891 compared paths**
+- Production history unchanged (179/83/298 once)
+- Wave evidence: `docs/migrations/evidence/wave-01-production-verification.json` (SHA: `c78e0c2677eb5cbe75ef883b3a5f99c68e97fc1ff6a66e005ac8854c23cbe5a7`)
+
+### Batch 6 — Verification: COMPLETE | Repair: PENDING (ACTIVE)
+- **Versions:** 191, 192, 193, 194, 195, 196, 197, 198, 201, 202, 203, 204, 205, 206, 207
+- **Object checks:** 129 (129 exact match, 0 superseded, 0 failed, 0 ambiguous)
+- **Compared property paths:** 550
+- **Verification evidence:** `docs/migrations/evidence/batch-06-production-verification.json`
+- **Evidence SHA-256:** `0fc3ff1f5f56644c0570a6f6ff30f7961a873dae29aab02abe7fa83cd3c60cf6`
+- **Repair status:** ACTIVE — 15 versions in repair allowlist
+- Next production write: Batch 6 one-by-one migration-history repair
+- No migration SQL executed. No schema or data change. No deployment.
+
+### Batch 7 — Verification: COMPLETE | Repair: WAITING FOR BATCH 6 CLOSEOUT
+- **Versions:** 208, 209, 210, 211, 212, 213, 214, 215, 218, 219, 220, 221, 223, 224, 225
+- **Object checks:** 83 (82 exact match, 1 superseded, 0 failed, 0 ambiguous)
+- **Compared property paths:** 341
+- **Supersession:** Migration 223 `public_read_active_businesses` policy on businesses — dropped by Migration 293 (`293_fix_production_table_exposure.sql`), replaced with stricter role-based access. Authenticated and service-role application access remains supported.
+- **Verification evidence:** `docs/migrations/evidence/batch-07-production-verification.json`
+- **Evidence SHA-256:** `ef3822deec7191c1a6b5fee69afd8c0c97fb588b6458cdc7aa86feeda5b66c00`
+- **Repair status:** DEFERRED — not in active repair allowlist
+- Activation blocked by Batch 6 repair closeout
+- No migration SQL executed. No schema or data change. No deployment.
+
+### Batches 8-9 — Verification: NOT STARTED
+- 19 candidates remain across 2 batches (Batches 8-9)
+- Batch 8 has not started
+- Next action after Batch 6 repair: Batch 7 activation or Batch 8 verification
 
 ## Mandatory Execution Control Rule
 
