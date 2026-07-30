@@ -3622,7 +3622,7 @@ describe('Batch 5 production verification evidence', () => {
   it('evidence digest consistency', () => {
     const content = readFileSync(evidencePath, 'utf-8');
     const digest = createHash('sha256').update(readFileSync(evidencePath)).digest('hex');
-    expect(digest).toBe('bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8');
+    expect(digest).toBe('c2c0c052af94ccdb96b3e6e7d798c4c0ee4a0df4f10b4dfec43f2b86c22a5450');
   });
 });
 
@@ -3802,7 +3802,7 @@ describe('Batch 5 CLI rejection tests', () => {
 
   it('rejects incorrect evidence digest', () => {
     const digest = createHash('sha256').update(readFileSync(resolve('docs/migrations/evidence/batch-05-production-verification.json'))).digest('hex');
-    expect(digest).toBe('bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8');
+    expect(digest).toBe('c2c0c052af94ccdb96b3e6e7d798c4c0ee4a0df4f10b4dfec43f2b86c22a5450');
     expect(digest).not.toBe('0000000000000000000000000000000000000000000000000000000000000000');
   });
 

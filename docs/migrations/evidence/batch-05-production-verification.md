@@ -2,10 +2,13 @@
 
 ## Evidence Lineage
 
-- **Canonical evidence:** V2 (this file supersedes the V1 temporary evidence)
+- **Canonical evidence:** V3 (repository comparison enrichment)
 - **V1 temporary evidence SHA-256:** `92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77`
-- **V2 repository evidence SHA-256:** `bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8`
+- **V2 preserved production snapshot:** `docs/migrations/evidence/batch-05-production-verification-v2.json`
+- **V2 SHA-256:** `bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8`
+- **V3 canonical evidence SHA-256:** `c2c0c052af94ccdb96b3e6e7d798c4c0ee4a0df4f10b4dfec43f2b86c22a5450`
 - **Evidence file:** `docs/migrations/evidence/batch-05-production-verification.json`
+- **V3 is a repository-only comparison enrichment.** All verified_properties are preserved exactly from V2. No new production access occurred.
 
 ## Verification Scope
 
@@ -18,7 +21,9 @@
 ## Results
 
 - **Total object checks:** 55
-- **Detailed property checks:** 383
+- **Compared leaf-property paths:** 383
+- **Exact match:** 52
+- **Equivalent stricter:** 3 (function privileges tightened by Migrations 181 and 296)
 - **Passed:** 55
 - **Superseded:** 0
 - **Failed:** 0
@@ -27,7 +32,13 @@
 
 ### Per-Migration Object and Property Counts
 
-| Version | Filename | Objects | Passed | Superseded | Failed | Ambiguous | Detailed Properties |
+### Function Privilege Lineage (equivalent_stricter)
+
+The 3 functions from Migration 173 (restore_stock, restore_variant_stock, restore_tickets_sold) were created as SECURITY DEFINER with public execute privileges. Migration 181 (181_financial_integrity.sql) and Migration 296 (296_restrict_sensitive_rpc_execution.sql) tightened privileges to service_role-only. Function bodies and signatures remain unchanged. The stricter privilege state preserves the original durable effect safely.
+
+### Per-Migration Object and Property Counts
+
+| Version | Filename | Objects | Passed | Superseded | Failed | Ambiguous | Compared Paths |
 |---------|----------|---------|--------|------------|--------|-----------|---------------------|
 | 172 | 172_recurring_billing.sql | 3 | 3 | 0 | 0 | 0 | 27 |
 | 173 | 173_restore_stock_rpc.sql | 3 | 3 | 0 | 0 | 0 | 42 |

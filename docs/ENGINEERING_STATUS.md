@@ -56,7 +56,7 @@ PR #21 (`fix/combined-18-19-20`, head `22168545`) contains tested but unmerged f
 ## OPS-001 Current State
 
 - Batch 4 verification and migration-history repair are complete. PR #74 merged.
-- Batch 5 read-only production verification is complete (V2 canonical, SHA `bf528a88`): 15 versions, 55 objects verified, 383 detailed property checks, 55/55 passed, 0 failed, 0 ambiguous, all 15 VERIFIED_APPLIED_UNTRACKED.
+- Batch 5 production verification is complete (V3 canonical, SHA `c2c0c052`): 15 versions, 55 objects verified, 383 compared leaf-property paths (52 exact match, 3 equivalent stricter with function privilege lineage), 55/55 passed, 0 failed, 0 ambiguous, all 15 VERIFIED_APPLIED_UNTRACKED.
 - Active repair allowlist contains 15 Batch 5 versions.
 - 60 migration-history repairs are complete across Batches 1-4.
 - 49 production-verification candidates remain across Batches 6-9.

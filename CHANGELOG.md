@@ -7,6 +7,19 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-29
 
+### Operations: Batch 5 V3 expected-state evidence binding
+- V3 canonical evidence enrichment: expected-state derivation from migration SQL and later-migration lineage.
+- V2 production snapshot preserved at `docs/migrations/evidence/batch-05-production-verification-v2.json` (SHA `bf528a88...`).
+- V3 canonical evidence SHA: `c2c0c052af94ccdb96b3e6e7d798c4c0ee4a0df4f10b4dfec43f2b86c22a5450`.
+- 383 compared leaf-property paths: 52 exact_match, 3 equivalent_stricter.
+- Function privilege lineage: restore_stock, restore_variant_stock, restore_tickets_sold created by Migration 173, privileges tightened by Migrations 181 and 296 to service_role-only.
+- Expected properties derived from local PostgreSQL (waaiio_batch5_expected database, localhost only, no remote access).
+- compared_property_paths validation added to validator.
+- No new production access. All verified_properties preserved exactly from V2.
+- Batch 5 repair remains pending. Issue #53 remains open. Batch 6 not started.
+  - **Affects:** Migration evidence integrity, validator accuracy
+  - **Could break:** Nothing — repository comparison enrichment only; no production access, no migration SQL, no deployment.
+
 ### Operations: Batch 5 V2 canonical evidence and independent-review corrections
 - V2 canonical evidence replaces V1 temporary evidence. V1 SHA: `92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77`. V2 SHA: `bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8`.
 - `docs/migrations/evidence/batch-05-production-verification.json` — V2 evidence with 55 objects, 383 detailed property checks, 15 per-migration evidence digests, occurrence maps, tracked snapshots, and 17 safety booleans.

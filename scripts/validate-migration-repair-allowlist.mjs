@@ -865,21 +865,21 @@ for (const { file, data: batch } of allBatches) {
     }
     if (snapErrors === 0) pass('Batch 5 snapshot validation passed (strict)');
 
-    // V2 evidence file SHA
+    // V3 canonical evidence file SHA
     const batch5EvidencePath = resolve(EVIDENCE_DIR, 'batch-05-production-verification.json');
     const batch5Content = readFileSync(batch5EvidencePath);
     const batch5SHA = createHash('sha256').update(batch5Content).digest('hex');
-    if (batch5SHA !== 'bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8') {
+    if (batch5SHA !== 'c2c0c052af94ccdb96b3e6e7d798c4c0ee4a0df4f10b4dfec43f2b86c22a5450') {
       fail(`Batch 5 evidence SHA mismatch: ${batch5SHA}`);
     } else {
-      pass('Batch 5 evidence file SHA matches V2 canonical');
+      pass('Batch 5 evidence file SHA matches V3 canonical');
     }
 
-    // V2 identity fields
-    if (batch.task_identifier !== 'batch-05-production-verification-v2') {
-      fail(`Batch 5 task_identifier: ${batch.task_identifier}, expected batch-05-production-verification-v2`);
+    // V3 identity fields
+    if (batch.task_identifier !== 'batch-05-production-verification-v3') {
+      fail(`Batch 5 task_identifier: ${batch.task_identifier}, expected batch-05-production-verification-v3`);
     } else {
-      pass('Batch 5 task_identifier = batch-05-production-verification-v2');
+      pass('Batch 5 task_identifier = batch-05-production-verification-v3');
     }
 
     // V2 detailed property checks total
@@ -1006,9 +1006,10 @@ for (const { file, data: batch } of allBatches) {
           fail(`Batch 5 version ${m.version} object ${obj.object_name}: generic pg_catalog verification_source`);
           objFieldErrors++;
         }
-        // Property comparison must be match
-        if (obj.property_comparison_result !== 'match') {
-          fail(`Batch 5 version ${m.version} object ${obj.object_name}: property_comparison_result is "${obj.property_comparison_result}", expected "match"`);
+        // Property comparison must be a valid result (exact_match, equivalent_stricter, or superseded)
+        const validResults = new Set(['exact_match', 'equivalent_stricter', 'superseded']);
+        if (!validResults.has(obj.property_comparison_result)) {
+          fail(`Batch 5 version ${m.version} object ${obj.object_name}: property_comparison_result "${obj.property_comparison_result}" is not a valid V3 result`);
           objFieldErrors++;
         }
       }
@@ -1331,6 +1332,86 @@ for (const { file, data: batch } of allBatches) {
       }
     }
   }
+
+
+    // V3 evidence enrichment checks
+    const v2PreservedPath = resolve(EVIDENCE_DIR, 'batch-05-production-verification-v2.json');
+    if (!existsSync(v2PreservedPath)) {
+      fail('Batch 5: preserved V2 evidence file missing');
+    } else {
+      const v2Content = readFileSync(v2PreservedPath);
+      const v2SHA = createHash('sha256').update(v2Content).digest('hex');
+      if (v2SHA !== 'bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8') {
+        fail(`Batch 5: preserved V2 evidence SHA mismatch: ${v2SHA}`);
+      } else {
+        pass('Batch 5 preserved V2 evidence SHA verified');
+      }
+    }
+
+    // V3 identity fields
+    if (batch.task_identifier === 'batch-05-production-verification-v3') {
+      if (batch.supersedes_repository_evidence_path !== 'docs/migrations/evidence/batch-05-production-verification-v2.json') {
+        fail('Batch 5 V3: incorrect supersedes_repository_evidence_path');
+      }
+      if (batch.superseded_repository_evidence_sha256 !== 'bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8') {
+        fail('Batch 5 V3: incorrect superseded_repository_evidence_sha256');
+      }
+      pass('Batch 5 V3 lineage fields verified');
+      
+      // V3 compared_property_paths validation
+      let v3CompareErrors = 0;
+      for (const m of batch.migrations || []) {
+        const ver = String(m.version);
+        const storedCount = m.detailed_property_checks_count;
+        let actualSum = 0;
+        
+        for (const obj of m.objects || []) {
+          // Require compared_property_paths
+          if (!Array.isArray(obj.compared_property_paths) || obj.compared_property_paths.length === 0) {
+            fail(`Batch 5 V3 version ${ver} object ${obj.object_name}: missing or empty compared_property_paths`);
+            v3CompareErrors++;
+            continue;
+          }
+          actualSum += obj.compared_property_paths.length;
+          
+          // Require non-generic comparison result
+          if (obj.property_comparison_result === 'match') {
+            fail(`Batch 5 V3 version ${ver} object ${obj.object_name}: generic comparison value "match" not allowed`);
+            v3CompareErrors++;
+          }
+          
+          // For exact_match: property_mismatches must be empty
+          if (obj.property_comparison_result === 'exact_match') {
+            if (Array.isArray(obj.property_mismatches) && obj.property_mismatches.length > 0) {
+              fail(`Batch 5 V3 version ${ver} object ${obj.object_name}: exact_match but property_mismatches non-empty`);
+              v3CompareErrors++;
+            }
+          }
+          
+          // For equivalent_stricter: require lineage
+          if (obj.property_comparison_result === 'equivalent_stricter') {
+            if (!Array.isArray(obj.later_migration_lineage) || obj.later_migration_lineage.length === 0) {
+              fail(`Batch 5 V3 version ${ver} object ${obj.object_name}: equivalent_stricter without later_migration_lineage`);
+              v3CompareErrors++;
+            } else {
+              for (const lin of obj.later_migration_lineage) {
+                if (!lin.version || !lin.filename) {
+                  fail(`Batch 5 V3 version ${ver} object ${obj.object_name}: lineage entry missing version or filename`);
+                  v3CompareErrors++;
+                }
+              }
+            }
+          }
+        }
+        
+        // Sum must equal stored count
+        if (storedCount !== undefined && actualSum !== storedCount) {
+          fail(`Batch 5 V3 version ${ver}: compared_property_paths sum ${actualSum} !== detailed_property_checks_count ${storedCount}`);
+          v3CompareErrors++;
+        }
+      }
+      if (v3CompareErrors === 0) pass('Batch 5 V3 compared_property_paths validation passed');
+    }
 
   if (batchErrors === 0) pass(`Batch ${batch.batch_number} cross-validation passed`);
 }

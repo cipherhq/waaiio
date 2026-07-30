@@ -1,5 +1,5 @@
 {
-  "task_identifier": "batch-05-production-verification-v3",
+  "task_identifier": "batch-05-production-verification-v2",
   "supersedes_temporary_evidence_path": "/tmp/waaiio-batch-05-production-verification.json",
   "superseded_temporary_evidence_sha256": "92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77",
   "main_sha": "906878f94141e39ecc3fe19e4cf6ddc714a3811c",
@@ -74,12 +74,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "subscriptions",
-            "data_type": "text",
-            "udt_name": "text",
-            "is_nullable": "YES",
-            "column_default": null,
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "stripe_subscription_id"
           },
           "verified_properties": {
             "schema": "public",
@@ -92,19 +87,7 @@
             "is_identity": "NO",
             "is_generated": "NEVER"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "172",
@@ -122,12 +105,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "subscriptions",
-            "data_type": "text",
-            "udt_name": "text",
-            "is_nullable": "YES",
-            "column_default": null,
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "stripe_customer_id"
           },
           "verified_properties": {
             "schema": "public",
@@ -140,19 +118,7 @@
             "is_identity": "NO",
             "is_generated": "NEVER"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "172",
@@ -170,12 +136,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "subscriptions",
-            "data_type": "text",
-            "udt_name": "text",
-            "is_nullable": "YES",
-            "column_default": "'month'::text",
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "billing_interval"
           },
           "verified_properties": {
             "schema": "public",
@@ -188,19 +149,7 @@
             "is_identity": "NO",
             "is_generated": "NEVER"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 3,
@@ -208,8 +157,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "bc1105742ed12e6cbb4dddf282e469aa163f5a8ccb9bee6ab6e5b7bcd9550bbe",
-      "detailed_property_checks_count": 24
+      "migration_evidence_digest": "6425db951dbb939523af2bdfcbeaeb19fe588d68b334f5755957228d514fb47b"
     },
     {
       "version": "173",
@@ -233,18 +181,8 @@
           "verification_source": "pg_proc",
           "query_category": "function_detail_select",
           "expected_properties": {
-            "identity_arguments": "p_product_id uuid, qty integer",
-            "return_type": "void",
-            "language": "plpgsql",
-            "security_definer": true,
-            "volatility": "v",
-            "parallel_safety": "u",
-            "leakproof": false,
-            "config": null,
-            "def_hash": "04f8c55c7d09397251a7ea1ff7c45a6b",
-            "anon_exec": true,
-            "auth_exec": true,
-            "svc_exec": true
+            "schema": "public",
+            "function": "restore_stock"
           },
           "verified_properties": {
             "schema": "public",
@@ -262,56 +200,7 @@
             "auth_exec": false,
             "svc_exec": true
           },
-          "property_comparison_result": "equivalent_stricter",
-          "compared_property_paths": [
-            "identity_arguments",
-            "return_type",
-            "language",
-            "security_definer",
-            "volatility",
-            "parallel_safety",
-            "leakproof",
-            "config",
-            "def_hash",
-            "anon_exec",
-            "auth_exec",
-            "svc_exec"
-          ],
-          "property_mismatches": [
-            {
-              "path": "anon_exec",
-              "expected_original": true,
-              "verified_current": false,
-              "later_migrations": [
-                "181",
-                "296"
-              ],
-              "reason": "REVOKE FROM PUBLIC/anon"
-            },
-            {
-              "path": "auth_exec",
-              "expected_original": true,
-              "verified_current": false,
-              "later_migrations": [
-                "181",
-                "296"
-              ],
-              "reason": "REVOKE FROM PUBLIC/authenticated"
-            }
-          ],
-          "comparison_basis": "function_privileges_tightened_by_migrations_181_and_296",
-          "later_migration_lineage": [
-            {
-              "version": "181",
-              "filename": "181_financial_integrity.sql",
-              "effect": "REVOKE ALL FROM PUBLIC, GRANT EXECUTE TO service_role"
-            },
-            {
-              "version": "296",
-              "filename": "296_restrict_sensitive_rpc_execution.sql",
-              "effect": "REVOKE EXECUTE FROM anon/authenticated, GRANT EXECUTE TO service_role"
-            }
-          ]
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "173",
@@ -327,18 +216,8 @@
           "verification_source": "pg_proc",
           "query_category": "function_detail_select",
           "expected_properties": {
-            "identity_arguments": "p_variant_id uuid, qty integer",
-            "return_type": "void",
-            "language": "plpgsql",
-            "security_definer": true,
-            "volatility": "v",
-            "parallel_safety": "u",
-            "leakproof": false,
-            "config": null,
-            "def_hash": "f7522c6a4e8ab2ab92c2fd1b68cbbc18",
-            "anon_exec": true,
-            "auth_exec": true,
-            "svc_exec": true
+            "schema": "public",
+            "function": "restore_variant_stock"
           },
           "verified_properties": {
             "schema": "public",
@@ -356,56 +235,7 @@
             "auth_exec": false,
             "svc_exec": true
           },
-          "property_comparison_result": "equivalent_stricter",
-          "compared_property_paths": [
-            "identity_arguments",
-            "return_type",
-            "language",
-            "security_definer",
-            "volatility",
-            "parallel_safety",
-            "leakproof",
-            "config",
-            "def_hash",
-            "anon_exec",
-            "auth_exec",
-            "svc_exec"
-          ],
-          "property_mismatches": [
-            {
-              "path": "anon_exec",
-              "expected_original": true,
-              "verified_current": false,
-              "later_migrations": [
-                "181",
-                "296"
-              ],
-              "reason": "REVOKE FROM PUBLIC/anon"
-            },
-            {
-              "path": "auth_exec",
-              "expected_original": true,
-              "verified_current": false,
-              "later_migrations": [
-                "181",
-                "296"
-              ],
-              "reason": "REVOKE FROM PUBLIC/authenticated"
-            }
-          ],
-          "comparison_basis": "function_privileges_tightened_by_migrations_181_and_296",
-          "later_migration_lineage": [
-            {
-              "version": "181",
-              "filename": "181_financial_integrity.sql",
-              "effect": "REVOKE ALL FROM PUBLIC, GRANT EXECUTE TO service_role"
-            },
-            {
-              "version": "296",
-              "filename": "296_restrict_sensitive_rpc_execution.sql",
-              "effect": "REVOKE EXECUTE FROM anon/authenticated, GRANT EXECUTE TO service_role"
-            }
-          ]
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "173",
@@ -421,18 +251,8 @@
           "verification_source": "pg_proc",
           "query_category": "function_detail_select",
           "expected_properties": {
-            "identity_arguments": "p_event_id uuid, qty integer",
-            "return_type": "void",
-            "language": "plpgsql",
-            "security_definer": true,
-            "volatility": "v",
-            "parallel_safety": "u",
-            "leakproof": false,
-            "config": null,
-            "def_hash": "4b163244e4f2808250a5619852bdce24",
-            "anon_exec": true,
-            "auth_exec": true,
-            "svc_exec": true
+            "schema": "public",
+            "function": "restore_tickets_sold"
           },
           "verified_properties": {
             "schema": "public",
@@ -450,56 +270,7 @@
             "auth_exec": false,
             "svc_exec": true
           },
-          "property_comparison_result": "equivalent_stricter",
-          "compared_property_paths": [
-            "identity_arguments",
-            "return_type",
-            "language",
-            "security_definer",
-            "volatility",
-            "parallel_safety",
-            "leakproof",
-            "config",
-            "def_hash",
-            "anon_exec",
-            "auth_exec",
-            "svc_exec"
-          ],
-          "property_mismatches": [
-            {
-              "path": "anon_exec",
-              "expected_original": true,
-              "verified_current": false,
-              "later_migrations": [
-                "181",
-                "296"
-              ],
-              "reason": "REVOKE FROM PUBLIC/anon"
-            },
-            {
-              "path": "auth_exec",
-              "expected_original": true,
-              "verified_current": false,
-              "later_migrations": [
-                "181",
-                "296"
-              ],
-              "reason": "REVOKE FROM PUBLIC/authenticated"
-            }
-          ],
-          "comparison_basis": "function_privileges_tightened_by_migrations_181_and_296",
-          "later_migration_lineage": [
-            {
-              "version": "181",
-              "filename": "181_financial_integrity.sql",
-              "effect": "REVOKE ALL FROM PUBLIC, GRANT EXECUTE TO service_role"
-            },
-            {
-              "version": "296",
-              "filename": "296_restrict_sensitive_rpc_execution.sql",
-              "effect": "REVOKE EXECUTE FROM anon/authenticated, GRANT EXECUTE TO service_role"
-            }
-          ]
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 3,
@@ -507,8 +278,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "bc767885590bb12a033ad5462cc06bd9332a862ec0413ca9c0cec8fcc45913de",
-      "detailed_property_checks_count": 36
+      "migration_evidence_digest": "79b50d4fb214411461d36040da170ba7a900ebb9e56b7e43bb7ae4f28615a647"
     },
     {
       "version": "174",
@@ -534,12 +304,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "contracts",
-            "data_type": "character varying",
-            "udt_name": "varchar",
-            "is_nullable": "YES",
-            "column_default": null,
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "reference_code"
           },
           "verified_properties": {
             "schema": "public",
@@ -553,19 +318,7 @@
             "is_generated": "NEVER",
             "character_maximum_length": 20
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "174",
@@ -583,12 +336,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "contract_signers",
-            "data_type": "character varying",
-            "udt_name": "varchar",
-            "is_nullable": "YES",
-            "column_default": null,
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "signature_reference"
           },
           "verified_properties": {
             "schema": "public",
@@ -602,19 +350,7 @@
             "is_generated": "NEVER",
             "character_maximum_length": 20
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 2,
@@ -622,8 +358,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "00ce816f9eff0a5b473b9806dc5cf93fa12b54fa75d18024b79913d7e3f16f15",
-      "detailed_property_checks_count": 16
+      "migration_evidence_digest": "638d01403f92548a43277cb342b9fc12ca7e825d9cbaa9197f011efe366f0b67"
     },
     {
       "version": "175",
@@ -649,12 +384,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "properties",
-            "policy": "public_read_active_properties",
-            "permissive": "PERMISSIVE",
-            "command": "SELECT",
-            "roles": "{anon,authenticated}",
-            "using_hash": "d2a67af4cacf5aae43b112e35267db5dab01ad300ed5693402a6581071c28192",
-            "check_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            "policy": "public_read_active_properties"
           },
           "verified_properties": {
             "schema": "public",
@@ -666,19 +396,7 @@
             "using_hash": "d2a67af4cacf5aae43b112e35267db5dab01ad300ed5693402a6581071c28192",
             "check_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "check_hash",
-            "command",
-            "permissive",
-            "policy",
-            "roles",
-            "schema",
-            "table",
-            "using_hash"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 1,
@@ -686,8 +404,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "532c0b9046740da1865adaf40d9f02eae89d83982bf6d95255f67d7609cbd9e6",
-      "detailed_property_checks_count": 8
+      "migration_evidence_digest": "d480bb8f80233b5392f150afd07c2fe56e2910210f727c7d616f0e629bd7e297"
     },
     {
       "version": "177",
@@ -712,22 +429,14 @@
           "query_category": "enum_detail_select",
           "expected_properties": {
             "type": "capability_type",
-            "label": "table_reservation",
-            "sort_order": 26
+            "label": "table_reservation"
           },
           "verified_properties": {
             "type": "capability_type",
             "label": "table_reservation",
             "sort_order": 26
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "label",
-            "sort_order",
-            "type"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "177",
@@ -744,22 +453,14 @@
           "query_category": "enum_detail_select",
           "expected_properties": {
             "type": "capability_type",
-            "label": "estimates",
-            "sort_order": 27
+            "label": "estimates"
           },
           "verified_properties": {
             "type": "capability_type",
             "label": "estimates",
             "sort_order": 27
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "label",
-            "sort_order",
-            "type"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "177",
@@ -776,22 +477,14 @@
           "query_category": "enum_detail_select",
           "expected_properties": {
             "type": "capability_type",
-            "label": "packages",
-            "sort_order": 28
+            "label": "packages"
           },
           "verified_properties": {
             "type": "capability_type",
             "label": "packages",
             "sort_order": 28
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "label",
-            "sort_order",
-            "type"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "177",
@@ -808,22 +501,14 @@
           "query_category": "enum_detail_select",
           "expected_properties": {
             "type": "capability_type",
-            "label": "class_booking",
-            "sort_order": 29
+            "label": "class_booking"
           },
           "verified_properties": {
             "type": "capability_type",
             "label": "class_booking",
             "sort_order": 29
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "label",
-            "sort_order",
-            "type"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "177",
@@ -840,22 +525,14 @@
           "query_category": "enum_detail_select",
           "expected_properties": {
             "type": "capability_type",
-            "label": "multi_location",
-            "sort_order": 30
+            "label": "multi_location"
           },
           "verified_properties": {
             "type": "capability_type",
             "label": "multi_location",
             "sort_order": 30
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "label",
-            "sort_order",
-            "type"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 5,
@@ -863,8 +540,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "c769bca6ed49bbb486d56d148cd0e27e263a199b114148abb9e55993d8b90c72",
-      "detailed_property_checks_count": 15
+      "migration_evidence_digest": "a5d2f39b4b3700fcab1a98630ab4856372b55e5516c16f84462ea6ef43434285"
     },
     {
       "version": "178",
@@ -890,12 +566,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "business_capabilities",
-            "data_type": "integer",
-            "udt_name": "int4",
-            "is_nullable": "YES",
-            "column_default": "0",
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "sort_order"
           },
           "verified_properties": {
             "schema": "public",
@@ -909,19 +580,7 @@
             "is_generated": "NEVER",
             "numeric_precision": 32
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "178",
@@ -938,10 +597,7 @@
           "query_category": "index_detail_select",
           "expected_properties": {
             "schema": "public",
-            "table": "business_capabilities",
-            "index": "idx_business_capabilities_sort_order",
-            "def_hash": "cf137c7550c92d86a5baed69638edfcaf16c76d79cb55d180823af4fa8daefe1",
-            "indexdef": "CREATE INDEX idx_business_capabilities_sort_order ON public.business_capabilities USING btree (business_id, sort_order, capability) WHERE (is_enabled = true)"
+            "index": "idx_business_capabilities_sort_order"
           },
           "verified_properties": {
             "schema": "public",
@@ -950,16 +606,7 @@
             "def_hash": "cf137c7550c92d86a5baed69638edfcaf16c76d79cb55d180823af4fa8daefe1",
             "indexdef": "CREATE INDEX idx_business_capabilities_sort_order ON public.business_capabilities USING btree (business_id, sort_order, capability) WHERE (is_enabled = true)"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "def_hash",
-            "index",
-            "indexdef",
-            "schema",
-            "table"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 2,
@@ -967,8 +614,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "045e095afa0bdc4def1d472f9c49a3b64be3b21d0a50a507c8d669f5571511f9",
-      "detailed_property_checks_count": 13
+      "migration_evidence_digest": "e3204e6c3e77f5a801e4250a97556cd6c36c5803e32281a88dc6ff31f80f0b61"
     },
     {
       "version": "179",
@@ -994,12 +640,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "business_capabilities",
-            "data_type": "text",
-            "udt_name": "text",
-            "is_nullable": "YES",
-            "column_default": null,
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "custom_label"
           },
           "verified_properties": {
             "schema": "public",
@@ -1012,19 +653,7 @@
             "is_identity": "NO",
             "is_generated": "NEVER"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 1,
@@ -1032,8 +661,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "fd8dd916937f53cc5fe431697f28cbd948b84212bafda715e56862eda15b83c6",
-      "detailed_property_checks_count": 8
+      "migration_evidence_digest": "235e7137efa16f78ed0b40d3f775fb675e280565574f4e9431f023a82f1492a5"
     },
     {
       "version": "180",
@@ -1058,19 +686,7 @@
           "query_category": "table_detail_select",
           "expected_properties": {
             "schema": "public",
-            "table": "api_keys",
-            "exists": true,
-            "columns_summary": "id uuid, business_id uuid, key_hash text, key_prefix text, name text, created_at timestamp with time zone, last_used_at timestamp with time zone, revoked_at timestamp with time zone",
-            "expected_columns": [
-              "id",
-              "business_id",
-              "key_hash",
-              "key_prefix",
-              "name",
-              "created_at",
-              "last_used_at",
-              "revoked_at"
-            ]
+            "table": "api_keys"
           },
           "verified_properties": {
             "schema": "public",
@@ -1078,20 +694,7 @@
             "exists": true,
             "columns_summary": "id uuid, business_id uuid, key_hash text, key_prefix text, name text, created_at timestamp with time zone, last_used_at timestamp with time zone, revoked_at timestamp with time zone"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "exists",
-            "column:id",
-            "column:business_id",
-            "column:key_hash",
-            "column:key_prefix",
-            "column:name",
-            "column:created_at",
-            "column:last_used_at",
-            "column:revoked_at"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "180",
@@ -1108,10 +711,7 @@
           "query_category": "index_detail_select",
           "expected_properties": {
             "schema": "public",
-            "table": "api_keys",
-            "index": "idx_api_keys_hash",
-            "def_hash": "cff0f6d3b7cda6a510c84719234f5286b31f0337aa7e21eb41243c643bb98b03",
-            "indexdef": "CREATE INDEX idx_api_keys_hash ON public.api_keys USING btree (key_hash) WHERE (revoked_at IS NULL)"
+            "index": "idx_api_keys_hash"
           },
           "verified_properties": {
             "schema": "public",
@@ -1120,16 +720,7 @@
             "def_hash": "cff0f6d3b7cda6a510c84719234f5286b31f0337aa7e21eb41243c643bb98b03",
             "indexdef": "CREATE INDEX idx_api_keys_hash ON public.api_keys USING btree (key_hash) WHERE (revoked_at IS NULL)"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "def_hash",
-            "index",
-            "indexdef",
-            "schema",
-            "table"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "180",
@@ -1146,10 +737,7 @@
           "query_category": "index_detail_select",
           "expected_properties": {
             "schema": "public",
-            "table": "api_keys",
-            "index": "idx_api_keys_business",
-            "def_hash": "6ebda2762487909235b7d238325db4dec1c3a3f0195d525888135b9d0cdbcd2b",
-            "indexdef": "CREATE INDEX idx_api_keys_business ON public.api_keys USING btree (business_id)"
+            "index": "idx_api_keys_business"
           },
           "verified_properties": {
             "schema": "public",
@@ -1158,16 +746,7 @@
             "def_hash": "6ebda2762487909235b7d238325db4dec1c3a3f0195d525888135b9d0cdbcd2b",
             "indexdef": "CREATE INDEX idx_api_keys_business ON public.api_keys USING btree (business_id)"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "def_hash",
-            "index",
-            "indexdef",
-            "schema",
-            "table"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "180",
@@ -1185,12 +764,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "api_keys",
-            "policy": "owners_manage_api_keys",
-            "permissive": "PERMISSIVE",
-            "command": "ALL",
-            "roles": "{public}",
-            "using_hash": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
-            "check_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            "policy": "owners_manage_api_keys"
           },
           "verified_properties": {
             "schema": "public",
@@ -1202,19 +776,7 @@
             "using_hash": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
             "check_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "check_hash",
-            "command",
-            "permissive",
-            "policy",
-            "roles",
-            "schema",
-            "table",
-            "using_hash"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "180",
@@ -1231,22 +793,14 @@
           "query_category": "enum_detail_select",
           "expected_properties": {
             "type": "booking_channel",
-            "label": "api",
-            "sort_order": 3
+            "label": "api"
           },
           "verified_properties": {
             "type": "booking_channel",
             "label": "api",
             "sort_order": 3
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "label",
-            "sort_order",
-            "type"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "180",
@@ -1263,22 +817,14 @@
           "query_category": "rls_detail_select",
           "expected_properties": {
             "table": "api_keys",
-            "relrowsecurity": true,
-            "relforcerowsecurity": false
+            "rls_enabled": true
           },
           "verified_properties": {
             "table": "api_keys",
             "relrowsecurity": true,
             "relforcerowsecurity": false
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "relforcerowsecurity",
-            "relrowsecurity",
-            "table"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 6,
@@ -1286,8 +832,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "5847ca83b5a2ae9017943387502e8a9720f551598deb99afe62a6a6868817d9f",
-      "detailed_property_checks_count": 33
+      "migration_evidence_digest": "5229d2cb6afb52a66820f23c6fcfe04878711ee7f926aa2f4619efd78b8eafcd"
     },
     {
       "version": "183",
@@ -1312,10 +857,7 @@
           "query_category": "index_detail_select",
           "expected_properties": {
             "schema": "public",
-            "table": "orders",
-            "index": "idx_orders_business_status",
-            "def_hash": "358f6e065bbe4d825e0f2156412acaf0324ae78e32219ed88831b22be6dfbb48",
-            "indexdef": "CREATE INDEX idx_orders_business_status ON public.orders USING btree (business_id, status) WHERE (deleted_at IS NULL)"
+            "index": "idx_orders_business_status"
           },
           "verified_properties": {
             "schema": "public",
@@ -1324,16 +866,7 @@
             "def_hash": "358f6e065bbe4d825e0f2156412acaf0324ae78e32219ed88831b22be6dfbb48",
             "indexdef": "CREATE INDEX idx_orders_business_status ON public.orders USING btree (business_id, status) WHERE (deleted_at IS NULL)"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "def_hash",
-            "index",
-            "indexdef",
-            "schema",
-            "table"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "183",
@@ -1349,15 +882,7 @@
           "verification_source": "pg_constraint",
           "query_category": "constraint_detail_select",
           "expected_properties": {
-            "constraint": "chk_payments_amount_nonneg",
-            "type": "c",
-            "validated": true,
-            "deferrable": false,
-            "deferred": false,
-            "definition": "CHECK ((amount >= 0))",
-            "def_hash": "bbdf2827ed95d20a9fc3fc674fa69eb73c81fb2491b10ca43b3d0e59b99c3b6f",
-            "table": "payments",
-            "check_expression": "(amount >= 0"
+            "constraint": "chk_payments_amount_nonneg"
           },
           "verified_properties": {
             "constraint": "chk_payments_amount_nonneg",
@@ -1369,20 +894,7 @@
             "def_hash": "bbdf2827ed95d20a9fc3fc674fa69eb73c81fb2491b10ca43b3d0e59b99c3b6f",
             "table": "payments"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "constraint",
-            "def_hash",
-            "deferrable",
-            "deferred",
-            "definition",
-            "table",
-            "type",
-            "validated",
-            "check_expression"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "183",
@@ -1398,15 +910,7 @@
           "verification_source": "pg_constraint",
           "query_category": "constraint_detail_select",
           "expected_properties": {
-            "constraint": "chk_platform_fees_amount_nonneg",
-            "type": "c",
-            "validated": true,
-            "deferrable": false,
-            "deferred": false,
-            "definition": "CHECK (((transaction_amount >= 0) AND (fee_total >= 0)))",
-            "def_hash": "aa0e38265d5413edc1cdb639791de047d5f68ea1cf1191064c1997eddce9ecc9",
-            "table": "platform_fees",
-            "check_expression": "((transaction_amount >= 0) AND (fee_total >= 0"
+            "constraint": "chk_platform_fees_amount_nonneg"
           },
           "verified_properties": {
             "constraint": "chk_platform_fees_amount_nonneg",
@@ -1418,20 +922,7 @@
             "def_hash": "aa0e38265d5413edc1cdb639791de047d5f68ea1cf1191064c1997eddce9ecc9",
             "table": "platform_fees"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "constraint",
-            "def_hash",
-            "deferrable",
-            "deferred",
-            "definition",
-            "table",
-            "type",
-            "validated",
-            "check_expression"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "183",
@@ -1447,15 +938,7 @@
           "verification_source": "pg_constraint",
           "query_category": "constraint_detail_select",
           "expected_properties": {
-            "constraint": "chk_payouts_amount_nonneg",
-            "type": "c",
-            "validated": true,
-            "deferrable": false,
-            "deferred": false,
-            "definition": "CHECK (((gross_amount >= (0)::numeric) AND (net_amount >= (0)::numeric)))",
-            "def_hash": "f9964f1b60d0332ca6e6d6826c58558c9301709fffed51a6bcdcbe633eb8f84d",
-            "table": "business_payouts",
-            "check_expression": "((gross_amount >= (0)::numeric) AND (net_amount >= (0)::numeric"
+            "constraint": "chk_payouts_amount_nonneg"
           },
           "verified_properties": {
             "constraint": "chk_payouts_amount_nonneg",
@@ -1467,20 +950,7 @@
             "def_hash": "f9964f1b60d0332ca6e6d6826c58558c9301709fffed51a6bcdcbe633eb8f84d",
             "table": "business_payouts"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "constraint",
-            "def_hash",
-            "deferrable",
-            "deferred",
-            "definition",
-            "table",
-            "type",
-            "validated",
-            "check_expression"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "183",
@@ -1496,22 +966,7 @@
           "verification_source": "pg_constraint",
           "query_category": "constraint_detail_select",
           "expected_properties": {
-            "constraint": "refund_requests_payment_id_fkey",
-            "type": "f",
-            "validated": true,
-            "deferrable": false,
-            "deferred": false,
-            "definition": "FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE RESTRICT",
-            "def_hash": "9c4ce2be95ab05d789e38ec28f3b770fc69bed4405c6a0f39c5dbd4640d61860",
-            "table": "refund_requests",
-            "source_columns": [
-              "payment_id"
-            ],
-            "referenced_table": "payments",
-            "referenced_columns": [
-              "id"
-            ],
-            "delete_action": "RESTRICT"
+            "constraint": "refund_requests_payment_id_fkey"
           },
           "verified_properties": {
             "constraint": "refund_requests_payment_id_fkey",
@@ -1523,23 +978,7 @@
             "def_hash": "9c4ce2be95ab05d789e38ec28f3b770fc69bed4405c6a0f39c5dbd4640d61860",
             "table": "refund_requests"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "constraint",
-            "def_hash",
-            "deferrable",
-            "deferred",
-            "definition",
-            "table",
-            "type",
-            "validated",
-            "source_columns",
-            "referenced_table",
-            "referenced_columns",
-            "delete_action"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "183",
@@ -1555,25 +994,13 @@
           "verification_source": "pg_indexes",
           "query_category": "index_absence_select",
           "expected_properties": {
-            "absent": true,
-            "original_index": "idx_subscriptions_restaurant",
-            "drop_verified": true,
-            "original_table": "subscriptions",
-            "original_schema": "public"
+            "index": "idx_subscriptions_restaurant",
+            "expected": "absent"
           },
           "verified_properties": {
             "absent": true
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "absent",
-            "original_index",
-            "drop_verified",
-            "original_table",
-            "original_schema"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 6,
@@ -1581,8 +1008,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "cac9ac6374268d8368c0b49964280a047a47ba18b5027ea117e8eacebd3bd03f",
-      "detailed_property_checks_count": 49
+      "migration_evidence_digest": "6a5efa43e5cc89329827d894b0acb715fb5ebed311d49d55f3f627f42d986adf"
     },
     {
       "version": "184",
@@ -1608,12 +1034,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "campaigns",
-            "data_type": "timestamp with time zone",
-            "udt_name": "timestamptz",
-            "is_nullable": "YES",
-            "column_default": null,
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "deleted_at"
           },
           "verified_properties": {
             "schema": "public",
@@ -1626,19 +1047,7 @@
             "is_identity": "NO",
             "is_generated": "NEVER"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "184",
@@ -1656,12 +1065,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "campaigns",
-            "data_type": "uuid",
-            "udt_name": "uuid",
-            "is_nullable": "YES",
-            "column_default": null,
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "deleted_by"
           },
           "verified_properties": {
             "schema": "public",
@@ -1674,19 +1078,7 @@
             "is_identity": "NO",
             "is_generated": "NEVER"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "184",
@@ -1703,10 +1095,7 @@
           "query_category": "index_detail_select",
           "expected_properties": {
             "schema": "public",
-            "table": "campaigns",
-            "index": "idx_campaigns_active",
-            "def_hash": "21a91c77be9fa78eebf4c6589e50edbd6b4d60f4cc08ecf5f10e28645f3d7f27",
-            "indexdef": "CREATE INDEX idx_campaigns_active ON public.campaigns USING btree (business_id) WHERE (deleted_at IS NULL)"
+            "index": "idx_campaigns_active"
           },
           "verified_properties": {
             "schema": "public",
@@ -1715,16 +1104,7 @@
             "def_hash": "21a91c77be9fa78eebf4c6589e50edbd6b4d60f4cc08ecf5f10e28645f3d7f27",
             "indexdef": "CREATE INDEX idx_campaigns_active ON public.campaigns USING btree (business_id) WHERE (deleted_at IS NULL)"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "def_hash",
-            "index",
-            "indexdef",
-            "schema",
-            "table"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "184",
@@ -1740,22 +1120,7 @@
           "verification_source": "pg_constraint",
           "query_category": "constraint_detail_select",
           "expected_properties": {
-            "constraint": "campaign_donations_campaign_id_fkey",
-            "type": "f",
-            "validated": true,
-            "deferrable": false,
-            "deferred": false,
-            "definition": "FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE RESTRICT",
-            "def_hash": "4a232fad10b8fda65edfb0b3f214060e53c1c90d710b3fd43a921d3af95f6c74",
-            "table": "campaign_donations",
-            "source_columns": [
-              "campaign_id"
-            ],
-            "referenced_table": "campaigns",
-            "referenced_columns": [
-              "id"
-            ],
-            "delete_action": "RESTRICT"
+            "constraint": "campaign_donations_campaign_id_fkey"
           },
           "verified_properties": {
             "constraint": "campaign_donations_campaign_id_fkey",
@@ -1767,20 +1132,7 @@
             "def_hash": "4a232fad10b8fda65edfb0b3f214060e53c1c90d710b3fd43a921d3af95f6c74",
             "table": "campaign_donations"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "constraint",
-            "def_hash",
-            "deferrable",
-            "deferred",
-            "definition",
-            "table",
-            "type",
-            "validated",
-            "delete_action"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 4,
@@ -1788,8 +1140,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "e4f05944a7b28ec2d0c546ff56d954ceb71488bdd6f3fa0628f6b4ead63c9563",
-      "detailed_property_checks_count": 30
+      "migration_evidence_digest": "3d18e7a55f4312bfd44fb2334f7835be340c50d393de79457fc2ab57a4c08c1f"
     },
     {
       "version": "185",
@@ -1814,22 +1165,14 @@
           "query_category": "enum_detail_select",
           "expected_properties": {
             "type": "booking_channel",
-            "label": "dashboard",
-            "sort_order": 4
+            "label": "dashboard"
           },
           "verified_properties": {
             "type": "booking_channel",
             "label": "dashboard",
             "sort_order": 4
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "label",
-            "sort_order",
-            "type"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 1,
@@ -1837,8 +1180,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "860091fa223e319d1d1e04c0385433f920cdb5553c683a726f85c89d3b641681",
-      "detailed_property_checks_count": 3
+      "migration_evidence_digest": "1cd876291cbe1e4b175c0789296308de42ef32721d0dbeb644adbb47bede8144"
     },
     {
       "version": "186",
@@ -1863,21 +1205,7 @@
           "query_category": "table_detail_select",
           "expected_properties": {
             "schema": "public",
-            "table": "waiver_templates",
-            "exists": true,
-            "columns_summary": "id uuid, business_id uuid, title character varying(300), body text, fields jsonb, is_active boolean, require_before_booking boolean, token character varying(32), created_at timestamp with time zone, updated_at timestamp with time zone, pdf_url text",
-            "expected_columns": [
-              "id",
-              "business_id",
-              "title",
-              "body",
-              "fields",
-              "is_active",
-              "require_before_booking",
-              "token",
-              "created_at",
-              "updated_at"
-            ]
+            "table": "waiver_templates"
           },
           "verified_properties": {
             "schema": "public",
@@ -1885,25 +1213,7 @@
             "exists": true,
             "columns_summary": "id uuid, business_id uuid, title character varying(300), body text, fields jsonb, is_active boolean, require_before_booking boolean, token character varying(32), created_at timestamp with time zone, updated_at timestamp with time zone, pdf_url text"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "exists",
-            "columns_summary",
-            "column:id",
-            "column:business_id",
-            "column:title",
-            "column:body",
-            "column:fields",
-            "column:is_active",
-            "column:require_before_booking",
-            "column:token",
-            "column:created_at",
-            "column:updated_at"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "186",
@@ -1920,23 +1230,7 @@
           "query_category": "table_detail_select",
           "expected_properties": {
             "schema": "public",
-            "table": "signed_waivers",
-            "exists": true,
-            "columns_summary": "id uuid, template_id uuid, business_id uuid, customer_name character varying(200), customer_phone character varying(30), customer_email character varying(200), signature_url text, signed_at timestamp with time zone, pdf_url text, metadata jsonb, audit_trail jsonb, created_at timestamp with time zone, access_token character varying(32)",
-            "expected_columns": [
-              "id",
-              "template_id",
-              "business_id",
-              "customer_name",
-              "customer_phone",
-              "customer_email",
-              "signature_url",
-              "signed_at",
-              "pdf_url",
-              "metadata",
-              "audit_trail",
-              "created_at"
-            ]
+            "table": "signed_waivers"
           },
           "verified_properties": {
             "schema": "public",
@@ -1944,27 +1238,7 @@
             "exists": true,
             "columns_summary": "id uuid, template_id uuid, business_id uuid, customer_name character varying(200), customer_phone character varying(30), customer_email character varying(200), signature_url text, signed_at timestamp with time zone, pdf_url text, metadata jsonb, audit_trail jsonb, created_at timestamp with time zone, access_token character varying(32)"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "exists",
-            "columns_summary",
-            "column:id",
-            "column:template_id",
-            "column:business_id",
-            "column:customer_name",
-            "column:customer_phone",
-            "column:customer_email",
-            "column:signature_url",
-            "column:signed_at",
-            "column:pdf_url",
-            "column:metadata",
-            "column:audit_trail",
-            "column:created_at"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "186",
@@ -1981,10 +1255,7 @@
           "query_category": "index_detail_select",
           "expected_properties": {
             "schema": "public",
-            "table": "waiver_templates",
-            "index": "idx_waiver_templates_business",
-            "def_hash": "ab9557d0e1c3e0b75122682c8afeebc86cb43f3305e54621038c8b0fbc88b937",
-            "indexdef": "CREATE INDEX idx_waiver_templates_business ON public.waiver_templates USING btree (business_id)"
+            "index": "idx_waiver_templates_business"
           },
           "verified_properties": {
             "schema": "public",
@@ -1993,16 +1264,7 @@
             "def_hash": "ab9557d0e1c3e0b75122682c8afeebc86cb43f3305e54621038c8b0fbc88b937",
             "indexdef": "CREATE INDEX idx_waiver_templates_business ON public.waiver_templates USING btree (business_id)"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "def_hash",
-            "index",
-            "indexdef",
-            "schema",
-            "table"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "186",
@@ -2019,10 +1281,7 @@
           "query_category": "index_detail_select",
           "expected_properties": {
             "schema": "public",
-            "table": "signed_waivers",
-            "index": "idx_signed_waivers_business",
-            "def_hash": "46b0966f23ce00648713a32d29ffe402c47d56f312f8280d46852729dbb2b4c1",
-            "indexdef": "CREATE INDEX idx_signed_waivers_business ON public.signed_waivers USING btree (business_id)"
+            "index": "idx_signed_waivers_business"
           },
           "verified_properties": {
             "schema": "public",
@@ -2031,16 +1290,7 @@
             "def_hash": "46b0966f23ce00648713a32d29ffe402c47d56f312f8280d46852729dbb2b4c1",
             "indexdef": "CREATE INDEX idx_signed_waivers_business ON public.signed_waivers USING btree (business_id)"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "def_hash",
-            "index",
-            "indexdef",
-            "schema",
-            "table"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "186",
@@ -2057,10 +1307,7 @@
           "query_category": "index_detail_select",
           "expected_properties": {
             "schema": "public",
-            "table": "signed_waivers",
-            "index": "idx_signed_waivers_template",
-            "def_hash": "3c778c3154e35311e684d33a2b64767858b2df081c4cec1a2117acf4f628323a",
-            "indexdef": "CREATE INDEX idx_signed_waivers_template ON public.signed_waivers USING btree (template_id)"
+            "index": "idx_signed_waivers_template"
           },
           "verified_properties": {
             "schema": "public",
@@ -2069,16 +1316,7 @@
             "def_hash": "3c778c3154e35311e684d33a2b64767858b2df081c4cec1a2117acf4f628323a",
             "indexdef": "CREATE INDEX idx_signed_waivers_template ON public.signed_waivers USING btree (template_id)"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "def_hash",
-            "index",
-            "indexdef",
-            "schema",
-            "table"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "186",
@@ -2095,10 +1333,7 @@
           "query_category": "index_detail_select",
           "expected_properties": {
             "schema": "public",
-            "table": "signed_waivers",
-            "index": "idx_signed_waivers_phone",
-            "def_hash": "9b632d48673c011069ca9beb8802dcc254d99a35f81d2bf1783c5801f7ebd367",
-            "indexdef": "CREATE INDEX idx_signed_waivers_phone ON public.signed_waivers USING btree (customer_phone)"
+            "index": "idx_signed_waivers_phone"
           },
           "verified_properties": {
             "schema": "public",
@@ -2107,16 +1342,7 @@
             "def_hash": "9b632d48673c011069ca9beb8802dcc254d99a35f81d2bf1783c5801f7ebd367",
             "indexdef": "CREATE INDEX idx_signed_waivers_phone ON public.signed_waivers USING btree (customer_phone)"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "def_hash",
-            "index",
-            "indexdef",
-            "schema",
-            "table"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "186",
@@ -2134,12 +1360,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "waiver_templates",
-            "policy": "owners_manage_waiver_templates",
-            "permissive": "PERMISSIVE",
-            "command": "ALL",
-            "roles": "{public}",
-            "using_hash": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
-            "check_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            "policy": "owners_manage_waiver_templates"
           },
           "verified_properties": {
             "schema": "public",
@@ -2151,19 +1372,7 @@
             "using_hash": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
             "check_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "check_hash",
-            "command",
-            "permissive",
-            "policy",
-            "roles",
-            "schema",
-            "table",
-            "using_hash"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "186",
@@ -2181,12 +1390,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "signed_waivers",
-            "policy": "owners_view_signed_waivers",
-            "permissive": "PERMISSIVE",
-            "command": "SELECT",
-            "roles": "{public}",
-            "using_hash": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
-            "check_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            "policy": "owners_view_signed_waivers"
           },
           "verified_properties": {
             "schema": "public",
@@ -2198,19 +1402,7 @@
             "using_hash": "bf959eab18343b357dd09d24ed489fa79cb3ebb6d6701cbd384c35a359877420",
             "check_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "check_hash",
-            "command",
-            "permissive",
-            "policy",
-            "roles",
-            "schema",
-            "table",
-            "using_hash"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "186",
@@ -2228,12 +1420,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "signed_waivers",
-            "policy": "service_insert_signed_waivers",
-            "permissive": "PERMISSIVE",
-            "command": "INSERT",
-            "roles": "{service_role}",
-            "using_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "check_hash": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+            "policy": "service_insert_signed_waivers"
           },
           "verified_properties": {
             "schema": "public",
@@ -2245,19 +1432,7 @@
             "using_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "check_hash": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "check_hash",
-            "command",
-            "permissive",
-            "policy",
-            "roles",
-            "schema",
-            "table",
-            "using_hash"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "186",
@@ -2273,12 +1448,8 @@
           "verification_source": "information_schema.triggers",
           "query_category": "trigger_detail_select",
           "expected_properties": {
-            "schema": "public",
             "table": "waiver_templates",
-            "timing": "BEFORE",
-            "event": "UPDATE",
-            "orientation": "ROW",
-            "action": "EXECUTE FUNCTION update_updated_at()"
+            "trigger": "update_waiver_templates_updated_at"
           },
           "verified_properties": {
             "schema": "public",
@@ -2289,17 +1460,7 @@
             "orientation": "ROW",
             "action": "EXECUTE FUNCTION update_updated_at()"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "action",
-            "event",
-            "orientation",
-            "schema",
-            "table",
-            "timing"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "186",
@@ -2316,22 +1477,14 @@
           "query_category": "rls_detail_select",
           "expected_properties": {
             "table": "waiver_templates",
-            "relrowsecurity": true,
-            "relforcerowsecurity": false
+            "rls_enabled": true
           },
           "verified_properties": {
             "table": "waiver_templates",
             "relrowsecurity": true,
             "relforcerowsecurity": false
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "relforcerowsecurity",
-            "relrowsecurity",
-            "table"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "186",
@@ -2348,22 +1501,14 @@
           "query_category": "rls_detail_select",
           "expected_properties": {
             "table": "signed_waivers",
-            "relrowsecurity": true,
-            "relforcerowsecurity": false
+            "rls_enabled": true
           },
           "verified_properties": {
             "table": "signed_waivers",
             "relrowsecurity": true,
             "relforcerowsecurity": false
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "relforcerowsecurity",
-            "relrowsecurity",
-            "table"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 12,
@@ -2371,8 +1516,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "da04b082c29ed639a966e87c183002a5e3ddbbb62f98d05e43189175e365af15",
-      "detailed_property_checks_count": 86
+      "migration_evidence_digest": "056345253cf6f82c6d1079b27dc1aa8f7c15c6cbda5504e43dc04537a54b38c4"
     },
     {
       "version": "188",
@@ -2398,12 +1542,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "waiver_templates",
-            "data_type": "text",
-            "udt_name": "text",
-            "is_nullable": "YES",
-            "column_default": null,
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "pdf_url"
           },
           "verified_properties": {
             "schema": "public",
@@ -2416,19 +1555,7 @@
             "is_identity": "NO",
             "is_generated": "NEVER"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 1,
@@ -2436,8 +1563,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "5f65f585cf553f56358f0c4698364a4fccd0d834a114ac057064a5fe2598a61a",
-      "detailed_property_checks_count": 8
+      "migration_evidence_digest": "d8ba5ba6b191fa76ed01a83bf6564b939aa2d1e7c76b4e2ee418e85b9bae73c8"
     },
     {
       "version": "189",
@@ -2463,12 +1589,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "signed_waivers",
-            "data_type": "character varying",
-            "udt_name": "varchar",
-            "is_nullable": "YES",
-            "column_default": "substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 16)",
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "access_token"
           },
           "verified_properties": {
             "schema": "public",
@@ -2482,19 +1603,7 @@
             "is_generated": "NEVER",
             "character_maximum_length": 32
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "189",
@@ -2512,12 +1621,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "waiver_templates",
-            "data_type": "character varying",
-            "udt_name": "varchar",
-            "is_nullable": "NO",
-            "column_default": "substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 16)",
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "token"
           },
           "verified_properties": {
             "schema": "public",
@@ -2531,19 +1635,7 @@
             "is_generated": "NEVER",
             "character_maximum_length": 32
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "189",
@@ -2560,10 +1652,7 @@
           "query_category": "index_detail_select",
           "expected_properties": {
             "schema": "public",
-            "table": "signed_waivers",
-            "index": "idx_signed_waivers_access_token",
-            "def_hash": "ee28d6b178fd1121eaaa6adb1d2b390757cc929e742399b516767bbdc2563d79",
-            "indexdef": "CREATE INDEX idx_signed_waivers_access_token ON public.signed_waivers USING btree (access_token)"
+            "index": "idx_signed_waivers_access_token"
           },
           "verified_properties": {
             "schema": "public",
@@ -2572,16 +1661,7 @@
             "def_hash": "ee28d6b178fd1121eaaa6adb1d2b390757cc929e742399b516767bbdc2563d79",
             "indexdef": "CREATE INDEX idx_signed_waivers_access_token ON public.signed_waivers USING btree (access_token)"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "def_hash",
-            "index",
-            "indexdef",
-            "schema",
-            "table"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 3,
@@ -2589,8 +1669,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "36276ec9496dc5af8cbb38169b988597081519dbbd49518d15ef5b787374f324",
-      "detailed_property_checks_count": 21
+      "migration_evidence_digest": "553f11501247dd09107da308a2ee9b01106ef08da0ac25834903136be8264391"
     },
     {
       "version": "190",
@@ -2616,12 +1695,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "platform_fees",
-            "data_type": "integer",
-            "udt_name": "int4",
-            "is_nullable": "NO",
-            "column_default": "0",
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "gateway_fee"
           },
           "verified_properties": {
             "schema": "public",
@@ -2635,19 +1709,7 @@
             "is_generated": "NEVER",
             "numeric_precision": 32
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "190",
@@ -2665,12 +1727,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "businesses",
-            "data_type": "numeric",
-            "udt_name": "numeric",
-            "is_nullable": "YES",
-            "column_default": null,
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "custom_fee_percentage"
           },
           "verified_properties": {
             "schema": "public",
@@ -2684,19 +1741,7 @@
             "is_generated": "NEVER",
             "numeric_precision": 5
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "190",
@@ -2714,12 +1759,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "businesses",
-            "data_type": "integer",
-            "udt_name": "int4",
-            "is_nullable": "YES",
-            "column_default": null,
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "custom_fee_flat"
           },
           "verified_properties": {
             "schema": "public",
@@ -2733,19 +1773,7 @@
             "is_generated": "NEVER",
             "numeric_precision": 32
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "190",
@@ -2763,12 +1791,7 @@
           "expected_properties": {
             "schema": "public",
             "table": "payments",
-            "data_type": "integer",
-            "udt_name": "int4",
-            "is_nullable": "NO",
-            "column_default": "0",
-            "is_identity": "NO",
-            "is_generated": "NEVER"
+            "column": "gateway_fee"
           },
           "verified_properties": {
             "schema": "public",
@@ -2782,19 +1805,7 @@
             "is_generated": "NEVER",
             "numeric_precision": 32
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "schema",
-            "table",
-            "data_type",
-            "udt_name",
-            "is_nullable",
-            "column_default",
-            "is_identity",
-            "is_generated"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         },
         {
           "migration_version": "190",
@@ -2810,14 +1821,7 @@
           "verification_source": "pg_constraint",
           "query_category": "constraint_detail_select",
           "expected_properties": {
-            "constraint": "chk_platform_fees_gateway_fee_nonneg",
-            "type": "c",
-            "validated": true,
-            "deferrable": false,
-            "deferred": false,
-            "definition": "CHECK ((gateway_fee >= 0))",
-            "def_hash": "08df889d3b0600d14f419c888e3bb92ae8c7402bcff1e9f069f0642c8e41ae81",
-            "table": "platform_fees"
+            "constraint": "chk_platform_fees_gateway_fee_nonneg"
           },
           "verified_properties": {
             "constraint": "chk_platform_fees_gateway_fee_nonneg",
@@ -2829,12 +1833,7 @@
             "def_hash": "08df889d3b0600d14f419c888e3bb92ae8c7402bcff1e9f069f0642c8e41ae81",
             "table": "platform_fees"
           },
-          "property_comparison_result": "exact_match",
-          "compared_property_paths": [
-            "def_hash"
-          ],
-          "property_mismatches": [],
-          "comparison_basis": "expected_vs_verified_property_comparison"
+          "property_comparison_result": "match"
         }
       ],
       "object_count": 5,
@@ -2842,8 +1841,7 @@
       "superseded": 0,
       "failed": 0,
       "ambiguous": 0,
-      "migration_evidence_digest": "2f31c45c3211bfeeb5482e136ab3d9fd57b05b799ec90a0154a3f0a4d66db64d",
-      "detailed_property_checks_count": 33
+      "migration_evidence_digest": "c73d9f02eec95d833a2dc08995f126f23d31592cff1ef2e792d4138ebdb73cd4"
     }
   ],
   "pre_total_remote_count": 164,
@@ -3235,9 +2233,5 @@
   "no_issue_53_mutation": true,
   "no_deployment_occurred": true,
   "no_token_recorded": true,
-  "batch_6_not_started": true,
-  "supersedes_repository_evidence_path": "docs/migrations/evidence/batch-05-production-verification-v2.json",
-  "superseded_repository_evidence_sha256": "bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8",
-  "verified_state_source": "production_v2_read_only_metadata",
-  "expected_state_source": "repository_migration_sql_and_later_lineage"
+  "batch_6_not_started": true
 }
