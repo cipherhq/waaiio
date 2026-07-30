@@ -79,6 +79,34 @@ function isValidUTCTimestamp(ts) {
   return !isNaN(d.getTime());
 }
 
+/**
+ * Strict canonical UTC ISO-8601 timestamp parser.
+ * Requires exact format: YYYY-MM-DDTHH:mm:ss.sssZ
+ * Rejects timezone offsets, missing Z, missing milliseconds, spaces, bare dates.
+ * Returns milliseconds if valid, or null if invalid (and emits a diagnostic).
+ */
+const CANONICAL_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+function parseCanonicalUtcTimestamp(value, label) {
+  if (typeof value !== 'string') {
+    fail(`${label} must be canonical UTC ISO-8601 (got ${typeof value})`);
+    return null;
+  }
+  if (!CANONICAL_UTC_RE.test(value)) {
+    fail(`${label} "${value}" must be canonical UTC ISO-8601 (YYYY-MM-DDTHH:mm:ss.sssZ)`);
+    return null;
+  }
+  const ms = Date.parse(value);
+  if (isNaN(ms)) {
+    fail(`${label} "${value}" must be canonical UTC ISO-8601 (unparseable)`);
+    return null;
+  }
+  if (new Date(ms).toISOString() !== value) {
+    fail(`${label} "${value}" must be canonical UTC ISO-8601 (round-trip mismatch)`);
+    return null;
+  }
+  return ms;
+}
+
 console.log('=== Migration Reconciliation Validation ===\n');
 
 // ── Check files exist ──
@@ -3098,27 +3126,32 @@ function validateRepairCloseout(cfg) {
   }
   if (progressionErrors === 0) pass('Count progression advances exactly once per version');
 
-  // 10. Timestamps: valid ISO-8601, startedAt <= completedAt, monotonically non-decreasing, after PR merge
+  // 10. Timestamps: canonical UTC ISO-8601, startedAt <= completedAt, sequential non-overlap, after PR merge
   let tsErrors = 0;
   let prevEndMs = 0;
-  for (const r of repairs) {
-    const startStr = r[f.startedAt];
-    const endStr = r[f.completedAt];
-    const startMs = new Date(startStr).getTime();
-    const endMs = new Date(endStr).getTime();
-    if (isNaN(startMs)) { fail(`Repair ${r.version} ${f.startedAt} not valid ISO-8601: ${startStr}`); tsErrors++; }
-    if (isNaN(endMs)) { fail(`Repair ${r.version} ${f.completedAt} not valid ISO-8601: ${endStr}`); tsErrors++; }
-    if (!isNaN(startMs) && !isNaN(endMs)) {
-      if (startMs > endMs) { fail(`Repair ${r.version} ${f.startedAt} > ${f.completedAt}`); tsErrors++; }
-      if (endMs < prevEndMs) { fail(`Repair ${r.version} timestamp moves backwards`); tsErrors++; }
+  for (let i = 0; i < repairs.length; i++) {
+    const r = repairs[i];
+    const startLabel = `Repair ${r.version} ${f.startedAt}`;
+    const endLabel = `Repair ${r.version} ${f.completedAt}`;
+    const startMs = parseCanonicalUtcTimestamp(r[f.startedAt], startLabel);
+    const endMs = parseCanonicalUtcTimestamp(r[f.completedAt], endLabel);
+    if (startMs === null) { tsErrors++; }
+    if (endMs === null) { tsErrors++; }
+    if (startMs !== null && endMs !== null) {
+      if (startMs > endMs) { fail(`Repair ${r.version} ${f.startedAt} is later than ${f.completedAt}`); tsErrors++; }
+      if (i > 0 && startMs < prevEndMs) {
+        fail(`Repair ${r.version} starts before previous repair completed (${r[f.startedAt]} < prev ${f.completedAt})`);
+        tsErrors++;
+      }
+      if (endMs < prevEndMs) { fail(`Repair ${r.version} completion time moves backwards`); tsErrors++; }
       prevEndMs = endMs;
     }
-    if (!isNaN(endMs) && endMs <= prMergeMs) {
-      fail(`Repair ${r.version} ${f.completedAt} ${endStr} not after PR merge`);
+    if (endMs !== null && endMs <= prMergeMs) {
+      fail(`Repair ${r.version} ${f.completedAt} ${r[f.completedAt]} not after PR merge`);
       tsErrors++;
     }
   }
-  if (tsErrors === 0) pass(`All timestamps valid, ordered, and after PR merge`);
+  if (tsErrors === 0) pass(`All timestamps canonical UTC, sequential, and after PR merge`);
 
   // 11. Own-batch occurrence maps
   const ownPreOcc = evidence[cfg.ownBatchOccurrenceMaps.pre] || {};

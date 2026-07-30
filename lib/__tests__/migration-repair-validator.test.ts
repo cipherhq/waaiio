@@ -6056,7 +6056,7 @@ describe('Batch 7 closeout rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/not valid ISO|invalid.*timestamp/i);
+      expect(output).toMatch(/must be canonical UTC ISO-8601/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6071,7 +6071,7 @@ describe('Batch 7 closeout rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/started_at.*>.*completed_at|started_at.*later.*completed_at/i);
+      expect(output).toMatch(/started_at.*is later than.*completed_at/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6087,7 +6087,7 @@ describe('Batch 7 closeout rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/monotonic|backwards|non-decreasing/i);
+      expect(output).toMatch(/starts before previous repair completed/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6164,6 +6164,41 @@ describe('Batch 7 closeout rejection tests', () => {
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
       expect(output).toMatch(/unapproved.*snapshot|snapshot.*unapproved|999/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 34. Non-canonical but JavaScript-parseable timestamp (timezone offset instead of Z)
+  it('rejects non-canonical UTC timestamp with timezone offset', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.repairs[0].started_at = '2026-07-30T12:52:22.000-04:00';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/must be canonical UTC ISO-8601/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 35. Overlapping sequence with monotonic completion times
+  it('rejects overlapping repairs even when completion times increase', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      // Keep repair 2 completed_at later than repair 1 completed_at,
+      // but set repair 2 started_at to 1ms before repair 1 completed_at
+      const repair1End = d.repairs[0].completed_at; // e.g. "2026-07-30T17:04:56.000Z"
+      const repair1EndMs = new Date(repair1End).getTime();
+      const overlapStart = new Date(repair1EndMs - 1).toISOString(); // 1ms before
+      const laterEnd = new Date(repair1EndMs + 60000).toISOString(); // 60s after
+      d.repairs[1].started_at = overlapStart;
+      d.repairs[1].completed_at = laterEnd;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/starts before previous repair completed/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 });
