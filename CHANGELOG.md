@@ -5,6 +5,20 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-30
+
+### Operations: Batch 5 migration-history repair complete (15 versions)
+- Batch 5 repair complete: 15 versions (172, 173, 174, 175, 177, 178, 179, 180, 183, 184, 185, 186, 188, 189, 190). Remote count 164→179 (+15). 101-246 tracked count 68→83 (+15). 75 total completed migration-history repairs.
+- All 15 approved versions appear exactly once in remote schema_migrations. No unapproved history changes.
+- No migration SQL executed. No schema or application data changed. No deployment.
+- Active repair allowlist cleared to empty. Batch 6 is next but has not started.
+- V3 canonical verification SHA: `8f093426b4688650d4e9da185f82d3d001592b9f3cc9b4b1ed2bdc8553962930`. 341 compared leaf-property paths (52 exact match, 3 equivalent stricter).
+- Repair evidence SHA: `703cd382c603618111025f7403fa4de075ed9736b9f0deecfca017c013c0bafc`.
+- Issue #53 remains open.
+  - **Files:** `docs/migrations/evidence/batch-05-repair.json`, `docs/migrations/evidence/batch-05-repair.md`, `docs/migrations/101-246-production-reconciliation.json`, `docs/migrations/101-246-repair-allowlist.json`, `docs/migrations/101-246-repair-runbook.md`, `docs/MIGRATION_REGISTRY.md`, `docs/engineering-status.json`, `docs/ENGINEERING_STATUS.md`
+  - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — evidence and metadata only; no migration SQL executed, no application-code change, no deployment.
+
 ## 2026-07-29
 
 ### Operations: Batch 5 function def_hash fix and real property comparison
@@ -18,8 +32,8 @@ If something breaks, check this log to find what changed and when.
 ### Operations: Batch 5 V3 expected-state evidence binding
 - V3 canonical evidence enrichment: expected-state derivation from migration SQL and later-migration lineage.
 - V2 production snapshot preserved at `docs/migrations/evidence/batch-05-production-verification-v2.json` (SHA `bf528a88...`).
-- V3 canonical evidence SHA: `c2c0c052af94ccdb96b3e6e7d798c4c0ee4a0df4f10b4dfec43f2b86c22a5450`.
-- 383 compared leaf-property paths: 52 exact_match, 3 equivalent_stricter.
+- V3 canonical evidence SHA: `8f093426b4688650d4e9da185f82d3d001592b9f3cc9b4b1ed2bdc8553962930` (final).
+- 341 compared leaf-property paths: 52 exact_match, 3 equivalent_stricter (corrected from initial 383 count that included synthetic paths).
 - Function privilege lineage: restore_stock, restore_variant_stock, restore_tickets_sold created by Migration 173, privileges tightened by Migrations 181 and 296 to service_role-only.
 - Expected properties derived from local PostgreSQL (waaiio_batch5_expected database, localhost only, no remote access).
 - compared_property_paths validation added to validator.
