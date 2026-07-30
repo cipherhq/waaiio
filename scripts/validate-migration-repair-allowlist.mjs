@@ -360,6 +360,24 @@ for (const e of batchRepairedEntries) {
     fail(`Version ${e.version}: batch-repaired but repaired_at is not valid UTC: "${e.repaired_at}"`);
     completedErrors++;
   }
+  // Batch 5 chronology: repaired_at must be after PR #75 merge and before PR #76 creation
+  if (e.repair_batch === 5) {
+    const PR75_MERGE = new Date('2026-07-30T02:54:38Z').getTime();
+    const PR76_CREATED = new Date('2026-07-30T04:37:37Z').getTime();
+    const repairedAtMs = new Date(e.repaired_at).getTime();
+    if (repairedAtMs <= PR75_MERGE) {
+      fail(`Version ${e.version}: Batch 5 repaired_at ${e.repaired_at} is not later than PR #75 merge 2026-07-30T02:54:38Z`);
+      completedErrors++;
+    }
+    if (repairedAtMs > PR76_CREATED) {
+      fail(`Version ${e.version}: Batch 5 repaired_at ${e.repaired_at} is later than PR #76 creation 2026-07-30T04:37:37Z`);
+      completedErrors++;
+    }
+    if (e.repaired_at_source !== 'batch-05-repair source evidence file mtime after final post-repair verification') {
+      fail(`Version ${e.version}: Batch 5 repaired_at_source missing or incorrect: "${e.repaired_at_source}"`);
+      completedErrors++;
+    }
+  }
   if (!e.repair_evidence_path || typeof e.repair_evidence_path !== 'string') {
     fail(`Version ${e.version}: batch-repaired but missing or invalid repair_evidence_path`);
     completedErrors++;

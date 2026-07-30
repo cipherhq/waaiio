@@ -4908,4 +4908,34 @@ describe('CLI rejection tests for Batch 5 repair evidence', () => {
       expect(output).toMatch(/candidate|cohort|75|PENDING.*VERIFIED.*repaired/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
+
+  // Test: Batch 5 repaired_at before PR #75 merge
+  it('rejects Batch 5 repaired_at before PR #75 merge time', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const manifestPath = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+      const entry = manifest.find((e: any) => e.version === '172');
+      entry.repaired_at = '2026-07-30T00:30:00Z'; // Before PR #75 merge at 02:54:38Z
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Batch 5 repaired_at.*not later than PR #75/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: Batch 5 repaired_at_source missing or incorrect
+  it('rejects Batch 5 repaired_at_source missing or incorrect', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const manifestPath = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+      const entry = manifest.find((e: any) => e.version === '172');
+      entry.repaired_at_source = 'wrong value';
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/repaired_at_source.*missing or incorrect/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
 });

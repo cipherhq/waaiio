@@ -4618,9 +4618,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "bc1105742ed12e6cbb4dddf282e469aa163f5a8ccb9bee6ab6e5b7bcd9550bbe",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "3a8259637c4172e706ab8ed66c58f8709d0f950d861d8fe640c208d2c21a8a65"
+    "repair_evidence_digest": "3a8259637c4172e706ab8ed66c58f8709d0f950d861d8fe640c208d2c21a8a65",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "173",
@@ -4676,9 +4677,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "8a8e8df1f924c8097a0d4cbdf3d196860a0846dc491d306a1344e241d17a5134",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "644a2ceca2a33961865c5e8e51588517b82acebb20ac66af924380f3f8577353"
+    "repair_evidence_digest": "644a2ceca2a33961865c5e8e51588517b82acebb20ac66af924380f3f8577353",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "174",
@@ -4723,9 +4725,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "00ce816f9eff0a5b473b9806dc5cf93fa12b54fa75d18024b79913d7e3f16f15",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "f1639747b274ab2268ee82474e67b2c53bd96ad92c9a06c366b439f39311be93"
+    "repair_evidence_digest": "f1639747b274ab2268ee82474e67b2c53bd96ad92c9a06c366b439f39311be93",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "175",
@@ -4759,9 +4762,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "532c0b9046740da1865adaf40d9f02eae89d83982bf6d95255f67d7609cbd9e6",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "df5d8bc8eb015a70a2a8e2910ec221bb1dd08894235bd14da8a44e5733ee83b0"
+    "repair_evidence_digest": "df5d8bc8eb015a70a2a8e2910ec221bb1dd08894235bd14da8a44e5733ee83b0",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "176",
@@ -4881,9 +4885,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "c769bca6ed49bbb486d56d148cd0e27e263a199b114148abb9e55993d8b90c72",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "062e9b50f9a215c38a8af575483bfef1b2069d106882bed22ce35015967f4fea"
+    "repair_evidence_digest": "062e9b50f9a215c38a8af575483bfef1b2069d106882bed22ce35015967f4fea",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "178",
@@ -4928,9 +4933,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "045e095afa0bdc4def1d472f9c49a3b64be3b21d0a50a507c8d669f5571511f9",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "03a6c0f4758d09f5b1e7a592db40dd1d03d3772812a5ac1acd037cadeef93d39"
+    "repair_evidence_digest": "03a6c0f4758d09f5b1e7a592db40dd1d03d3772812a5ac1acd037cadeef93d39",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "179",
@@ -4964,9 +4970,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "fd8dd916937f53cc5fe431697f28cbd948b84212bafda715e56862eda15b83c6",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "3f6d50e0db503c28f86ca8843dd9a34e11e3138ed8912626a40d4799d2fd85b3"
+    "repair_evidence_digest": "3f6d50e0db503c28f86ca8843dd9a34e11e3138ed8912626a40d4799d2fd85b3",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "180",
@@ -5055,9 +5062,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "1e52c562e55ee081bc35f5201c1b49f992395d7126f29b1cd867bdc12977ffd0",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "baf21189d737e3b77c6f660df50a1650fe83d0399bc3e9b3554c1c42eb28473b"
+    "repair_evidence_digest": "baf21189d737e3b77c6f660df50a1650fe83d0399bc3e9b3554c1c42eb28473b",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "181",
@@ -5314,9 +5322,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "b3f715cc75ba9613b154233ac897c9d5cd9e772d279a7d2ea302bf64f53105d4",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "e6c9a8f637a7bbad6baa033c3d2066d92af6c0e11e0c7606c93944547cb9d9ad"
+    "repair_evidence_digest": "e6c9a8f637a7bbad6baa033c3d2066d92af6c0e11e0c7606c93944547cb9d9ad",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "184",
@@ -5383,9 +5392,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "f1d0c0d7b37072728c866506a2199511f795277796e17f74cab8390d17715844",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "2800f45a18ff8a16efa0a6831c35b68e2279452167115a18aaa4172c2e8b0ef3"
+    "repair_evidence_digest": "2800f45a18ff8a16efa0a6831c35b68e2279452167115a18aaa4172c2e8b0ef3",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "185",
@@ -5419,9 +5429,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "860091fa223e319d1d1e04c0385433f920cdb5553c683a726f85c89d3b641681",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "c736e0554f6c703011c3fa2103b883ee2332305216d227f3d1c928c7118e2844"
+    "repair_evidence_digest": "c736e0554f6c703011c3fa2103b883ee2332305216d227f3d1c928c7118e2844",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "186",
@@ -5576,9 +5587,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "abe9dec49fa525173caca3deb552c530c42ad39f843778dbbe481df65f5ed2ef",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "d143115febdfa8d6e1b0cc2a388b82182b9c26e7f6d0f5e2053a7684dabfc5e7"
+    "repair_evidence_digest": "d143115febdfa8d6e1b0cc2a388b82182b9c26e7f6d0f5e2053a7684dabfc5e7",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "187",
@@ -5638,9 +5650,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "5f65f585cf553f56358f0c4698364a4fccd0d834a114ac057064a5fe2598a61a",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "38629f3ba01b6bb7dff5440974a21951619d236be8e9ebc4aa15a6fa421cfd07"
+    "repair_evidence_digest": "38629f3ba01b6bb7dff5440974a21951619d236be8e9ebc4aa15a6fa421cfd07",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "189",
@@ -5696,9 +5709,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "36276ec9496dc5af8cbb38169b988597081519dbbd49518d15ef5b787374f324",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "f716019441ae89807857048f51a92a52cffa3cd8431bf3931b7161b52e019058"
+    "repair_evidence_digest": "f716019441ae89807857048f51a92a52cffa3cd8431bf3931b7161b52e019058",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "190",
@@ -5776,9 +5790,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
     "production_evidence_digest": "2f31c45c3211bfeeb5482e136ab3d9fd57b05b799ec90a0154a3f0a4d66db64d",
     "repair_batch": 5,
-    "repaired_at": "2026-07-30T00:30:00+00:00",
+    "repaired_at": "2026-07-30T03:47:45Z",
     "repair_evidence_path": "docs/migrations/evidence/batch-05-repair.json",
-    "repair_evidence_digest": "2139005f1504d6a78be4c2e346d87e395f77795735374416a47ab81a5f23fd97"
+    "repair_evidence_digest": "2139005f1504d6a78be4c2e346d87e395f77795735374416a47ab81a5f23fd97",
+    "repaired_at_source": "batch-05-repair source evidence file mtime after final post-repair verification"
   },
   {
     "version": "191",
