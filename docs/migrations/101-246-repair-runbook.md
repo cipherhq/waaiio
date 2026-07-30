@@ -19,17 +19,16 @@ This runbook governs the controlled verification and repair of 124 migration-his
 
 ## Current State
 
-- **98 ALIGNED_TRACKED:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 244
-- **15 VERIFIED_APPLIED_UNTRACKED:** Batch 7 (15, active for repair)
+- **113 ALIGNED_TRACKED:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 218, 219, 220, 221, 223, 224, 225, 244
+- **0 VERIFIED_APPLIED_UNTRACKED**
 - **19 PENDING_PRODUCTION_REVERIFICATION:** Batches 8-9
 - **12 NOT_VERIFIABLE_SAFELY:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 SUPERSEDED:** 122, 130
-- **Active repair allowlist: 15** (Batch 7 only)
-- **Completed migration-history repairs: 90** (45 Batch 1-3 + 15 Batch 4 + 15 Batch 5 + 15 Batch 6)
-- **Batch 6: verification and repair complete**
-- **Batch 7: verified, active for repair** — next production action is controlled Batch 7 repair
-- **Batches 8-9: not started**
-- **Next action: Batch 7 controlled migration-history repair**
+- **Active repair allowlist: 0** (empty)
+- **Completed migration-history repairs: 105** (45 Batch 1-3 + 15 Batch 4 + 15 Batch 5 + 15 Batch 6 + 15 Batch 7)
+- **Batch 7: verification and repair complete**
+- **Batches 8-9: not started, unverified**
+- **Next action: final read-only production-verification wave for Batches 8 and 9**
 
 ## Batch Status
 
@@ -125,21 +124,25 @@ This runbook governs the controlled verification and repair of 124 migration-his
 - All 15 versions appear exactly once in remote schema_migrations
 - Repair status: COMPLETE
 
-### Batch 7 — Verification: COMPLETE | Repair: ACTIVE (PENDING)
+### Batch 7 — Verification: COMPLETE | Repair: COMPLETE
 - **Versions:** 208, 209, 210, 211, 212, 213, 214, 215, 218, 219, 220, 221, 223, 224, 225
 - **Object checks:** 83 (82 exact match, 1 superseded, 0 failed, 0 ambiguous)
 - **Compared property paths:** 341
 - **Supersession:** Migration 223 `public_read_active_businesses` policy on businesses — dropped by Migration 293 (`293_fix_production_table_exposure.sql`), replaced with stricter role-based access. Authenticated and service-role application access remains supported.
 - **Verification evidence:** `docs/migrations/evidence/batch-07-production-verification.json`
 - **Evidence SHA-256:** `ef3822deec7191c1a6b5fee69afd8c0c97fb588b6458cdc7aa86feeda5b66c00`
-- **Repair status:** ACTIVE — 15 versions in repair allowlist
-- Next production write: Batch 7 one-by-one migration-history repair
-- No migration SQL executed. No schema or data change. No deployment.
+- **Repair evidence:** `docs/migrations/evidence/batch-07-repair.json`
+- **Repair evidence SHA-256:** `d99a37ee09a8ebe6d80c7cc3cea2d858d60753b5b28783b1ac2a6a02196837ec`
+- **Remote count:** 194 -> 209 (+15)
+- **101-246 tracked count:** 98 -> 113 (+15)
+- All 15 versions appear exactly once in remote schema_migrations
+- Repair status: COMPLETE
 
 ### Batches 8-9 — Verification: NOT STARTED
 - 19 candidates remain across 2 batches (Batches 8-9)
 - Batch 8 has not started
-- Next action after Batch 7 repair: Batch 8 verification
+- Batch 9 has not started
+- Next action: final read-only production-verification wave for Batches 8 and 9
 
 ## Mandatory Execution Control Rule
 
