@@ -22,7 +22,7 @@ if (!combinedPattern) {
 
 const secretRegex = new RegExp(combinedPattern, 'i');
 // Exempt named digest/checksum keys AND numeric version keys (e.g. "154": "sha256...") in migration evidence
-const exemptKeyRegex = /^\+\s*"(checksum|local_checksum|evidence_digest|production_evidence_digest|repair_evidence_digest|migration_checksum|expected_object_digest|previous_evidence_sha256|original_evidence_sha256|migration_file_sha256|migration_evidence_digest|superseded_temporary_evidence_sha256|def_hash|using_hash|\d{3})"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$/;
+const exemptKeyRegex = /^\+\s*"(checksum|local_checksum|evidence_digest|production_evidence_digest|repair_evidence_digest|migration_checksum|expected_object_digest|previous_evidence_sha256|original_evidence_sha256|migration_file_sha256|migration_evidence_digest|superseded_temporary_evidence_sha256|def_hash|def_sha256|using_hash|using_sha256|\d{3})"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$/;
 const migrationJsonPath = /^docs\/migrations\/(evidence\/)?[^/]+\.json$/;
 
 let currentFile = '';

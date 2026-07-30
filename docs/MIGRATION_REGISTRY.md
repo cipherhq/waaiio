@@ -94,6 +94,36 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 156 | `atomic_form_response_count` | Batch 4 repaired (tracked) | — | Remote history repair completed 2026-07-29. No SQL executed. |
 | 155 | `class_booking_multi_location` | Batch 4 repaired (tracked) | — | Remote history repair completed 2026-07-29. No SQL executed. |
 | 154 | `service_packages` | Batch 4 repaired (tracked) | — | Remote history repair completed 2026-07-29. No SQL executed. |
+| 225 | `flow_dropoff_analytics` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 224 | `event_tickets_reminder_sent` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 223 | `security_fix_exposed_tables` | Production verified (Batch 7) | — | Verified 2026-07-30. Policy `public_read_active_businesses` on businesses superseded by Migration 293 (`293_fix_production_table_exposure.sql`) — policy dropped and replaced with stricter role-based access. Waiting for Batch 6 repair closeout. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 221 | `admin_permissions` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 220 | `profiles_admin_insert` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 219 | `admin_rls_missing_tables` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 218 | `resellers_admin_rls` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 215 | `annual_billing` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 214 | `security_rls_fix` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 213 | `pending_transfers_campaign_id` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 212 | `platform_fee_invoices` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 211 | `ocr_result_and_admin_rls` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 210 | `receipt_ocr` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 209 | `direct_bank_transfer` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 208 | `payment_channels` | Production verified (Batch 7) | — | Verified 2026-07-30. Waiting for Batch 6 repair closeout. Not active for repair. Evidence: `batch-07-production-verification.json` (SHA `ef3822de`). Not yet remotely tracked. |
+| 207 | `reseller_full` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 206 | `demo_requests` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 205 | `resellers` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 204 | `party_enhancements` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 203 | `keyword_campaigns` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 202 | `balance_reminder_settings` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 201 | `session_security` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 198 | `party_custom_responses` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 197 | `event_refund_policy` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 196 | `waiver_capability_enum` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 195 | `pay_link_limits` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 194 | `blocked_phones_table` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 193 | `fix_search_path` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 192 | `secure_revenue_rpcs` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
+| 191 | `scan_to_pay` | Production verified (Batch 6) | — | Verified 2026-07-30. Approved for history-only repair. Evidence: `batch-06-production-verification.json` (SHA `0fc3ff1f`). Not yet remotely tracked. |
 | 190 | `gateway_fees_and_custom_overrides` | Batch 5 repaired (tracked) | — | Remote history repair completed 2026-07-30. No SQL executed. |
 | 189 | `waiver_access_token` | Batch 5 repaired (tracked) | — | Remote history repair completed 2026-07-30. No SQL executed. |
 | 188 | `waiver_template_pdf_url` | Batch 5 repaired (tracked) | — | Remote history repair completed 2026-07-30. No SQL executed. |
@@ -195,7 +225,7 @@ Per Issue #53 preflight findings:
 
 Of the 146 migrations in the 101-246 range:
 - **83 aligned/tracked:** Batches 1-5 repaired (75 versions) + 8 individually tracked (115, 119, 176, 181, 182, 199, 200, 244)
-- **0 verified and pending repair**
-- **49 remaining candidates pending verification:** Batches 6-9 per verification candidates (`docs/migrations/101-246-verification-candidates.json`)
+- **30 verified and pending repair:** Batch 6 (15, active for repair) + Batch 7 (15, deferred until Batch 6 closeout)
+- **19 remaining candidates pending verification:** Batches 8-9 per verification candidates (`docs/migrations/101-246-verification-candidates.json`)
 - **12 not verifiable safely:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 superseded:** 122 (by 233), 130 (by 233)
