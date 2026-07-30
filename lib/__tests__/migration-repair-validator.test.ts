@@ -1332,7 +1332,7 @@ describe('Real Batch 1-5 evidence integration (Batches 1-4 repaired, Batch 5 ver
     const repairFiles = readdirSync(evidenceDir)
       .filter(f => /^batch-\d+-repair\.json$/.test(f))
       .sort();
-    expect(repairFiles.length).toBe(4);
+    expect(repairFiles.length).toBe(5);
 
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as ManifestEntry[];
     const allowlist = JSON.parse(readFileSync(allowlistPath, 'utf-8')) as Array<{ version: string }>;
@@ -1354,23 +1354,13 @@ describe('Real Batch 1-5 evidence integration (Batches 1-4 repaired, Batch 5 ver
     for (const b of batches) allVersions.push(...b.versions);
     expect(new Set(allVersions).size).toBe(allVersions.length);
 
-    // Batches 1-4 completed (repaired)
-    const batch5Versions = new Set(['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190']);
+    // Batches 1-5 completed (repaired)
     for (const b of batches) {
       for (const ver of b.versions) {
         const me = manifest.find(e => e.version === ver)!;
         expect(me).toBeDefined();
-        if (batch5Versions.has(ver)) {
-          // Batch 5: verified but not yet repaired
-          expect(me.repair_status).toBe('approved_for_repair');
-          expect(me.current_classification).toBe('VERIFIED_APPLIED_UNTRACKED');
-          expect(me.remote_tracked).toBe(false);
-          expect(me.repair_eligible).toBe(true);
-          // Must be in allowlist, NOT in candidates
-          expect(allowlistVersions.has(ver)).toBe(true);
-          expect(candidateVersions.has(ver)).toBe(false);
-        } else {
-          // Batches 1-4: completed
+        // All Batches 1-5: completed
+        {
           expect(me.repair_status).toBe('completed');
           expect(me.current_classification).toBe('ALIGNED_TRACKED');
           expect(me.remote_tracked).toBe(true);
@@ -1382,21 +1372,21 @@ describe('Real Batch 1-5 evidence integration (Batches 1-4 repaired, Batch 5 ver
       }
     }
 
-    // 15 approved entries (Batch 5)
+    // 0 approved entries (Batch 5 repair complete)
     const approvedEntries = manifest.filter(e => e.repair_status === 'approved_for_repair');
-    expect(approvedEntries.length).toBe(15);
+    expect(approvedEntries.length).toBe(0);
 
-    // Classification counts (post Batch 5 verification)
+    // Classification counts (post Batch 5 repair)
     const counts: Record<string, number> = {};
     manifest.forEach(e => { counts[e.current_classification] = (counts[e.current_classification] || 0) + 1; });
-    expect(counts['ALIGNED_TRACKED']).toBe(68);
-    expect(counts['VERIFIED_APPLIED_UNTRACKED']).toBe(15);
+    expect(counts['ALIGNED_TRACKED']).toBe(83);
+    expect(counts['VERIFIED_APPLIED_UNTRACKED'] || 0).toBe(0);
     expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(49);
     expect(counts['NOT_VERIFIABLE_SAFELY']).toBe(12);
     expect(counts['SUPERSEDED_WITH_EQUIVALENT_STATE']).toBe(2);
 
-    // Allowlist = 15 (Batch 5 verified), Candidates = 49
-    expect(allowlist.length).toBe(15);
+    // Allowlist = 0 (Batch 5 repair complete), Candidates = 49
+    expect(allowlist.length).toBe(0);
     expect(candidates.length).toBe(49);
 
     // 124-candidate cohort invariant: PENDING + VERIFIED + repaired candidates = 124
@@ -1407,7 +1397,7 @@ describe('Real Batch 1-5 evidence integration (Batches 1-4 repaired, Batch 5 ver
       e.original_classification === 'VERIFIED_APPLIED_UNTRACKED'
     ).length;
     expect(49 + verifiedCount + repairedCandidates).toBe(124);
-    expect(repairedCandidates).toBe(60); // 15 Batch 1 + 15 Batch 2 + 15 Batch 3 + 15 Batch 4
+    expect(repairedCandidates).toBe(75); // 15 * 5 batches
 
     // No duplicate versions across repair batches
     
@@ -1417,7 +1407,7 @@ describe('Real Batch 1-5 evidence integration (Batches 1-4 repaired, Batch 5 ver
     const allRepairVersions: string[] = [];
     for (const r of repairs) allRepairVersions.push(...r.approved_versions.map(String));
     expect(new Set(allRepairVersions).size).toBe(allRepairVersions.length);
-    expect(allRepairVersions.length).toBe(60); // 15 + 15 + 15 + 15
+    expect(allRepairVersions.length).toBe(75); // 15 * 5
 
     // Validate each repair batch
     for (const repair of repairs) {
@@ -1427,18 +1417,39 @@ describe('Real Batch 1-5 evidence integration (Batches 1-4 repaired, Batch 5 ver
         expect(repair.confirmations.no_unrelated_version_changed).toBe(true);
       }
 
-      for (const r of repair.repair_results) {
-        expect(r.exit_status).toBe(0);
-        expect(r.version_tracked).toBe(true);
+      // Batch 5 uses `repairs` array instead of `repair_results`
+      const results = repair.repair_results || (repair as any).repairs;
+      if (results) {
+        for (const r of results) {
+          expect(r.exit_status).toBe(0);
+          if ('version_tracked' in r) expect(r.version_tracked).toBe(true);
+          if ('post_occurrences' in r) expect(r.post_occurrences).toBe(1);
+        }
       }
     }
 
-    // Verify repair-evidence digests recompute for all 60 completed entries
+    // Verify repair-evidence digests recompute for all 75 completed entries
     const allErrors: string[] = [];
     for (const repair of repairs) {
-      const repairTimestamp = repair.timestamp_utc || repair.repair_timestamp;
-      const repairResultsByVersion: Record<string, RepairResult> = {};
-      repair.repair_results.forEach((r: RepairResult) => { repairResultsByVersion[String(r.version)] = r; });
+      const repairTimestamp = repair.timestamp_utc || repair.repair_timestamp || null;
+
+      // Normalize: Batch 5 uses `repairs` array instead of `repair_results`
+      let repairResultsByVersion: Record<string, any> = {};
+      if (repair.repair_results) {
+        repair.repair_results.forEach((r: any) => { repairResultsByVersion[String(r.version)] = r; });
+      } else if ((repair as any).repairs) {
+        (repair as any).repairs.forEach((r: any) => {
+          repairResultsByVersion[String(r.version)] = {
+            version: r.version,
+            exit_status: r.exit_status,
+            version_tracked: r.post_occurrences === 1,
+            total_delta: 1,
+            range_delta: 1,
+            post_total: r.post_total_remote_count,
+            post_range: r.post_range_101_246_count
+          };
+        });
+      }
 
       // Find batch number from repair evidence
       const batchNum = repair.batch_number;
@@ -1792,14 +1803,14 @@ describe('Batch 2 repair-specific validation', () => {
     expect(overlap).toContain('121');
   });
 
-  it('valid Batch 1, Batch 2, Batch 3, and Batch 4 repair evidence passes', () => {
+  it('valid Batch 1, Batch 2, Batch 3, Batch 4, and Batch 5 repair evidence passes', () => {
     const evidenceDir = resolve('docs/migrations/evidence');
     const repairFiles = readdirSync(evidenceDir)
       .filter(f => /^batch-\d+-repair\.json$/.test(f))
       .sort();
-    expect(repairFiles.length).toBe(4);
+    expect(repairFiles.length).toBe(5);
 
-    
+
     const repairs: RepairEvidenceBase[] = repairFiles.map(f =>
       JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8'))
     );
@@ -1808,7 +1819,7 @@ describe('Batch 2 repair-specific validation', () => {
     const allVersions: string[] = [];
     for (const r of repairs) allVersions.push(...r.approved_versions.map(String));
     expect(new Set(allVersions).size).toBe(allVersions.length);
-    expect(allVersions.length).toBe(60);
+    expect(allVersions.length).toBe(75);
 
     // Each batch has 15 versions and all passed
     for (const r of repairs) {
@@ -1818,9 +1829,14 @@ describe('Batch 2 repair-specific validation', () => {
         expect(r.confirmations.no_unrelated_version_changed).toBe(true);
       }
 
-      for (const rr of r.repair_results) {
-        expect(rr.exit_status).toBe(0);
-        expect(rr.version_tracked).toBe(true);
+      // Batch 5 uses `repairs` array instead of `repair_results`
+      const results = r.repair_results || (r as any).repairs;
+      if (results) {
+        for (const rr of results) {
+          expect(rr.exit_status).toBe(0);
+          if ('version_tracked' in rr) expect(rr.version_tracked).toBe(true);
+          if ('post_occurrences' in rr) expect(rr.post_occurrences).toBe(1);
+        }
       }
     }
 
@@ -2215,14 +2231,10 @@ describe('Batch 3 verification state consistency', () => {
     expect(overlap.length).toBe(0);
   });
 
-  it('allowlist has 15 Batch 5 entries after Batch 5 verification', () => {
+  it('allowlist is empty after Batch 5 repair', () => {
     const allowlistPath = resolve('docs/migrations/101-246-repair-allowlist.json');
-    const allowlist = JSON.parse(readFileSync(allowlistPath, 'utf-8')) as Array<{ version: string }>;
-    expect(allowlist.length).toBe(15);
-    const batch5Versions = new Set(['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190']);
-    for (const entry of allowlist) {
-      expect(batch5Versions.has(entry.version)).toBe(true);
-    }
+    const allowlist = JSON.parse(readFileSync(allowlistPath, 'utf-8'));
+    expect(allowlist).toEqual([]);
   });
 
   it('Batch 3 entries now marked remote_tracked=true after repair', () => {
@@ -2345,22 +2357,22 @@ describe('Batch 3 repair-specific validation', () => {
     expect(repairData.post_repair.range_101_246_count - repairData.pre_repair.range_101_246_count).toBe(15);
   });
 
-  it('valid Batch 1+2+3+4 repair evidence passes', () => {
+  it('valid Batch 1+2+3+4+5 repair evidence passes', () => {
     const evidenceDir = resolve('docs/migrations/evidence');
     const repairFiles = readdirSync(evidenceDir)
       .filter(f => /^batch-\d+-repair\.json$/.test(f))
       .sort();
-    expect(repairFiles.length).toBe(4);
+    expect(repairFiles.length).toBe(5);
 
-    // No duplicate versions across all 4 repair batches
+    // No duplicate versions across all 5 repair batches
     const allVersions: string[] = [];
     for (const f of repairFiles) {
-      
+
       const data = JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8')) as RepairEvidenceBase;
       allVersions.push(...data.approved_versions.map(String));
     }
     expect(new Set(allVersions).size).toBe(allVersions.length);
-    expect(allVersions.length).toBe(60);
+    expect(allVersions.length).toBe(75);
 
     // Batch 1: 103->118, Batch 2: 118->133, Batch 3: 133->148
     
@@ -2500,7 +2512,7 @@ describe('Batch 3 repair-specific validation', () => {
     }
   });
 
-  it('all 60 completed entries in manifest have valid digests', () => {
+  it('all 75 completed batch-repaired entries in manifest have valid digests', () => {
     const evidenceDir = resolve('docs/migrations/evidence');
     const manifestPath = resolve('docs/migrations/101-246-production-reconciliation.json');
     const allowlistPath = resolve('docs/migrations/101-246-repair-allowlist.json');
@@ -2512,14 +2524,14 @@ describe('Batch 3 repair-specific validation', () => {
     const allowlistVersions = new Set(allowlist.map(a => a.version));
     const candidateVersions = new Set(candidates.map(c => c.version));
 
-    // Classification counts post Batch 5 verification
+    // Classification counts post Batch 5 repair
     const counts: Record<string, number> = {};
     manifest.forEach(e => { counts[e.current_classification] = (counts[e.current_classification] || 0) + 1; });
-    expect(counts['ALIGNED_TRACKED']).toBe(68);
-    expect(counts['VERIFIED_APPLIED_UNTRACKED']).toBe(15);
+    expect(counts['ALIGNED_TRACKED']).toBe(83);
+    expect(counts['VERIFIED_APPLIED_UNTRACKED'] || 0).toBe(0);
     expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(49);
 
-    expect(allowlist.length).toBe(15);
+    expect(allowlist.length).toBe(0);
     expect(candidates.length).toBe(49);
 
     const repairedCandidates = manifest.filter(e =>
@@ -2527,27 +2539,43 @@ describe('Batch 3 repair-specific validation', () => {
       e.repair_status === 'completed' &&
       e.original_classification === 'VERIFIED_APPLIED_UNTRACKED'
     ).length;
-    expect(49 + 15 + repairedCandidates).toBe(124);
-    expect(repairedCandidates).toBe(60);
+    expect(49 + 0 + repairedCandidates).toBe(124);
+    expect(repairedCandidates).toBe(75);
 
-    // Verify all 60 completed entries NOT in allowlist or candidates
+    // Verify all 75 completed entries NOT in allowlist or candidates
     const completedEntries = manifest.filter(e => e.repair_status === 'completed' && e.original_classification === 'VERIFIED_APPLIED_UNTRACKED');
     for (const entry of completedEntries) {
       expect(allowlistVersions.has(entry.version)).toBe(false);
       expect(candidateVersions.has(entry.version)).toBe(false);
     }
 
-    // Verify all 60 digests recompute
+    // Verify all 75 digests recompute
     const repairFiles = readdirSync(evidenceDir)
       .filter(f => /^batch-\d+-repair\.json$/.test(f))
       .sort();
     const allErrors: string[] = [];
     for (const f of repairFiles) {
-      
-      const repair = JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8')) as RepairEvidenceBase;
-      const repairTimestamp = repair.timestamp_utc || repair.repair_timestamp;
-      const repairResultsByVersion: Record<string, RepairResult> = {};
-      repair.repair_results.forEach((r: RepairResult) => { repairResultsByVersion[String(r.version)] = r; });
+
+      const repair = JSON.parse(readFileSync(resolve(evidenceDir, f), 'utf-8'));
+      const repairTimestamp = repair.timestamp_utc || repair.repair_timestamp || null;
+
+      // Normalize: Batch 5 uses `repairs` array with different structure
+      let repairResultsByVersion: Record<string, any> = {};
+      if (repair.repair_results) {
+        repair.repair_results.forEach((r: any) => { repairResultsByVersion[String(r.version)] = r; });
+      } else if (repair.repairs) {
+        repair.repairs.forEach((r: any) => {
+          repairResultsByVersion[String(r.version)] = {
+            version: r.version,
+            exit_status: r.exit_status,
+            version_tracked: r.post_occurrences === 1,
+            total_delta: 1,
+            range_delta: 1,
+            post_total: r.post_total_remote_count,
+            post_range: r.post_range_101_246_count
+          };
+        });
+      }
 
       const batchEntries = manifest.filter(e => e.repair_batch === repair.batch_number && e.repair_status === 'completed');
       for (const entry of batchEntries) {
@@ -3626,53 +3654,29 @@ describe('Batch 5 production verification evidence', () => {
   });
 });
 
-describe('Batch 5 allowlist validation', () => {
-  const BATCH5_VERSIONS = ['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190'];
-
-  it('exactly 15 entries with exact Batch 5 version set', () => {
+describe('Post-Batch 5 repair allowlist validation', () => {
+  it('allowlist is empty after Batch 5 repair', () => {
     const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
-    expect(allowlist.length).toBe(15);
-    const versions = allowlist.map((e: { version: string }) => e.version);
-    expect(versions.sort((a: string, b: string) => parseInt(a) - parseInt(b))).toEqual(BATCH5_VERSIONS);
+    expect(allowlist).toEqual([]);
   });
 
-  it('no duplicates', () => {
-    const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
-    const versions = allowlist.map((e: { version: string }) => e.version);
-    expect(new Set(versions).size).toBe(versions.length);
-  });
-
-  it('every checksum matches repository migration file', () => {
-    const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
-    const migrationFiles = readdirSync(resolve('supabase/migrations')).filter(f => f.endsWith('.sql'));
-    for (const entry of allowlist) {
-      const repoFile = migrationFiles.find((f: string) => f.startsWith(entry.version + '_'));
-      expect(repoFile).toBeDefined();
-      const content = readFileSync(resolve('supabase/migrations', repoFile!), 'utf-8');
-      const sha256 = createHash('sha256').update(content).digest('hex');
-      expect(entry.checksum).toBe(sha256);
-    }
-  });
-
-  it('every allowlisted manifest entry is VERIFIED_APPLIED_UNTRACKED', () => {
-    const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
+  it('all 15 Batch 5 versions are now ALIGNED_TRACKED', () => {
     const manifest = JSON.parse(readFileSync(resolve('docs/migrations/101-246-production-reconciliation.json'), 'utf-8'));
-    for (const entry of allowlist) {
-      const me = manifest.find((e: ManifestEntry) => e.version === entry.version);
-      expect(me).toBeDefined();
-      expect(me!.current_classification).toBe('VERIFIED_APPLIED_UNTRACKED');
+    const batch5Versions = ['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190'];
+    for (const v of batch5Versions) {
+      const entry = manifest.find((e: ManifestEntry) => e.version === v);
+      expect(entry).toBeDefined();
+      expect(entry!.current_classification).toBe('ALIGNED_TRACKED');
+      expect(entry!.repair_status).toBe('completed');
+      expect(entry!.remote_tracked).toBe(true);
+      expect(entry!.repair_eligible).toBe(false);
     }
   });
 
-  it('no ALIGNED, PENDING, NOT_VERIFIABLE or SUPERSEDED version is allowlisted', () => {
-    const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
+  it('no VERIFIED_APPLIED_UNTRACKED entries remain', () => {
     const manifest = JSON.parse(readFileSync(resolve('docs/migrations/101-246-production-reconciliation.json'), 'utf-8'));
-    const allowlistVersions = new Set(allowlist.map((e: { version: string }) => e.version));
-    for (const entry of manifest) {
-      if (entry.current_classification !== 'VERIFIED_APPLIED_UNTRACKED') {
-        expect(allowlistVersions.has(entry.version)).toBe(false);
-      }
-    }
+    const verified = manifest.filter((e: ManifestEntry) => e.current_classification === 'VERIFIED_APPLIED_UNTRACKED');
+    expect(verified.length).toBe(0);
   });
 });
 
@@ -3711,18 +3715,18 @@ describe('Batch 5 candidate validation', () => {
 });
 
 describe('Batch 5 classification counts', () => {
-  it('68/15/49/12/2 and completed repairs remain 60', () => {
+  it('83/0/49/12/2 and completed repairs at 83', () => {
     const manifest = JSON.parse(readFileSync(resolve('docs/migrations/101-246-production-reconciliation.json'), 'utf-8')) as ManifestEntry[];
     const counts: Record<string, number> = {};
     manifest.forEach(e => { counts[e.current_classification] = (counts[e.current_classification] || 0) + 1; });
-    expect(counts['ALIGNED_TRACKED']).toBe(68);
-    expect(counts['VERIFIED_APPLIED_UNTRACKED']).toBe(15);
+    expect(counts['ALIGNED_TRACKED']).toBe(83);
+    expect(counts['VERIFIED_APPLIED_UNTRACKED'] || 0).toBe(0);
     expect(counts['PENDING_PRODUCTION_REVERIFICATION']).toBe(49);
     expect(counts['NOT_VERIFIABLE_SAFELY']).toBe(12);
     expect(counts['SUPERSEDED_WITH_EQUIVALENT_STATE']).toBe(2);
 
     const completedRepairs = manifest.filter(e => e.repair_status === 'completed' && e.current_classification === 'ALIGNED_TRACKED').length;
-    expect(completedRepairs).toBeGreaterThanOrEqual(60);
+    expect(completedRepairs).toBe(83);
   });
 });
 
@@ -3806,20 +3810,20 @@ describe('Batch 5 CLI rejection tests', () => {
     expect(digest).not.toBe('0000000000000000000000000000000000000000000000000000000000000000');
   });
 
-  it('rejects allowlist missing one Batch 5 version', () => {
+  it('confirms allowlist is empty after Batch 5 repair', () => {
     const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
-    const allowlistVersions = new Set(allowlist.map((e: { version: string }) => e.version));
-    const batch5Versions = ['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190'];
-    for (const v of batch5Versions) {
-      expect(allowlistVersions.has(v)).toBe(true);
-    }
+    expect(allowlist).toEqual([]);
   });
 
-  it('rejects allowlist containing an unrelated version', () => {
-    const allowlist = JSON.parse(readFileSync(resolve('docs/migrations/101-246-repair-allowlist.json'), 'utf-8'));
-    const batch5Versions = new Set(['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190']);
-    for (const entry of allowlist) {
-      expect(batch5Versions.has(entry.version)).toBe(true);
+  it('confirms all Batch 5 versions are ALIGNED_TRACKED in manifest', () => {
+    const manifest = JSON.parse(readFileSync(resolve('docs/migrations/101-246-production-reconciliation.json'), 'utf-8'));
+    const batch5Versions = ['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190'];
+    for (const v of batch5Versions) {
+      const entry = manifest.find((e: any) => e.version === v);
+      expect(entry.current_classification).toBe('ALIGNED_TRACKED');
+      expect(entry.repair_status).toBe('completed');
+      expect(entry.remote_tracked).toBe(true);
+      expect(entry.repair_batch).toBe(5);
     }
   });
 
@@ -4048,33 +4052,14 @@ describe('CLI rejection tests for V2 evidence', () => {
     }
   }, 30000);
 
-  // Test 9: Empty allowlist production_evidence_digest
-  it('rejects when allowlist production_evidence_digest is empty', () => {
-    const tmpDir = createTestFixture();
-    try {
-      const a = readAllowlist(tmpDir);
-      const entry172 = a.find((e: { version: string }) => e.version === '172');
-      if (entry172) {
-        entry172.production_evidence_digest = '';
-      }
-      writeAllowlist(tmpDir, a);
-      const { exitCode, output } = runValidatorInFixture(tmpDir);
-      expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/digest|172/i);
-    } finally {
-      cleanupFixture(tmpDir);
-    }
-  }, 30000);
-
-  // Test 10: Manifest digest differs from V2 digest
-  it('rejects when manifest production_evidence_digest differs from V2', () => {
+  // Test 9: Manifest production_evidence_digest tampered (V2 digest binding)
+  it('rejects when manifest production_evidence_digest is tampered for Batch 5 entry', () => {
     const tmpDir = createTestFixture();
     try {
       const m = readManifest(tmpDir);
-      const batch5Entry = m.find((e: ManifestEntry) => e.version === '172' && e.current_classification === 'VERIFIED_APPLIED_UNTRACKED');
+      const batch5Entry = m.find((e: ManifestEntry) => e.version === '172');
       if (batch5Entry) {
-        // Change the evidence to invalidate the digest
-        batch5Entry.evidence[0].verified_at = '2020-01-01T00:00:00Z';
+        batch5Entry.production_evidence_digest = 'aa' + batch5Entry.production_evidence_digest.slice(2);
       }
       writeManifest(tmpDir, m);
       const { exitCode, output } = runValidatorInFixture(tmpDir);
@@ -4085,19 +4070,33 @@ describe('CLI rejection tests for V2 evidence', () => {
     }
   }, 30000);
 
-  // Test 11: Allowlist digest differs from V2 digest
-  it('rejects when allowlist production_evidence_digest differs from V2', () => {
+  // Test 10: Allowlist must be empty after Batch 5 repair
+  it('rejects when allowlist is not empty after Batch 5 repair', () => {
     const tmpDir = createTestFixture();
     try {
-      const a = readAllowlist(tmpDir);
-      const entry172 = a.find((e: { version: string }) => e.version === '172');
-      if (entry172) {
-        entry172.production_evidence_digest = 'aa' + entry172.production_evidence_digest.slice(2);
-      }
+      const a = [{ version: '172', filename: '172_recurring_billing.sql', checksum: 'abc', classification: 'VERIFIED_APPLIED_UNTRACKED', repair_action: 'migration_history_repair_only', confidence: 'HIGH', production_evidence_path: 'docs/migrations/evidence/batch-05-production-verification.json', production_evidence_digest: 'abc' }];
       writeAllowlist(tmpDir, a);
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/digest.*mismatch|mismatch.*digest|172/i);
+      expect(output).toMatch(/allowlist|approved/i);
+    } finally {
+      cleanupFixture(tmpDir);
+    }
+  }, 30000);
+
+  // Test 11: Manifest evidence timestamp tampered invalidates V2 digest
+  it('rejects when manifest evidence verified_at is tampered for Batch 5 entry', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const m = readManifest(tmpDir);
+      const batch5Entry = m.find((e: ManifestEntry) => e.version === '172');
+      if (batch5Entry && batch5Entry.evidence[0]) {
+        batch5Entry.evidence[0].verified_at = '2020-01-01T00:00:00Z';
+      }
+      writeManifest(tmpDir, m);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/digest|mismatch|timestamp|172/i);
     } finally {
       cleanupFixture(tmpDir);
     }
@@ -4670,6 +4669,273 @@ describe('V3 property comparison CLI tests', () => {
       }
       const { exitCode } = runValidatorInFixture(tmpDir);
       expect(exitCode).toBe(0);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+});
+
+// ══════════════════════════════════════════════════════════════
+// CLI REJECTION TESTS FOR BATCH 5 REPAIR EVIDENCE
+// ══════════════════════════════════════════════════════════════
+
+describe('CLI rejection tests for Batch 5 repair evidence', () => {
+  const { execSync } = require('child_process');
+  const { mkdirSync, cpSync, rmSync, writeFileSync, unlinkSync } = require('fs');
+  const { join } = require('path');
+  const os = require('os');
+
+  const VALIDATOR_SCRIPT = resolve('scripts/validate-migration-repair-allowlist.mjs');
+  const SRC_DOCS_MIGRATIONS = resolve('docs/migrations');
+  const SRC_SUPABASE_MIGRATIONS = resolve('supabase/migrations');
+  const REPAIR_FILE = 'batch-05-repair.json';
+
+  function createTestFixture(): string {
+    const tmpDir = join(os.tmpdir(), `b5-repair-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    mkdirSync(join(tmpDir, 'docs', 'migrations', 'evidence'), { recursive: true });
+    mkdirSync(join(tmpDir, 'supabase', 'migrations'), { recursive: true });
+
+    cpSync(join(SRC_DOCS_MIGRATIONS, '101-246-production-reconciliation.json'), join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json'));
+    cpSync(join(SRC_DOCS_MIGRATIONS, '101-246-repair-allowlist.json'), join(tmpDir, 'docs', 'migrations', '101-246-repair-allowlist.json'));
+    cpSync(join(SRC_DOCS_MIGRATIONS, '101-246-verification-candidates.json'), join(tmpDir, 'docs', 'migrations', '101-246-verification-candidates.json'));
+
+    const evidenceDir = join(SRC_DOCS_MIGRATIONS, 'evidence');
+    for (const f of readdirSync(evidenceDir)) {
+      cpSync(join(evidenceDir, f), join(tmpDir, 'docs', 'migrations', 'evidence', f));
+    }
+
+    for (const f of readdirSync(SRC_SUPABASE_MIGRATIONS).filter((f: string) => f.endsWith('.sql'))) {
+      cpSync(join(SRC_SUPABASE_MIGRATIONS, f), join(tmpDir, 'supabase', 'migrations', f));
+    }
+
+    return tmpDir;
+  }
+
+  function runValidatorInFixture(cwd: string): { exitCode: number; output: string } {
+    try {
+      const output = execSync(`node "${VALIDATOR_SCRIPT}"`, { cwd, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] });
+      return { exitCode: 0, output };
+    } catch (err: unknown) {
+      const e = err as { status?: number; stdout?: string; stderr?: string };
+      return { exitCode: e.status || 1, output: (e.stdout || '') + (e.stderr || '') };
+    }
+  }
+
+  function cleanupFixture(tmpDir: string) { rmSync(tmpDir, { recursive: true, force: true }); }
+
+  function readRepairEvidence(tmpDir: string) {
+    return JSON.parse(readFileSync(join(tmpDir, 'docs', 'migrations', 'evidence', REPAIR_FILE), 'utf-8'));
+  }
+  function writeRepairEvidence(tmpDir: string, data: any) {
+    writeFileSync(join(tmpDir, 'docs', 'migrations', 'evidence', REPAIR_FILE), JSON.stringify(data, null, 2) + '\n');
+  }
+
+  // Positive baseline
+  it('accepts unmodified Batch 5 repair evidence', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const { exitCode } = runValidatorInFixture(tmpDir);
+      expect(exitCode).toBe(0);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: repair evidence missing
+  it('rejects when repair evidence file is missing', () => {
+    const tmpDir = createTestFixture();
+    try {
+      unlinkSync(join(tmpDir, 'docs', 'migrations', 'evidence', REPAIR_FILE));
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/batch-05-repair|repair evidence/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: repair evidence SHA mismatch
+  it('rejects when repair evidence SHA mismatches', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readRepairEvidence(tmpDir);
+      d._tamper = 'modified';
+      writeRepairEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/SHA mismatch|repair evidence/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: wrong repaired version set
+  it('rejects wrong repaired version set', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readRepairEvidence(tmpDir);
+      d.approved_versions = [172, 173, 174, 175, 177, 178, 179, 180, 183, 184, 185, 186, 188, 189, 999];
+      writeRepairEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/version|mismatch|999/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: wrong repair sequence
+  it('rejects wrong repair sequence', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readRepairEvidence(tmpDir);
+      d.repairs[0].sequence = 2;
+      writeRepairEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/sequence/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: nonzero command exit
+  it('rejects nonzero command exit status', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readRepairEvidence(tmpDir);
+      d.repairs[3].exit_status = 1;
+      writeRepairEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/exit_status/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: failed postcondition
+  it('rejects failed postcondition', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readRepairEvidence(tmpDir);
+      d.repairs[7].postcondition_passed = false;
+      writeRepairEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/postcondition_passed/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: incorrect pre/post count progression
+  it('rejects incorrect post_total_remote_count progression', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readRepairEvidence(tmpDir);
+      d.repairs[5].post_total_remote_count = 999;
+      writeRepairEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/post_total|expected/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: Migration 298 count changed
+  it('rejects when Migration 298 count changes during repair', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readRepairEvidence(tmpDir);
+      d.repairs[10].migration_298_post_occurrences = 2;
+      writeRepairEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/migration_298/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: removed version present
+  it('rejects when removed_versions is non-empty', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readRepairEvidence(tmpDir);
+      d.post_repair.removed_versions = [102];
+      writeRepairEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/removed/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: unapproved added version present
+  it('rejects when unapproved_added_versions is non-empty', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const d = readRepairEvidence(tmpDir);
+      d.post_repair.unapproved_added_versions = [999];
+      writeRepairEvidence(tmpDir, d);
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/unapproved/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: one Batch 5 manifest entry not ALIGNED_TRACKED
+  it('rejects when a Batch 5 manifest entry is not ALIGNED_TRACKED', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const manifestPath = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+      const entry = manifest.find((e: any) => e.version === '172');
+      entry.current_classification = 'VERIFIED_APPLIED_UNTRACKED';
+      entry.repair_status = 'approved_for_repair';
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/ALIGNED_TRACKED|classification/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: allowlist not empty
+  it('rejects when allowlist is not empty', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const alPath = join(tmpDir, 'docs', 'migrations', '101-246-repair-allowlist.json');
+      writeFileSync(alPath, JSON.stringify([{ version: '172', confidence: 'HIGH' }], null, 2));
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/allowlist|approved/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: completed repair count not 75
+  it('rejects when batch-repaired candidate count is not 75', () => {
+    const tmpDir = createTestFixture();
+    try {
+      // Remove the repair_batch from one Batch 5 entry to reduce the count
+      const manifestPath = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+      const entry = manifest.find((e: any) => e.version === '172');
+      entry.original_classification = 'ALIGNED_TRACKED'; // No longer in repaired candidate cohort
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/candidate|cohort|75|PENDING.*VERIFIED.*repaired/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: Batch 5 repaired_at before PR #75 merge
+  it('rejects Batch 5 repaired_at before PR #75 merge time', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const manifestPath = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+      const entry = manifest.find((e: any) => e.version === '172');
+      entry.repaired_at = '2026-07-30T00:30:00Z'; // Before PR #75 merge at 02:54:38Z
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Batch 5 repaired_at.*not later than PR #75/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Test: Batch 5 repaired_at_source missing or incorrect
+  it('rejects Batch 5 repaired_at_source missing or incorrect', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const manifestPath = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+      const entry = manifest.find((e: any) => e.version === '172');
+      entry.repaired_at_source = 'wrong value';
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/repaired_at_source.*missing or incorrect/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 });
