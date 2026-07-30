@@ -1,1 +1,167 @@
-[]
+[
+  {
+    "version": "227",
+    "filename": "227_customer_ltv_tier.sql",
+    "checksum": "c9d46af9a8077937475a3f54f419e4765355379e8bead3fff768a3ab48db1e89",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "9adeb4fdac2d1f75ff045f03f6a3f18208cb2ceb4bf2d33bd8127086d15197d1"
+  },
+  {
+    "version": "228",
+    "filename": "228_add_pending_subscription_status.sql",
+    "checksum": "d20104099900339f20057ac38c710b0f17c4f707f243d8cfaa563b2695d11939",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "33e02710476d2dc3e0fe13ee7103bf01c6f9790d3064f0bcfb3c0feeaa1b6bec"
+  },
+  {
+    "version": "229",
+    "filename": "229_attendance_log.sql",
+    "checksum": "0eab50ca0d21788f63818b981a5d58bb2287a44dc2e37a8e15d90b56fbcd3d29",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "376c1373620c2ae87901bbc029abba870f0155222b5d7fc19454371b38c76828"
+  },
+  {
+    "version": "230",
+    "filename": "230_attendance_rls_hardening.sql",
+    "checksum": "61d477bf4e09ac0f72e3003e0e7ab08ac7c2ccaa44dad6728aa40bebf0c880a7",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "01ff3d40c03185e345ea531d0b2929090ad8db269860410cae756536ccfa9c63"
+  },
+  {
+    "version": "231",
+    "filename": "231_atomic_catalog_order.sql",
+    "checksum": "d9b84ba7d8f69a472465106eccc7e94c4db984e88a5a4936c393dd8d3ac3d2c2",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "6e271d3f5dc86983aea8705ab0c0097a0f224ef77746d9dc82ffdd104e6032d3"
+  },
+  {
+    "version": "232",
+    "filename": "232_webhook_event_state_machine.sql",
+    "checksum": "df8b6b626301eceb40d6340f7beb9b82704f774ef8dea31eb516b849209ea5d9",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "8c1319eea6b9cafa223ffd61bc6022bc40c051bf36126e53e80f8a9538ef1564"
+  },
+  {
+    "version": "233",
+    "filename": "233_atomic_recurring_charge.sql",
+    "checksum": "12421515136eeb3f1a0679699650155d8fed14d8fbce1b7097bf3a634833f80b",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "e136b341336bd1f165e1c36a1e9dd96eeca4319b284c0ed4bc390af5864e78a5"
+  },
+  {
+    "version": "234",
+    "filename": "234_revoke_catalog_order_public.sql",
+    "checksum": "08c2ce67f3512af81e46230259b9c1d0c45eae2df8363ee8e8fbd6045ab0ee83",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "411720caf5f3fcf3ed55434ba4f68723f4cb395207ec88457f7e02ca39af0607"
+  },
+  {
+    "version": "235",
+    "filename": "235_catalog_order_quantity_validation.sql",
+    "checksum": "53f59de87553e701fc11af6b1b6c7b97961cb7c20f696a5324c5e34b26a7305b",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "c3c95523f7befcd7b28e5a8725b00fef70bead6cd3c986771398638a8c274099"
+  },
+  {
+    "version": "236",
+    "filename": "236_session_versioning.sql",
+    "checksum": "cbfbdaf42f9ad610bcbad18cebe291ff82d33f8789e65363ae5fe463a0929dd2",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "031cebd6271c0e3c3aad202b0bc19854a298829240de4d1120249c7812e54da0"
+  },
+  {
+    "version": "237",
+    "filename": "237_opt_out_suppression.sql",
+    "checksum": "4fc9f9e4afd5edc10f91602bc4b02c61a00e3bdd0564b3bf6b1e44848596deef",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "6b01a6aee741745567c6c4b262807517f4580e07d16d4dc3245d5404340930a2"
+  },
+  {
+    "version": "238",
+    "filename": "238_remove_gupshup.sql",
+    "checksum": "f3c084016ed17f75aa8d220420fc30c3fcea46ed3ca5bb77a271d371051ed8b6",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "b185ff725f17f20ef29d762535e41d9b30eea3434d759881706116be1173b0a4"
+  },
+  {
+    "version": "239",
+    "filename": "239_ai_conversation_config.sql",
+    "checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "c886127f8bdd678b8cb0c6a07f8ddd1239197058eb732d704086e5438e128515"
+  },
+  {
+    "version": "240",
+    "filename": "240_ai_classification_log_owner_rls.sql",
+    "checksum": "dbd605ad4e773f4fae74c47e6127d2b1ab4be82cb3783d61ac35eab7f0435a94",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "b02f8fccd53b327a926ec24c642c9b17f111fd229f3029899bf11b18cd535793"
+  },
+  {
+    "version": "241",
+    "filename": "241_growth_engine.sql",
+    "checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "1cbb7eb0d0a4948e02b923455e5f20183fd3c0a2624432c84714887754bfe94b"
+  }
+]

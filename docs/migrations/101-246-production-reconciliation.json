@@ -2841,7 +2841,7 @@
         "replacement_object_name": "trg_bot_session_deactivate ON bot_sessions (re-created in same migration)",
         "superseding_migration": "147_auto_last_active_on_deactivate.sql",
         "rationale": "Migration 147 uses DROP IF EXISTS + CREATE pattern to replace the trigger definition. The DROP step is superseded by the CREATE in the same migration.",
-        "application_behaviour_impact": "None — trigger exists with intended function update_last_active_on_deactivate. Behaviour matches intent."
+        "application_behaviour_impact": "None \u2014 trigger exists with intended function update_last_active_on_deactivate. Behaviour matches intent."
       }
     ],
     "missing_effects": [],
@@ -3354,7 +3354,7 @@
         "replacement_object_name": "trg_generate_event_slug ON events (re-created in same migration)",
         "superseding_migration": "149_public_event_booking_slugs.sql",
         "rationale": "Migration 149 uses DROP IF EXISTS + CREATE pattern to replace the trigger. The DROP is superseded by the re-creation in the same migration.",
-        "application_behaviour_impact": "None — trigger exists with intended function generate_event_slug. Behaviour matches intent."
+        "application_behaviour_impact": "None \u2014 trigger exists with intended function generate_event_slug. Behaviour matches intent."
       }
     ],
     "missing_effects": [],
@@ -3774,7 +3774,7 @@
         "replacement_implementation_migration": "176_buffer_time_atomic.sql",
         "obsolete_overload_removal_migration": "245_fix_book_slot_atomic_overloads.sql",
         "rationale": "Migration 176 created the current 26-argument implementation preserving all parameters from earlier migrations (p_location_id from 155, p_appointment_id from 166) plus p_buffer_minutes and p_duration. Migration 245 removed the obsolete 23- and 24-argument overloads, leaving only the 26-argument implementation.",
-        "application_behaviour_impact": "None — all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
+        "application_behaviour_impact": "None \u2014 all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
       }
     ],
     "missing_effects": [],
@@ -4202,7 +4202,7 @@
         "replacement_implementation_migration": "176_buffer_time_atomic.sql",
         "obsolete_overload_removal_migration": "245_fix_book_slot_atomic_overloads.sql",
         "rationale": "Migration 176 created the current 26-argument implementation preserving all parameters from earlier migrations (p_location_id from 155, p_appointment_id from 166) plus p_buffer_minutes and p_duration. Migration 245 removed the obsolete 23- and 24-argument overloads, leaving only the 26-argument implementation.",
-        "application_behaviour_impact": "None — all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
+        "application_behaviour_impact": "None \u2014 all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
       }
     ],
     "missing_effects": [],
@@ -10427,1122 +10427,3683 @@
     "filename": "227_customer_ltv_tier.sql",
     "checksum": "c9d46af9a8077937475a3f54f419e4765355379e8bead3fff768a3ab48db1e89",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "column",
         "object_name": "customer_profiles.ltv_tier",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "table": "customer_profiles",
+          "column": "ltv_tier",
+          "data_type": "character varying",
+          "character_maximum_length": 20,
+          "column_default": "'new'::character varying",
+          "is_nullable": "YES"
+        },
+        "verified_properties": {
+          "table": "customer_profiles",
+          "column": "ltv_tier",
+          "data_type": "character varying",
+          "character_maximum_length": 20,
+          "column_default": "'new'::character varying",
+          "is_nullable": "YES"
+        },
+        "compared_property_paths": [
+          "data_type",
+          "character_maximum_length",
+          "column_default",
+          "is_nullable"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.columns",
+        "query_category": "column_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_customer_profiles_ltv_tier",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_customer_profiles_ltv_tier",
+          "indexdef": "CREATE INDEX idx_customer_profiles_ltv_tier ON public.customer_profiles USING btree (business_id, ltv_tier)"
+        },
+        "verified_properties": {
+          "indexname": "idx_customer_profiles_ltv_tier",
+          "indexdef": "CREATE INDEX idx_customer_profiles_ltv_tier ON public.customer_profiles USING btree (business_id, ltv_tier)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "9adeb4fdac2d1f75ff045f03f6a3f18208cb2ceb4bf2d33bd8127086d15197d1",
+    "repair_batch": 8
   },
   {
     "version": "228",
     "filename": "228_add_pending_subscription_status.sql",
     "checksum": "d20104099900339f20057ac38c710b0f17c4f707f243d8cfaa563b2695d11939",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "constraint",
         "object_name": "customer_subscriptions_status_check",
-        "expected_state": "exists",
-        "verification_source": "pg_constraint"
+        "expected_properties": {
+          "conname": "customer_subscriptions_status_check",
+          "constraint_def": "CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'paused'::character varying, 'cancelled'::character varying, 'past_due'::character varying, 'pending'::character varying, 'failed'::character varying])::text[])))"
+        },
+        "verified_properties": {
+          "conname": "customer_subscriptions_status_check",
+          "constraint_def": "CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'paused'::character varying, 'cancelled'::character varying, 'past_due'::character varying, 'pending'::character varying, 'failed'::character varying])::text[])))"
+        },
+        "compared_property_paths": [
+          "conname",
+          "constraint_def"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_constraint",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "33e02710476d2dc3e0fe13ee7103bf01c6f9790d3064f0bcfb3c0feeaa1b6bec",
+    "repair_batch": 8
   },
   {
     "version": "229",
     "filename": "229_attendance_log.sql",
     "checksum": "0eab50ca0d21788f63818b981a5d58bb2287a44dc2e37a8e15d90b56fbcd3d29",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "attendance_log",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "table_name": "attendance_log",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "table_name": "attendance_log",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "table_name",
+          "schema",
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "table_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_attendance_business",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexdef": "CREATE INDEX idx_attendance_business ON public.attendance_log USING btree (business_id, checked_in_at DESC)"
+        },
+        "verified_properties": {
+          "indexdef": "CREATE INDEX idx_attendance_business ON public.attendance_log USING btree (business_id, checked_in_at DESC)"
+        },
+        "compared_property_paths": [
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_attendance_phone",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "owners_read ON attendance_log",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "service_insert ON attendance_log",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "owners_delete ON attendance_log",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "expected_properties": {
+          "indexdef": "CREATE INDEX idx_attendance_phone ON public.attendance_log USING btree (business_id, customer_phone, checked_in_at DESC)"
+        },
+        "verified_properties": {
+          "indexdef": "CREATE INDEX idx_attendance_phone ON public.attendance_log USING btree (business_id, customer_phone, checked_in_at DESC)"
+        },
+        "compared_property_paths": [
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "rls",
-        "object_name": "attendance_log",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "object_name": "attendance_log.rls_enabled",
+        "expected_properties": {
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "rls_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "attendance_log.owners_read",
+        "expected_properties": {
+          "polname": "owners_read",
+          "polcmd": "r",
+          "table": "attendance_log"
+        },
+        "verified_properties": {
+          "polname": "owners_read",
+          "polcmd": "r",
+          "table": "attendance_log"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "attendance_log.service_insert",
+        "expected_properties": {
+          "polname": "service_insert",
+          "polcmd": "a",
+          "table": "attendance_log"
+        },
+        "verified_properties": {
+          "policy_exists": false
+        },
+        "compared_property_paths": [
+          "policy_exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "superseded",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z",
+        "superseded_by": "migration_230",
+        "supersession_detail": "Migration 230 drops service_insert policy as unsafe (ATT-01). Service role bypasses RLS, so the policy was unnecessary and dangerous.",
+        "continued_behavior_proof": "Service role INSERT still works because service_role bypasses RLS entirely."
+      },
+      {
+        "object_type": "policy",
+        "object_name": "attendance_log.owners_delete",
+        "expected_properties": {
+          "polname": "owners_delete",
+          "polcmd": "d",
+          "table": "attendance_log"
+        },
+        "verified_properties": {
+          "polname": "owners_delete",
+          "polcmd": "d",
+          "table": "attendance_log"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "376c1373620c2ae87901bbc029abba870f0155222b5d7fc19454371b38c76828",
+    "repair_batch": 8
   },
   {
     "version": "230",
     "filename": "230_attendance_rls_hardening.sql",
     "checksum": "61d477bf4e09ac0f72e3003e0e7ab08ac7c2ccaa44dad6728aa40bebf0c880a7",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "policy",
-        "object_name": "admin_ops_read ON attendance_log",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "service_insert ON attendance_log",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
+        "object_name": "attendance_log.service_insert_drop",
+        "expected_properties": {
+          "action": "DROP POLICY",
+          "polname": "service_insert",
+          "table": "attendance_log"
+        },
+        "verified_properties": {
+          "policy_exists": false
+        },
+        "compared_property_paths": [
+          "policy_exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "constraint",
         "object_name": "chk_attendance_name_length",
-        "expected_state": "exists",
-        "verification_source": "pg_constraint"
+        "expected_properties": {
+          "conname": "chk_attendance_name_length",
+          "constraint_def": "CHECK ((length(customer_name) <= 200))"
+        },
+        "verified_properties": {
+          "conname": "chk_attendance_name_length",
+          "constraint_def": "CHECK ((length(customer_name) <= 200))"
+        },
+        "compared_property_paths": [
+          "conname",
+          "constraint_def"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_constraint",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "constraint",
         "object_name": "chk_attendance_phone_length",
-        "expected_state": "exists",
-        "verification_source": "pg_constraint"
+        "expected_properties": {
+          "conname": "chk_attendance_phone_length",
+          "constraint_def": "CHECK (((customer_phone IS NULL) OR (length(customer_phone) <= 30)))"
+        },
+        "verified_properties": {
+          "conname": "chk_attendance_phone_length",
+          "constraint_def": "CHECK (((customer_phone IS NULL) OR (length(customer_phone) <= 30)))"
+        },
+        "compared_property_paths": [
+          "conname",
+          "constraint_def"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_constraint",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "constraint",
         "object_name": "chk_attendance_email_length",
-        "expected_state": "exists",
-        "verification_source": "pg_constraint"
+        "expected_properties": {
+          "conname": "chk_attendance_email_length",
+          "constraint_def": "CHECK (((customer_email IS NULL) OR (length(customer_email) <= 320)))"
+        },
+        "verified_properties": {
+          "conname": "chk_attendance_email_length",
+          "constraint_def": "CHECK (((customer_email IS NULL) OR (length(customer_email) <= 320)))"
+        },
+        "compared_property_paths": [
+          "conname",
+          "constraint_def"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_constraint",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "constraint",
         "object_name": "chk_attendance_notes_length",
-        "expected_state": "exists",
-        "verification_source": "pg_constraint"
+        "expected_properties": {
+          "conname": "chk_attendance_notes_length",
+          "constraint_def": "CHECK (((notes IS NULL) OR (length(notes) <= 2000)))"
+        },
+        "verified_properties": {
+          "conname": "chk_attendance_notes_length",
+          "constraint_def": "CHECK (((notes IS NULL) OR (length(notes) <= 2000)))"
+        },
+        "compared_property_paths": [
+          "conname",
+          "constraint_def"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_constraint",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "constraint",
         "object_name": "chk_attendance_source",
-        "expected_state": "exists",
-        "verification_source": "pg_constraint"
+        "expected_properties": {
+          "conname": "chk_attendance_source",
+          "constraint_def": "CHECK ((source = ANY (ARRAY['web'::text, 'whatsapp'::text, 'manual'::text])))"
+        },
+        "verified_properties": {
+          "conname": "chk_attendance_source",
+          "constraint_def": "CHECK ((source = ANY (ARRAY['web'::text, 'whatsapp'::text, 'manual'::text])))"
+        },
+        "compared_property_paths": [
+          "conname",
+          "constraint_def"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_constraint",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "attendance_log.admin_ops_read",
+        "expected_properties": {
+          "polname": "admin_ops_read",
+          "polcmd": "r",
+          "table": "attendance_log"
+        },
+        "verified_properties": {
+          "polname": "admin_ops_read",
+          "polcmd": "r",
+          "table": "attendance_log"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "01ff3d40c03185e345ea531d0b2929090ad8db269860410cae756536ccfa9c63",
+    "repair_batch": 8
   },
   {
     "version": "231",
     "filename": "231_atomic_catalog_order.sql",
     "checksum": "d9b84ba7d8f69a472465106eccc7e94c4db984e88a5a4936c393dd8d3ac3d2c2",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "function",
         "object_name": "create_catalog_order_atomic",
-        "expected_state": "exists",
-        "verification_source": "pg_proc"
+        "expected_properties": {
+          "proname": "create_catalog_order_atomic",
+          "args": "p_business_id uuid, p_user_id uuid, p_delivery_phone text, p_meta_message_id text, p_customer_note text, p_items jsonb",
+          "security_definer": true
+        },
+        "verified_properties": {
+          "proname": "create_catalog_order_atomic",
+          "args": "p_business_id uuid, p_user_id uuid, p_delivery_phone text, p_meta_message_id text, p_customer_note text, p_items jsonb",
+          "security_definer": true,
+          "body_hash": "e6824d66dac39b6580b3f599aa6bc9228383b5d2ef13b4038ad3374d6203d74c"
+        },
+        "compared_property_paths": [
+          "proname",
+          "args",
+          "security_definer"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "superseded",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z",
+        "superseded_by": "migration_235",
+        "supersession_detail": "Migration 235 replaces the function body via CREATE OR REPLACE to add quantity validation (items array validation, per-item quantity bounds 1-100, max 50 items). Same signature retained.",
+        "continued_behavior_proof": "Function exists with same name and signature. The 235 version is a strict superset that adds input validation before executing the same order creation logic."
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "6e271d3f5dc86983aea8705ab0c0097a0f224ef77746d9dc82ffdd104e6032d3",
+    "repair_batch": 8
   },
   {
     "version": "232",
     "filename": "232_webhook_event_state_machine.sql",
     "checksum": "df8b6b626301eceb40d6340f7beb9b82704f774ef8dea31eb516b849209ea5d9",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "column",
         "object_name": "processed_webhook_events.status",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "column_name": "status",
+          "data_type": "text",
+          "column_default": "'completed'::text",
+          "is_nullable": "YES"
+        },
+        "verified_properties": {
+          "column_name": "status",
+          "data_type": "text",
+          "column_default": "'completed'::text",
+          "is_nullable": "YES"
+        },
+        "compared_property_paths": [
+          "data_type",
+          "column_default",
+          "is_nullable"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.columns",
+        "query_category": "column_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_webhook_events_retry",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexdef": "CREATE INDEX idx_webhook_events_retry ON public.processed_webhook_events USING btree (status, last_attempted_at) WHERE (status = ANY (ARRAY['failed'::text, 'processing'::text]))"
+        },
+        "verified_properties": {
+          "indexdef": "CREATE INDEX idx_webhook_events_retry ON public.processed_webhook_events USING btree (status, last_attempted_at) WHERE (status = ANY (ARRAY['failed'::text, 'processing'::text]))"
+        },
+        "compared_property_paths": [
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_webhook_events_completed",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexdef": "CREATE INDEX idx_webhook_events_completed ON public.processed_webhook_events USING btree (completed_at) WHERE (status = 'completed'::text)"
+        },
+        "verified_properties": {
+          "indexdef": "CREATE INDEX idx_webhook_events_completed ON public.processed_webhook_events USING btree (completed_at) WHERE (status = 'completed'::text)"
+        },
+        "compared_property_paths": [
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "8c1319eea6b9cafa223ffd61bc6022bc40c051bf36126e53e80f8a9538ef1564",
+    "repair_batch": 8
   },
   {
     "version": "233",
     "filename": "233_atomic_recurring_charge.sql",
     "checksum": "12421515136eeb3f1a0679699650155d8fed14d8fbce1b7097bf3a634833f80b",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "function",
         "object_name": "process_recurring_charge",
-        "expected_state": "exists",
-        "verification_source": "pg_proc"
+        "expected_properties": {
+          "proname": "process_recurring_charge",
+          "args": "p_event_id text, p_event_type text, p_gateway_ref text, p_auth_code text, p_cust_code text, p_amount_kobo bigint, p_currency text, p_channel text, p_card_last_four text, p_card_brand text",
+          "security_definer": true
+        },
+        "verified_properties": {
+          "proname": "process_recurring_charge",
+          "args": "p_event_id text, p_event_type text, p_gateway_ref text, p_auth_code text, p_cust_code text, p_amount_kobo bigint, p_currency text, p_channel text, p_card_last_four text, p_card_brand text",
+          "security_definer": true,
+          "body_hash": "e9ba948272e9b45af73550fb6307131f2be04aaeb6fed166400b2c9791d130be"
+        },
+        "compared_property_paths": [
+          "proname",
+          "args",
+          "security_definer"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "superseded",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z",
+        "superseded_by": "migration_244",
+        "supersession_detail": "Migration 244 replaces the function body via CREATE OR REPLACE to add payment_source='subscription' to the booking INSERT. Same signature retained.",
+        "continued_behavior_proof": "Function exists with same name and signature. The 244 version adds payment_source column to the INSERT while preserving all original transaction logic."
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON process_recurring_charge",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "process_recurring_charge.revoke_public",
+        "expected_properties": {
+          "function": "process_recurring_charge",
+          "public_has_execute": false
+        },
+        "verified_properties": {
+          "function": "process_recurring_charge",
+          "grantees": [
+            "postgres",
+            "service_role"
+          ],
+          "public_has_execute": false
+        },
+        "compared_property_paths": [
+          "public_has_execute"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "equivalent_stricter",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z",
+        "equivalent_stricter_by": "migration_295",
+        "stricter_detail": "Migration 295 explicitly revokes EXECUTE from anon and authenticated (not just PUBLIC), closing the Supabase ALTER DEFAULT PRIVILEGES gap."
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON process_recurring_charge",
-        "expected_state": "revoked",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "process_recurring_charge.grant_service_role",
+        "expected_properties": {
+          "function": "process_recurring_charge",
+          "service_role_has_execute": true
+        },
+        "verified_properties": {
+          "function": "process_recurring_charge",
+          "service_role_has_execute": true
+        },
+        "compared_property_paths": [
+          "service_role_has_execute"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "e136b341336bd1f165e1c36a1e9dd96eeca4319b284c0ed4bc390af5864e78a5",
+    "repair_batch": 8
   },
   {
     "version": "234",
     "filename": "234_revoke_catalog_order_public.sql",
     "checksum": "08c2ce67f3512af81e46230259b9c1d0c45eae2df8363ee8e8fbd6045ab0ee83",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON create_catalog_order_atomic",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "create_catalog_order_atomic.revoke_public",
+        "expected_properties": {
+          "function": "create_catalog_order_atomic",
+          "public_has_execute": false
+        },
+        "verified_properties": {
+          "function": "create_catalog_order_atomic",
+          "grantees": [
+            "postgres",
+            "service_role"
+          ],
+          "public_has_execute": false
+        },
+        "compared_property_paths": [
+          "public_has_execute"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON create_catalog_order_atomic",
-        "expected_state": "revoked",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "create_catalog_order_atomic.grant_service_role",
+        "expected_properties": {
+          "function": "create_catalog_order_atomic",
+          "service_role_has_execute": true
+        },
+        "verified_properties": {
+          "function": "create_catalog_order_atomic",
+          "service_role_has_execute": true
+        },
+        "compared_property_paths": [
+          "service_role_has_execute"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "411720caf5f3fcf3ed55434ba4f68723f4cb395207ec88457f7e02ca39af0607",
+    "repair_batch": 8
   },
   {
     "version": "235",
     "filename": "235_catalog_order_quantity_validation.sql",
     "checksum": "53f59de87553e701fc11af6b1b6c7b97961cb7c20f696a5324c5e34b26a7305b",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "function",
         "object_name": "create_catalog_order_atomic",
-        "expected_state": "exists",
-        "verification_source": "pg_proc"
+        "expected_properties": {
+          "proname": "create_catalog_order_atomic",
+          "args": "p_business_id uuid, p_user_id uuid, p_delivery_phone text, p_meta_message_id text, p_customer_note text, p_items jsonb",
+          "security_definer": true
+        },
+        "verified_properties": {
+          "proname": "create_catalog_order_atomic",
+          "args": "p_business_id uuid, p_user_id uuid, p_delivery_phone text, p_meta_message_id text, p_customer_note text, p_items jsonb",
+          "security_definer": true,
+          "body_hash": "e6824d66dac39b6580b3f599aa6bc9228383b5d2ef13b4038ad3374d6203d74c"
+        },
+        "compared_property_paths": [
+          "proname",
+          "args",
+          "security_definer"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "c3c95523f7befcd7b28e5a8725b00fef70bead6cd3c986771398638a8c274099",
+    "repair_batch": 8
   },
   {
     "version": "236",
     "filename": "236_session_versioning.sql",
     "checksum": "cbfbdaf42f9ad610bcbad18cebe291ff82d33f8789e65363ae5fe463a0929dd2",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "column",
         "object_name": "bot_sessions.version",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "column_name": "version",
+          "data_type": "bigint",
+          "column_default": "0",
+          "is_nullable": "NO"
+        },
+        "verified_properties": {
+          "column_name": "version",
+          "data_type": "bigint",
+          "column_default": "0",
+          "is_nullable": "NO"
+        },
+        "compared_property_paths": [
+          "data_type",
+          "column_default",
+          "is_nullable"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.columns",
+        "query_category": "column_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "function",
         "object_name": "update_session_cas",
-        "expected_state": "exists",
-        "verification_source": "pg_proc"
+        "expected_properties": {
+          "proname": "update_session_cas",
+          "args": "p_session_id uuid, p_expected_version bigint, p_current_step text, p_session_data jsonb, p_conversation_log jsonb, p_step_history text[]",
+          "security_definer": true
+        },
+        "verified_properties": {
+          "proname": "update_session_cas",
+          "args": "p_session_id uuid, p_expected_version bigint, p_current_step text, p_session_data jsonb, p_conversation_log jsonb, p_step_history text[]",
+          "security_definer": true,
+          "body_hash": "7df85cfe54243452810229ea236d41c98c45dcae5029a9091c48d43000dfc20b"
+        },
+        "compared_property_paths": [
+          "proname",
+          "args",
+          "security_definer"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON update_session_cas",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "update_session_cas.revoke_public",
+        "expected_properties": {
+          "function": "update_session_cas",
+          "public_has_execute": false
+        },
+        "verified_properties": {
+          "function": "update_session_cas",
+          "grantees": [
+            "postgres",
+            "service_role"
+          ],
+          "public_has_execute": false
+        },
+        "compared_property_paths": [
+          "public_has_execute"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON update_session_cas",
-        "expected_state": "revoked",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "update_session_cas.grant_service_role",
+        "expected_properties": {
+          "function": "update_session_cas",
+          "service_role_has_execute": true
+        },
+        "verified_properties": {
+          "function": "update_session_cas",
+          "service_role_has_execute": true
+        },
+        "compared_property_paths": [
+          "service_role_has_execute"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "031cebd6271c0e3c3aad202b0bc19854a298829240de4d1120249c7812e54da0",
+    "repair_batch": 8
   },
   {
     "version": "237",
     "filename": "237_opt_out_suppression.sql",
     "checksum": "4fc9f9e4afd5edc10f91602bc4b02c61a00e3bdd0564b3bf6b1e44848596deef",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "messaging_opt_outs",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "table_name": "messaging_opt_outs",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "table_name": "messaging_opt_outs",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "table_name",
+          "schema",
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "table_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_opt_out_unique",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexdef": "CREATE UNIQUE INDEX idx_opt_out_unique ON public.messaging_opt_outs USING btree (phone, COALESCE(business_id, '00000000-0000-0000-0000-000000000000'::uuid), channel) WHERE (resubscribed_at IS NULL)"
+        },
+        "verified_properties": {
+          "indexdef": "CREATE UNIQUE INDEX idx_opt_out_unique ON public.messaging_opt_outs USING btree (phone, COALESCE(business_id, '00000000-0000-0000-0000-000000000000'::uuid), channel) WHERE (resubscribed_at IS NULL)"
+        },
+        "compared_property_paths": [
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_opt_out_phone",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "owners_read ON messaging_opt_outs",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "expected_properties": {
+          "indexdef": "CREATE INDEX idx_opt_out_phone ON public.messaging_opt_outs USING btree (phone, channel)"
+        },
+        "verified_properties": {
+          "indexdef": "CREATE INDEX idx_opt_out_phone ON public.messaging_opt_outs USING btree (phone, channel)"
+        },
+        "compared_property_paths": [
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "rls",
-        "object_name": "messaging_opt_outs",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "object_name": "messaging_opt_outs.rls_enabled",
+        "expected_properties": {
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "rls_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "messaging_opt_outs.owners_read",
+        "expected_properties": {
+          "polname": "owners_read",
+          "polcmd": "r",
+          "table": "messaging_opt_outs"
+        },
+        "verified_properties": {
+          "polname": "owners_read",
+          "polcmd": "r",
+          "table": "messaging_opt_outs"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "6b01a6aee741745567c6c4b262807517f4580e07d16d4dc3245d5404340930a2",
+    "repair_batch": 8
   },
   {
     "version": "238",
     "filename": "238_remove_gupshup.sql",
     "checksum": "f3c084016ed17f75aa8d220420fc30c3fcea46ed3ca5bb77a271d371051ed8b6",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
-        "object_type": "column_alter",
-        "object_name": "whatsapp_channels.provider",
-        "expected_state": "set",
-        "verification_source": "information_schema"
-      },
-      {
         "object_type": "constraint",
         "object_name": "chk_active_provider_meta",
-        "expected_state": "exists",
-        "verification_source": "pg_constraint"
+        "expected_properties": {
+          "conname": "chk_active_provider_meta",
+          "constraint_def": "CHECK (((is_active = false) OR ((provider)::text = 'meta_cloud'::text)))"
+        },
+        "verified_properties": {
+          "conname": "chk_active_provider_meta",
+          "constraint_def": "CHECK (((is_active = false) OR ((provider)::text = 'meta_cloud'::text)))"
+        },
+        "compared_property_paths": [
+          "conname",
+          "constraint_def"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_constraint",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "column",
+        "object_name": "whatsapp_channels.provider_default",
+        "expected_properties": {
+          "column_name": "provider",
+          "column_default": "'meta_cloud'::character varying"
+        },
+        "verified_properties": {
+          "column_name": "provider",
+          "column_default": "'meta_cloud'::character varying"
+        },
+        "compared_property_paths": [
+          "column_default"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.columns",
+        "query_category": "column_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "b185ff725f17f20ef29d762535e41d9b30eea3434d759881706116be1173b0a4",
+    "repair_batch": 8
   },
   {
     "version": "239",
     "filename": "239_ai_conversation_config.sql",
     "checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "ai_conversation_config",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "table_name": "ai_conversation_config",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "table_name": "ai_conversation_config",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "table_name",
+          "schema",
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "table_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
-        "object_type": "table",
-        "object_name": "ai_classification_log",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "object_type": "rls",
+        "object_name": "ai_conversation_config.rls_enabled",
+        "expected_properties": {
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "rls_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "ai_conversation_config.owners_manage",
+        "expected_properties": {
+          "polname": "owners_manage",
+          "polcmd": "*",
+          "table": "ai_conversation_config"
+        },
+        "verified_properties": {
+          "polname": "owners_manage",
+          "polcmd": "*",
+          "table": "ai_conversation_config"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "column",
         "object_name": "businesses.latitude",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "column_name": "latitude",
+          "data_type": "numeric",
+          "is_nullable": "YES"
+        },
+        "verified_properties": {
+          "column_name": "latitude",
+          "data_type": "numeric",
+          "is_nullable": "YES"
+        },
+        "compared_property_paths": [
+          "data_type",
+          "is_nullable"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.columns",
+        "query_category": "column_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "column",
+        "object_name": "businesses.longitude",
+        "expected_properties": {
+          "column_name": "longitude",
+          "data_type": "numeric",
+          "is_nullable": "YES"
+        },
+        "verified_properties": {
+          "column_name": "longitude",
+          "data_type": "numeric",
+          "is_nullable": "YES"
+        },
+        "compared_property_paths": [
+          "data_type",
+          "is_nullable"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.columns",
+        "query_category": "column_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "column",
         "object_name": "businesses.discovery_enabled",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "column_name": "discovery_enabled",
+          "data_type": "boolean",
+          "column_default": "false",
+          "is_nullable": "YES"
+        },
+        "verified_properties": {
+          "column_name": "discovery_enabled",
+          "data_type": "boolean",
+          "column_default": "false",
+          "is_nullable": "YES"
+        },
+        "compared_property_paths": [
+          "data_type",
+          "column_default",
+          "is_nullable"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.columns",
+        "query_category": "column_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_businesses_name_trgm",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexdef": "CREATE INDEX idx_businesses_name_trgm ON public.businesses USING gin (name gin_trgm_ops)"
+        },
+        "verified_properties": {
+          "indexdef": "CREATE INDEX idx_businesses_name_trgm ON public.businesses USING gin (name gin_trgm_ops)"
+        },
+        "compared_property_paths": [
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_businesses_discovery",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexdef": "CREATE INDEX idx_businesses_discovery ON public.businesses USING btree (discovery_enabled, status, category) WHERE ((discovery_enabled = true) AND (status = 'active'::restaurant_status))"
+        },
+        "verified_properties": {
+          "indexdef": "CREATE INDEX idx_businesses_discovery ON public.businesses USING btree (discovery_enabled, status, category) WHERE ((discovery_enabled = true) AND (status = 'active'::restaurant_status))"
+        },
+        "compared_property_paths": [
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_businesses_location",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexdef": "CREATE INDEX idx_businesses_location ON public.businesses USING btree (latitude, longitude) WHERE ((latitude IS NOT NULL) AND (longitude IS NOT NULL))"
+        },
+        "verified_properties": {
+          "indexdef": "CREATE INDEX idx_businesses_location ON public.businesses USING btree (latitude, longitude) WHERE ((latitude IS NOT NULL) AND (longitude IS NOT NULL))"
+        },
+        "compared_property_paths": [
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "table",
+        "object_name": "ai_classification_log",
+        "expected_properties": {
+          "table_name": "ai_classification_log",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "table_name": "ai_classification_log",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "table_name",
+          "schema",
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "table_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_ai_class_log_business",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexdef": "CREATE INDEX idx_ai_class_log_business ON public.ai_classification_log USING btree (business_id, created_at DESC)"
+        },
+        "verified_properties": {
+          "indexdef": "CREATE INDEX idx_ai_class_log_business ON public.ai_classification_log USING btree (business_id, created_at DESC)"
+        },
+        "compared_property_paths": [
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_ai_class_log_intent",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexdef": "CREATE INDEX idx_ai_class_log_intent ON public.ai_classification_log USING btree (intent, created_at DESC)"
+        },
+        "verified_properties": {
+          "indexdef": "CREATE INDEX idx_ai_class_log_intent ON public.ai_classification_log USING btree (intent, created_at DESC)"
+        },
+        "compared_property_paths": [
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "policy",
-        "object_name": "owners_manage ON ai_conversation_config",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "admin_read ON ai_classification_log",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "ai_conversation_config",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "ai_classification_log",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "object_name": "ai_classification_log.admin_read",
+        "expected_properties": {
+          "polname": "admin_read",
+          "polcmd": "r",
+          "table": "ai_classification_log"
+        },
+        "verified_properties": {
+          "polname": "admin_read",
+          "polcmd": "r",
+          "table": "ai_classification_log"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "c886127f8bdd678b8cb0c6a07f8ddd1239197058eb732d704086e5438e128515",
+    "repair_batch": 8
   },
   {
     "version": "240",
     "filename": "240_ai_classification_log_owner_rls.sql",
     "checksum": "dbd605ad4e773f4fae74c47e6127d2b1ab4be82cb3783d61ac35eab7f0435a94",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "policy",
-        "object_name": "owners_read_own ON ai_classification_log",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
+        "object_name": "ai_classification_log.owners_read_own",
+        "expected_properties": {
+          "polname": "owners_read_own",
+          "polcmd": "r",
+          "table": "ai_classification_log"
+        },
+        "verified_properties": {
+          "polname": "owners_read_own",
+          "polcmd": "r",
+          "table": "ai_classification_log"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "b02f8fccd53b327a926ec24c642c9b17f111fd229f3029899bf11b18cd535793",
+    "repair_batch": 8
   },
   {
     "version": "241",
     "filename": "241_growth_engine.sql",
     "checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
+        "object_type": "column",
+        "object_name": "businesses.growth_enabled",
+        "expected_properties": {
+          "column_name": "growth_enabled",
+          "data_type": "boolean",
+          "column_default": "false",
+          "is_nullable": "YES"
+        },
+        "verified_properties": {
+          "column_name": "growth_enabled",
+          "data_type": "boolean",
+          "column_default": "false",
+          "is_nullable": "YES"
+        },
+        "compared_property_paths": [
+          "data_type",
+          "column_default",
+          "is_nullable"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.columns",
+        "query_category": "column_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
         "object_type": "table",
         "object_name": "growth_imports",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "table_name": "growth_imports",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "table_name": "growth_imports",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "table_name",
+          "schema",
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "table_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "table",
         "object_name": "growth_contacts",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "table_name": "growth_contacts",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "table_name": "growth_contacts",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "table_name",
+          "schema",
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "table_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "table",
         "object_name": "customer_consents",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "table_name": "customer_consents",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "table_name": "customer_consents",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "table_name",
+          "schema",
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "table_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "table",
         "object_name": "growth_campaigns",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "table_name": "growth_campaigns",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "table_name": "growth_campaigns",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "table_name",
+          "schema",
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "table_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "table",
         "object_name": "growth_campaign_recipients",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "table_name": "growth_campaign_recipients",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "table_name": "growth_campaign_recipients",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "table_name",
+          "schema",
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "table_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "table",
         "object_name": "growth_credits",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "table_name": "growth_credits",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "table_name": "growth_credits",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "table_name",
+          "schema",
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "table_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "table",
         "object_name": "growth_credit_transactions",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "table_name": "growth_credit_transactions",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "table_name": "growth_credit_transactions",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "table_name",
+          "schema",
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "table_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "table",
         "object_name": "growth_pricing",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "table_name": "growth_pricing",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "table_name": "growth_pricing",
+          "schema": "public",
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "table_name",
+          "schema",
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "table_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
-        "object_type": "column",
-        "object_name": "businesses.growth_enabled",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "object_type": "rls",
+        "object_name": "growth_imports.rls_enabled",
+        "expected_properties": {
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "rls_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "growth_contacts.rls_enabled",
+        "expected_properties": {
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "rls_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "customer_consents.rls_enabled",
+        "expected_properties": {
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "rls_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "growth_campaigns.rls_enabled",
+        "expected_properties": {
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "rls_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "growth_campaign_recipients.rls_enabled",
+        "expected_properties": {
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "rls_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "growth_credits.rls_enabled",
+        "expected_properties": {
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "rls_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "growth_credit_transactions.rls_enabled",
+        "expected_properties": {
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "rls_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "rls",
+        "object_name": "growth_pricing.rls_enabled",
+        "expected_properties": {
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "rls_enabled": true
+        },
+        "compared_property_paths": [
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_tables",
+        "query_category": "rls_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_contacts.growth_contacts_select",
+        "expected_properties": {
+          "polname": "growth_contacts_select",
+          "polcmd": "r",
+          "table": "growth_contacts"
+        },
+        "verified_properties": {
+          "polname": "growth_contacts_select",
+          "polcmd": "r",
+          "table": "growth_contacts"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_contacts.growth_contacts_insert",
+        "expected_properties": {
+          "polname": "growth_contacts_insert",
+          "polcmd": "a",
+          "table": "growth_contacts"
+        },
+        "verified_properties": {
+          "polname": "growth_contacts_insert",
+          "polcmd": "a",
+          "table": "growth_contacts"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_contacts.growth_contacts_update",
+        "expected_properties": {
+          "polname": "growth_contacts_update",
+          "polcmd": "w",
+          "table": "growth_contacts"
+        },
+        "verified_properties": {
+          "polname": "growth_contacts_update",
+          "polcmd": "w",
+          "table": "growth_contacts"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_contacts.growth_contacts_delete",
+        "expected_properties": {
+          "polname": "growth_contacts_delete",
+          "polcmd": "d",
+          "table": "growth_contacts"
+        },
+        "verified_properties": {
+          "polname": "growth_contacts_delete",
+          "polcmd": "d",
+          "table": "growth_contacts"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_imports.growth_imports_select",
+        "expected_properties": {
+          "polname": "growth_imports_select",
+          "polcmd": "r",
+          "table": "growth_imports"
+        },
+        "verified_properties": {
+          "polname": "growth_imports_select",
+          "polcmd": "r",
+          "table": "growth_imports"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_imports.growth_imports_insert",
+        "expected_properties": {
+          "polname": "growth_imports_insert",
+          "polcmd": "a",
+          "table": "growth_imports"
+        },
+        "verified_properties": {
+          "polname": "growth_imports_insert",
+          "polcmd": "a",
+          "table": "growth_imports"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_imports.growth_imports_update",
+        "expected_properties": {
+          "polname": "growth_imports_update",
+          "polcmd": "w",
+          "table": "growth_imports"
+        },
+        "verified_properties": {
+          "polname": "growth_imports_update",
+          "polcmd": "w",
+          "table": "growth_imports"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_imports.growth_imports_delete",
+        "expected_properties": {
+          "polname": "growth_imports_delete",
+          "polcmd": "d",
+          "table": "growth_imports"
+        },
+        "verified_properties": {
+          "polname": "growth_imports_delete",
+          "polcmd": "d",
+          "table": "growth_imports"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "customer_consents.customer_consents_select",
+        "expected_properties": {
+          "polname": "customer_consents_select",
+          "polcmd": "r",
+          "table": "customer_consents"
+        },
+        "verified_properties": {
+          "polname": "customer_consents_select",
+          "polcmd": "r",
+          "table": "customer_consents"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "customer_consents.customer_consents_service_insert",
+        "expected_properties": {
+          "polname": "customer_consents_service_insert",
+          "polcmd": "a",
+          "table": "customer_consents"
+        },
+        "verified_properties": {
+          "policy_exists": false
+        },
+        "compared_property_paths": [
+          "policy_exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "superseded",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z",
+        "superseded_by": "migration_242",
+        "supersession_detail": "Migration 242 drops customer_consents_service_insert as unsafe (WITH CHECK (true) allows any role to insert). Service role bypasses RLS, so policy was unnecessary.",
+        "continued_behavior_proof": "Service role INSERT still works because service_role bypasses RLS entirely."
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_campaigns.growth_campaigns_select",
+        "expected_properties": {
+          "polname": "growth_campaigns_select",
+          "polcmd": "r",
+          "table": "growth_campaigns"
+        },
+        "verified_properties": {
+          "polname": "growth_campaigns_select",
+          "polcmd": "r",
+          "table": "growth_campaigns"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_campaigns.growth_campaigns_insert",
+        "expected_properties": {
+          "polname": "growth_campaigns_insert",
+          "polcmd": "a",
+          "table": "growth_campaigns"
+        },
+        "verified_properties": {
+          "polname": "growth_campaigns_insert",
+          "polcmd": "a",
+          "table": "growth_campaigns"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_campaigns.growth_campaigns_update",
+        "expected_properties": {
+          "polname": "growth_campaigns_update",
+          "polcmd": "w",
+          "table": "growth_campaigns"
+        },
+        "verified_properties": {
+          "polname": "growth_campaigns_update",
+          "polcmd": "w",
+          "table": "growth_campaigns"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_campaigns.growth_campaigns_delete",
+        "expected_properties": {
+          "polname": "growth_campaigns_delete",
+          "polcmd": "d",
+          "table": "growth_campaigns"
+        },
+        "verified_properties": {
+          "polname": "growth_campaigns_delete",
+          "polcmd": "d",
+          "table": "growth_campaigns"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_campaign_recipients.growth_campaign_recipients_select",
+        "expected_properties": {
+          "polname": "growth_campaign_recipients_select",
+          "polcmd": "r",
+          "table": "growth_campaign_recipients"
+        },
+        "verified_properties": {
+          "polname": "growth_campaign_recipients_select",
+          "polcmd": "r",
+          "table": "growth_campaign_recipients"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_credits.growth_credits_select",
+        "expected_properties": {
+          "polname": "growth_credits_select",
+          "polcmd": "r",
+          "table": "growth_credits"
+        },
+        "verified_properties": {
+          "polname": "growth_credits_select",
+          "polcmd": "r",
+          "table": "growth_credits"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_credits.growth_credits_insert",
+        "expected_properties": {
+          "polname": "growth_credits_insert",
+          "polcmd": "a",
+          "table": "growth_credits"
+        },
+        "verified_properties": {
+          "polname": "growth_credits_insert",
+          "polcmd": "a",
+          "table": "growth_credits"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_credits.growth_credits_update",
+        "expected_properties": {
+          "polname": "growth_credits_update",
+          "polcmd": "w",
+          "table": "growth_credits"
+        },
+        "verified_properties": {
+          "polname": "growth_credits_update",
+          "polcmd": "w",
+          "table": "growth_credits"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_credits.growth_credits_delete",
+        "expected_properties": {
+          "polname": "growth_credits_delete",
+          "polcmd": "d",
+          "table": "growth_credits"
+        },
+        "verified_properties": {
+          "polname": "growth_credits_delete",
+          "polcmd": "d",
+          "table": "growth_credits"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_credit_transactions.growth_credit_transactions_select",
+        "expected_properties": {
+          "polname": "growth_credit_transactions_select",
+          "polcmd": "r",
+          "table": "growth_credit_transactions"
+        },
+        "verified_properties": {
+          "polname": "growth_credit_transactions_select",
+          "polcmd": "r",
+          "table": "growth_credit_transactions"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_credit_transactions.growth_credit_transactions_insert",
+        "expected_properties": {
+          "polname": "growth_credit_transactions_insert",
+          "polcmd": "a",
+          "table": "growth_credit_transactions"
+        },
+        "verified_properties": {
+          "polname": "growth_credit_transactions_insert",
+          "polcmd": "a",
+          "table": "growth_credit_transactions"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_pricing.growth_pricing_admin_select",
+        "expected_properties": {
+          "polname": "growth_pricing_admin_select",
+          "polcmd": "r",
+          "table": "growth_pricing"
+        },
+        "verified_properties": {
+          "polname": "growth_pricing_admin_select",
+          "polcmd": "r",
+          "table": "growth_pricing"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_pricing.growth_pricing_service_insert",
+        "expected_properties": {
+          "polname": "growth_pricing_service_insert",
+          "polcmd": "a",
+          "table": "growth_pricing"
+        },
+        "verified_properties": {
+          "polname": "growth_pricing_service_insert",
+          "polcmd": "a",
+          "table": "growth_pricing"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
+      },
+      {
+        "object_type": "policy",
+        "object_name": "growth_pricing.growth_pricing_service_update",
+        "expected_properties": {
+          "polname": "growth_pricing_service_update",
+          "polcmd": "w",
+          "table": "growth_pricing"
+        },
+        "verified_properties": {
+          "polname": "growth_pricing_service_update",
+          "polcmd": "w",
+          "table": "growth_pricing"
+        },
+        "compared_property_paths": [
+          "polname",
+          "polcmd"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_contacts_business_created",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_contacts_business_created",
+          "indexdef": "CREATE INDEX idx_growth_contacts_business_created ON public.growth_contacts USING btree (business_id, created_at)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_contacts_business_created",
+          "indexdef": "CREATE INDEX idx_growth_contacts_business_created ON public.growth_contacts USING btree (business_id, created_at)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_contacts_phone",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_contacts_phone",
+          "indexdef": "CREATE INDEX idx_growth_contacts_phone ON public.growth_contacts USING btree (phone)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_contacts_phone",
+          "indexdef": "CREATE INDEX idx_growth_contacts_phone ON public.growth_contacts USING btree (phone)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_contacts_import",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_contacts_import",
+          "indexdef": "CREATE INDEX idx_growth_contacts_import ON public.growth_contacts USING btree (import_id)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_contacts_import",
+          "indexdef": "CREATE INDEX idx_growth_contacts_import ON public.growth_contacts USING btree (import_id)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_imports_business_created",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_imports_business_created",
+          "indexdef": "CREATE INDEX idx_growth_imports_business_created ON public.growth_imports USING btree (business_id, created_at)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_imports_business_created",
+          "indexdef": "CREATE INDEX idx_growth_imports_business_created ON public.growth_imports USING btree (business_id, created_at)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_customer_consents_business_phone",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_customer_consents_business_phone",
+          "indexdef": "CREATE INDEX idx_customer_consents_business_phone ON public.customer_consents USING btree (business_id, phone)"
+        },
+        "verified_properties": {
+          "indexname": "idx_customer_consents_business_phone",
+          "indexdef": "CREATE INDEX idx_customer_consents_business_phone ON public.customer_consents USING btree (business_id, phone)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_customer_consents_business_created",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_customer_consents_business_created",
+          "indexdef": "CREATE INDEX idx_customer_consents_business_created ON public.customer_consents USING btree (business_id, created_at)"
+        },
+        "verified_properties": {
+          "indexname": "idx_customer_consents_business_created",
+          "indexdef": "CREATE INDEX idx_customer_consents_business_created ON public.customer_consents USING btree (business_id, created_at)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_customer_consents_phone_channel",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_customer_consents_phone_channel",
+          "indexdef": "CREATE INDEX idx_customer_consents_phone_channel ON public.customer_consents USING btree (phone, channel, purpose)"
+        },
+        "verified_properties": {
+          "indexname": "idx_customer_consents_phone_channel",
+          "indexdef": "CREATE INDEX idx_customer_consents_phone_channel ON public.customer_consents USING btree (phone, channel, purpose)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_campaigns_business_created",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_campaigns_business_created",
+          "indexdef": "CREATE INDEX idx_growth_campaigns_business_created ON public.growth_campaigns USING btree (business_id, created_at)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_campaigns_business_created",
+          "indexdef": "CREATE INDEX idx_growth_campaigns_business_created ON public.growth_campaigns USING btree (business_id, created_at)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_campaigns_status",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_campaigns_status",
+          "indexdef": "CREATE INDEX idx_growth_campaigns_status ON public.growth_campaigns USING btree (status)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_campaigns_status",
+          "indexdef": "CREATE INDEX idx_growth_campaigns_status ON public.growth_campaigns USING btree (status)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_campaign_recipients_campaign",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_campaign_recipients_campaign",
+          "indexdef": "CREATE INDEX idx_growth_campaign_recipients_campaign ON public.growth_campaign_recipients USING btree (campaign_id)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_campaign_recipients_campaign",
+          "indexdef": "CREATE INDEX idx_growth_campaign_recipients_campaign ON public.growth_campaign_recipients USING btree (campaign_id)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_campaign_recipients_phone",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_campaign_recipients_phone",
+          "indexdef": "CREATE INDEX idx_growth_campaign_recipients_phone ON public.growth_campaign_recipients USING btree (phone)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_campaign_recipients_phone",
+          "indexdef": "CREATE INDEX idx_growth_campaign_recipients_phone ON public.growth_campaign_recipients USING btree (phone)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_campaign_recipients_status",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_campaign_recipients_status",
+          "indexdef": "CREATE INDEX idx_growth_campaign_recipients_status ON public.growth_campaign_recipients USING btree (status)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_campaign_recipients_status",
+          "indexdef": "CREATE INDEX idx_growth_campaign_recipients_status ON public.growth_campaign_recipients USING btree (status)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_credits_business",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_credits_business",
+          "indexdef": "CREATE INDEX idx_growth_credits_business ON public.growth_credits USING btree (business_id)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_credits_business",
+          "indexdef": "CREATE INDEX idx_growth_credits_business ON public.growth_credits USING btree (business_id)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_credits_business_remaining",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_credits_business_remaining",
+          "indexdef": "CREATE INDEX idx_growth_credits_business_remaining ON public.growth_credits USING btree (business_id, remaining) WHERE (remaining > 0)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_credits_business_remaining",
+          "indexdef": "CREATE INDEX idx_growth_credits_business_remaining ON public.growth_credits USING btree (business_id, remaining) WHERE (remaining > 0)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_credit_transactions_business",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_credit_transactions_business",
+          "indexdef": "CREATE INDEX idx_growth_credit_transactions_business ON public.growth_credit_transactions USING btree (business_id, created_at)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_credit_transactions_business",
+          "indexdef": "CREATE INDEX idx_growth_credit_transactions_business ON public.growth_credit_transactions USING btree (business_id, created_at)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_credit_transactions_campaign",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_credit_transactions_campaign",
+          "indexdef": "CREATE INDEX idx_growth_credit_transactions_campaign ON public.growth_credit_transactions USING btree (campaign_id)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_credit_transactions_campaign",
+          "indexdef": "CREATE INDEX idx_growth_credit_transactions_campaign ON public.growth_credit_transactions USING btree (campaign_id)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_pricing_country_channel",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
+        "expected_properties": {
+          "indexname": "idx_growth_pricing_country_channel",
+          "indexdef": "CREATE INDEX idx_growth_pricing_country_channel ON public.growth_pricing USING btree (country_code, channel)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_pricing_country_channel",
+          "indexdef": "CREATE INDEX idx_growth_pricing_country_channel ON public.growth_pricing USING btree (country_code, channel)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_growth_pricing_active",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_contacts_select ON growth_contacts",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_contacts_insert ON growth_contacts",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_contacts_update ON growth_contacts",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_contacts_delete ON growth_contacts",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_imports_select ON growth_imports",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_imports_insert ON growth_imports",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_imports_update ON growth_imports",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_imports_delete ON growth_imports",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "customer_consents_select ON customer_consents",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "customer_consents_service_insert ON customer_consents",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_campaigns_select ON growth_campaigns",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_campaigns_insert ON growth_campaigns",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_campaigns_update ON growth_campaigns",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_campaigns_delete ON growth_campaigns",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_campaign_recipients_select ON growth_campaign_recipients",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_credits_select ON growth_credits",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_credits_insert ON growth_credits",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_credits_update ON growth_credits",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_credits_delete ON growth_credits",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_credit_transactions_select ON growth_credit_transactions",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_credit_transactions_insert ON growth_credit_transactions",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_pricing_admin_select ON growth_pricing",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_pricing_service_insert ON growth_pricing",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "growth_pricing_service_update ON growth_pricing",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "growth_contacts",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "growth_imports",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "customer_consents",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "growth_campaigns",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "growth_campaign_recipients",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "growth_credits",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "growth_credit_transactions",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
-      },
-      {
-        "object_type": "rls",
-        "object_name": "growth_pricing",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "expected_properties": {
+          "indexname": "idx_growth_pricing_active",
+          "indexdef": "CREATE INDEX idx_growth_pricing_active ON public.growth_pricing USING btree (is_active) WHERE (is_active = true)"
+        },
+        "verified_properties": {
+          "indexname": "idx_growth_pricing_active",
+          "indexdef": "CREATE INDEX idx_growth_pricing_active ON public.growth_pricing USING btree (is_active) WHERE (is_active = true)"
+        },
+        "compared_property_paths": [
+          "indexname",
+          "indexdef"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:47:52.870Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
-    "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_eligible": true,
+    "repair_status": "approved_for_repair",
+    "confidence": "HIGH",
+    "recommended_action": "migration_history_repair_only",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 8,
+    "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
+    "production_evidence_digest": "1cbb7eb0d0a4948e02b923455e5f20183fd3c0a2624432c84714887754bfe94b",
+    "repair_batch": 8
   },
   {
     "version": "242",
     "filename": "242_growth_credit_atomic.sql",
     "checksum": "578661c4ec55021f1856706194e3df010e8d22f04f06f0eb491148719f218e0f",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
-        "object_type": "policy",
-        "object_name": "customer_consents_service_insert ON customer_consents",
-        "expected_state": "dropped",
-        "verification_source": "pg_policies"
+        "object_type": "function",
+        "object_name": "reserve_credits_atomic(uuid, uuid, integer)",
+        "expected_properties": {
+          "schema": "public",
+          "language": "plpgsql",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer"
+        },
+        "verified_properties": {
+          "schema": "public",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
+          "def_hash": "2c3a0bd9cdc9be9054de5523e4f5b8127999bc701f78c57701aa3c5d23962932",
+          "volatile": "v",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "schema",
+          "security_definer",
+          "search_path",
+          "args",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "superseded",
+        "superseding_migration": "243",
+        "superseding_reason": "Migration 243 replaced function body with full reservation lifecycle (campaign locking, double-reservation prevention, reservation_id tracking)",
+        "continued_behavior_proof": "Function exists with same signature and security properties; body updated by 243",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
         "object_type": "function",
-        "object_name": "reserve_credits_atomic",
-        "expected_state": "exists",
-        "verification_source": "pg_proc"
+        "object_name": "consume_credits_atomic(uuid, uuid, integer)",
+        "expected_properties": {
+          "schema": "public",
+          "language": "plpgsql",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer"
+        },
+        "verified_properties": {
+          "schema": "public",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
+          "def_hash": "28e737b0a5395614e97015fe5044e7f83c1a62837393ba91094f1191cc2a71aa",
+          "volatile": "v",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "schema",
+          "security_definer",
+          "search_path",
+          "args",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "superseded",
+        "superseding_migration": "243",
+        "superseding_reason": "Migration 243 replaced function body with reservation verification (campaign locking, reservation status checks, consumable limit enforcement)",
+        "continued_behavior_proof": "Function exists with same signature and security properties; body updated by 243",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "function",
-        "object_name": "consume_credits_atomic",
-        "expected_state": "exists",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "revoke_reserve_credits_atomic_from_public",
+        "expected_properties": {
+          "function_name": "reserve_credits_atomic(uuid, uuid, integer)",
+          "revoked_from": [
+            "PUBLIC",
+            "anon",
+            "authenticated"
+          ],
+          "action": "REVOKE ALL"
+        },
+        "verified_properties": {
+          "anon_has_execute": false,
+          "authenticated_has_execute": false,
+          "public_has_execute": false
+        },
+        "compared_property_paths": [
+          "anon_has_execute",
+          "authenticated_has_execute",
+          "public_has_execute"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "superseded",
+        "superseding_migration": "243",
+        "superseding_reason": "Migration 243 re-applied REVOKE ALL after CREATE OR REPLACE which resets default grants",
+        "continued_behavior_proof": "anon and authenticated confirmed without EXECUTE privilege in production",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON reserve_credits_atomic",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "grant_reserve_credits_atomic_to_service_role",
+        "expected_properties": {
+          "function_name": "reserve_credits_atomic(uuid, uuid, integer)",
+          "grantee": "service_role",
+          "privilege": "EXECUTE"
+        },
+        "verified_properties": {
+          "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "confirmed": true
+        },
+        "compared_property_paths": [
+          "grantee",
+          "privilege"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "superseded",
+        "superseding_migration": "243",
+        "superseding_reason": "Migration 243 re-applied GRANT EXECUTE TO service_role after CREATE OR REPLACE",
+        "continued_behavior_proof": "service_role confirmed with EXECUTE privilege in production",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON consume_credits_atomic",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "revoke_consume_credits_atomic_from_public",
+        "expected_properties": {
+          "function_name": "consume_credits_atomic(uuid, uuid, integer)",
+          "revoked_from": [
+            "PUBLIC",
+            "anon",
+            "authenticated"
+          ],
+          "action": "REVOKE ALL"
+        },
+        "verified_properties": {
+          "anon_has_execute": false,
+          "authenticated_has_execute": false,
+          "public_has_execute": false
+        },
+        "compared_property_paths": [
+          "anon_has_execute",
+          "authenticated_has_execute",
+          "public_has_execute"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "superseded",
+        "superseding_migration": "243",
+        "superseding_reason": "Migration 243 re-applied REVOKE ALL after CREATE OR REPLACE which resets default grants",
+        "continued_behavior_proof": "anon and authenticated confirmed without EXECUTE privilege in production",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON reserve_credits_atomic",
-        "expected_state": "revoked",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "grant_consume_credits_atomic_to_service_role",
+        "expected_properties": {
+          "function_name": "consume_credits_atomic(uuid, uuid, integer)",
+          "grantee": "service_role",
+          "privilege": "EXECUTE"
+        },
+        "verified_properties": {
+          "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "confirmed": true
+        },
+        "compared_property_paths": [
+          "grantee",
+          "privilege"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "superseded",
+        "superseding_migration": "243",
+        "superseding_reason": "Migration 243 re-applied GRANT EXECUTE TO service_role after CREATE OR REPLACE",
+        "continued_behavior_proof": "service_role confirmed with EXECUTE privilege in production",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON consume_credits_atomic",
-        "expected_state": "revoked",
-        "verification_source": "pg_proc"
+        "object_type": "policy_drop",
+        "object_name": "customer_consents_service_insert",
+        "expected_properties": {
+          "table": "customer_consents",
+          "policy_name": "customer_consents_service_insert",
+          "action": "DROP POLICY IF EXISTS",
+          "expected_absent": true
+        },
+        "verified_properties": {
+          "policy_exists": false,
+          "remaining_policies": [
+            "customer_consents_select"
+          ],
+          "table_exists": true
+        },
+        "compared_property_paths": [
+          "policy_exists",
+          "table_exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
         "object_type": "constraint",
         "object_name": "uq_growth_campaign_dedup",
-        "expected_state": "exists",
-        "verification_source": "pg_constraint"
+        "expected_properties": {
+          "table": "growth_campaigns",
+          "constraint_type": "UNIQUE",
+          "columns": [
+            "business_id",
+            "name",
+            "type"
+          ],
+          "deferrable": true,
+          "initially_deferred": true
+        },
+        "verified_properties": {
+          "constraint_exists": false,
+          "replacement": "idx_campaign_idempotency"
+        },
+        "compared_property_paths": [
+          "constraint_exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "superseded",
+        "superseding_migration": "243",
+        "superseding_reason": "Migration 243 dropped uq_growth_campaign_dedup and replaced dedup strategy with idempotency_key unique index",
+        "continued_behavior_proof": "Constraint absent in production; idx_campaign_idempotency exists as replacement",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.table_constraints",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_8_repair_closeout",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 9,
+    "production_evidence_path": "docs/migrations/evidence/batch-09-production-verification.json",
+    "production_evidence_digest": "1f27a0b5970f8ef989dca992c81766354cf04afee34f373bb9bf795fce1723f7",
+    "activation_blocked_by_batch": 8
   },
   {
     "version": "243",
     "filename": "243_growth_credit_hardening.sql",
     "checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
-        "object_type": "column",
-        "object_name": "growth_campaigns.reservation_id",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
-      },
-      {
-        "object_type": "index",
-        "object_name": "idx_campaign_idempotency",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "function",
-        "object_name": "reserve_credits_atomic",
-        "expected_state": "exists",
-        "verification_source": "pg_proc"
-      },
-      {
-        "object_type": "function",
-        "object_name": "consume_credits_atomic",
-        "expected_state": "exists",
-        "verification_source": "pg_proc"
-      },
-      {
-        "object_type": "function",
-        "object_name": "release_credits_atomic",
-        "expected_state": "exists",
-        "verification_source": "pg_proc"
-      },
-      {
-        "object_type": "function",
-        "object_name": "recover_expired_reservations",
-        "expected_state": "exists",
-        "verification_source": "pg_proc"
-      },
-      {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON release_credits_atomic",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
-      },
-      {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON reserve_credits_atomic",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
-      },
-      {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON consume_credits_atomic",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
-      },
-      {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON recover_expired_reservations",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
-      },
-      {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON release_credits_atomic",
-        "expected_state": "revoked",
-        "verification_source": "pg_proc"
-      },
-      {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON reserve_credits_atomic",
-        "expected_state": "revoked",
-        "verification_source": "pg_proc"
-      },
-      {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON consume_credits_atomic",
-        "expected_state": "revoked",
-        "verification_source": "pg_proc"
-      },
-      {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON recover_expired_reservations",
-        "expected_state": "revoked",
-        "verification_source": "pg_proc"
-      },
-      {
         "object_type": "constraint",
         "object_name": "chk_credits_amount_positive",
-        "expected_state": "exists",
-        "verification_source": "pg_constraint"
+        "expected_properties": {
+          "table": "growth_credits",
+          "constraint_type": "CHECK",
+          "check_clause": "(amount > 0)"
+        },
+        "verified_properties": {
+          "table": "growth_credits",
+          "constraint_type": "CHECK",
+          "check_clause": "(amount > 0)",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "table",
+          "constraint_type",
+          "check_clause",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.check_constraints",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
         "object_type": "constraint",
         "object_name": "chk_credits_remaining_non_negative",
-        "expected_state": "exists",
-        "verification_source": "pg_constraint"
+        "expected_properties": {
+          "table": "growth_credits",
+          "constraint_type": "CHECK",
+          "check_clause": "(remaining >= 0)"
+        },
+        "verified_properties": {
+          "table": "growth_credits",
+          "constraint_type": "CHECK",
+          "check_clause": "(remaining >= 0)",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "table",
+          "constraint_type",
+          "check_clause",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.check_constraints",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
         "object_type": "constraint",
         "object_name": "chk_credits_remaining_lte_amount",
-        "expected_state": "exists",
-        "verification_source": "pg_constraint"
+        "expected_properties": {
+          "table": "growth_credits",
+          "constraint_type": "CHECK",
+          "check_clause": "(remaining <= amount)"
+        },
+        "verified_properties": {
+          "table": "growth_credits",
+          "constraint_type": "CHECK",
+          "check_clause": "(remaining <= amount)",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "table",
+          "constraint_type",
+          "check_clause",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.check_constraints",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "column",
+        "object_name": "growth_campaigns.reservation_id",
+        "expected_properties": {
+          "table": "growth_campaigns",
+          "column_name": "reservation_id",
+          "data_type": "uuid",
+          "column_default": "gen_random_uuid()",
+          "is_nullable": "YES"
+        },
+        "verified_properties": {
+          "table": "growth_campaigns",
+          "column_name": "reservation_id",
+          "data_type": "uuid",
+          "column_default": "gen_random_uuid()",
+          "is_nullable": "YES"
+        },
+        "compared_property_paths": [
+          "data_type",
+          "column_default",
+          "is_nullable"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.columns",
+        "query_category": "column_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "column",
+        "object_name": "growth_campaigns.reservation_status",
+        "expected_properties": {
+          "table": "growth_campaigns",
+          "column_name": "reservation_status",
+          "data_type": "text",
+          "column_default": "'none'::text",
+          "is_nullable": "YES",
+          "check_values": [
+            "none",
+            "reserved",
+            "partially_consumed",
+            "consumed",
+            "released",
+            "expired"
+          ]
+        },
+        "verified_properties": {
+          "table": "growth_campaigns",
+          "column_name": "reservation_status",
+          "data_type": "text",
+          "column_default": "'none'::text",
+          "is_nullable": "YES",
+          "check_constraint": "growth_campaigns_reservation_status_check",
+          "check_clause": "(reservation_status = ANY (ARRAY['none'::text, 'reserved'::text, 'partially_consumed'::text, 'consumed'::text, 'released'::text, 'expired'::text]))"
+        },
+        "compared_property_paths": [
+          "data_type",
+          "column_default",
+          "is_nullable",
+          "check_values"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.columns",
+        "query_category": "column_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "column",
+        "object_name": "growth_campaigns.reservation_expires_at",
+        "expected_properties": {
+          "table": "growth_campaigns",
+          "column_name": "reservation_expires_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES"
+        },
+        "verified_properties": {
+          "table": "growth_campaigns",
+          "column_name": "reservation_expires_at",
+          "data_type": "timestamp with time zone",
+          "column_default": null,
+          "is_nullable": "YES"
+        },
+        "compared_property_paths": [
+          "data_type",
+          "is_nullable"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.columns",
+        "query_category": "column_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "column",
+        "object_name": "growth_campaigns.idempotency_key",
+        "expected_properties": {
+          "table": "growth_campaigns",
+          "column_name": "idempotency_key",
+          "data_type": "text",
+          "is_nullable": "YES"
+        },
+        "verified_properties": {
+          "table": "growth_campaigns",
+          "column_name": "idempotency_key",
+          "data_type": "text",
+          "column_default": null,
+          "is_nullable": "YES"
+        },
+        "compared_property_paths": [
+          "data_type",
+          "is_nullable"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.columns",
+        "query_category": "column_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "index",
+        "object_name": "idx_campaign_idempotency",
+        "expected_properties": {
+          "table": "growth_campaigns",
+          "unique": true,
+          "columns": [
+            "business_id",
+            "idempotency_key"
+          ],
+          "where_clause": "idempotency_key IS NOT NULL"
+        },
+        "verified_properties": {
+          "indexdef": "CREATE UNIQUE INDEX idx_campaign_idempotency ON public.growth_campaigns USING btree (business_id, idempotency_key) WHERE (idempotency_key IS NOT NULL)",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "unique",
+          "columns",
+          "where_clause",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "constraint_drop",
+        "object_name": "uq_growth_campaign_dedup_drop",
+        "expected_properties": {
+          "table": "growth_campaigns",
+          "constraint_name": "uq_growth_campaign_dedup",
+          "action": "DROP CONSTRAINT IF EXISTS",
+          "expected_absent": true
+        },
+        "verified_properties": {
+          "constraint_exists": false
+        },
+        "compared_property_paths": [
+          "constraint_exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.table_constraints",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "function",
+        "object_name": "reserve_credits_atomic(uuid, uuid, integer)",
+        "expected_properties": {
+          "schema": "public",
+          "language": "plpgsql",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
+          "version": "243_reservation_lifecycle"
+        },
+        "verified_properties": {
+          "schema": "public",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
+          "def_hash": "2c3a0bd9cdc9be9054de5523e4f5b8127999bc701f78c57701aa3c5d23962932",
+          "volatile": "v",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "schema",
+          "security_definer",
+          "search_path",
+          "args",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "function",
+        "object_name": "consume_credits_atomic(uuid, uuid, integer)",
+        "expected_properties": {
+          "schema": "public",
+          "language": "plpgsql",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
+          "version": "243_reservation_verification"
+        },
+        "verified_properties": {
+          "schema": "public",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
+          "def_hash": "28e737b0a5395614e97015fe5044e7f83c1a62837393ba91094f1191cc2a71aa",
+          "volatile": "v",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "schema",
+          "security_definer",
+          "search_path",
+          "args",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "function",
+        "object_name": "release_credits_atomic(uuid, uuid)",
+        "expected_properties": {
+          "schema": "public",
+          "language": "plpgsql",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_business_id uuid, p_campaign_id uuid"
+        },
+        "verified_properties": {
+          "schema": "public",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_business_id uuid, p_campaign_id uuid",
+          "def_hash": "f7d6681c22b11da1c603ed9dad102af18887e256570306f618ba92f58768b8ee",
+          "volatile": "v",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "schema",
+          "security_definer",
+          "search_path",
+          "args",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "function",
+        "object_name": "recover_expired_reservations()",
+        "expected_properties": {
+          "schema": "public",
+          "language": "plpgsql",
+          "security_definer": true,
+          "search_path": "public",
+          "args": ""
+        },
+        "verified_properties": {
+          "schema": "public",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "",
+          "def_hash": "76786055261d9e3252effae2ef6084a170b3c2eb9e338197dca61c1c83ff2458",
+          "volatile": "v",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "schema",
+          "security_definer",
+          "search_path",
+          "args",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "grant",
+        "object_name": "release_credits_atomic_service_role_execute",
+        "expected_properties": {
+          "function_name": "release_credits_atomic(uuid, uuid)",
+          "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "revoked_from": [
+            "PUBLIC",
+            "anon",
+            "authenticated"
+          ]
+        },
+        "verified_properties": {
+          "grantees": [
+            "postgres",
+            "service_role"
+          ],
+          "anon_has_execute": false,
+          "authenticated_has_execute": false
+        },
+        "compared_property_paths": [
+          "grantee_service_role",
+          "anon_revoked",
+          "authenticated_revoked"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "grant",
+        "object_name": "reserve_credits_atomic_re_revoke",
+        "expected_properties": {
+          "function_name": "reserve_credits_atomic(uuid, uuid, integer)",
+          "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "revoked_from": [
+            "PUBLIC",
+            "anon",
+            "authenticated"
+          ],
+          "note": "Re-applied after CREATE OR REPLACE"
+        },
+        "verified_properties": {
+          "grantees": [
+            "postgres",
+            "service_role"
+          ],
+          "anon_has_execute": false,
+          "authenticated_has_execute": false
+        },
+        "compared_property_paths": [
+          "grantee_service_role",
+          "anon_revoked",
+          "authenticated_revoked"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "grant",
+        "object_name": "consume_credits_atomic_re_revoke",
+        "expected_properties": {
+          "function_name": "consume_credits_atomic(uuid, uuid, integer)",
+          "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "revoked_from": [
+            "PUBLIC",
+            "anon",
+            "authenticated"
+          ],
+          "note": "Re-applied after CREATE OR REPLACE"
+        },
+        "verified_properties": {
+          "grantees": [
+            "postgres",
+            "service_role"
+          ],
+          "anon_has_execute": false,
+          "authenticated_has_execute": false
+        },
+        "compared_property_paths": [
+          "grantee_service_role",
+          "anon_revoked",
+          "authenticated_revoked"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "grant",
+        "object_name": "recover_expired_reservations_service_role_execute",
+        "expected_properties": {
+          "function_name": "recover_expired_reservations()",
+          "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "revoked_from": [
+            "PUBLIC",
+            "anon",
+            "authenticated"
+          ]
+        },
+        "verified_properties": {
+          "grantees": [
+            "postgres",
+            "service_role"
+          ],
+          "anon_has_execute": false,
+          "authenticated_has_execute": false
+        },
+        "compared_property_paths": [
+          "grantee_service_role",
+          "anon_revoked",
+          "authenticated_revoked"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_8_repair_closeout",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 9,
+    "production_evidence_path": "docs/migrations/evidence/batch-09-production-verification.json",
+    "production_evidence_digest": "5fac56dfe66b087cee1a6d6cf6c83c56216b68c23cc6f251bf7965a2239d2ce9",
+    "activation_blocked_by_batch": 8
   },
   {
     "version": "244",
@@ -11615,137 +14176,651 @@
     "filename": "245_fix_book_slot_atomic_overloads.sql",
     "checksum": "20172654b4897937f1d297850f148ac8760902cf32fe2f56164c82f66f782ac9",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON book_slot_atomic",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
+        "object_type": "function_drop",
+        "object_name": "book_slot_atomic(22_args)",
+        "expected_properties": {
+          "schema": "public",
+          "function_name": "book_slot_atomic",
+          "arg_count": 22,
+          "action": "DROP FUNCTION IF EXISTS",
+          "expected_absent": true
+        },
+        "verified_properties": {
+          "function_exists_with_22_args": false,
+          "only_26_arg_version_exists": true,
+          "total_overloads": 1
+        },
+        "compared_property_paths": [
+          "function_exists_with_22_args",
+          "only_26_arg_version_exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON book_slot_atomic",
-        "expected_state": "revoked",
-        "verification_source": "pg_proc"
+        "object_type": "function_drop",
+        "object_name": "book_slot_atomic(23_args)",
+        "expected_properties": {
+          "schema": "public",
+          "function_name": "book_slot_atomic",
+          "arg_count": 23,
+          "action": "DROP FUNCTION IF EXISTS",
+          "expected_absent": true
+        },
+        "verified_properties": {
+          "function_exists_with_23_args": false,
+          "only_26_arg_version_exists": true,
+          "total_overloads": 1
+        },
+        "compared_property_paths": [
+          "function_exists_with_23_args",
+          "only_26_arg_version_exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "function",
-        "object_name": "with",
-        "expected_state": "dropped",
-        "verification_source": "pg_proc"
+        "object_type": "function_drop",
+        "object_name": "book_slot_atomic(24_args)",
+        "expected_properties": {
+          "schema": "public",
+          "function_name": "book_slot_atomic",
+          "arg_count": 24,
+          "action": "DROP FUNCTION IF EXISTS",
+          "expected_absent": true
+        },
+        "verified_properties": {
+          "function_exists_with_24_args": false,
+          "only_26_arg_version_exists": true,
+          "total_overloads": 1
+        },
+        "compared_property_paths": [
+          "function_exists_with_24_args",
+          "only_26_arg_version_exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "function",
-        "object_name": "book_slot_atomic",
-        "expected_state": "dropped",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "book_slot_atomic_26_args_service_role",
+        "expected_properties": {
+          "function_name": "book_slot_atomic(26_args)",
+          "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "revoked_from": [
+            "PUBLIC"
+          ]
+        },
+        "verified_properties": {
+          "grantees": [
+            "postgres",
+            "service_role"
+          ],
+          "anon_has_execute": false,
+          "authenticated_has_execute": false,
+          "pronargs": 26
+        },
+        "compared_property_paths": [
+          "grantee_service_role",
+          "anon_revoked",
+          "authenticated_revoked"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "equivalent_stricter",
+        "tightening_migration": "296",
+        "tightening_reason": "Migration 296 explicitly revoked EXECUTE from anon and authenticated roles with role existence guards, hardening beyond 245's REVOKE FROM PUBLIC",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_8_repair_closeout",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 9,
+    "production_evidence_path": "docs/migrations/evidence/batch-09-production-verification.json",
+    "production_evidence_digest": "dc6d97561a65fd7cbcf3ec7edd11b85f44d97916f7f3e27623bed7136a0bc4a2",
+    "activation_blocked_by_batch": 8
   },
   {
     "version": "246",
     "filename": "246_phone_otp_challenges.sql",
     "checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
-    "current_classification": "PENDING_PRODUCTION_REVERIFICATION",
+    "current_classification": "VERIFIED_APPLIED_UNTRACKED",
     "remote_tracked": false,
     "evidence": [
       {
         "object_type": "table",
         "object_name": "phone_otp_challenges",
-        "expected_state": "exists",
-        "verification_source": "information_schema"
+        "expected_properties": {
+          "schema": "public",
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false,
+              "default": "gen_random_uuid()"
+            },
+            {
+              "name": "challenge_id",
+              "type": "character varying",
+              "nullable": false,
+              "max_length": 64
+            },
+            {
+              "name": "phone_hash",
+              "type": "character varying",
+              "nullable": false,
+              "max_length": 128
+            },
+            {
+              "name": "otp_hash",
+              "type": "character varying",
+              "nullable": false,
+              "max_length": 128
+            },
+            {
+              "name": "expires_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "consumed_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "failed_attempts",
+              "type": "integer",
+              "nullable": false,
+              "default": "0"
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false,
+              "default": "now()"
+            },
+            {
+              "name": "last_attempt_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            }
+          ]
+        },
+        "verified_properties": {
+          "schema": "public",
+          "exists": true,
+          "column_count": 9,
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false,
+              "default": "gen_random_uuid()"
+            },
+            {
+              "name": "challenge_id",
+              "type": "character varying",
+              "nullable": false,
+              "max_length": 64
+            },
+            {
+              "name": "phone_hash",
+              "type": "character varying",
+              "nullable": false,
+              "max_length": 128
+            },
+            {
+              "name": "otp_hash",
+              "type": "character varying",
+              "nullable": false,
+              "max_length": 128
+            },
+            {
+              "name": "expires_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "consumed_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "failed_attempts",
+              "type": "integer",
+              "nullable": false,
+              "default": "0"
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false,
+              "default": "now()"
+            },
+            {
+              "name": "last_attempt_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            }
+          ]
+        },
+        "compared_property_paths": [
+          "schema",
+          "exists",
+          "column_count",
+          "columns.*.name",
+          "columns.*.type",
+          "columns.*.nullable",
+          "columns.*.default",
+          "columns.*.max_length"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.columns",
+        "query_category": "table_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "constraint",
+        "object_name": "phone_otp_challenges_pkey",
+        "expected_properties": {
+          "table": "phone_otp_challenges",
+          "constraint_type": "PRIMARY KEY",
+          "column": "id"
+        },
+        "verified_properties": {
+          "table": "phone_otp_challenges",
+          "constraint_type": "PRIMARY KEY",
+          "exists": true,
+          "indexdef": "CREATE UNIQUE INDEX phone_otp_challenges_pkey ON public.phone_otp_challenges USING btree (id)"
+        },
+        "compared_property_paths": [
+          "constraint_type",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.table_constraints",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "constraint",
+        "object_name": "phone_otp_challenges_challenge_id_key",
+        "expected_properties": {
+          "table": "phone_otp_challenges",
+          "constraint_type": "UNIQUE",
+          "column": "challenge_id"
+        },
+        "verified_properties": {
+          "table": "phone_otp_challenges",
+          "constraint_type": "UNIQUE",
+          "exists": true,
+          "indexdef": "CREATE UNIQUE INDEX phone_otp_challenges_challenge_id_key ON public.phone_otp_challenges USING btree (challenge_id)"
+        },
+        "compared_property_paths": [
+          "constraint_type",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.table_constraints",
+        "query_category": "constraint_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
         "object_type": "index",
         "object_name": "idx_phone_otp_challenges_expires_at",
-        "expected_state": "exists",
-        "verification_source": "pg_indexes"
-      },
-      {
-        "object_type": "policy",
-        "object_name": "service_role_full_access ON phone_otp_challenges",
-        "expected_state": "exists",
-        "verification_source": "pg_policies"
-      },
-      {
-        "object_type": "function",
-        "object_name": "otp_record_failed_attempt",
-        "expected_state": "exists",
-        "verification_source": "pg_proc"
-      },
-      {
-        "object_type": "function",
-        "object_name": "otp_consume_challenge",
-        "expected_state": "exists",
-        "verification_source": "pg_proc"
-      },
-      {
-        "object_type": "function",
-        "object_name": "cleanup_expired_otp_challenges",
-        "expected_state": "exists",
-        "verification_source": "pg_proc"
+        "expected_properties": {
+          "table": "phone_otp_challenges",
+          "column": "expires_at",
+          "unique": false
+        },
+        "verified_properties": {
+          "indexdef": "CREATE INDEX idx_phone_otp_challenges_expires_at ON public.phone_otp_challenges USING btree (expires_at)",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "table",
+          "column",
+          "unique",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_indexes",
+        "query_category": "index_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
         "object_type": "rls",
-        "object_name": "phone_otp_challenges",
-        "expected_state": "enabled",
-        "verification_source": "pg_class"
+        "object_name": "phone_otp_challenges_rls_enabled",
+        "expected_properties": {
+          "table": "phone_otp_challenges",
+          "rls_enabled": true
+        },
+        "verified_properties": {
+          "relrowsecurity": true,
+          "relforcerowsecurity": false
+        },
+        "compared_property_paths": [
+          "rls_enabled"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_class",
+        "query_category": "rls_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON otp_record_failed_attempt",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
+        "object_type": "policy",
+        "object_name": "service_role_full_access",
+        "expected_properties": {
+          "table": "phone_otp_challenges",
+          "policy_name": "service_role_full_access",
+          "command": "ALL",
+          "using_expression": "(auth.role() = 'service_role'::text)"
+        },
+        "verified_properties": {
+          "polname": "service_role_full_access",
+          "polcmd": "*",
+          "qual": "(auth.role() = 'service_role'::text)",
+          "role_oids": [
+            0
+          ]
+        },
+        "compared_property_paths": [
+          "policy_name",
+          "command",
+          "using_expression"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_policy",
+        "query_category": "policy_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON otp_consume_challenge",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "phone_otp_challenges_table_grants",
+        "expected_properties": {
+          "table": "phone_otp_challenges",
+          "revoked_from": [
+            "PUBLIC",
+            "anon",
+            "authenticated"
+          ],
+          "granted_to_service_role": [
+            "SELECT",
+            "INSERT"
+          ]
+        },
+        "verified_properties": {
+          "service_role_privileges": [
+            "INSERT",
+            "SELECT"
+          ],
+          "anon_privileges": [],
+          "authenticated_privileges": [],
+          "postgres_has_all": true
+        },
+        "compared_property_paths": [
+          "service_role_privileges",
+          "anon_privileges",
+          "authenticated_privileges"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.table_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON cleanup_expired_otp_challenges",
-        "expected_state": "granted",
-        "verification_source": "pg_proc"
+        "object_type": "function",
+        "object_name": "otp_record_failed_attempt(uuid)",
+        "expected_properties": {
+          "schema": "public",
+          "language": "plpgsql",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_challenge_id uuid",
+          "returns": "integer"
+        },
+        "verified_properties": {
+          "schema": "public",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_challenge_id uuid",
+          "def_hash": "2991f345a676e7ad898bcb23aaa1f2031f2c1cc2154d29992733a93d362bab9e",
+          "volatile": "v",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "schema",
+          "security_definer",
+          "search_path",
+          "args",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON otp_record_failed_attempt",
-        "expected_state": "revoked",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "otp_record_failed_attempt_service_role_execute",
+        "expected_properties": {
+          "function_name": "otp_record_failed_attempt(uuid)",
+          "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "revoked_from": [
+            "PUBLIC",
+            "anon",
+            "authenticated"
+          ]
+        },
+        "verified_properties": {
+          "grantees": [
+            "postgres",
+            "service_role"
+          ],
+          "anon_has_execute": false,
+          "authenticated_has_execute": false
+        },
+        "compared_property_paths": [
+          "grantee_service_role",
+          "anon_revoked",
+          "authenticated_revoked"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON otp_consume_challenge",
-        "expected_state": "revoked",
-        "verification_source": "pg_proc"
+        "object_type": "function",
+        "object_name": "otp_consume_challenge(uuid)",
+        "expected_properties": {
+          "schema": "public",
+          "language": "plpgsql",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_challenge_id uuid",
+          "returns": "uuid"
+        },
+        "verified_properties": {
+          "schema": "public",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "p_challenge_id uuid",
+          "def_hash": "79f6e8f591e0fbee3305120b1d0609e57076d9f16783df2b1eddcf059e536963",
+          "volatile": "v",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "schema",
+          "security_definer",
+          "search_path",
+          "args",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       },
       {
-        "object_type": "privilege",
-        "object_name": "EXECUTE ON cleanup_expired_otp_challenges",
-        "expected_state": "revoked",
-        "verification_source": "pg_proc"
+        "object_type": "grant",
+        "object_name": "otp_consume_challenge_service_role_execute",
+        "expected_properties": {
+          "function_name": "otp_consume_challenge(uuid)",
+          "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "revoked_from": [
+            "PUBLIC",
+            "anon",
+            "authenticated"
+          ]
+        },
+        "verified_properties": {
+          "grantees": [
+            "postgres",
+            "service_role"
+          ],
+          "anon_has_execute": false,
+          "authenticated_has_execute": false
+        },
+        "compared_property_paths": [
+          "grantee_service_role",
+          "anon_revoked",
+          "authenticated_revoked"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "function",
+        "object_name": "cleanup_expired_otp_challenges()",
+        "expected_properties": {
+          "schema": "public",
+          "language": "plpgsql",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "",
+          "returns": "void"
+        },
+        "verified_properties": {
+          "schema": "public",
+          "security_definer": true,
+          "search_path": "public",
+          "args": "",
+          "def_hash": "25193eb64b5391579f454e94a20e145554bd6697da253cde66678f6e841d7f86",
+          "volatile": "v",
+          "exists": true
+        },
+        "compared_property_paths": [
+          "schema",
+          "security_definer",
+          "search_path",
+          "args",
+          "exists"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "pg_proc",
+        "query_category": "function_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
+      },
+      {
+        "object_type": "grant",
+        "object_name": "cleanup_expired_otp_challenges_service_role_execute",
+        "expected_properties": {
+          "function_name": "cleanup_expired_otp_challenges()",
+          "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "revoked_from": [
+            "PUBLIC",
+            "anon",
+            "authenticated"
+          ]
+        },
+        "verified_properties": {
+          "grantees": [
+            "postgres",
+            "service_role"
+          ],
+          "anon_has_execute": false,
+          "authenticated_has_execute": false
+        },
+        "compared_property_paths": [
+          "grantee_service_role",
+          "anon_revoked",
+          "authenticated_revoked"
+        ],
+        "property_mismatches": [],
+        "property_comparison_result": "exact_match",
+        "comparison_basis": "production_metadata_query",
+        "verification_source": "information_schema.routine_privileges",
+        "query_category": "grant_metadata",
+        "verified_at": "2026-07-30T19:45:51.100Z"
       }
     ],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "pending_verification",
-    "confidence": "UNCONFIRMED",
-    "recommended_action": "verify_production_objects_before_repair",
-    "last_verified_at": null,
-    "evidence_source": "sql_derived"
+    "repair_status": "verified_waiting_for_activation",
+    "confidence": "HIGH",
+    "recommended_action": "wait_for_batch_8_repair_closeout",
+    "last_verified_at": "2026-07-30T19:49:36.134Z",
+    "evidence_source": "production_verified",
+    "verification_batch": 9,
+    "production_evidence_path": "docs/migrations/evidence/batch-09-production-verification.json",
+    "production_evidence_digest": "6ae3aff1909e2e068331eca2826aa7dbb9732075d6f17e19602ef3c7cce7a897",
+    "activation_blocked_by_batch": 8
   }
 ]

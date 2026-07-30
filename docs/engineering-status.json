@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
-  "last_reconciled_main_sha": "66cd00adf92ce3b9d46cd81cf12a4bb9b65de8b1",
-  "last_reconciled_at": "2026-07-30T18:00:00Z",
+  "last_reconciled_main_sha": "21cbf57ff76d30538fe493069148e673451431c6",
+  "last_reconciled_at": "2026-07-30T20:30:00Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -297,11 +297,12 @@
         75,
         76,
         77,
-        78
+        78,
+        79
       ],
       "implementation_sha": null,
       "reviewed_sha": null,
-      "merge_sha": "66cd00adf92ce3b9d46cd81cf12a4bb9b65de8b1",
+      "merge_sha": "21cbf57ff76d30538fe493069148e673451431c6",
       "deployed_sha": null,
       "environment": "production",
       "production_verified_at": null,
@@ -456,15 +457,35 @@
         "ALIGNED_TRACKED = 113, VERIFIED_APPLIED_UNTRACKED = 0, PENDING = 19, NOT_VERIFIABLE = 12, SUPERSEDED = 2",
         "Completed repairs: 105",
         "19 candidates remain for verification in Batches 8-9",
-        "Issue #53 remains open. Batches 8 and 9 not started. Next action: final read-only verification wave for Batches 8 and 9"
+        "Issue #53 remains open. Batches 8 and 9 not started. Next action: final read-only verification wave for Batches 8 and 9",
+        "PR #79 merged: Batch 7 migration repair closeout",
+        "Final Verification Wave 2 complete: 19 migrations (Batches 8-9) production-verified",
+        "Batch 8 production verification complete: 15 versions (227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241)",
+        "Batch 8: 111 objects, 106 exact match, 1 equivalent-stricter (Migration 233 revoke_public \u2192 Migration 295), 4 superseded, 0 failed, 212 compared paths",
+        "Batch 8 evidence SHA: bc5ac3169b34c663e45707b25c4fb48c70e7f22b561f90155f7457a57ddd44f5",
+        "Batch 9 production verification complete: 4 versions (242, 243, 245, 246)",
+        "Batch 9: 42 objects, 34 exact match, 1 equivalent-stricter (Migration 245 book_slot_atomic \u2192 Migration 296), 7 superseded, 0 failed, 139 compared paths",
+        "Batch 9 evidence SHA: 531f94b3c11e2c0c02d078e37a6e71f950d59fd9741818d1b81f93e34f51eff7",
+        "Wave 2 combined: 153 objects, 140 exact match, 2 equivalent-stricter, 11 superseded, 0 failed, 0 ambiguous, 351 compared paths",
+        "Wave 2 evidence SHA: 8008cd5817061972b5e6973fa7da59464d3483798e62fb803604cdefbe1413ae",
+        "Production history unchanged: 209 remote, 113 in range 101-246, Migration 298 once, all Wave 2 version occurrences = 0",
+        "Batch 8 activated for controlled migration-history repair (15 versions in allowlist)",
+        "Batch 9 verified but deferred \u2014 repair blocked until Batch 8 closeout",
+        "All actionable verification candidates complete (candidate registry empty)",
+        "ALIGNED_TRACKED = 113, VERIFIED_APPLIED_UNTRACKED = 19, PENDING = 0, NOT_VERIFIABLE = 12, SUPERSEDED = 2",
+        "Active repair allowlist: 15 Batch 8 versions",
+        "Completed repairs: 105",
+        "12 NOT_VERIFIABLE_SAFELY and 2 SUPERSEDED migrations remain intentionally outside repair",
+        "Issue #53 remains open. Next action: controlled Batch 8 migration-history repair"
       ],
       "blockers": [
-        "19 migration repair candidates awaiting verification (Batches 8-9)",
+        "15 Batch 8 versions awaiting controlled migration-history repair",
+        "4 Batch 9 versions awaiting Batch 8 repair closeout before activation",
         "12 NOT_VERIFIABLE_SAFELY migrations require new evidence before disposition",
         "2 SUPERSEDED migrations (122, 130) require final disposition decision"
       ],
-      "next_action": "Final read-only production-verification wave for Batches 8 and 9",
-      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migrations 115, 119, 199, 200, 244, 294, 295, 296, 297 production-verified. Migrations 176, 181, 182 individually verified and recorded. Migration 115 fully satisfied (completed by Migration 297, PR #63). Batches 1-7 verification and repair complete (105 versions total, remote count 103->209, 101-246 tracked 8->113). Migration 298 applied to production and forensically verified (Management API SQL + migration repair; procedure deviation from approved dry-run stop). Wave 1 (Batches 6-7) verification complete: 30 versions, 212 objects, 211 exact match, 1 superseded. Batch 7 repair complete (15 versions, remote 194->209, tracked 98->113, 105 total repairs across Batches 1-7). Active repair allowlist cleared. 19 candidates remain for Batches 8-9. 12 NOT_VERIFIABLE_SAFELY and 2 SUPERSEDED migrations excluded from repair. Issue #53 remains open."
+      "next_action": "Controlled Batch 8 migration-history repair",
+      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migrations 115, 119, 199, 200, 244, 294, 295, 296, 297 production-verified. Migrations 176, 181, 182 individually verified and recorded. Migration 115 fully satisfied (completed by Migration 297, PR #63). Batches 1-7 verification and repair complete (105 versions total, remote count 103->209, 101-246 tracked 8->113). Migration 298 applied to production and forensically verified (Management API SQL + migration repair; procedure deviation from approved dry-run stop). Wave 1 (Batches 6-7) verification complete: 30 versions, 212 objects, 211 exact match, 1 superseded. Wave 2 (Batches 8-9) verification complete: 19 versions, 153 objects, 140 exact match, 2 equivalent-stricter, 11 superseded, 351 compared paths. Batch 8 activated for repair (15 versions in allowlist). Batch 9 verified but deferred. All actionable verification candidates complete. 12 NOT_VERIFIABLE_SAFELY and 2 SUPERSEDED migrations excluded from repair. Issue #53 remains open."
     }
   ]
 }
