@@ -7,6 +7,46 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-29
 
+### Operations: Batch 5 function def_hash fix and real property comparison
+- Fixed Migration 173 expected def_hash: replaced MD5 (32-char) with SHA-256 (64-char) matching production algorithm `encode(sha256(pg_get_functiondef(oid)::bytea), 'hex')`. All 3 function def_hash values now match exactly between expected and verified.
+- Implemented real key-by-key property comparison in validator: resolves every compared_property_paths entry in both expected and verified, computes actual unequal set, validates against declared mismatches.
+- Removed synthetic compared paths (column:name, check_expression) that didn't exist in both property sets. Honest compared-path total is 341 (was 383 with synthetic paths).
+- Migration 173 remains repair-eligible: def_hash matches, only anon_exec and auth_exec differ (approved equivalent_stricter via Migrations 181 and 296).
+  - **Affects:** Evidence integrity, validator accuracy
+  - **Could break:** Nothing — def_hash correction and comparison enforcement only.
+
+### Operations: Batch 5 V3 expected-state evidence binding
+- V3 canonical evidence enrichment: expected-state derivation from migration SQL and later-migration lineage.
+- V2 production snapshot preserved at `docs/migrations/evidence/batch-05-production-verification-v2.json` (SHA `bf528a88...`).
+- V3 canonical evidence SHA: `c2c0c052af94ccdb96b3e6e7d798c4c0ee4a0df4f10b4dfec43f2b86c22a5450`.
+- 383 compared leaf-property paths: 52 exact_match, 3 equivalent_stricter.
+- Function privilege lineage: restore_stock, restore_variant_stock, restore_tickets_sold created by Migration 173, privileges tightened by Migrations 181 and 296 to service_role-only.
+- Expected properties derived from local PostgreSQL (waaiio_batch5_expected database, localhost only, no remote access).
+- compared_property_paths validation added to validator.
+- No new production access. All verified_properties preserved exactly from V2.
+- Batch 5 repair remains pending. Issue #53 remains open. Batch 6 not started.
+  - **Affects:** Migration evidence integrity, validator accuracy
+  - **Could break:** Nothing — repository comparison enrichment only; no production access, no migration SQL, no deployment.
+
+### Operations: Batch 5 V2 canonical evidence and independent-review corrections
+- V2 canonical evidence replaces V1 temporary evidence. V1 SHA: `92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77`. V2 SHA: `bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8`.
+- `docs/migrations/evidence/batch-05-production-verification.json` — V2 evidence with 55 objects, 383 detailed property checks, 15 per-migration evidence digests, occurrence maps, tracked snapshots, and 17 safety booleans.
+- `docs/migrations/evidence/batch-05-production-verification.md` — Updated summary with V2 lineage, per-migration property counts.
+- `docs/migrations/101-246-production-reconciliation.json` — Restored from base to remove unrelated serialization churn (em dash unicode escaping). Batch 5 entries updated with V2 migration_evidence_digest bindings and specific verification sources.
+- `docs/migrations/101-246-repair-allowlist.json` — All 15 production_evidence_digest values replaced with V2 migration_evidence_digest.
+- `scripts/validate-migration-repair-allowlist.mjs` — V2 evidence SHA validation, per-migration digest recomputation, occurrence map and snapshot strict validation, RLS-only exists→enabled equivalence, 17 safety boolean checks.
+- `lib/__tests__/migration-repair-validator.test.ts` — 36 CLI rejection tests added covering V2 integrity, digest binding, occurrence maps, snapshots, safety booleans, RLS equivalence restriction.
+- Unrelated reconciliation formatting churn (literal em dashes rewritten as JSON unicode escapes) removed.
+- Migration history remained unchanged: total remote count 164, 101-246 tracked count 68. 60 completed repairs. 49 candidates remain. 15 Batch 5 versions approved for repair.
+- Migration-history repair was not executed. Batch 6 was not started. Issue #53 remains open.
+  - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — evidence and governance corrections only; no production access, no migration SQL, no deployment.
+
+### Operations: Batch 5 migration production verification recorded (15 versions)
+- Initial V1 temporary verification evidence recorded. Superseded by V2 canonical evidence above.
+  - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — read-only verification only; no migration SQL executed, no migration-history repair, no schema or application-data change, no deployment.
+
 ### Operations: Batch 4 migration-history repair complete and Migration 298 production result
 - Batch 4 repair complete: 15 versions (154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170, 171). Remote count 148→163 (+15). 101-246 tracked count 53→68 (+15). 60 total completed migration-history repairs.
 - Migration 298 applied to production: exactly 11 historical payment rows linked, pending rows now zero, populated consistent count 39.

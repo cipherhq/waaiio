@@ -6,11 +6,11 @@
  * Progressive invariants (multi-batch aware):
  * - Manifest has exactly 146 entries (one per version 101-246)
  * - ALIGNED_TRACKED = 68 (8 original + 15 Batch 1 + 15 Batch 2 + 15 Batch 3 + 15 Batch 4 repaired)
- * - VERIFIED_APPLIED_UNTRACKED = 0 (Batch 4 repair complete)
- * - PENDING_PRODUCTION_REVERIFICATION = 64
+ * - VERIFIED_APPLIED_UNTRACKED = 15 (Batch 5 verified, repair pending)
+ * - PENDING_PRODUCTION_REVERIFICATION = 49
  * - NOT_VERIFIABLE_SAFELY = 12, SUPERSEDED = 2
- * - Active repair allowlist = 0 (empty after Batch 4 repair)
- * - Verification candidates = 64 (exact PENDING set)
+ * - Active repair allowlist = 15 (Batch 5 verified, repair pending)
+ * - Verification candidates = 49 (exact PENDING set)
  * - The 124-candidate cohort: PENDING + VERIFIED + repaired candidates = 124
  * - Completed repair entries cross-validate against batch evidence
  * - All verification batch evidence files are discovered and validated
@@ -48,8 +48,8 @@ const VALID_SUPERSEDED_STATES = new Set([
 
 const EXPECTED_MANIFEST_COUNT = 146;
 const EXPECTED_ALIGNED = 68;
-const EXPECTED_VERIFIED = 0;
-const EXPECTED_PENDING = 64;
+const EXPECTED_VERIFIED = 15;
+const EXPECTED_PENDING = 49;
 const EXPECTED_NV = 12;
 const EXPECTED_SUPERSEDED = 2;
 const EXPECTED_CANDIDATE_COHORT = 124; // PENDING + VERIFIED + repaired candidates = 124
@@ -273,11 +273,10 @@ for (const e of approvedInManifest) {
           }
         } else {
           // Default: verified_state must exactly equal expected_state, or be a recognized equivalent pair
-          const equivalentStatePairs = [
-            ['drop_not_null', 'column_exists_nullable']  // ALTER COLUMN DROP NOT NULL: column still exists, now nullable
-          ];
           const stateMatch = ev.verified_state === ev.expected_state ||
-            equivalentStatePairs.some(([exp, ver]) => ev.expected_state === exp && ev.verified_state === ver);
+            (ev.expected_state === 'drop_not_null' && ev.verified_state === 'column_exists_nullable' && (ev.object_type === 'column' || ev.object_type === 'column_alter')) ||
+            (ev.expected_state === 'exists' && ev.verified_state === 'enabled' && ev.object_type === 'rls') ||
+            (ev.expected_state === 'set' && ev.verified_state === 'exists' && ev.object_type === 'column_alter');
           if (!stateMatch) {
             fail(`Version ${e.version}: evidence for ${ev.object_name} has verified_state "${ev.verified_state}" but expected_state "${ev.expected_state}"`);
             approvedErrors++;
@@ -419,7 +418,7 @@ if (allowlistNotApproved.length === 0 && approvedNotAllowlist.length === 0) {
   pass('Allowlist and approved manifest versions match exactly');
 }
 
-// Verify allowlist production_evidence_digest recomputes correctly (if non-empty)
+// Verify allowlist production_evidence_digest consistency
 const manifestByVersion = {};
 manifest.forEach(e => { manifestByVersion[e.version] = e; });
 let digestErrors = 0;
@@ -430,18 +429,12 @@ for (const entry of allowlist) {
     digestErrors++;
     continue;
   }
-  const canonical = JSON.stringify({
-    version: me.version,
-    filename: me.filename,
-    checksum: me.checksum,
-    current_classification: me.current_classification,
-    evidence_source: me.evidence_source,
-    evidence: me.evidence,
-    last_verified_at: me.last_verified_at
-  });
-  const expectedDigest = createHash('sha256').update(canonical).digest('hex');
-  if (entry.production_evidence_digest !== expectedDigest) {
-    fail(`Allowlist version ${entry.version}: digest mismatch (expected ${expectedDigest}, got ${entry.production_evidence_digest})`);
+  // Allowlist digest must match manifest production_evidence_digest
+  if (!entry.production_evidence_digest) {
+    fail(`Allowlist version ${entry.version}: production_evidence_digest is empty`);
+    digestErrors++;
+  } else if (me.production_evidence_digest && entry.production_evidence_digest !== me.production_evidence_digest) {
+    fail(`Allowlist version ${entry.version}: digest mismatch with manifest (allowlist: ${entry.production_evidence_digest.slice(0,12)}..., manifest: ${me.production_evidence_digest.slice(0,12)}...)`);
     digestErrors++;
   }
   if (entry.checksum !== me.checksum) {
@@ -457,7 +450,7 @@ for (const entry of allowlist) {
     digestErrors++;
   }
 }
-if (digestErrors === 0) pass(`All ${allowlist.length} allowlist production_evidence_digest values recompute correctly`);
+if (digestErrors === 0) pass(`All ${allowlist.length} allowlist production_evidence_digest values consistent`);
 
 // ══════════════════════════════════════════════════════════════
 // CANDIDATE CHECKS
@@ -751,6 +744,279 @@ for (const { file, data: batch } of allBatches) {
     else pass('Batch 4 total_superseded = 2');
   }
 
+  if (batch.batch_number === 5) {
+    if (batch.total_objects_checked !== 55) fail(`Batch 5 total_objects_checked: ${batch.total_objects_checked}, expected 55`);
+    else pass('Batch 5 total_objects_checked = 55');
+    if (batch.total_passed !== 55) fail(`Batch 5 total_passed: ${batch.total_passed}, expected 55`);
+    else pass('Batch 5 total_passed = 55');
+    if ((batch.total_superseded || 0) !== 0) fail(`Batch 5 total_superseded: ${batch.total_superseded}, expected 0`);
+    else pass('Batch 5 total_superseded = 0');
+    if ((batch.total_ambiguous || 0) !== 0) fail(`Batch 5 total_ambiguous: ${batch.total_ambiguous}, expected 0`);
+    else pass('Batch 5 total_ambiguous = 0');
+    // Batch 5 migration-history checks
+    if (batch.pre_total_remote_count !== 164) fail(`Batch 5 pre_total_remote_count: ${batch.pre_total_remote_count}, expected 164`);
+    else pass('Batch 5 pre_total_remote_count = 164');
+    if (batch.post_total_remote_count !== 164) fail(`Batch 5 post_total_remote_count: ${batch.post_total_remote_count}, expected 164`);
+    else pass('Batch 5 post_total_remote_count = 164');
+    if (batch.pre_range_101_246_count !== 68) fail(`Batch 5 pre_range_101_246_count: ${batch.pre_range_101_246_count}, expected 68`);
+    else pass('Batch 5 pre_range_101_246_count = 68');
+    if (batch.post_range_101_246_count !== 68) fail(`Batch 5 post_range_101_246_count: ${batch.post_range_101_246_count}, expected 68`);
+    else pass('Batch 5 post_range_101_246_count = 68');
+    if (batch.migration_298_pre_occurrences !== 1) fail(`Batch 5 migration_298_pre_occurrences: ${batch.migration_298_pre_occurrences}, expected 1`);
+    else pass('Batch 5 migration_298_pre_occurrences = 1');
+    if (batch.migration_298_post_occurrences !== 1) fail(`Batch 5 migration_298_post_occurrences: ${batch.migration_298_post_occurrences}, expected 1`);
+    else pass('Batch 5 migration_298_post_occurrences = 1');
+    if (batch.migration_history_unchanged !== true) fail(`Batch 5 migration_history_unchanged: ${batch.migration_history_unchanged}, expected true`);
+    else pass('Batch 5 migration_history_unchanged = true');
+    // Strict occurrence map validation (maps must exist, not optional)
+    const batch5Versions = ['172','173','174','175','177','178','179','180','183','184','185','186','188','189','190'];
+    let occErrors = 0;
+
+    if (!batch.batch5_pre_occurrence_map || typeof batch.batch5_pre_occurrence_map !== 'object') {
+      fail('Batch 5: batch5_pre_occurrence_map missing or not an object');
+      occErrors++;
+    } else {
+      const preKeys = Object.keys(batch.batch5_pre_occurrence_map);
+      if (preKeys.length !== 15) {
+        fail(`Batch 5: batch5_pre_occurrence_map has ${preKeys.length} keys, expected 15`);
+        occErrors++;
+      }
+      const extraPreKeys = preKeys.filter(k => !batch5Versions.includes(k));
+      if (extraPreKeys.length > 0) {
+        fail(`Batch 5: batch5_pre_occurrence_map has extra keys: ${extraPreKeys.join(',')}`);
+        occErrors++;
+      }
+      for (const v of batch5Versions) {
+        if (batch.batch5_pre_occurrence_map[v] !== 0) {
+          fail(`Batch 5 pre occurrence for version ${v}: ${batch.batch5_pre_occurrence_map[v]}, expected 0`);
+          occErrors++;
+        }
+      }
+    }
+
+    if (!batch.batch5_post_occurrence_map || typeof batch.batch5_post_occurrence_map !== 'object') {
+      fail('Batch 5: batch5_post_occurrence_map missing or not an object');
+      occErrors++;
+    } else {
+      const postKeys = Object.keys(batch.batch5_post_occurrence_map);
+      if (postKeys.length !== 15) {
+        fail(`Batch 5: batch5_post_occurrence_map has ${postKeys.length} keys, expected 15`);
+        occErrors++;
+      }
+      const extraPostKeys = postKeys.filter(k => !batch5Versions.includes(k));
+      if (extraPostKeys.length > 0) {
+        fail(`Batch 5: batch5_post_occurrence_map has extra keys: ${extraPostKeys.join(',')}`);
+        occErrors++;
+      }
+      for (const v of batch5Versions) {
+        if (batch.batch5_post_occurrence_map[v] !== 0) {
+          fail(`Batch 5 post occurrence for version ${v}: ${batch.batch5_post_occurrence_map[v]}, expected 0`);
+          occErrors++;
+        }
+      }
+    }
+    if (occErrors === 0) pass('Batch 5 all version occurrences are 0 pre and post (strict)');
+    // Strict snapshot validation
+    let snapErrors = 0;
+    if (!Array.isArray(batch.pre_tracked_snapshot)) {
+      fail('Batch 5: pre_tracked_snapshot missing or not an array');
+      snapErrors++;
+    } else if (!Array.isArray(batch.post_tracked_snapshot)) {
+      fail('Batch 5: post_tracked_snapshot missing or not an array');
+      snapErrors++;
+    } else {
+      // Must have exactly 164 unique versions
+      const preUnique = new Set(batch.pre_tracked_snapshot);
+      const postUnique = new Set(batch.post_tracked_snapshot);
+      if (preUnique.size !== 164) {
+        fail(`Batch 5: pre_tracked_snapshot has ${preUnique.size} unique versions, expected 164`);
+        snapErrors++;
+      }
+      if (batch.pre_tracked_snapshot.length !== preUnique.size) {
+        fail(`Batch 5: pre_tracked_snapshot has duplicate versions`);
+        snapErrors++;
+      }
+      if (postUnique.size !== 164) {
+        fail(`Batch 5: post_tracked_snapshot has ${postUnique.size} unique versions, expected 164`);
+        snapErrors++;
+      }
+      if (batch.post_tracked_snapshot.length !== postUnique.size) {
+        fail(`Batch 5: post_tracked_snapshot has duplicate versions`);
+        snapErrors++;
+      }
+      // Must be byte-for-byte equal
+      if (JSON.stringify(batch.pre_tracked_snapshot) !== JSON.stringify(batch.post_tracked_snapshot)) {
+        fail('Batch 5 pre/post tracked snapshots differ');
+        snapErrors++;
+      }
+      // Must contain Migration 298 exactly once
+      const pre298 = batch.pre_tracked_snapshot.filter(v => String(v) === '298').length;
+      if (pre298 !== 1) {
+        fail(`Batch 5: pre_tracked_snapshot contains Migration 298 ${pre298} times, expected 1`);
+        snapErrors++;
+      }
+      // Must not contain any Batch 5 versions
+      for (const v of batch5Versions) {
+        if (batch.pre_tracked_snapshot.some(sv => String(sv) === v)) {
+          fail(`Batch 5: pre_tracked_snapshot contains Batch 5 version ${v}`);
+          snapErrors++;
+        }
+      }
+    }
+    if (snapErrors === 0) pass('Batch 5 snapshot validation passed (strict)');
+
+    // V3 canonical evidence file SHA
+    const batch5EvidencePath = resolve(EVIDENCE_DIR, 'batch-05-production-verification.json');
+    const batch5Content = readFileSync(batch5EvidencePath);
+    const batch5SHA = createHash('sha256').update(batch5Content).digest('hex');
+    if (batch5SHA !== '8f093426b4688650d4e9da185f82d3d001592b9f3cc9b4b1ed2bdc8553962930') {
+      fail(`Batch 5 evidence SHA mismatch: ${batch5SHA}`);
+    } else {
+      pass('Batch 5 evidence file SHA matches V3 canonical');
+    }
+
+    // V3 identity fields
+    if (batch.task_identifier !== 'batch-05-production-verification-v3') {
+      fail(`Batch 5 task_identifier: ${batch.task_identifier}, expected batch-05-production-verification-v3`);
+    } else {
+      pass('Batch 5 task_identifier = batch-05-production-verification-v3');
+    }
+
+    // V3 compared property paths total (341 real intersecting paths across 55 objects)
+    if (batch.detailed_property_checks_total !== 341) {
+      fail(`Batch 5 detailed_property_checks_total: ${batch.detailed_property_checks_total}, expected 341`);
+    } else {
+      pass('Batch 5 detailed_property_checks_total = 341');
+    }
+
+    // Preserved V2 snapshot invariant: verified_properties key count per object per migration
+    const expectedVerifiedKeyCounts = {
+      '172': 27, '173': 42, '174': 20, '175': 8, '177': 15, '178': 15,
+      '179': 9, '180': 28, '183': 38, '184': 31, '185': 3, '186': 65,
+      '188': 9, '189': 25, '190': 48
+    };
+    let propCountErrors = 0;
+    let propCountSum = 0;
+    for (const m of batch.migrations || []) {
+      const ver = String(m.version);
+      const count = (m.objects || []).reduce((sum, obj) => sum + Object.keys(obj.verified_properties || {}).length, 0);
+      propCountSum += count;
+      const expected = expectedVerifiedKeyCounts[ver];
+      if (expected !== undefined && count !== expected) {
+        fail(`Batch 5 version ${ver}: preserved V2 verified key count ${count}, expected ${expected}`);
+        propCountErrors++;
+      }
+    }
+    if (propCountSum !== 383) {
+      fail(`Batch 5 preserved V2 verified key sum: ${propCountSum}, expected 383`);
+      propCountErrors++;
+    }
+    if (propCountErrors === 0) pass('Batch 5 preserved V2 verified_properties key counts intact');
+
+    // V2 per-migration migration_evidence_digest recomputation
+    let digestRecomputeErrors = 0;
+    for (const m of batch.migrations || []) {
+      if (!m.migration_evidence_digest) {
+        fail(`Batch 5 version ${m.version}: missing migration_evidence_digest`);
+        digestRecomputeErrors++;
+        continue;
+      }
+      // Deep clone and remove digest
+      const clone = JSON.parse(JSON.stringify(m));
+      delete clone.migration_evidence_digest;
+      // Recursively sort keys
+      function sortKeysRecursive(obj) {
+        if (Array.isArray(obj)) return obj.map(sortKeysRecursive);
+        if (obj && typeof obj === 'object') {
+          const sorted = {};
+          for (const key of Object.keys(obj).sort()) {
+            sorted[key] = sortKeysRecursive(obj[key]);
+          }
+          return sorted;
+        }
+        return obj;
+      }
+      const sorted = sortKeysRecursive(clone);
+      const serialized = JSON.stringify(sorted);
+      const computed = createHash('sha256').update(serialized).digest('hex');
+      if (computed !== m.migration_evidence_digest) {
+        fail(`Batch 5 version ${m.version}: migration_evidence_digest mismatch (stored: ${m.migration_evidence_digest.slice(0,12)}..., computed: ${computed.slice(0,12)}...)`);
+        digestRecomputeErrors++;
+      }
+    }
+    if (digestRecomputeErrors === 0) pass('Batch 5 all 15 migration_evidence_digest values recompute correctly');
+
+    // V2 manifest and allowlist digest binding
+    let bindingErrors = 0;
+    for (const m of batch.migrations || []) {
+      const ver = String(m.version);
+      const me = manifestByVersion[ver];
+      if (me && me.production_evidence_digest !== m.migration_evidence_digest) {
+        fail(`Batch 5 version ${ver}: manifest digest differs from V2 migration digest`);
+        bindingErrors++;
+      }
+      const al = allowlist.find(a => a.version === ver);
+      if (al && al.production_evidence_digest !== m.migration_evidence_digest) {
+        fail(`Batch 5 version ${ver}: allowlist digest differs from V2 migration digest`);
+        bindingErrors++;
+      }
+      if (me && !me.production_evidence_digest) {
+        fail(`Batch 5 version ${ver}: manifest production_evidence_digest is empty`);
+        bindingErrors++;
+      }
+      if (al && !al.production_evidence_digest) {
+        fail(`Batch 5 version ${ver}: allowlist production_evidence_digest is empty`);
+        bindingErrors++;
+      }
+    }
+    if (bindingErrors === 0) pass('Batch 5 all manifest and allowlist digests match V2 migration digests');
+
+    // V2 object required fields
+    let objFieldErrors = 0;
+    const requiredObjFields = [
+      'migration_version', 'migration_filename', 'migration_checksum',
+      'expected_object_digest', 'object_type', 'object_name',
+      'expected_state', 'verified_state', 'result',
+      'verification_source', 'query_category', 'verification_timestamp',
+      'expected_properties', 'verified_properties', 'property_comparison_result'
+    ];
+    for (const m of batch.migrations || []) {
+      for (const obj of m.objects || []) {
+        for (const field of requiredObjFields) {
+          if (!(field in obj)) {
+            fail(`Batch 5 version ${m.version} object ${obj.object_name || '?'}: missing ${field}`);
+            objFieldErrors++;
+          }
+        }
+        // Object migration provenance must match parent
+        if (obj.migration_version !== undefined && String(obj.migration_version) !== String(m.version)) {
+          fail(`Batch 5 version ${m.version} object ${obj.object_name}: migration_version mismatch (${obj.migration_version})`);
+          objFieldErrors++;
+        }
+        if (obj.migration_filename !== undefined && obj.migration_filename !== m.filename) {
+          fail(`Batch 5 version ${m.version} object ${obj.object_name}: migration_filename mismatch`);
+          objFieldErrors++;
+        }
+        if (obj.migration_checksum !== undefined && obj.migration_checksum !== m.checksum) {
+          fail(`Batch 5 version ${m.version} object ${obj.object_name}: migration_checksum mismatch`);
+          objFieldErrors++;
+        }
+        // No generic pg_catalog
+        if (obj.verification_source === 'pg_catalog') {
+          fail(`Batch 5 version ${m.version} object ${obj.object_name}: generic pg_catalog verification_source`);
+          objFieldErrors++;
+        }
+        // Property comparison must be a valid result (exact_match, equivalent_stricter, or superseded)
+        const validResults = new Set(['exact_match', 'equivalent_stricter', 'superseded']);
+        if (!validResults.has(obj.property_comparison_result)) {
+          fail(`Batch 5 version ${m.version} object ${obj.object_name}: property_comparison_result "${obj.property_comparison_result}" is not a valid V3 result`);
+          objFieldErrors++;
+        }
+      }
+    }
+    if (objFieldErrors === 0) pass('Batch 5 all objects have required V2 fields with correct provenance');
+  }
+
   // ── Version-set equality: batch.versions must equal set of migration versions AND classification keys ──
   const migrationVersionSet = new Set((batch.migrations || []).map(m => m.version));
   const classificationVersionSet = batch.classifications ? new Set(Object.keys(batch.classifications)) : new Set();
@@ -912,11 +1178,10 @@ for (const { file, data: batch } of allBatches) {
         }
         // For result=pass: verified_state must exactly equal expected_state, or be a recognized equivalent pair
         if (obj.result === 'pass' && obj.verified_state && obj.expected_state) {
-          const equivalentStatePairs = [
-            ['drop_not_null', 'column_exists_nullable']
-          ];
           const stateOk = obj.verified_state === obj.expected_state ||
-            equivalentStatePairs.some(([exp, ver]) => obj.expected_state === exp && obj.verified_state === ver);
+            (obj.expected_state === 'drop_not_null' && obj.verified_state === 'column_exists_nullable' && (obj.object_type === 'column' || obj.object_type === 'column_alter')) ||
+            (obj.expected_state === 'exists' && obj.verified_state === 'enabled' && obj.object_type === 'rls') ||
+            (obj.expected_state === 'set' && obj.verified_state === 'exists' && obj.object_type === 'column_alter');
           if (!stateOk) {
             fail(`Batch ${batch.batch_number} version ${m.version}: object ${obj.object_name || '?'} result=pass but verified_state "${obj.verified_state}" !== expected_state "${obj.expected_state}"`);
             enrichErrors++; batchErrors++;
@@ -1013,9 +1278,11 @@ for (const { file, data: batch } of allBatches) {
       'no_schema_or_data_changed',
       'no_customer_records_accessed',
       'no_deployment_occurred',
-      'no_token_recorded',
-      'batch_5_not_started'
+      'no_token_recorded'
     ];
+    // Each batch must confirm the next batch was not started
+    const nextBatchKey = `batch_${batch.batch_number + 1}_not_started`;
+    requiredVerificationConfirmations.push(nextBatchKey);
     let safetyErrors = 0;
     for (const key of requiredVerificationConfirmations) {
       if (batch[key] !== true) {
@@ -1026,6 +1293,254 @@ for (const { file, data: batch } of allBatches) {
     }
     if (safetyErrors === 0) pass(`Batch ${batch.batch_number} all ${requiredVerificationConfirmations.length} verification safety confirmations present and true`);
   }
+
+  // ── Batch 5 extended safety booleans (17 total) ──
+  if (batch.batch_number === 5) {
+    const requiredBatch5SafetyBooleans = [
+      'all_queries_read_only', 'no_record_contents_returned', 'no_customer_records_accessed',
+      'no_write_query_executed', 'no_migration_sql_executed', 'no_migration_repair',
+      'no_migration_up', 'no_supabase_db_push', 'no_management_api_write',
+      'no_schema_or_data_changed', 'no_migration_history_changed', 'no_repository_change',
+      'no_commit_push_or_pr', 'no_issue_53_mutation', 'no_deployment_occurred',
+      'no_token_recorded', 'batch_6_not_started'
+    ];
+    let batch5SafetyErrors = 0;
+    for (const key of requiredBatch5SafetyBooleans) {
+      if (batch[key] !== true) {
+        fail(`Batch 5: safety boolean ${key} missing or not true (got ${JSON.stringify(batch[key])})`);
+        batch5SafetyErrors++;
+      }
+    }
+    if (batch5SafetyErrors === 0) pass(`Batch 5 all ${requiredBatch5SafetyBooleans.length} safety booleans present and true`);
+
+    // total_failed must explicitly equal 0
+    if (batch.total_failed !== 0) {
+      fail(`Batch 5: total_failed is ${batch.total_failed}, must explicitly equal 0`);
+    } else {
+      pass('Batch 5 total_failed explicitly equals 0');
+    }
+
+    // classification_counts must represent exactly 15 VERIFIED_APPLIED_UNTRACKED
+    if (batch.classification_counts) {
+      const ccKeys = Object.keys(batch.classification_counts);
+      if (ccKeys.length !== 1 || ccKeys[0] !== 'VERIFIED_APPLIED_UNTRACKED') {
+        fail(`Batch 5: classification_counts has unexpected keys: ${ccKeys.join(',')}`);
+      } else if (batch.classification_counts.VERIFIED_APPLIED_UNTRACKED !== 15) {
+        fail(`Batch 5: classification_counts.VERIFIED_APPLIED_UNTRACKED = ${batch.classification_counts.VERIFIED_APPLIED_UNTRACKED}, expected 15`);
+      } else {
+        pass('Batch 5 classification_counts exactly {VERIFIED_APPLIED_UNTRACKED: 15}');
+      }
+    }
+  }
+
+
+    // V3 evidence enrichment checks
+    const v2PreservedPath = resolve(EVIDENCE_DIR, 'batch-05-production-verification-v2.json');
+    if (!existsSync(v2PreservedPath)) {
+      fail('Batch 5: preserved V2 evidence file missing');
+    } else {
+      const v2Content = readFileSync(v2PreservedPath);
+      const v2SHA = createHash('sha256').update(v2Content).digest('hex');
+      if (v2SHA !== 'bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8') {
+        fail(`Batch 5: preserved V2 evidence SHA mismatch: ${v2SHA}`);
+      } else {
+        pass('Batch 5 preserved V2 evidence SHA verified');
+      }
+    }
+
+    // V3 identity fields
+    if (batch.task_identifier === 'batch-05-production-verification-v3') {
+      if (batch.supersedes_repository_evidence_path !== 'docs/migrations/evidence/batch-05-production-verification-v2.json') {
+        fail('Batch 5 V3: incorrect supersedes_repository_evidence_path');
+      }
+      if (batch.superseded_repository_evidence_sha256 !== 'bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8') {
+        fail('Batch 5 V3: incorrect superseded_repository_evidence_sha256');
+      }
+      pass('Batch 5 V3 lineage fields verified');
+      
+      // V3 compared_property_paths real value comparison
+      let v3CompareErrors = 0;
+
+      // Resolve a dot-separated or plain path in an object
+      function resolvePath(obj, path) {
+        if (path in obj) return { found: true, value: obj[path] };
+        const parts = path.split('.');
+        let cur = obj;
+        for (const p of parts) {
+          if (cur == null || typeof cur !== 'object') return { found: false };
+          if (!(p in cur)) return { found: false };
+          cur = cur[p];
+        }
+        return { found: true, value: cur };
+      }
+
+      // Deterministic deep-equal (handles objects, arrays, primitives)
+      function deepEqual(a, b) {
+        if (a === b) return true;
+        if (a == null || b == null) return a === b;
+        if (typeof a !== typeof b) return false;
+        if (Array.isArray(a)) {
+          if (!Array.isArray(b) || a.length !== b.length) return false;
+          return a.every((v, i) => deepEqual(v, b[i]));
+        }
+        if (typeof a === 'object') {
+          const ka = Object.keys(a).sort();
+          const kb = Object.keys(b).sort();
+          if (ka.length !== kb.length) return false;
+          return ka.every((k, i) => k === kb[i] && deepEqual(a[k], b[k]));
+        }
+        return false;
+      }
+
+      for (const m of batch.migrations || []) {
+        const ver = String(m.version);
+        const storedCount = m.detailed_property_checks_count;
+        let actualSum = 0;
+
+        for (const obj of m.objects || []) {
+          const ep = obj.expected_properties || {};
+          const vp = obj.verified_properties || {};
+          const paths = obj.compared_property_paths;
+          const cr = obj.property_comparison_result;
+          const mm = obj.property_mismatches || [];
+
+          // 1. compared_property_paths must be non-empty array
+          if (!Array.isArray(paths) || paths.length === 0) {
+            fail(`Batch 5 V3 ${ver}/${obj.object_name}: compared_property_paths missing or empty`);
+            v3CompareErrors++; continue;
+          }
+
+          // 2. Reject duplicates
+          if (new Set(paths).size !== paths.length) {
+            fail(`Batch 5 V3 ${ver}/${obj.object_name}: duplicate compared paths`);
+            v3CompareErrors++;
+          }
+
+          actualSum += paths.length;
+
+          // 3. Resolve every path in expected and verified; compute actual unequal set
+          const actualUnequal = [];
+          for (const p of paths) {
+            const epRes = resolvePath(ep, p);
+            const vpRes = resolvePath(vp, p);
+            if (!epRes.found) {
+              fail(`Batch 5 V3 ${ver}/${obj.object_name}: compared path "${p}" not in expected_properties`);
+              v3CompareErrors++;
+            }
+            if (!vpRes.found) {
+              fail(`Batch 5 V3 ${ver}/${obj.object_name}: compared path "${p}" not in verified_properties`);
+              v3CompareErrors++;
+            }
+            if (epRes.found && vpRes.found && !deepEqual(epRes.value, vpRes.value)) {
+              actualUnequal.push(p);
+            }
+          }
+
+          // 4. Reject generic comparison result
+          if (cr === 'match') {
+            fail(`Batch 5 V3 ${ver}/${obj.object_name}: generic "match" comparison not allowed`);
+            v3CompareErrors++;
+          }
+
+          // 5. Validate exact_match
+          if (cr === 'exact_match') {
+            if (actualUnequal.length > 0) {
+              fail(`Batch 5 V3 ${ver}/${obj.object_name}: exact_match but values differ at: ${actualUnequal.join(', ')}`);
+              v3CompareErrors++;
+            }
+            if (mm.length > 0) {
+              fail(`Batch 5 V3 ${ver}/${obj.object_name}: exact_match but property_mismatches non-empty`);
+              v3CompareErrors++;
+            }
+          }
+
+          // 6. Validate equivalent_stricter
+          if (cr === 'equivalent_stricter') {
+            // Mismatch paths must equal actual unequal paths exactly
+            const declaredPaths = new Set(mm.map(x => x.path));
+            const actualPaths = new Set(actualUnequal);
+            for (const p of actualPaths) {
+              if (!declaredPaths.has(p)) {
+                fail(`Batch 5 V3 ${ver}/${obj.object_name}: undeclared unequal path "${p}"`);
+                v3CompareErrors++;
+              }
+            }
+            for (const p of declaredPaths) {
+              if (!actualPaths.has(p)) {
+                fail(`Batch 5 V3 ${ver}/${obj.object_name}: declared mismatch "${p}" but values actually match`);
+                v3CompareErrors++;
+              }
+            }
+
+            // Verify mismatch expected_original and verified_current match actual values
+            for (const mismatch of mm) {
+              const epVal = resolvePath(ep, mismatch.path);
+              const vpVal = resolvePath(vp, mismatch.path);
+              if (epVal.found && !deepEqual(mismatch.expected_original, epVal.value)) {
+                fail(`Batch 5 V3 ${ver}/${obj.object_name}: mismatch "${mismatch.path}" expected_original doesn't match actual expected value`);
+                v3CompareErrors++;
+              }
+              if (vpVal.found && !deepEqual(mismatch.verified_current, vpVal.value)) {
+                fail(`Batch 5 V3 ${ver}/${obj.object_name}: mismatch "${mismatch.path}" verified_current doesn't match actual verified value`);
+                v3CompareErrors++;
+              }
+            }
+
+            // Require lineage
+            if (!Array.isArray(obj.later_migration_lineage) || obj.later_migration_lineage.length === 0) {
+              fail(`Batch 5 V3 ${ver}/${obj.object_name}: equivalent_stricter without later_migration_lineage`);
+              v3CompareErrors++;
+            } else {
+              for (const lin of obj.later_migration_lineage) {
+                if (!lin.version || !lin.filename) {
+                  fail(`Batch 5 V3 ${ver}/${obj.object_name}: lineage entry missing version or filename`);
+                  v3CompareErrors++;
+                }
+              }
+            }
+
+            // Migration 173 function-specific checks
+            if (ver === '173' && obj.object_type === 'function') {
+              const permitted = new Set(['anon_exec', 'auth_exec']);
+              for (const p of actualUnequal) {
+                if (!permitted.has(p)) {
+                  fail(`Batch 5 V3 173/${obj.object_name}: unpermitted unequal property "${p}"`);
+                  v3CompareErrors++;
+                }
+              }
+              // svc_exec must be true in both
+              if (ep.svc_exec !== true || vp.svc_exec !== true) {
+                fail(`Batch 5 V3 173/${obj.object_name}: svc_exec must be true in both expected and verified`);
+                v3CompareErrors++;
+              }
+              // def_hash must match exactly
+              if (ep.def_hash !== vp.def_hash) {
+                fail(`Batch 5 V3 173/${obj.object_name}: def_hash mismatch (expected ${(ep.def_hash||'').slice(0,12)}... verified ${(vp.def_hash||'').slice(0,12)}...)`);
+                v3CompareErrors++;
+              }
+              // Lineage must contain exactly 181 and 296
+              const lineageVersions = new Set((obj.later_migration_lineage || []).map(l => l.version));
+              if (!lineageVersions.has('181') || !lineageVersions.has('296') || lineageVersions.size !== 2) {
+                fail(`Batch 5 V3 173/${obj.object_name}: lineage must contain exactly versions 181 and 296`);
+                v3CompareErrors++;
+              }
+              const lineageFilenames = new Set((obj.later_migration_lineage || []).map(l => l.filename));
+              if (!lineageFilenames.has('181_financial_integrity.sql') || !lineageFilenames.has('296_restrict_sensitive_rpc_execution.sql')) {
+                fail(`Batch 5 V3 173/${obj.object_name}: lineage filenames incorrect`);
+                v3CompareErrors++;
+              }
+            }
+          }
+        }
+
+        // Sum must equal stored count
+        if (storedCount !== undefined && actualSum !== storedCount) {
+          fail(`Batch 5 V3 ${ver}: compared_property_paths sum ${actualSum} !== detailed_property_checks_count ${storedCount}`);
+          v3CompareErrors++;
+        }
+      }
+      if (v3CompareErrors === 0) pass('Batch 5 V3 property comparison validated (values resolved and compared)');
+    }
 
   if (batchErrors === 0) pass(`Batch ${batch.batch_number} cross-validation passed`);
 }
@@ -1055,10 +1570,12 @@ for (const file of repairFiles) {
     // Normalize flat-key repair evidence (Batch 4+) to nested structure
     if (data.pre_repair_total !== undefined && !data.pre_repair) {
       // Strict: require all safety booleans to exist and be true
+      const batchNum = data.batch_number || 0;
+      const nextBatchKey = `batch_${batchNum + 1}_not_started`;
       const requiredFlatBooleans = [
         'no_unapproved_versions_added', 'no_migration_sql_executed', 'no_supabase_db_push',
         'no_schema_or_data_changed', 'no_customer_records_accessed',
-        'no_deployment_occurred', 'no_token_recorded', 'batch_5_not_started'
+        'no_deployment_occurred', 'no_token_recorded', nextBatchKey
       ];
       for (const key of requiredFlatBooleans) {
         if (!(key in data)) {

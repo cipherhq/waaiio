@@ -20,11 +20,11 @@ This runbook governs the controlled verification and repair of 124 migration-his
 ## Current State
 
 - **68 ALIGNED_TRACKED:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170, 171, 176, 181, 182, 199, 200, 244
-- **0 VERIFIED_APPLIED_UNTRACKED**
-- **64 PENDING_PRODUCTION_REVERIFICATION:** require read-only verification
+- **15 VERIFIED_APPLIED_UNTRACKED:** 172, 173, 174, 175, 177, 178, 179, 180, 183, 184, 185, 186, 188, 189, 190
+- **49 PENDING_PRODUCTION_REVERIFICATION:** require read-only verification
 - **12 NOT_VERIFIABLE_SAFELY:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 SUPERSEDED:** 122, 130
-- **Active repair allowlist: 0** (empty)
+- **Active repair allowlist: 15** (Batch 5 versions)
 - **Completed migration-history repairs: 60** (45 Batch 1-3 + 15 Batch 4)
 
 ## Batch Status
@@ -87,10 +87,25 @@ This runbook governs the controlled verification and repair of 124 migration-his
 - **Canonical evidence:** `docs/migrations/evidence/migration-298-production-application-corrected.json`
 - **Superseded original evidence:** `docs/migrations/evidence/migration-298-production-application-original.json` (preserved as initial report; accurately recorded methods but did not explicitly classify the dry-run stop violation as a procedure deviation)
 
-### Batches 5-9 — Verification: NOT STARTED
-- 64 candidates remain across 5 batches (Batches 5-9)
-- Verification will proceed after Batch 4 closeout PR is merged
-- Batch 5 has not started
+### Batch 5 — Verification: COMPLETE | Repair: PENDING
+- **Versions:** 172, 173, 174, 175, 177, 178, 179, 180, 183, 184, 185, 186, 188, 189, 190
+- **Object checks:** 55 (55 passed, 0 superseded, 0 failed, 0 ambiguous)
+- **Verification evidence:** `docs/migrations/evidence/batch-05-production-verification.json`
+- **V3 canonical evidence digest:** `c2c0c052af94ccdb96b3e6e7d798c4c0ee4a0df4f10b4dfec43f2b86c22a5450`
+- **Preserved V2 production snapshot:** `bf528a884c0361b4d601232074b6d78194930b413726922d624f1fa932a4d2a8`
+- **Compared leaf-property paths:** 383 (52 exact match, 3 equivalent stricter)
+- **Superseded V1 digest:** `92039f91091c0fa5f411f2ad1360b7a9d1d7634edbd81913d5f392182eef1f77`
+- **Total remote count:** 164 (unchanged)
+- **101-246 tracked count:** 68 (unchanged — Batch 5 versions remain untracked pending repair)
+- All Batch 5 versions have 0 occurrences in remote schema_migrations
+- Active repair allowlist contains 15 versions
+- No migration SQL executed. No schema or data change. No deployment.
+- No migration repair executed — repair blocked until evidence PR merges
+
+### Batches 6-9 — Verification: NOT STARTED
+- 49 candidates remain across 4 batches (Batches 6-9)
+- Verification will proceed after Batch 5 repair is complete
+- Batch 6 has not started
 
 ## Mandatory Execution Control Rule
 

@@ -1,1 +1,152 @@
-[]
+[
+  {
+    "version": "172",
+    "filename": "172_recurring_billing.sql",
+    "checksum": "667e071f5e6af1ba6ba25eb7f40b24823a456b1676a0939458eb10fe2c77d927",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "bc1105742ed12e6cbb4dddf282e469aa163f5a8ccb9bee6ab6e5b7bcd9550bbe"
+  },
+  {
+    "version": "173",
+    "filename": "173_restore_stock_rpc.sql",
+    "checksum": "ba93897303a12d06c03d221b3fe62c02e613f38f524679ac7ad10fee7d6a3579",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "8a8e8df1f924c8097a0d4cbdf3d196860a0846dc491d306a1344e241d17a5134"
+  },
+  {
+    "version": "174",
+    "filename": "174_contract_references.sql",
+    "checksum": "591c490498a065d904f4a819a649262993142df1626b43e30224f4b400616b22",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "00ce816f9eff0a5b473b9806dc5cf93fa12b54fa75d18024b79913d7e3f16f15"
+  },
+  {
+    "version": "175",
+    "filename": "175_public_property_read.sql",
+    "checksum": "04b5d050dffbfc68ffd98ffb1c6e9da6b04a298be19df9d5ba38feeaddf65fef",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "532c0b9046740da1865adaf40d9f02eae89d83982bf6d95255f67d7609cbd9e6"
+  },
+  {
+    "version": "177",
+    "filename": "177_add_missing_capability_types.sql",
+    "checksum": "d6c1f57ad7db3c81f7dca50acc5cc0a83841a2808b0857cdf1489f003fc11139",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "c769bca6ed49bbb486d56d148cd0e27e263a199b114148abb9e55993d8b90c72"
+  },
+  {
+    "version": "178",
+    "filename": "178_capability_sort_order.sql",
+    "checksum": "8278eb0deadaecf1a458e60a30819767b02b94e320608fb8ec9077edd7aa15f7",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "045e095afa0bdc4def1d472f9c49a3b64be3b21d0a50a507c8d669f5571511f9"
+  },
+  {
+    "version": "179",
+    "filename": "179_capability_custom_label.sql",
+    "checksum": "cb4aa8ab67001e653821f0673dc0f66decce5afd1b575ae56a824cb32912dbf9",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "fd8dd916937f53cc5fe431697f28cbd948b84212bafda715e56862eda15b83c6"
+  },
+  {
+    "version": "180",
+    "filename": "180_api_keys_external_booking.sql",
+    "checksum": "27fe71fd4fd0cfb12b97f8f4bd7322720a6de9b91ffa826aeba21afb8b036408",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "1e52c562e55ee081bc35f5201c1b49f992395d7126f29b1cd867bdc12977ffd0"
+  },
+  {
+    "version": "183",
+    "filename": "183_check_constraints_and_cascade_fixes.sql",
+    "checksum": "b394ff2190cd0d82cf1241ad36c4ce5ab5d226b2683e2f7cb7d156c3f980c2e5",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "b3f715cc75ba9613b154233ac897c9d5cd9e772d279a7d2ea302bf64f53105d4"
+  },
+  {
+    "version": "184",
+    "filename": "184_campaign_soft_delete.sql",
+    "checksum": "aa68afe1e7040b656dbb461bcc6c9cb917511f3ba48a6faafe8a9c4eb291bf0c",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "f1d0c0d7b37072728c866506a2199511f795277796e17f74cab8390d17715844"
+  },
+  {
+    "version": "185",
+    "filename": "185_add_dashboard_booking_channel.sql",
+    "checksum": "eb5d1797082624e3b00a8009e1516ddfa47bb5b8c65f177c7794b2597629bfc1",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "860091fa223e319d1d1e04c0385433f920cdb5553c683a726f85c89d3b641681"
+  },
+  {
+    "version": "186",
+    "filename": "186_waivers.sql",
+    "checksum": "35f5af0a04202fbf7f0d3882c23e3acb7c41d211dc93283de965e50446640115",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "abe9dec49fa525173caca3deb552c530c42ad39f843778dbbe481df65f5ed2ef"
+  },
+  {
+    "version": "188",
+    "filename": "188_waiver_template_pdf_url.sql",
+    "checksum": "c5a4c9316d509ae59bed4532f982fb11f2aef8bf78434d6221312357c6ffc512",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "5f65f585cf553f56358f0c4698364a4fccd0d834a114ac057064a5fe2598a61a"
+  },
+  {
+    "version": "189",
+    "filename": "189_waiver_access_token.sql",
+    "checksum": "691cca513115647777b0e36d916d1cb603e336c0a0918485a98688bb7002e0a5",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "36276ec9496dc5af8cbb38169b988597081519dbbd49518d15ef5b787374f324"
+  },
+  {
+    "version": "190",
+    "filename": "190_gateway_fees_and_custom_overrides.sql",
+    "checksum": "cd2d5b7f3d4b3d25966415f8556d461e2304ef31a42695dd2c6e82714e126a46",
+    "classification": "VERIFIED_APPLIED_UNTRACKED",
+    "repair_action": "migration_history_repair_only",
+    "confidence": "HIGH",
+    "production_evidence_path": "docs/migrations/evidence/batch-05-production-verification.json",
+    "production_evidence_digest": "2f31c45c3211bfeeb5482e136ab3d9fd57b05b799ec90a0154a3f0a4d66db64d"
+  }
+]

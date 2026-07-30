@@ -94,6 +94,21 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 | 156 | `atomic_form_response_count` | Batch 4 repaired (tracked) | — | Remote history repair completed 2026-07-29. No SQL executed. |
 | 155 | `class_booking_multi_location` | Batch 4 repaired (tracked) | — | Remote history repair completed 2026-07-29. No SQL executed. |
 | 154 | `service_packages` | Batch 4 repaired (tracked) | — | Remote history repair completed 2026-07-29. No SQL executed. |
+| 190 | `gateway_fees_and_custom_overrides` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 5/5 objects passed. Not yet remotely tracked. |
+| 189 | `waiver_access_token` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 3/3 objects passed. Not yet remotely tracked. |
+| 188 | `waiver_template_pdf_url` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 1/1 objects passed. Not yet remotely tracked. |
+| 186 | `waivers` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 12/12 objects passed. Not yet remotely tracked. |
+| 185 | `add_dashboard_booking_channel` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 1/1 objects passed. Not yet remotely tracked. |
+| 184 | `campaign_soft_delete` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 4/4 objects passed. Not yet remotely tracked. |
+| 183 | `check_constraints_and_cascade_fixes` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 6/6 objects passed. Not yet remotely tracked. |
+| 180 | `api_keys_external_booking` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 6/6 objects passed. Not yet remotely tracked. |
+| 179 | `capability_custom_label` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 1/1 objects passed. Not yet remotely tracked. |
+| 178 | `capability_sort_order` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 2/2 objects passed. Not yet remotely tracked. |
+| 177 | `add_missing_capability_types` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 5/5 objects passed. Not yet remotely tracked. |
+| 175 | `public_property_read` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 1/1 objects passed. Not yet remotely tracked. |
+| 174 | `contract_references` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 2/2 objects passed. Not yet remotely tracked. |
+| 173 | `restore_stock_rpc` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 3/3 objects passed. Not yet remotely tracked. |
+| 172 | `recurring_billing` | Batch 5 verified (repair pending) | — | Production verified 2026-07-29. 3/3 objects passed. Not yet remotely tracked. |
 | 102 | `service_availability` | Batch 1 repaired (tracked) | — | Remote history repair completed 2026-07-28. No SQL executed. |
 
 **Batch 1 repair summary:** 15 versions (102-120) now tracked in remote schema_migrations.
@@ -179,7 +194,7 @@ Per Issue #53 preflight findings:
 
 Of the 146 migrations in the 101-246 range:
 - **68 aligned/tracked:** Batches 1-4 repaired (60 versions) + 8 individually tracked (115, 119, 176, 181, 182, 199, 200, 244)
-- **0 verified and pending repair**
-- **64 remaining candidates pending verification:** Batches 5-9 per verification candidates (`docs/migrations/101-246-verification-candidates.json`)
+- **15 verified and pending repair:** Batch 5 (172, 173, 174, 175, 177, 178, 179, 180, 183, 184, 185, 186, 188, 189, 190) — 55/55 object checks passed, 383 compared leaf-property paths (52 exact match, 3 equivalent stricter), 0 failed, 0 ambiguous. Evidence: `docs/migrations/evidence/batch-05-production-verification.json` (V3 digest: `c2c0c052af94ccdb96b3e6e7d798c4c0ee4a0df4f10b4dfec43f2b86c22a5450`). No migration SQL executed. No schema or data change. Not yet remotely tracked. Batch 6 not started.
+- **49 remaining candidates pending verification:** Batches 6-9 per verification candidates (`docs/migrations/101-246-verification-candidates.json`)
 - **12 not verifiable safely:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 superseded:** 122 (by 233), 130 (by 233)
