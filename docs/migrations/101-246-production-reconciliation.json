@@ -2841,7 +2841,7 @@
         "replacement_object_name": "trg_bot_session_deactivate ON bot_sessions (re-created in same migration)",
         "superseding_migration": "147_auto_last_active_on_deactivate.sql",
         "rationale": "Migration 147 uses DROP IF EXISTS + CREATE pattern to replace the trigger definition. The DROP step is superseded by the CREATE in the same migration.",
-        "application_behaviour_impact": "None \u2014 trigger exists with intended function update_last_active_on_deactivate. Behaviour matches intent."
+        "application_behaviour_impact": "None — trigger exists with intended function update_last_active_on_deactivate. Behaviour matches intent."
       }
     ],
     "missing_effects": [],
@@ -3354,7 +3354,7 @@
         "replacement_object_name": "trg_generate_event_slug ON events (re-created in same migration)",
         "superseding_migration": "149_public_event_booking_slugs.sql",
         "rationale": "Migration 149 uses DROP IF EXISTS + CREATE pattern to replace the trigger. The DROP is superseded by the re-creation in the same migration.",
-        "application_behaviour_impact": "None \u2014 trigger exists with intended function generate_event_slug. Behaviour matches intent."
+        "application_behaviour_impact": "None — trigger exists with intended function generate_event_slug. Behaviour matches intent."
       }
     ],
     "missing_effects": [],
@@ -3774,7 +3774,7 @@
         "replacement_implementation_migration": "176_buffer_time_atomic.sql",
         "obsolete_overload_removal_migration": "245_fix_book_slot_atomic_overloads.sql",
         "rationale": "Migration 176 created the current 26-argument implementation preserving all parameters from earlier migrations (p_location_id from 155, p_appointment_id from 166) plus p_buffer_minutes and p_duration. Migration 245 removed the obsolete 23- and 24-argument overloads, leaving only the 26-argument implementation.",
-        "application_behaviour_impact": "None \u2014 all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
+        "application_behaviour_impact": "None — all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
       }
     ],
     "missing_effects": [],
@@ -4202,7 +4202,7 @@
         "replacement_implementation_migration": "176_buffer_time_atomic.sql",
         "obsolete_overload_removal_migration": "245_fix_book_slot_atomic_overloads.sql",
         "rationale": "Migration 176 created the current 26-argument implementation preserving all parameters from earlier migrations (p_location_id from 155, p_appointment_id from 166) plus p_buffer_minutes and p_duration. Migration 245 removed the obsolete 23- and 24-argument overloads, leaving only the 26-argument implementation.",
-        "application_behaviour_impact": "None \u2014 all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
+        "application_behaviour_impact": "None — all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
       }
     ],
     "missing_effects": [],

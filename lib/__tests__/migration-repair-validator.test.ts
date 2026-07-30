@@ -5719,7 +5719,7 @@ describe('Batch 7 closeout rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/Batch 7 repair.*version|SHA mismatch/i);
+      expect(output).toMatch(/Batch 7 repair.*version/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -5733,7 +5733,7 @@ describe('Batch 7 closeout rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/sequence|SHA mismatch/i);
+      expect(output).toMatch(/sequence.*expected/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -5747,7 +5747,7 @@ describe('Batch 7 closeout rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/exit_status|SHA mismatch/i);
+      expect(output).toMatch(/exit_status/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -5761,7 +5761,7 @@ describe('Batch 7 closeout rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/postcondition|SHA mismatch/i);
+      expect(output).toMatch(/postcondition/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -5776,7 +5776,7 @@ describe('Batch 7 closeout rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/total delta|SHA mismatch/i);
+      expect(output).toMatch(/total delta/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -5790,7 +5790,7 @@ describe('Batch 7 closeout rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/B89.*occurrence|Batch 8.*9.*remain zero|SHA mismatch/i);
+      expect(output).toMatch(/later.*occurrence.*227/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -5804,7 +5804,7 @@ describe('Batch 7 closeout rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/m298|migration.*298|SHA mismatch/i);
+      expect(output).toMatch(/m298|Post m298/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -5818,7 +5818,7 @@ describe('Batch 7 closeout rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/Removed version|SHA mismatch/i);
+      expect(output).toMatch(/Removed version/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -5832,7 +5832,7 @@ describe('Batch 7 closeout rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/Unapproved.*version|unapproved|SHA mismatch/i);
+      expect(output).toMatch(/Unapproved.*version/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -5970,6 +5970,200 @@ describe('Batch 7 closeout rejection tests', () => {
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
       expect(output).toMatch(/candidate|cohort|104|105/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 21. Repairs array missing one entry
+  it('rejects repairs array with wrong count', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.repairs = d.repairs.slice(0, 14); // Remove last repair entry
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/repairs.*14.*expected 15/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 22. Repair version order changed
+  it('rejects repair version order changed', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      // Swap first two repairs' versions
+      const tmp = d.repairs[0].version;
+      d.repairs[0].version = d.repairs[1].version;
+      d.repairs[1].version = tmp;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/version.*expected.*208/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 23. pre_occurrences not zero
+  it('rejects pre_occurrences not zero', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.repairs[0].pre_occurrences = 1;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/pre_occurrences/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 24. post_occurrences not one
+  it('rejects post_occurrences not one', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.repairs[0].post_occurrences = 0;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/post_occurrences/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 25. later_batch_occurrences_remain_zero false
+  it('rejects later_batch_occurrences_remain_zero false', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.repairs[0].later_batch_occurrences_remain_zero = false;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/later_batch_occurrences_remain_zero/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 26. Invalid UTC timestamp
+  it('rejects invalid UTC timestamp', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.repairs[0].started_at = 'not-a-timestamp';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/not valid ISO|invalid.*timestamp/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 27. started_at later than completed_at
+  it('rejects started_at later than completed_at', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      // Set started_at to after completed_at
+      d.repairs[0].started_at = '2099-01-01T00:00:00.000Z';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/started_at.*>.*completed_at|started_at.*later.*completed_at/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 28. Non-monotonic sequence timestamp
+  it('rejects non-monotonic sequence timestamp', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      // Set repairs[1].started_at to before repairs[0].completed_at
+      d.repairs[1].started_at = '2026-07-30T14:25:00.000Z';
+      d.repairs[1].completed_at = '2026-07-30T14:25:01.000Z';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/monotonic|backwards|non-decreasing/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 29. Missing Batch 8-9 occurrence-map key
+  it('rejects missing later-batch occurrence map key', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      delete d.batches_8_9_post_occurrence_map['246']; // Remove last key
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/later.*occurrence.*missing.*246|later.*18.*expected 19|246/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 30. Extra occurrence-map key
+  it('rejects extra occurrence map key', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.batch_7_post_occurrence_map['999'] = 0; // Add unexpected key
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/extra.*key|unexpected.*key|own.*occurrence.*16.*expected 15/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 31. Missing required safety field replaced by unrelated
+  it('rejects missing required safety field replaced by unrelated', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      delete d.safety_confirmations.no_batch_8_or_9_verification_started;
+      d.safety_confirmations.some_unrelated_field = true; // Keep count at 20 but wrong key
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/safety.*missing.*no_batch_8_or_9_verification_started|required safety key/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 32. Post snapshot missing pre-existing version
+  it('rejects post snapshot missing pre-existing version', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      // Remove a version from post snapshot that exists in pre snapshot
+      if (d.post_repair_ordered_version_snapshot) {
+        d.post_repair_ordered_version_snapshot = d.post_repair_ordered_version_snapshot.filter((v: string) => v !== '102');
+      }
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/version.*102.*removed|pre version.*removed|snapshot.*length/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 33. Post snapshot containing unapproved version
+  it('rejects post snapshot containing unapproved version', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-07-repair.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      if (d.post_repair_ordered_version_snapshot) {
+        d.post_repair_ordered_version_snapshot.push('999');
+      }
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/unapproved.*snapshot|snapshot.*unapproved|999/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 });
