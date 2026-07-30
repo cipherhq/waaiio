@@ -7,6 +7,19 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-30
 
+### Operations: Batch 6 migration-history repair complete and Batch 7 activated (15 versions)
+- Batch 6 repair complete: 15 versions (191, 192, 193, 194, 195, 196, 197, 198, 201, 202, 203, 204, 205, 206, 207). Remote count 179→194 (+15). 101-246 tracked count 83→98 (+15). 90 total completed migration-history repairs.
+- All 15 approved versions appear exactly once in remote schema_migrations. No unapproved history changes.
+- Batch 7 remained unchanged during repair — every Batch 7 version stayed at zero occurrences.
+- No migration SQL executed. No schema or application data changed. No deployment.
+- Batch 7 activated for controlled migration-history repair (15 versions in allowlist).
+- Batches 8 and 9 not started. 19 candidates remain.
+- Repair evidence SHA: `e38ca82b69f8112c6b312ca5b966c3cecc2e5f28f7a621003ce378241de25d16`.
+- Issue #53 remains open.
+  - **Files:** `docs/migrations/evidence/batch-06-repair.json`, `docs/migrations/evidence/batch-06-repair.md`, `docs/migrations/101-246-production-reconciliation.json`, `docs/migrations/101-246-repair-allowlist.json`, `docs/migrations/101-246-repair-runbook.md`, `docs/MIGRATION_REGISTRY.md`, `docs/engineering-status.json`, `docs/ENGINEERING_STATUS.md`, `scripts/validate-migration-repair-allowlist.mjs`, `lib/__tests__/migration-repair-validator.test.ts`
+  - **Affects:** Migration reconciliation, repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — evidence and metadata only; no migration SQL executed, no application-code change, no deployment.
+
 ### Operations: Accelerated Verification Wave 1 complete (Batches 6 and 7)
 - Wave 1 read-only production verification complete: 30 migrations (Batches 6 and 7), 212 objects, 211 exact matches, 1 superseded (Migration 223 policy → Migration 293), 0 failed, 0 ambiguous, 891 compared property paths.
 - Production history unchanged: 179 remote, 83 in range 101-246, Migration 298 once, all Wave 1 version occurrences = 0.
