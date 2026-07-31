@@ -19,17 +19,17 @@ This runbook governs the controlled verification and repair of 124 migration-his
 
 ## Current State
 
-- **128 ALIGNED_TRACKED:** 102–225 (excluding not-verifiable and superseded) + 227–241 + 244
-- **4 VERIFIED_APPLIED_UNTRACKED:** Batch 9 (242, 243, 245, 246) — active for repair
+- **132 ALIGNED_TRACKED:** 102–225 (excluding not-verifiable and superseded) + 227–246 (excluding 244 individually tracked)
+- **0 VERIFIED_APPLIED_UNTRACKED**
 - **0 PENDING_PRODUCTION_REVERIFICATION**
 - **12 NOT_VERIFIABLE_SAFELY:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 SUPERSEDED:** 122, 130
-- **Active repair allowlist: 4** (Batch 9 versions)
-- **Completed migration-history repairs: 120** (45 Batch 1-3 + 15 Batch 4 + 15 Batch 5 + 15 Batch 6 + 15 Batch 7 + 15 Batch 8)
-- **Batch 8: verification and repair COMPLETE**
-- **Batch 9: verification COMPLETE, repair ACTIVE and PENDING**
+- **Active repair allowlist: 0**
+- **Completed migration-history repairs: 124** (45 Batch 1-3 + 15 Batch 4 + 15 Batch 5 + 15 Batch 6 + 15 Batch 7 + 15 Batch 8 + 4 Batch 9)
+- **All batches (1–9): verification and repair COMPLETE**
 - **No unverified actionable candidates remain**
-- **Next action: controlled Batch 9 migration-history repair**
+- **12 not-verifiable and 2 superseded migrations intentionally remain unrepaired**
+- **Issue #53 remains open pending merge and final closure**
 
 ## Batch Status
 
@@ -163,7 +163,7 @@ This runbook governs the controlled verification and repair of 124 migration-his
 - Migration 298 remained exactly once. Batch 9 remained zero during Batch 8 repair.
 - No migration SQL executed. No schema or data change. No deployment.
 
-### Batch 9 — Verification: COMPLETE | Repair: ACTIVE and PENDING
+### Batch 9 — Verification: COMPLETE | Repair: COMPLETE
 - **Versions:** 242, 243, 245, 246
 - **Object checks:** 42 (34 exact match, 1 equivalent-stricter, 7 superseded, 0 failed, 0 ambiguous)
 - **Compared property paths:** 148
@@ -180,8 +180,13 @@ This runbook governs the controlled verification and repair of 124 migration-his
 - **Verification evidence:** `docs/migrations/evidence/batch-09-production-verification.json`
 - **V3 canonical SHA-256:** `ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5`
 - **Superseded V1 SHA-256:** `531f94b3c11e2c0c02d078e37a6e71f950d59fd9741818d1b81f93e34f51eff7`
-- Active repair allowlist: 4 Batch 9 versions
-- Next production write: controlled one-by-one Batch 9 repair
+- **Repair evidence:** `docs/migrations/evidence/batch-09-repair.json`
+- **Repair evidence SHA-256:** `1bf9ad999576a73f2aa4e1f554f4a1806f5ec1e54270ffd9be4125fc048f1731`
+- **Remote count:** 224 → 228 (+4)
+- **101-246 tracked count:** 128 → 132 (+4)
+- All 4 versions appear exactly once in remote schema_migrations
+- Migration 298 remained exactly once. Batch 8 remained unchanged.
+- No migration SQL executed. No schema or data change. No deployment.
 
 ## Mandatory Execution Control Rule
 

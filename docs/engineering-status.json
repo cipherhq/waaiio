@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0.0",
-  "last_reconciled_main_sha": "a63d219d473e36fa3c3bb638ba6c32406280fcd9",
-  "last_reconciled_at": "2026-07-31T02:30:16Z",
+  "last_reconciled_main_sha": "4a44807899ad1b395efba80b2ccd9655ed0217fa",
+  "last_reconciled_at": "2026-07-31T05:17:15Z",
   "milestones": [
     {
       "id": "AUTH-001",
@@ -299,11 +299,12 @@
         77,
         78,
         79,
-        80
+        80,
+        81
       ],
       "implementation_sha": null,
       "reviewed_sha": null,
-      "merge_sha": "a63d219d473e36fa3c3bb638ba6c32406280fcd9",
+      "merge_sha": "4a44807899ad1b395efba80b2ccd9655ed0217fa",
       "deployed_sha": null,
       "environment": "production",
       "production_verified_at": null,
@@ -496,15 +497,27 @@
         "ALIGNED_TRACKED = 128, VERIFIED_APPLIED_UNTRACKED = 4, PENDING = 0, NOT_VERIFIABLE = 12, SUPERSEDED = 2",
         "Batch 9 activated for repair (4 versions in allowlist: 242, 243, 245, 246)",
         "Candidate registry empty. All actionable verification candidates complete",
-        "Issue #53 remains open. Next action: controlled Batch 9 migration-history repair"
+        "Issue #53 remains open. Next action: controlled Batch 9 migration-history repair",
+        "PR #81 merged: Batch 8 repair closeout and Batch 9 activation",
+        "Batch 9 migration-history repair complete: 4 versions (242, 243, 245, 246)",
+        "Remote count 224 -> 228 (+4). 101-246 tracked count 128 -> 132 (+4)",
+        "All 4 Batch 9 versions appear exactly once in remote schema_migrations",
+        "Migration 298 remained exactly once. Batch 8 remained unchanged",
+        "No unrelated history changed. No migration SQL executed. No schema or data change. No deployment",
+        "Repair evidence: docs/migrations/evidence/batch-09-repair.json (SHA 1bf9ad999576a73f2aa4e1f554f4a1806f5ec1e54270ffd9be4125fc048f1731)",
+        "124 total completed migration-history repairs across Batches 1-9",
+        "ALIGNED_TRACKED = 132, VERIFIED_APPLIED_UNTRACKED = 0, PENDING = 0, NOT_VERIFIABLE = 12, SUPERSEDED = 2",
+        "Active repair allowlist: 0 (all actionable repairs complete)",
+        "All 124 actionable migration-history candidates repaired and tracked",
+        "12 NOT_VERIFIABLE_SAFELY and 2 SUPERSEDED migrations intentionally remain unrepaired",
+        "Issue #53 remains open pending merge and final closure"
       ],
       "blockers": [
-        "4 Batch 9 versions awaiting controlled migration-history repair",
         "12 NOT_VERIFIABLE_SAFELY migrations require new evidence before disposition",
         "2 SUPERSEDED migrations (122, 130) require final disposition decision"
       ],
-      "next_action": "Controlled Batch 9 migration-history repair",
-      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migrations 115, 119, 199, 200, 244, 294, 295, 296, 297 production-verified. Migrations 176, 181, 182 individually verified and recorded. Migration 115 fully satisfied (completed by Migration 297, PR #63). Batches 1-7 verification and repair complete (105 versions total, remote count 103->209, 101-246 tracked 8->113). Migration 298 applied to production and forensically verified (Management API SQL + migration repair; procedure deviation from approved dry-run stop). Wave 1 (Batches 6-7) verification complete: 30 versions, 212 objects, 211 exact match, 1 superseded. Wave 2 (Batches 8-9) V3 canonical verification complete: 19 versions, 153 objects (13 function objects), 140 exact match, 2 equivalent-stricter, 11 superseded, 370 compared paths. V3 adds per-object provenance. Migration 236 comment-only raw hash exception. Batch 8 repair complete (120 total repairs). Batch 9 activated for repair (4 versions in allowlist). All actionable verification candidates complete. Candidate registry empty. 12 NOT_VERIFIABLE_SAFELY and 2 SUPERSEDED migrations excluded from repair. Issue #53 remains open."
+      "next_action": "Merge final closeout PR then close Issue #53",
+      "notes": "Operational milestone tracking Issue #53 migration history alignment. Migrations 115, 119, 199, 200, 244, 294, 295, 296, 297 production-verified. Migrations 176, 181, 182 individually verified and recorded. Migration 115 fully satisfied (completed by Migration 297, PR #63). Batches 1-7 verification and repair complete (105 versions total, remote count 103->209, 101-246 tracked 8->113). Migration 298 applied to production and forensically verified (Management API SQL + migration repair; procedure deviation from approved dry-run stop). Wave 1 (Batches 6-7) verification complete: 30 versions, 212 objects, 211 exact match, 1 superseded. Wave 2 (Batches 8-9) V3 canonical verification complete: 19 versions, 153 objects (13 function objects), 140 exact match, 2 equivalent-stricter, 11 superseded, 370 compared paths. V3 adds per-object provenance. Migration 236 comment-only raw hash exception. Batches 1-9 repair complete (124 total repairs). All actionable candidates tracked. All actionable verification candidates complete. Candidate registry empty. 12 NOT_VERIFIABLE_SAFELY and 2 SUPERSEDED migrations excluded from repair. Issue #53 remains open."
     }
   ]
 }
