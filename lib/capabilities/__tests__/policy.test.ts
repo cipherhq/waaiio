@@ -590,3 +590,92 @@ describe('downgrade preservation', () => {
     expect(afterUpgrade.blocked).toEqual([]);
   });
 });
+
+// ══════════════════════════════════════════════════════════
+// Selected / Disabled / Paused-selection preservation
+// ══════════════════════════════════════════════════════════
+
+describe('selected and disabled fields', () => {
+  const pastDate = new Date(Date.now() - 86400000).toISOString();
+
+  it('separates selected from disabled', () => {
+    const result = getEffectiveCapabilities({
+      configuredCapabilities: [
+        { capability: 'scheduling', is_enabled: true, sort_order: 0 },
+        { capability: 'appointment', is_enabled: false, sort_order: 1 },
+      ],
+      overrides: [],
+      tier: 'free',
+      trialEndsAt: null,
+    });
+    expect(result.selected).toEqual(['scheduling']);
+    expect(result.disabled).toEqual(['appointment']);
+    expect(result.configured).toEqual(['scheduling', 'appointment']);
+  });
+
+  it('paused capabilities appear in selected but not effective', () => {
+    const result = getEffectiveCapabilities({
+      configuredCapabilities: [
+        { capability: 'scheduling', is_enabled: true, sort_order: 0 },
+        { capability: 'staff', is_enabled: true, sort_order: 1 },
+      ],
+      overrides: [],
+      tier: 'free',
+      trialEndsAt: pastDate,
+    });
+    expect(result.selected).toEqual(['scheduling', 'staff']);
+    expect(result.effective).toEqual(['scheduling']);
+    expect(result.paused.map(p => p.capability)).toEqual(['staff']);
+  });
+});
+
+describe('paused-selection preservation regression', () => {
+  const pastDate = new Date(Date.now() - 86400000).toISOString();
+
+  it('changing a free capability does not erase paused staff selection', () => {
+    // Step 1: staff is selected, trial expired, staff is paused
+    const before = getEffectiveCapabilities({
+      configuredCapabilities: [
+        { capability: 'scheduling', is_enabled: true, sort_order: 0 },
+        { capability: 'staff', is_enabled: true, sort_order: 1 },
+        { capability: 'chat', is_enabled: false, sort_order: 2 },
+      ],
+      overrides: [],
+      tier: 'free',
+      trialEndsAt: pastDate,
+    });
+    expect(before.selected).toEqual(['scheduling', 'staff']);
+    expect(before.effective).toEqual(['scheduling']);
+
+    // Step 2: owner enables chat (free cap) — staff must remain in selected
+    // The configure RPC receives: ['scheduling', 'staff', 'chat']
+    // because the UI initialized from selectedCapabilities which includes staff
+    const after = getEffectiveCapabilities({
+      configuredCapabilities: [
+        { capability: 'scheduling', is_enabled: true, sort_order: 0 },
+        { capability: 'staff', is_enabled: true, sort_order: 1 },
+        { capability: 'chat', is_enabled: true, sort_order: 2 },
+      ],
+      overrides: [],
+      tier: 'free',
+      trialEndsAt: pastDate,
+    });
+    expect(after.selected).toContain('staff');
+    expect(after.effective).toEqual(['scheduling', 'chat']);
+    expect(after.paused.map(p => p.capability)).toEqual(['staff']);
+
+    // Step 3: upgrade to business — staff becomes effective again
+    const upgraded = getEffectiveCapabilities({
+      configuredCapabilities: [
+        { capability: 'scheduling', is_enabled: true, sort_order: 0 },
+        { capability: 'staff', is_enabled: true, sort_order: 1 },
+        { capability: 'chat', is_enabled: true, sort_order: 2 },
+      ],
+      overrides: [],
+      tier: 'business',
+      trialEndsAt: null,
+    });
+    expect(upgraded.effective).toEqual(['scheduling', 'staff', 'chat']);
+    expect(upgraded.paused).toEqual([]);
+  });
+});

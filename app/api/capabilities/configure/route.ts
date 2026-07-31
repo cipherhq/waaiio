@@ -11,14 +11,10 @@ const VALID_CAP_IDS = new Set<string>(CAPABILITIES.map(c => c.id));
 /**
  * POST /api/capabilities/configure
  *
- * Atomic bulk capability configuration.
- * Accepts the complete desired enabled set and applies it atomically.
+ * Atomic bulk capability configuration via PostgreSQL RPC.
+ * Validates the entire request, then applies atomically — all succeed or all roll back.
  *
  * Body: { businessId: string, capabilities: string[], order?: string[] }
- *
- * - capabilities: the full list of capabilities to enable
- * - order: optional sort order (capabilities[0] = sort_order 0, etc.)
- * - unlisted configured capabilities are disabled, not deleted
  */
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -37,13 +33,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, reason: 'missing_fields' }, { status: 400 });
   }
 
-  // Validate all capability IDs
+  // Validate capability IDs
   const invalidCaps = requestedCaps.filter(c => !VALID_CAP_IDS.has(c));
   if (invalidCaps.length > 0) {
     return NextResponse.json({ success: false, reason: 'invalid_capabilities', invalid: invalidCaps }, { status: 400 });
   }
   if (requestedCaps.length === 0) {
     return NextResponse.json({ success: false, reason: 'must_have_at_least_one' }, { status: 400 });
+  }
+
+  // Reject duplicates
+  if (new Set(requestedCaps).size !== requestedCaps.length) {
+    return NextResponse.json({ success: false, reason: 'duplicate_capabilities' }, { status: 400 });
   }
 
   // Verify business ownership and status
@@ -73,7 +74,7 @@ export async function POST(request: NextRequest) {
 
   const overrides = (overrideRows || []).map(r => r.capability as string);
 
-  // Validate tier/trial/override for each capability being enabled
+  // Validate tier/trial/override for each capability
   const denied: Array<{ capability: string; reason: string }> = [];
   for (const cap of requestedCaps) {
     const check = canModifyCapability({
@@ -103,37 +104,24 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Atomic write: disable all, then upsert enabled set
-  const service = createServiceClient();
-
-  // Step 1: Disable all existing rows for this business
-  const { error: disableError } = await service
-    .from('business_capabilities')
-    .update({ is_enabled: false })
-    .eq('business_id', businessId);
-
-  if (disableError) {
-    return NextResponse.json({ success: false, reason: 'write_failed' }, { status: 500 });
-  }
-
-  // Step 2: Upsert each enabled capability with sort order
+  // Build sort orders
   const order = body.order || requestedCaps;
-  const rows = requestedCaps.map(cap => ({
-    business_id: businessId,
-    capability: cap,
-    is_enabled: true,
-    sort_order: order.indexOf(cap) >= 0 ? order.indexOf(cap) : 999,
-  }));
+  const sortOrders = requestedCaps.map(cap => {
+    const idx = order.indexOf(cap);
+    return idx >= 0 ? idx : 999;
+  });
 
-  const { error: upsertError } = await service
-    .from('business_capabilities')
-    .upsert(rows, { onConflict: 'business_id,capability' });
+  // Execute atomic RPC via service client
+  const service = createServiceClient();
+  const { data: result, error: rpcError } = await service.rpc('configure_business_capabilities', {
+    p_business_id: businessId,
+    p_capabilities: requestedCaps,
+    p_sort_orders: sortOrders,
+  });
 
-  if (upsertError) {
-    // Attempt to restore — re-enable the previously disabled ones
-    // This is best-effort since we can't truly roll back without a transaction
-    return NextResponse.json({ success: false, reason: 'write_failed' }, { status: 500 });
+  if (rpcError) {
+    return NextResponse.json({ success: false, reason: 'configuration_failed', detail: rpcError.message }, { status: 500 });
   }
 
-  return NextResponse.json({ success: true, enabled: requestedCaps.length });
+  return NextResponse.json({ success: true, state: result });
 }

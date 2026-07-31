@@ -18,17 +18,18 @@
 
 **Status:** Guard created. Rollout deferred.
 
-### 3. Capability writes — server API route with RLS enforcement
+### 3. Capability writes — server API + atomic RPC + RLS enforcement
 
-**Decision:** Server API route + RLS migration.
+**Decision:** Server API route + PostgreSQL RPC + RLS migration.
 
 **Implementation:**
-- `POST /api/capabilities/toggle` handles toggle, reorder, and custom label operations
-- Dashboard capabilities page, WhatsApp page, and AccountTab migrated to use server API
+- `POST /api/capabilities/configure` validates then calls `configure_business_capabilities` RPC (migration 300) for atomic bulk configuration
+- `POST /api/capabilities/toggle` handles single-field operations (sort_order, custom_label, individual toggle)
+- Admin grant/revoke uses `admin_grant_capability` / `admin_revoke_capability` RPCs (migration 301)
 - Migration 299 drops owner UPDATE/DELETE policies; only service_role can write
 - All browser direct writes to business_capabilities eliminated
 
-**Status:** implemented_pending_independent_review
+**Status:** implemented_pending_independent_review — RPC transaction rollback not runtime-tested
 
 ### 4. New category defaults — explicit opt-in for existing businesses
 

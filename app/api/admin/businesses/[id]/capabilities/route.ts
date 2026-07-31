@@ -52,74 +52,46 @@ export async function POST(
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
-  const body = await request.json();
-  const { capability, action, reason } = body as {
-    capability: string;
-    action: 'grant' | 'revoke';
-    reason?: string;
-  };
-
-  if (!capability || !action || !VALID_CAP_IDS.has(capability)) {
-    return NextResponse.json({ error: 'Missing or invalid capability/action' }, { status: 400 });
+  let body: { capability?: string; action?: string; reason?: string };
+  try { body = await request.json(); } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  // Use service client for all writes (INSERT is service_role-only per migration 182,
-  // UPDATE/DELETE are service_role-only per migration 299)
-  const service = createServiceClient();
+  const { capability, action, reason } = body;
 
-  if (action === 'grant') {
-    const { error: overrideError } = await service
-      .from('capability_overrides')
-      .upsert(
-        { business_id: id, capability, granted_by: admin.id, reason: reason || null },
-        { onConflict: 'business_id,capability' },
-      );
-
-    if (overrideError) {
-      return NextResponse.json({ error: 'Failed to create override', detail: overrideError.message }, { status: 500 });
-    }
-
-    const { error: capError } = await service
-      .from('business_capabilities')
-      .upsert(
-        { business_id: id, capability, is_enabled: true },
-        { onConflict: 'business_id,capability' },
-      );
-
-    if (capError) {
-      return NextResponse.json({ error: 'Failed to enable capability', detail: capError.message }, { status: 500 });
-    }
-  } else {
-    const { error: deleteError } = await service
-      .from('capability_overrides')
-      .delete()
-      .eq('business_id', id)
-      .eq('capability', capability);
-
-    if (deleteError) {
-      return NextResponse.json({ error: 'Failed to remove override', detail: deleteError.message }, { status: 500 });
-    }
-
-    const { error: disableError } = await service
-      .from('business_capabilities')
-      .update({ is_enabled: false })
-      .eq('business_id', id)
-      .eq('capability', capability);
-
-    if (disableError) {
-      return NextResponse.json({ error: 'Failed to disable capability', detail: disableError.message }, { status: 500 });
-    }
+  if (!capability || !VALID_CAP_IDS.has(capability)) {
+    return NextResponse.json({ error: 'Invalid capability' }, { status: 400 });
+  }
+  if (action !== 'grant' && action !== 'revoke') {
+    return NextResponse.json({ error: 'Action must be grant or revoke' }, { status: 400 });
   }
 
-  // Audit log (using SSR client for audit — this table has different RLS)
+  // Verify business exists
   const supabase = await createClient();
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.id,
-    action: action === 'grant' ? 'grant_capability' : 'revoke_capability',
-    entity_type: 'business',
-    entity_id: id,
-    details: { capability, reason: reason || null },
+  const { data: biz } = await supabase
+    .from('businesses')
+    .select('id')
+    .eq('id', id)
+    .single();
+
+  if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
+
+  // Execute atomic RPC via service client
+  const service = createServiceClient();
+  const rpcName = action === 'grant' ? 'admin_grant_capability' : 'admin_revoke_capability';
+  const { data: result, error: rpcError } = await service.rpc(rpcName, {
+    p_business_id: id,
+    p_capability: capability,
+    p_granted_by: admin.id,
+    p_reason: reason || null,
   });
 
-  return NextResponse.json({ success: true });
+  if (rpcError) {
+    return NextResponse.json(
+      { error: 'Operation failed. Please try again.' },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json(result || { success: true });
 }

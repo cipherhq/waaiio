@@ -55,8 +55,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Retry only the capability initialization (idempotent upsert)
-      const templateCaps = undefined; // Original template not available on retry — use submitted caps
+      // Retry capability initialization (idempotent upsert)
       const capsToInit = (capabilities as CapabilityId[] | undefined);
       try {
         await initCapabilities(service, pendingBiz.id, pendingBiz.category, capsToInit);
@@ -66,6 +65,32 @@ export async function POST(request: NextRequest) {
           { error: 'Capability setup failed on retry. Please try again.', recoverable: true, businessId: pendingBiz.id },
           { status: 500 },
         );
+      }
+
+      // Run shared finalization — idempotent operations that may have been missed
+      // Canned responses (only if chat capability selected and no existing responses)
+      const enabledCaps = capsToInit || [];
+      if (enabledCaps.includes('chat' as CapabilityId)) {
+        const { count } = await service.from('canned_responses').select('id', { count: 'exact', head: true }).eq('business_id', pendingBiz.id);
+        if (!count || count === 0) {
+          const defaultCanned = [
+            { title: 'Thanks for waiting', message_text: 'Thanks for your patience! How can I help you?', sort_order: 0 },
+            { title: 'Operating hours', message_text: 'Our operating hours are Monday - Saturday, 9am - 6pm.', sort_order: 1 },
+            { title: 'Price inquiry', message_text: 'I\'d be happy to help with pricing! What are you interested in?', sort_order: 2 },
+            { title: 'How to book', message_text: 'I can help you get started. Would you like to proceed?', sort_order: 3 },
+            { title: 'Follow up', message_text: 'Just following up on our conversation. Is there anything else I can help with?', sort_order: 4 },
+          ];
+          try { await service.from('canned_responses').insert(defaultCanned.map(cr => ({ business_id: pendingBiz.id, ...cr }))); } catch { /* best-effort */ }
+        }
+      }
+
+      // Profile update (idempotent)
+      const { first_name: retryFirstName, last_name: retryLastName } = body;
+      if (retryFirstName || retryLastName) {
+        const profileUpdate: Record<string, string> = {};
+        if (retryFirstName) profileUpdate.first_name = String(retryFirstName).trim();
+        if (retryLastName) profileUpdate.last_name = String(retryLastName).trim();
+        try { await service.from('profiles').update(profileUpdate).eq('id', user.id); } catch { /* best-effort */ }
       }
 
       return NextResponse.json({ business_id: pendingBiz.id, bot_code: pendingBiz.bot_code });

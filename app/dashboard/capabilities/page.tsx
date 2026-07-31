@@ -62,12 +62,14 @@ export default function CapabilitiesPage() {
   const business = useBusiness();
   const tier = (business.subscription_tier || 'free') as SubscriptionTier;
   const overrides = business.capabilityOverrides || [];
-  const [enabled, setEnabled] = useState<CapabilityId[]>(business.capabilities);
+  // Initialize from selectedCapabilities (includes paused) not effective capabilities
+  const selected = (business as any).selectedCapabilities || business.capabilities;
+  const [enabled, setEnabled] = useState<CapabilityId[]>(selected);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
 
   // ── Drag-and-drop reorder state ──
-  const [orderedCaps, setOrderedCaps] = useState<CapabilityId[]>(business.capabilities);
+  const [orderedCaps, setOrderedCaps] = useState<CapabilityId[]>(selected);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [savingOrder, setSavingOrder] = useState(false);

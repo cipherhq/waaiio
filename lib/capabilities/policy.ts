@@ -78,9 +78,17 @@ export interface BlockedCapability {
 }
 
 export interface GetEffectiveCapabilitiesResult {
+  /** Capabilities currently allowed by tier/trial/overrides. Subset of selected. */
   effective: CapabilityId[];
+  /** All capabilities with is_enabled=true (effective + paused). */
+  selected: CapabilityId[];
+  /** All capabilities with any row (selected + explicitly disabled). */
   configured: CapabilityId[];
+  /** Explicitly disabled capabilities (is_enabled=false). */
+  disabled: CapabilityId[];
+  /** Selected but currently tier/trial-blocked. */
   blocked: BlockedCapability[];
+  /** Alias for blocked — same reference. */
   paused: BlockedCapability[];
 }
 
@@ -108,7 +116,9 @@ export function getEffectiveCapabilities(
   const overrideSet = new Set(overrides);
 
   const effective: CapabilityId[] = [];
+  const selected: CapabilityId[] = [];
   const configured: CapabilityId[] = [];
+  const disabled: CapabilityId[] = [];
   const blocked: BlockedCapability[] = [];
 
   for (const row of configuredCapabilities) {
@@ -117,7 +127,13 @@ export function getEffectiveCapabilities(
     const capId = row.capability as CapabilityId;
     configured.push(capId);
 
-    if (!row.is_enabled) continue;
+    if (!row.is_enabled) {
+      disabled.push(capId);
+      continue;
+    }
+
+    // is_enabled=true — this is a "selected" capability
+    selected.push(capId);
 
     const hasOverride = overrideSet.has(capId);
     const required = CAPABILITY_TIER_REQUIREMENTS[capId];
@@ -135,7 +151,7 @@ export function getEffectiveCapabilities(
     }
   }
 
-  return { effective, configured, blocked, paused: blocked };
+  return { effective, selected, configured, disabled, blocked, paused: blocked };
 }
 
 // ── 3. canModifyCapability ──────────────────────────────

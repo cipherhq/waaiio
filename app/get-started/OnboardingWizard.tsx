@@ -360,6 +360,7 @@ function OnboardingWizard() {
     setCustomBotCode(draft.customBotCode);
     setSelectedPlan(draft.selectedPlan);
     setWaMethod(draft.waMethod);
+    if (draft.pendingBusinessId) setBusinessId(draft.pendingBusinessId);
     setShowDraftRestored(true);
     // Auto-dismiss the indicator after 4 seconds
     setTimeout(() => setShowDraftRestored(false), 4000);
@@ -384,7 +385,8 @@ function OnboardingWizard() {
     customBotCode,
     selectedPlan,
     waMethod,
-  }), [step, selectedCountry, city, state, zipCode, selectedGroup, category, selectedCapabilities, name, firstName, lastName, address, businessPhone, email, customBotCode, selectedPlan, waMethod]);
+    pendingBusinessId: businessId || undefined,
+  }), [step, selectedCountry, city, state, zipCode, selectedGroup, category, selectedCapabilities, name, firstName, lastName, address, businessPhone, email, customBotCode, selectedPlan, waMethod, businessId]);
 
   useOnboardingPersistence(user, formStateForPersistence, restoreDraft);
 
