@@ -1,0 +1,511 @@
+[
+  {
+    "id": "spine:signup-entry",
+    "stage": "onboarding",
+    "source": {
+      "path": "app/get-started/page.tsx",
+      "symbol": "OnboardingWizard"
+    },
+    "destination": {
+      "path": "app/get-started/OnboardingWizard.tsx",
+      "symbol": "step='auth'"
+    },
+    "data_or_decision": "User signs up with email/password or phone OTP",
+    "status": "verified_connected",
+    "evidence": [
+      "app/get-started/page.tsx:6-16 dynamically imports OnboardingWizard",
+      "OnboardingWizard.tsx steps: auth→category→features→details→success"
+    ],
+    "tests": [],
+    "confidence": "high",
+    "unresolved_questions": [
+      "No onboarding tests exist"
+    ]
+  },
+  {
+    "id": "spine:country-selection",
+    "stage": "onboarding",
+    "source": {
+      "path": "app/get-started/steps/StepCategory.tsx",
+      "symbol": "selectedCountry state"
+    },
+    "destination": {
+      "path": "app/api/onboarding/register/route.ts",
+      "symbol": "country_code on businesses row"
+    },
+    "data_or_decision": "Country selected from button group, defaults to NG, stored as businesses.country_code",
+    "status": "verified_connected",
+    "evidence": [
+      "StepCategory.tsx:367-378 country button group",
+      "register/route.ts:183 stores country_code"
+    ],
+    "tests": [],
+    "confidence": "high",
+    "unresolved_questions": []
+  },
+  {
+    "id": "spine:category-selection",
+    "stage": "onboarding",
+    "source": {
+      "path": "app/get-started/steps/StepCategory.tsx",
+      "symbol": "setCategory(key)"
+    },
+    "destination": {
+      "path": "app/get-started/OnboardingWizard.tsx",
+      "symbol": "selectedCapabilities state seeded from CATEGORY_DEFAULT_CAPABILITIES"
+    },
+    "data_or_decision": "Category choice immediately seeds selectedCapabilities with CATEGORY_DEFAULT_CAPABILITIES[key]",
+    "status": "verified_connected",
+    "evidence": [
+      "StepCategory.tsx:437-445 sets category and seeds capabilities",
+      "lib/capabilities/types.ts:160-283 CATEGORY_DEFAULT_CAPABILITIES with 79 categories"
+    ],
+    "tests": [],
+    "confidence": "high",
+    "unresolved_questions": []
+  },
+  {
+    "id": "spine:capability-toggle",
+    "stage": "onboarding",
+    "source": {
+      "path": "app/get-started/steps/StepFeatures.tsx",
+      "symbol": "capability toggle UI"
+    },
+    "destination": {
+      "path": "app/get-started/OnboardingWizard.tsx",
+      "symbol": "selectedCapabilities updated"
+    },
+    "data_or_decision": "User can toggle any capability on/off during onboarding. All caps available during 30-day trial regardless of tier.",
+    "status": "verified_connected",
+    "evidence": [
+      "StepFeatures.tsx:186-188 isLocked=false — all toggleable during trial"
+    ],
+    "tests": [],
+    "confidence": "high",
+    "unresolved_questions": [
+      "All capabilities unlocked during trial regardless of tier — is this intentional?"
+    ]
+  },
+  {
+    "id": "spine:business-creation",
+    "stage": "persistence",
+    "source": {
+      "path": "app/get-started/OnboardingWizard.tsx",
+      "symbol": "POST /api/onboarding/register"
+    },
+    "destination": {
+      "path": "app/api/onboarding/register/route.ts",
+      "symbol": "businesses INSERT"
+    },
+    "data_or_decision": "Creates business row with subscription_tier='free', status='pending', trial_ends_at=now+30d",
+    "status": "verified_connected",
+    "evidence": [
+      "register/route.ts:167-188 INSERT into businesses",
+      "trial_ends_at uses inline Date.now()+30d, not TRIAL_DAYS constant"
+    ],
+    "tests": [],
+    "confidence": "high",
+    "unresolved_questions": [
+      "trial_ends_at computed inline, not from TRIAL_DAYS constant — divergence risk"
+    ]
+  },
+  {
+    "id": "spine:capability-persistence",
+    "stage": "persistence",
+    "source": {
+      "path": "app/api/onboarding/register/route.ts",
+      "symbol": "initCapabilities()"
+    },
+    "destination": {
+      "path": "lib/capabilities/service.ts",
+      "symbol": "INSERT into business_capabilities"
+    },
+    "data_or_decision": "User-selected capabilities persisted as business_capabilities rows with is_enabled=true. Priority: user selection → template metadata → CATEGORY_DEFAULT_CAPABILITIES → ['scheduling']",
+    "status": "partially_connected",
+    "evidence": [
+      "register/route.ts:232-245 calls initCapabilities",
+      "service.ts:130-148 plain INSERT (not upsert), service client bypasses RLS"
+    ],
+    "tests": [],
+    "confidence": "high",
+    "unresolved_questions": [
+      "initCapabilities() discards Supabase insert error — failure is silent (CAS-009)",
+      "Dashboard and bot use different fallback logic when no rows exist (CAS-010)"
+    ]
+  },
+  {
+    "id": "spine:tier-enforcement-dashboard",
+    "stage": "plan",
+    "source": {
+      "path": "app/dashboard/capabilities/page.tsx",
+      "symbol": "canToggle() → canEnableCapability()"
+    },
+    "destination": {
+      "path": "lib/capabilities/types.ts",
+      "symbol": "CAPABILITY_TIER_REQUIREMENTS"
+    },
+    "data_or_decision": "Dashboard UI prevents toggling growth/business caps when tier is free (client-side only). Trial bypasses all tier checks.",
+    "status": "partially_connected",
+    "evidence": [
+      "capabilities/page.tsx:148 checks canEnableCapability",
+      "RLS policy business_capabilities_owner_update checks only owner_id, not tier",
+      "No server-side tier enforcement on capability writes"
+    ],
+    "tests": [],
+    "confidence": "verified",
+    "unresolved_questions": [
+      "Tier enforcement is UI-only. RLS does not enforce tier. A browser client could bypass."
+    ]
+  },
+  {
+    "id": "spine:admin-override",
+    "stage": "plan",
+    "source": {
+      "path": "app/api/admin/businesses/[id]/capabilities/route.ts",
+      "symbol": "POST grant/revoke"
+    },
+    "destination": {
+      "path": "capability_overrides table + business_capabilities table",
+      "symbol": "upsert override + set is_enabled"
+    },
+    "data_or_decision": "Admin can grant any capability regardless of tier. Override recorded in capability_overrides. Audit logged.",
+    "status": "verified_connected",
+    "evidence": [
+      "admin capabilities route.ts POST handler",
+      "capability_overrides table (migration 027)"
+    ],
+    "tests": [],
+    "confidence": "high",
+    "unresolved_questions": []
+  },
+  {
+    "id": "spine:dashboard-capability-load",
+    "stage": "dashboard",
+    "source": {
+      "path": "app/dashboard/layout.tsx",
+      "symbol": "business_capabilities query + capability_overrides query"
+    },
+    "destination": {
+      "path": "components/dashboard/DashboardProvider.tsx",
+      "symbol": "capabilities: CapabilityId[] in context"
+    },
+    "data_or_decision": "Server component queries business_capabilities (is_enabled=true) and capability_overrides, injects into DashboardProvider context",
+    "status": "verified_connected",
+    "evidence": [
+      "layout.tsx:168-193 queries both tables",
+      "DashboardProvider.tsx:67-131 pure context wrapper, no DB queries"
+    ],
+    "tests": [],
+    "confidence": "high",
+    "unresolved_questions": []
+  },
+  {
+    "id": "spine:sidebar-gating",
+    "stage": "dashboard",
+    "source": {
+      "path": "components/dashboard/Sidebar.tsx",
+      "symbol": "navItems with capabilities[] filter"
+    },
+    "destination": {
+      "path": "dashboard pages",
+      "symbol": "navigation visibility"
+    },
+    "data_or_decision": "Sidebar shows items whose capabilities intersect business.capabilities. Ungated items always shown. Tier-blocked items show upgrade badge.",
+    "status": "verified_connected",
+    "evidence": [
+      "Sidebar.tsx:574-643 capability filtering and tier-based upgrade section"
+    ],
+    "tests": [],
+    "confidence": "high",
+    "unresolved_questions": []
+  },
+  {
+    "id": "spine:page-capability-gate",
+    "stage": "dashboard",
+    "source": {
+      "path": "components/dashboard/DashboardProvider.tsx",
+      "symbol": "useRequireCapability()"
+    },
+    "destination": {
+      "path": "7 dashboard pages",
+      "symbol": "client-side redirect to /dashboard/capabilities"
+    },
+    "data_or_decision": "7 pages use useRequireCapability(). Additional pages use hasCapability()/capabilities.includes() for conditional rendering (not access blocking). ~50 pages have no capability gate. Sidebar hiding is UI-only, not access control.",
+    "status": "partially_connected",
+    "evidence": [
+      "useRequireCapability used in: recurring, broadcasts, membership, queue, loyalty, referrals, waitlist",
+      "hasCapability/useCapabilities used for conditional rendering in: calendar, dashboard home, flow-editor, products, whatsapp, settings",
+      "~50 pages accessible by direct URL with no capability check",
+      "No parent layout provides capability-based routing"
+    ],
+    "tests": [],
+    "confidence": "verified",
+    "unresolved_questions": [
+      "Is it intentional that 85 dashboard pages have no capability gate?"
+    ]
+  },
+  {
+    "id": "spine:api-capability-enforcement",
+    "stage": "api",
+    "source": {
+      "path": "app/api/**/route.ts",
+      "symbol": "authenticateRequest()"
+    },
+    "destination": {
+      "path": "business data",
+      "symbol": "auth + ownership only"
+    },
+    "data_or_decision": "Zero API routes enforce capability access. All check only auth and business ownership. A client can create bookings, orders, tickets etc. even if the capability is disabled.",
+    "status": "disconnected",
+    "evidence": [
+      "Reviewed: bookings/create-manual, invoices, surveys, polls, queue/call-next, recurring/setup, events/purchase",
+      "Only POST /api/invoices has tier check (checkTierLimit) — no capability check",
+      "All others: auth + ownership only",
+      "Not exhaustive: 245 total routes, ~8 representative write routes reviewed"
+    ],
+    "tests": [],
+    "confidence": "high",
+    "unresolved_questions": [
+      "Should API routes enforce capabilities? Or is UI/bot gating considered sufficient?"
+    ]
+  },
+  {
+    "id": "spine:bot-capability-load",
+    "stage": "bot",
+    "source": {
+      "path": "lib/bot/bot.service.ts",
+      "symbol": "getEnabledCapabilities(supabase, business.id, business.category)"
+    },
+    "destination": {
+      "path": "session_data.capabilities",
+      "symbol": "CapabilityId[] stored in bot session"
+    },
+    "data_or_decision": "Bot loads same business_capabilities truth as dashboard. Stored in session_data for flow duration.",
+    "status": "verified_connected",
+    "evidence": [
+      "bot.service.ts:903-916 loads capabilities",
+      "lib/capabilities/service.ts:8 getEnabledCapabilities queries business_capabilities is_enabled=true"
+    ],
+    "tests": [],
+    "confidence": "high",
+    "unresolved_questions": [
+      "Bot uses getEnabledCapabilities which auto-merges new category defaults — dashboard layout does not (CAS-010)"
+    ]
+  },
+  {
+    "id": "spine:bot-menu-generation",
+    "stage": "bot",
+    "source": {
+      "path": "lib/bot/handlers/flow-routing.ts",
+      "symbol": "getFirstStepFromCapabilities()"
+    },
+    "destination": {
+      "path": "lib/bot/flows/capability-selection.flow.ts",
+      "symbol": "select_capability step"
+    },
+    "data_or_decision": "Filters to user-facing caps, skips those without backing data. 0-1 cap → direct flow. 2+ caps → capability selection menu.",
+    "status": "verified_connected",
+    "evidence": [
+      "flow-routing.ts:25 filters non-user-facing caps",
+      "capability-selection.flow.ts:44-205 builds menu from filtered capabilities"
+    ],
+    "tests": [
+      "lib/bot/flows/__tests__/capability-selection.flow.test.ts",
+      "lib/bot/__tests__/bot-conversations.test.ts"
+    ],
+    "confidence": "high",
+    "unresolved_questions": []
+  },
+  {
+    "id": "spine:free-text-classification",
+    "stage": "bot",
+    "source": {
+      "path": "lib/bot/smart-intent.ts",
+      "symbol": "parseSmartIntentHybrid()"
+    },
+    "destination": {
+      "path": "lib/bot/bot.service.ts",
+      "symbol": "intent used for entity pre-fill, not routing"
+    },
+    "data_or_decision": "Regex first (BOOKING/ORDERING/PAYMENT/TICKETING patterns), then Claude Haiku LLM if PostHog flag enabled. Intent does NOT override capability routing.",
+    "status": "partially_connected",
+    "evidence": [
+      "smart-intent.ts:521 hybrid function",
+      "bot.service.ts:939 routing based on getFirstStepFromCapabilities, not intent",
+      "Intent pre-fills session_data entities but does not control which flow runs"
+    ],
+    "tests": [
+      "lib/bot/__tests__/smart-intent.test.ts"
+    ],
+    "confidence": "high",
+    "unresolved_questions": [
+      "Intent classification does not check if matched capability is enabled — silently ignored if not in menu"
+    ]
+  },
+  {
+    "id": "spine:disabled-capability-response",
+    "stage": "bot",
+    "source": {
+      "path": "lib/bot/flows/capability-selection.flow.ts",
+      "symbol": "validate() line 266"
+    },
+    "destination": {
+      "path": "customer",
+      "symbol": "error message"
+    },
+    "data_or_decision": "Customer requesting disabled capability sees generic 'I didn't understand that' — never told the capability exists but is disabled.",
+    "status": "verified_connected",
+    "evidence": [
+      "capability-selection.flow.ts:266 returns errorMessage without mentioning the capability"
+    ],
+    "tests": [
+      "lib/bot/flows/__tests__/capability-selection.flow.test.ts tests invalid rejection"
+    ],
+    "confidence": "verified",
+    "unresolved_questions": [
+      "Should the bot say 'this business doesn't offer X' instead of 'I didn't understand'?"
+    ]
+  },
+  {
+    "id": "spine:plan-blocked-bot",
+    "stage": "bot",
+    "source": {
+      "path": "lib/bot/bot.service.ts",
+      "symbol": "business_capabilities query"
+    },
+    "destination": {
+      "path": "capability menu",
+      "symbol": "only is_enabled=true caps shown"
+    },
+    "data_or_decision": "Bot does not check subscription_tier for individual capabilities. Relies entirely on business_capabilities rows. If a free-tier business has a growth capability enabled (e.g., via trial or override), the bot exposes it.",
+    "status": "verified_connected",
+    "evidence": [
+      "bot.service.ts:903-916 loads capabilities from business_capabilities only",
+      "No tier check in capability loading code"
+    ],
+    "tests": [],
+    "confidence": "verified",
+    "unresolved_questions": [
+      "Is this intentional? Trial businesses get all caps, but after trial ends, are growth caps automatically disabled?"
+    ]
+  },
+  {
+    "id": "spine:session-persistence",
+    "stage": "bot",
+    "source": {
+      "path": "lib/bot/flows/executor.ts",
+      "symbol": "bot_sessions table updates"
+    },
+    "destination": {
+      "path": "bot_sessions.session_data",
+      "symbol": "JSONB state"
+    },
+    "data_or_decision": "Session stores current_step, session_data (capabilities, entities, step_history), version (CAS). Conversation log capped at 100 entries.",
+    "status": "verified_connected",
+    "evidence": [
+      "executor.ts updates session per step",
+      "version column for optimistic concurrency"
+    ],
+    "tests": [
+      "lib/bot/__tests__/session-concurrency.test.ts tests CAS"
+    ],
+    "confidence": "high",
+    "unresolved_questions": []
+  },
+  {
+    "id": "spine:cancellation",
+    "stage": "recovery",
+    "source": {
+      "path": "lib/bot/flows/executor.ts",
+      "symbol": "CANCEL_WORDS and RESTART_WORDS"
+    },
+    "destination": {
+      "path": "bot_sessions",
+      "symbol": "deactivateSession()"
+    },
+    "data_or_decision": "'stop/quit/exit/end' → deactivate + 'Send Hi to start'. 'cancel' → go back one step. 'start over/restart/reset' → deactivate + new session.",
+    "status": "verified_connected",
+    "evidence": [
+      "executor.ts:221-258 cancel/restart handling",
+      "escape-hatches.ts CANCEL_PATTERN pops _step_history"
+    ],
+    "tests": [
+      "scheduling.flow.test.ts:116-143 tests cancel_booking"
+    ],
+    "confidence": "high",
+    "unresolved_questions": [
+      "No test coverage for CANCEL_WORDS/RESTART_WORDS in executor"
+    ]
+  },
+  {
+    "id": "spine:human-handoff",
+    "stage": "recovery",
+    "source": {
+      "path": "lib/bot/flows/executor.ts",
+      "symbol": "escalation regex + caps.includes('chat')"
+    },
+    "destination": {
+      "path": "lib/bot/handlers/chat-handoff.ts",
+      "symbol": "handleChatHandoff()"
+    },
+    "data_or_decision": "'talk to a human/agent/person' triggers escalation if chat capability is enabled. If chat not enabled, escalation silently fails (no message to customer).",
+    "status": "partially_connected",
+    "evidence": [
+      "executor.ts:296-330 escalation check",
+      "chat-handoff.ts forwards to business owner WhatsApp + email",
+      "Silent failure when chat not enabled"
+    ],
+    "tests": [],
+    "confidence": "high",
+    "unresolved_questions": [
+      "Silent failure when chat not enabled — customer says 'talk to someone' and gets no response about handoff"
+    ]
+  },
+  {
+    "id": "spine:reconfiguration-propagation",
+    "stage": "dashboard",
+    "source": {
+      "path": "app/dashboard/capabilities/page.tsx",
+      "symbol": "direct Supabase client write to business_capabilities"
+    },
+    "destination": {
+      "path": "bot + dashboard on next load",
+      "symbol": "both re-query business_capabilities"
+    },
+    "data_or_decision": "Capability changes via dashboard toggle write directly to DB (no API route). Bot and dashboard both re-query on next request — changes propagate on next session/page load.",
+    "status": "verified_connected",
+    "evidence": [
+      "capabilities/page.tsx:191 direct supabase client write",
+      "layout.tsx:168-174 re-queries on each page load",
+      "bot.service.ts:903-916 re-queries on each message"
+    ],
+    "tests": [],
+    "confidence": "high",
+    "unresolved_questions": [
+      "No API route — writes go directly from browser to DB via RLS. Tier enforcement is client-only."
+    ]
+  },
+  {
+    "id": "spine:trial-to-paid-transition",
+    "stage": "plan",
+    "source": {
+      "path": "app/api/onboarding/verify/route.ts",
+      "symbol": "trial_ends_at set to now()"
+    },
+    "destination": {
+      "path": "businesses table",
+      "symbol": "subscription_tier updated, trial_ends_at ended"
+    },
+    "data_or_decision": "When user selects paid plan and pays, verify route sets tier and ends trial. But no automatic capability downgrade exists when trial ends without payment.",
+    "status": "partially_connected",
+    "evidence": [
+      "verify/route.ts:224-228 sets tier and trial_ends_at",
+      "No cron job or trigger that revokes growth/business capabilities when trial expires"
+    ],
+    "tests": [],
+    "confidence": "verified",
+    "unresolved_questions": [
+      "After 30-day trial ends, capabilities enabled during trial remain enabled in business_capabilities. No automatic downgrade mechanism found."
+    ]
+  }
+]

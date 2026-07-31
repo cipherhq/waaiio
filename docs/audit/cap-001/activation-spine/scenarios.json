@@ -1,0 +1,130 @@
+[
+  {
+    "id": "scenario:A",
+    "title": "New free-plan business",
+    "description": "Business signs up, chooses country/category, receives defaults, completes onboarding, enters dashboard, receives WhatsApp message",
+    "status": "traced",
+    "connections_verified": [
+      "spine:signup-entry",
+      "spine:country-selection",
+      "spine:category-selection",
+      "spine:capability-toggle",
+      "spine:business-creation",
+      "spine:capability-persistence",
+      "spine:dashboard-capability-load",
+      "spine:sidebar-gating",
+      "spine:bot-capability-load",
+      "spine:bot-menu-generation"
+    ],
+    "findings": [
+      "CAS-001",
+      "CAS-002",
+      "CAS-003",
+      "CAS-009",
+      "CAS-010"
+    ],
+    "confidence": "high_static"
+  },
+  {
+    "id": "scenario:B",
+    "title": "Guided WhatsApp interaction",
+    "description": "Customer opens WhatsApp, taps button/list option, enters flow, completes or cancels",
+    "status": "traced",
+    "connections_verified": [
+      "spine:bot-capability-load",
+      "spine:bot-menu-generation",
+      "spine:session-persistence",
+      "spine:cancellation"
+    ],
+    "findings": [],
+    "confidence": "high_static"
+  },
+  {
+    "id": "scenario:C",
+    "title": "Free-text WhatsApp interaction",
+    "description": "Customer writes natural language like 'I need a haircut tomorrow afternoon'",
+    "status": "traced",
+    "connections_verified": [
+      "spine:free-text-classification",
+      "spine:bot-menu-generation"
+    ],
+    "findings": [
+      "CAS-004"
+    ],
+    "confidence": "medium_static"
+  },
+  {
+    "id": "scenario:D",
+    "title": "Ambiguous request",
+    "description": "Customer sends 'I want to book' without specifying what",
+    "status": "traced",
+    "connections_verified": [
+      "spine:free-text-classification",
+      "spine:bot-menu-generation",
+      "spine:disabled-capability-response"
+    ],
+    "findings": [
+      "CAS-004"
+    ],
+    "confidence": "medium_static"
+  },
+  {
+    "id": "scenario:E",
+    "title": "Disabled capability request",
+    "description": "Customer requests a capability the business hasn't enabled",
+    "status": "traced",
+    "connections_verified": [
+      "spine:disabled-capability-response"
+    ],
+    "findings": [
+      "CAS-005",
+      "CAS-010"
+    ],
+    "confidence": "high_static"
+  },
+  {
+    "id": "scenario:F",
+    "title": "Plan-blocked capability",
+    "description": "Business enables or requests a capability above its subscription tier",
+    "status": "traced",
+    "connections_verified": [
+      "spine:tier-enforcement-dashboard",
+      "spine:plan-blocked-bot",
+      "spine:trial-to-paid-transition"
+    ],
+    "findings": [
+      "CAS-006",
+      "CAS-007"
+    ],
+    "confidence": "high_static"
+  },
+  {
+    "id": "scenario:G",
+    "title": "Reconfiguration",
+    "description": "Business changes enabled capabilities, subscription tier, or admin overrides",
+    "status": "traced",
+    "connections_verified": [
+      "spine:reconfiguration-propagation",
+      "spine:admin-override"
+    ],
+    "findings": [
+      "CAS-006",
+      "CAS-010"
+    ],
+    "confidence": "high_static"
+  },
+  {
+    "id": "scenario:H",
+    "title": "Session correction and recovery",
+    "description": "Customer begins workflow, corrects answer, cancels, restarts, requests human help",
+    "status": "traced",
+    "connections_verified": [
+      "spine:cancellation",
+      "spine:human-handoff"
+    ],
+    "findings": [
+      "CAS-008"
+    ],
+    "confidence": "high_static"
+  }
+]

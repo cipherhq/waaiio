@@ -1,0 +1,253 @@
+[
+  {
+    "id": "CAS-001",
+    "title": "No onboarding tests exist",
+    "severity": "P2",
+    "confidence": "source_path_verified",
+    "affected_stages": [
+      "onboarding",
+      "persistence"
+    ],
+    "affected_scenarios": [
+      "scenario:A"
+    ],
+    "expected_behavior": "Onboarding path (register, capability init, trial setup) has automated test coverage",
+    "actual_behavior": "Zero test files cover the onboarding registration, capability initialization, or trial setup code paths",
+    "evidence": [
+      "grep -r 'onboarding|register|get-started|initCapabilities' lib/__tests__/ returns zero matches",
+      "No test file in __shortest__/ covers the full onboarding wizard"
+    ],
+    "blast_radius": "Regressions in onboarding are undetected until a real user signs up",
+    "recommended_direction": "Add integration tests for POST /api/onboarding/register covering capability persistence and trial initialization",
+    "implementation_status": "not_started",
+    "requires_product_decision": false,
+    "product_question": null
+  },
+  {
+    "id": "CAS-002",
+    "title": "trial_ends_at uses inline calculation, not TRIAL_DAYS constant",
+    "severity": "P3",
+    "confidence": "source_path_verified",
+    "affected_stages": [
+      "persistence"
+    ],
+    "affected_scenarios": [
+      "scenario:A"
+    ],
+    "expected_behavior": "trial_ends_at calculation uses the TRIAL_DAYS constant from lib/constants.ts",
+    "actual_behavior": "register/route.ts:185 uses inline Date.now() + 30 * 24 * 60 * 60 * 1000 instead of importing TRIAL_DAYS",
+    "evidence": [
+      "register/route.ts:185 inline 30-day calculation",
+      "lib/constants.ts:8 TRIAL_DAYS = 30 defined but not imported"
+    ],
+    "blast_radius": "If TRIAL_DAYS changes, register route would not update. Low risk since both currently equal 30.",
+    "recommended_direction": "Import and use TRIAL_DAYS constant",
+    "implementation_status": "not_started",
+    "requires_product_decision": false,
+    "product_question": null
+  },
+  {
+    "id": "CAS-003",
+    "title": "No API-level capability enforcement",
+    "severity": "P2",
+    "confidence": "source_path_verified",
+    "affected_stages": [
+      "api"
+    ],
+    "affected_scenarios": [
+      "scenario:A",
+      "scenario:F",
+      "scenario:G"
+    ],
+    "expected_behavior": "API routes that create capability-specific resources (bookings, orders, tickets, etc.) verify the business has that capability enabled",
+    "actual_behavior": "No shared capability-enforcement mechanism was found. Reviewed representative mutation routes (bookings/create-manual, invoices, surveys, polls, queue/call-next, recurring/setup, events/purchase) do not enforce capability eligibility. The only tier check found is in POST /api/invoices (checkTierLimit). All others check only auth and business ownership.",
+    "evidence": [
+      "grep across app/api/ for hasCapability/checkCapability/getEnabledCapabilities — zero matches for access gating",
+      "POST /api/bookings/create-manual — authenticateRequest + owner_id only",
+      "POST /api/surveys — owner_id only, no capability check",
+      "POST /api/polls — owner_id only, no capability check",
+      "POST /api/invoices — owner_id + checkTierLimit (tier check but NOT capability check)",
+      "POST /api/queue/call-next — authenticateRequest + requireBusinessOwnership only",
+      "POST /api/recurring/setup — authenticateRequest + requireBusinessOwnership only",
+      "POST /api/events/purchase — public OTP-verified endpoint, no capability check"
+    ],
+    "blast_radius": "Direct API calls or custom integrations could create data for disabled capabilities. Dashboard pages without useRequireCapability could also reach these APIs.",
+    "recommended_direction": "Add capability middleware or per-route checks for capability-specific API routes",
+    "implementation_status": "not_started",
+    "requires_product_decision": true,
+    "product_question": "Should API routes enforce capabilities, or is UI/bot gating considered sufficient for the current product?"
+  },
+  {
+    "id": "CAS-004",
+    "title": "Free-text intent does not check capability eligibility",
+    "severity": "P3",
+    "confidence": "source_path_verified",
+    "affected_stages": [
+      "bot"
+    ],
+    "affected_scenarios": [
+      "scenario:C",
+      "scenario:D"
+    ],
+    "expected_behavior": "Intent classification considers which capabilities the business has enabled",
+    "actual_behavior": "parseSmartIntentHybrid classifies text independently of business capabilities. If a customer at a restaurant says 'book an appointment', the intent returns 'booking' even if the restaurant only has ordering enabled. The routing layer (getFirstStepFromCapabilities) prevents the wrong flow from starting, but the intent metadata is wasted.",
+    "evidence": [
+      "smart-intent.ts:521 parseSmartIntentHybrid has no business context parameter",
+      "bot.service.ts:939 routing ignores intent for flow selection"
+    ],
+    "blast_radius": "Low — the routing layer correctly prevents wrong-flow dispatch. But entity pre-fill from irrelevant intents could cause confusion.",
+    "recommended_direction": "Pass enabled capabilities to intent classification so it can filter results. Not urgent — routing layer is the safety net.",
+    "implementation_status": "not_started",
+    "requires_product_decision": false,
+    "product_question": null
+  },
+  {
+    "id": "CAS-005",
+    "title": "Disabled capability response is generic, not informative",
+    "severity": "P3",
+    "confidence": "source_path_verified",
+    "affected_stages": [
+      "bot"
+    ],
+    "affected_scenarios": [
+      "scenario:E"
+    ],
+    "expected_behavior": "When a customer requests a capability the business doesn't offer, the bot says something like 'This business doesn't offer X'",
+    "actual_behavior": "capability-selection.flow.ts:266 returns 'I didn't understand that. Try typing book, order, tickets, or tap View Options to see the menu.' — identical to any parse failure",
+    "evidence": [
+      "capability-selection.flow.ts:266 generic errorMessage"
+    ],
+    "blast_radius": "Customer confusion — they know what they want but are told the bot doesn't understand them",
+    "recommended_direction": "Distinguish between 'capability not offered by this business' vs 'I didn't understand your input'",
+    "implementation_status": "not_started",
+    "requires_product_decision": false,
+    "product_question": null
+  },
+  {
+    "id": "CAS-006",
+    "title": "Tier enforcement is client-side only — no server or RLS enforcement",
+    "severity": "P1",
+    "confidence": "source_path_verified",
+    "affected_stages": [
+      "plan",
+      "dashboard"
+    ],
+    "affected_scenarios": [
+      "scenario:F",
+      "scenario:G"
+    ],
+    "expected_behavior": "Server-side or RLS enforcement prevents a business from enabling capabilities above its subscription tier",
+    "actual_behavior": "Tier check exists only in dashboard UI (canEnableCapability). The RLS policy business_capabilities_owner_update checks only owner_id = auth.uid(). A browser client could directly enable growth/business capabilities on a free plan. During trial all caps are unlocked by design.",
+    "evidence": [
+      "capabilities/page.tsx:148 client-side canToggle()",
+      "RLS policy checks owner_id only (migration 182 replaced over-permissive INSERT but didn't add tier check)",
+      "No API route exists for capability toggling — direct browser Supabase writes"
+    ],
+    "blast_radius": "Business could bypass UI to enable paid capabilities without paying. After trial ends, no downgrade occurs.",
+    "recommended_direction": "Add RLS check or API route with server-side tier validation for capability writes",
+    "implementation_status": "not_started",
+    "requires_product_decision": true,
+    "product_question": "Is the current client-only tier enforcement acceptable during trial? What should happen to growth/business capabilities when a trial ends without upgrade?"
+  },
+  {
+    "id": "CAS-007",
+    "title": "No automatic capability downgrade when trial expires",
+    "severity": "P1",
+    "confidence": "source_path_verified",
+    "affected_stages": [
+      "plan"
+    ],
+    "affected_scenarios": [
+      "scenario:F"
+    ],
+    "expected_behavior": "When a 30-day trial ends without the business upgrading, capabilities above the free tier are disabled or restricted",
+    "actual_behavior": "No cron job, trigger, or webhook handler downgrades capabilities when trial_ends_at passes. Capabilities enabled during trial remain enabled in business_capabilities indefinitely.",
+    "evidence": [
+      "No cron route or Edge Function references trial_ends_at for capability downgrade",
+      "app/api/cron/ has trial-check/route.ts but it only sends reminder emails, does not modify capabilities",
+      "business_capabilities rows persist with is_enabled=true regardless of trial status"
+    ],
+    "blast_radius": "Businesses that never upgrade retain growth/business capabilities permanently after trial",
+    "recommended_direction": "Either: (a) downgrade capabilities when trial expires, or (b) check trial+tier at runtime (bot/dashboard query time) and filter out ineligible caps",
+    "implementation_status": "not_started",
+    "requires_product_decision": true,
+    "product_question": "Should post-trial businesses with free tier lose access to growth/business capabilities? Should this be immediate or grace-period?"
+  },
+  {
+    "id": "CAS-008",
+    "title": "Human handoff silently fails when chat capability not enabled",
+    "severity": "P2",
+    "confidence": "source_path_verified",
+    "affected_stages": [
+      "recovery"
+    ],
+    "affected_scenarios": [
+      "scenario:H"
+    ],
+    "expected_behavior": "When a customer says 'talk to someone' and the business doesn't have chat enabled, the bot explains that live chat isn't available",
+    "actual_behavior": "executor.ts:296-330 checks caps.includes('chat'). If chat is not enabled, the escalation block does nothing — the input falls through to the regular flow validator, which treats it as invalid input.",
+    "evidence": [
+      "executor.ts:296-330 escalation regex check",
+      "No else branch or customer-facing message when chat is not enabled"
+    ],
+    "blast_radius": "Customer asks for human help and gets no acknowledgment — appears as if the bot ignored them",
+    "recommended_direction": "Add an else branch that tells the customer live chat is not available and offers alternatives",
+    "implementation_status": "not_started",
+    "requires_product_decision": false,
+    "product_question": null
+  },
+  {
+    "id": "CAS-009",
+    "title": "Capability initialization failure is silently ignored during onboarding",
+    "severity": "P1",
+    "confidence": "source_path_verified",
+    "affected_stages": [
+      "onboarding",
+      "persistence"
+    ],
+    "affected_scenarios": [
+      "scenario:A"
+    ],
+    "expected_behavior": "initCapabilities() checks the Supabase insert result and propagates errors so onboarding fails atomically or retries",
+    "actual_behavior": "initCapabilities() (lib/capabilities/service.ts:145-147) awaits the insert but discards the {data, error} return. Supabase insert errors are returned, not thrown — the caller's try/catch (register/route.ts:236-245) cannot catch them. Registration succeeds with zero capability rows. Dashboard and bot enter fallback behavior, potentially replacing user-selected capabilities with category defaults.",
+    "evidence": [
+      "lib/capabilities/service.ts:145-147 — insert result not destructured",
+      "app/api/onboarding/register/route.ts:236-245 — try/catch cannot catch non-thrown Supabase errors",
+      "app/dashboard/layout.tsx:176-184 — falls back to CATEGORY_DEFAULT_CAPABILITIES when no rows",
+      "lib/capabilities/service.ts:45-51 — getEnabledCapabilities falls back to getCategoryDefaultCapabilities then CATEGORY_DEFAULT_CAPABILITIES"
+    ],
+    "blast_radius": "User-selected optional capabilities lost. Business operates on hardcoded category defaults without knowing. Dashboard and bot may show different fallback sets (see CAS-010).",
+    "recommended_direction": "Destructure insert result, check error, fail onboarding registration or retry. Add integration test for this path.",
+    "implementation_status": "not_started",
+    "requires_product_decision": false,
+    "product_question": null
+  },
+  {
+    "id": "CAS-010",
+    "title": "Dashboard and WhatsApp bot use divergent capability-resolution rules",
+    "severity": "P1",
+    "confidence": "source_path_verified",
+    "affected_stages": [
+      "dashboard",
+      "bot"
+    ],
+    "affected_scenarios": [
+      "scenario:A",
+      "scenario:E",
+      "scenario:G"
+    ],
+    "expected_behavior": "Dashboard and bot use the same resolver to determine a business's effective capabilities",
+    "actual_behavior": "Dashboard (layout.tsx:168-184) queries only is_enabled=true rows and falls back to hardcoded CATEGORY_DEFAULT_CAPABILITIES. Bot (getEnabledCapabilities in service.ts:13-51) queries ALL rows (enabled and disabled), merges newly-added category defaults not in known set, and falls back to DB-backed getCategoryDefaultCapabilities() first. Concrete divergence: when a new capability default is added to a category after onboarding, the bot auto-enables it but the dashboard does not show it.",
+    "evidence": [
+      "app/dashboard/layout.tsx:168-174 — queries is_enabled=true only, no merge logic",
+      "lib/capabilities/service.ts:13-51 — queries all rows, merges new defaults",
+      "app/dashboard/layout.tsx:176-184 — hardcoded CATEGORY_DEFAULT_CAPABILITIES fallback",
+      "lib/capabilities/service.ts:45-51 — getCategoryDefaultCapabilities (DB-backed) then hardcoded fallback"
+    ],
+    "blast_radius": "Bot can expose capabilities the dashboard doesn't show (or vice versa). Fallback paths produce different capability sets when rows are missing. Business cannot see or manage a capability the bot is offering to customers.",
+    "recommended_direction": "Unify to a single getEffectiveCapabilities() resolver used by both dashboard layout and bot service. The resolver should apply: enabled rows → tier filter → trial override → admin overrides, consistently.",
+    "implementation_status": "not_started",
+    "requires_product_decision": true,
+    "product_question": "Should newly-added category defaults auto-enable for existing businesses (bot behavior) or require explicit opt-in (dashboard behavior)?"
+  }
+]
