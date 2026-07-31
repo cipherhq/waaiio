@@ -74,9 +74,29 @@ export async function POST(request: NextRequest) {
 
   const overrides = (overrideRows || []).map(r => r.capability as string);
 
-  // Validate tier/trial/override for each capability
+  // Service client for server-controlled operations
+  const service = createServiceClient();
+
+  // Load current selected capabilities to distinguish newly enabled from unchanged
+  const { data: currentRows, error: currentError } = await service
+    .from('business_capabilities')
+    .select('capability, is_enabled')
+    .eq('business_id', businessId);
+
+  if (currentError) {
+    return NextResponse.json({ success: false, reason: 'capability_read_failed' }, { status: 500 });
+  }
+
+  const currentSelected = new Set(
+    (currentRows || []).filter(r => r.is_enabled).map(r => r.capability as string),
+  );
+
+  // Only validate tier/trial/override for NEWLY ENABLED capabilities
+  // Existing paused-but-selected capabilities are allowed to remain selected
+  const newlyEnabled = requestedCaps.filter(cap => !currentSelected.has(cap));
+
   const denied: Array<{ capability: string; reason: string }> = [];
-  for (const cap of requestedCaps) {
+  for (const cap of newlyEnabled) {
     const check = canModifyCapability({
       capabilityId: cap,
       requestedState: true,
@@ -104,15 +124,28 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Build sort orders
+  // Validate and build sort orders
   const order = body.order || requestedCaps;
-  const sortOrders = requestedCaps.map(cap => {
-    const idx = order.indexOf(cap);
-    return idx >= 0 ? idx : 999;
-  });
+  if (!Array.isArray(order)) {
+    return NextResponse.json({ success: false, reason: 'invalid_order' }, { status: 400 });
+  }
+  // Order must contain exactly the same IDs as requestedCaps
+  const orderSet = new Set(order);
+  const capsSet = new Set(requestedCaps);
+  if (orderSet.size !== order.length) {
+    return NextResponse.json({ success: false, reason: 'invalid_order', detail: 'duplicate entries' }, { status: 400 });
+  }
+  if (orderSet.size !== capsSet.size || ![...orderSet].every(id => capsSet.has(id))) {
+    return NextResponse.json({ success: false, reason: 'invalid_order', detail: 'must contain exactly the requested capabilities' }, { status: 400 });
+  }
+  // Validate all order entries are valid capability IDs
+  const invalidOrderIds = order.filter(id => !VALID_CAP_IDS.has(id));
+  if (invalidOrderIds.length > 0) {
+    return NextResponse.json({ success: false, reason: 'invalid_order', detail: 'invalid capability IDs in order' }, { status: 400 });
+  }
+  const sortOrders = requestedCaps.map(cap => order.indexOf(cap));
 
-  // Execute atomic RPC via service client
-  const service = createServiceClient();
+  // Execute atomic RPC
   const { data: result, error: rpcError } = await service.rpc('configure_business_capabilities', {
     p_business_id: businessId,
     p_capabilities: requestedCaps,
@@ -120,7 +153,8 @@ export async function POST(request: NextRequest) {
   });
 
   if (rpcError) {
-    return NextResponse.json({ success: false, reason: 'configuration_failed', detail: rpcError.message }, { status: 500 });
+    console.warn('[CAP_CONFIGURE] RPC error:', rpcError.message);
+    return NextResponse.json({ success: false, reason: 'configuration_failed' }, { status: 500 });
   }
 
   return NextResponse.json({ success: true, state: result });

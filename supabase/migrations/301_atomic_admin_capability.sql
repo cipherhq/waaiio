@@ -19,6 +19,11 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
+  -- Lock business row to serialize concurrent admin operations
+  IF NOT EXISTS (SELECT 1 FROM businesses WHERE id = p_business_id FOR UPDATE) THEN
+    RAISE EXCEPTION 'business_not_found';
+  END IF;
+
   -- Upsert override
   INSERT INTO capability_overrides (business_id, capability, granted_by, reason)
   VALUES (p_business_id, p_capability::capability_type, p_granted_by, p_reason)
@@ -52,6 +57,11 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
+  -- Lock business row to serialize concurrent admin operations
+  IF NOT EXISTS (SELECT 1 FROM businesses WHERE id = p_business_id FOR UPDATE) THEN
+    RAISE EXCEPTION 'business_not_found';
+  END IF;
+
   -- Delete override
   DELETE FROM capability_overrides
   WHERE business_id = p_business_id AND capability = p_capability::capability_type;

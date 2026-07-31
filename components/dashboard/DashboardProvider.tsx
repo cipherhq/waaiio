@@ -42,7 +42,15 @@ export interface Business {
   recurring_enabled: boolean;
   metadata: Record<string, unknown>;
   created_at: string;
+  /** Effective capabilities — currently allowed by tier/trial/overrides. Used by Sidebar and bot. */
   capabilities: CapabilityId[];
+  /** Selected capabilities — is_enabled=true (effective + paused). Used by capability management. */
+  selectedCapabilities: CapabilityId[];
+  /** Paused capabilities — selected but tier/trial-blocked, with reason. */
+  pausedCapabilities: Array<{ capability: CapabilityId; reason: string }>;
+  /** Explicitly disabled capabilities — is_enabled=false. */
+  disabledCapabilities: CapabilityId[];
+  /** Admin overrides — bypasses tier requirements for specific capabilities. */
   capabilityOverrides: CapabilityId[];
 }
 

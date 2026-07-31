@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { finalizeOnboarding } from '@/lib/onboarding/finalize';
 import {
   generateSlug,
   generateBotCode,
@@ -67,30 +68,21 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Run shared finalization — idempotent operations that may have been missed
-      // Canned responses (only if chat capability selected and no existing responses)
-      const enabledCaps = capsToInit || [];
-      if (enabledCaps.includes('chat' as CapabilityId)) {
-        const { count } = await service.from('canned_responses').select('id', { count: 'exact', head: true }).eq('business_id', pendingBiz.id);
-        if (!count || count === 0) {
-          const defaultCanned = [
-            { title: 'Thanks for waiting', message_text: 'Thanks for your patience! How can I help you?', sort_order: 0 },
-            { title: 'Operating hours', message_text: 'Our operating hours are Monday - Saturday, 9am - 6pm.', sort_order: 1 },
-            { title: 'Price inquiry', message_text: 'I\'d be happy to help with pricing! What are you interested in?', sort_order: 2 },
-            { title: 'How to book', message_text: 'I can help you get started. Would you like to proceed?', sort_order: 3 },
-            { title: 'Follow up', message_text: 'Just following up on our conversation. Is there anything else I can help with?', sort_order: 4 },
-          ];
-          try { await service.from('canned_responses').insert(defaultCanned.map(cr => ({ business_id: pendingBiz.id, ...cr }))); } catch { /* best-effort */ }
-        }
-      }
-
-      // Profile update (idempotent)
-      const { first_name: retryFirstName, last_name: retryLastName } = body;
-      if (retryFirstName || retryLastName) {
-        const profileUpdate: Record<string, string> = {};
-        if (retryFirstName) profileUpdate.first_name = String(retryFirstName).trim();
-        if (retryLastName) profileUpdate.last_name = String(retryLastName).trim();
-        try { await service.from('profiles').update(profileUpdate).eq('id', user.id); } catch { /* best-effort */ }
+      // Run shared finalization
+      try {
+        await finalizeOnboarding(service, {
+          businessId: pendingBiz.id,
+          userId: user.id,
+          capabilities: capsToInit || [],
+          firstName: body.first_name ? String(body.first_name) : undefined,
+          lastName: body.last_name ? String(body.last_name) : undefined,
+        });
+      } catch (err) {
+        logger.error('[ONBOARDING] Retry finalization failed:', err);
+        return NextResponse.json(
+          { error: 'Setup finalization failed. Please try again.', recoverable: true, businessId: pendingBiz.id },
+          { status: 500 },
+        );
       }
 
       return NextResponse.json({ business_id: pendingBiz.id, bot_code: pendingBiz.bot_code });
@@ -311,56 +303,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create default canned responses if chat capability is enabled
-    const enabledCaps = capabilities as CapabilityId[] | undefined;
-    if (enabledCaps?.includes('chat')) {
-      const defaultCanned = [
-        { title: 'Thanks for waiting', message_text: 'Thanks for your patience! How can I help you?', sort_order: 0 },
-        { title: 'Operating hours', message_text: 'Our operating hours are Monday - Saturday, 9am - 6pm. We\'re closed on Sundays.', sort_order: 1 },
-        { title: 'Price inquiry', message_text: 'I\'d be happy to help with pricing! What are you interested in?', sort_order: 2 },
-        { title: 'How to book', message_text: 'I can help you get started. Would you like to proceed?', sort_order: 3 },
-        { title: 'Follow up', message_text: 'Just following up on our conversation. Is there anything else I can help with?', sort_order: 4 },
-      ];
-      try {
-        const { error: cannedErr } = await service.from('canned_responses').insert(
-          defaultCanned.map((cr) => ({
-            business_id: business.id,
-            ...cr,
-          })),
-        );
-        if (cannedErr) logger.error('[ONBOARDING] canned_responses insert failed:', cannedErr);
-      } catch (err) {
-        logger.error('[ONBOARDING] canned_responses insert exception:', err);
-      }
+    // Shared finalization — canned responses + profile update
+    try {
+      await finalizeOnboarding(service, {
+        businessId: business.id,
+        userId: user.id,
+        capabilities: capsToInit || [],
+        firstName: first_name ? String(first_name) : undefined,
+        lastName: last_name ? String(last_name) : undefined,
+      });
+    } catch (err) {
+      logger.error('[ONBOARDING] Finalization failed:', err);
+      return NextResponse.json(
+        { error: 'Setup finalization failed. Please try again.', recoverable: true, businessId: business.id },
+        { status: 500 },
+      );
     }
 
-    // Update profile: role + owner name
-    const { data: profile } = await service
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single();
-
-    const isFirstBusiness = !profile?.role || profile.role === 'diner';
-    const profileUpdate: Record<string, string> = {};
-    if (isFirstBusiness) profileUpdate.role = 'restaurant_owner';
-    if (first_name) profileUpdate.first_name = String(first_name).trim();
-    if (last_name) profileUpdate.last_name = String(last_name).trim();
-
-    if (Object.keys(profileUpdate).length > 0) {
-      await service
-        .from('profiles')
-        .update(profileUpdate)
-        .eq('id', user.id);
-    }
-
-    // Send emails (non-blocking)
+    // Send emails (optional, non-blocking)
     const userEmail = user.email;
     if (userEmail) {
       const categoryLabel = (category as string).replace(/_/g, ' ');
-      if (isFirstBusiness) {
-        const welcome = welcomeEmail(name);
-        sendEmail({ to: userEmail, ...welcome }).catch(() => {});
+      // Welcome email for first-time business owners
+      const { data: profileCheck } = await service.from('profiles').select('role').eq('id', user.id).single();
+      if (profileCheck?.role === 'restaurant_owner') {
+        // Only send welcome if this was their first business (role was just set by finalization)
+        const { count: bizCount2 } = await service.from('businesses').select('id', { count: 'exact', head: true }).eq('owner_id', user.id);
+        if ((bizCount2 || 0) <= 1) {
+          const welcome = welcomeEmail(name);
+          sendEmail({ to: userEmail, ...welcome }).catch(() => {});
+        }
       }
       const registered = businessRegisteredEmail(name, business.bot_code, categoryLabel);
       sendEmail({ to: userEmail, ...registered }).catch(() => {});

@@ -333,6 +333,7 @@ function OnboardingWizard() {
     preselectedPlan && ['growth', 'business'].includes(preselectedPlan) ? preselectedPlan : 'free'
   );
   const [businessId, setBusinessId] = useState('');
+  const [pendingRetryId, setPendingRetryId] = useState('');
   const [botCode, setBotCode] = useState('');
 
   // Success state
@@ -360,7 +361,7 @@ function OnboardingWizard() {
     setCustomBotCode(draft.customBotCode);
     setSelectedPlan(draft.selectedPlan);
     setWaMethod(draft.waMethod);
-    if (draft.pendingBusinessId) setBusinessId(draft.pendingBusinessId);
+    if (draft.pendingBusinessId) setPendingRetryId(draft.pendingBusinessId);
     setShowDraftRestored(true);
     // Auto-dismiss the indicator after 4 seconds
     setTimeout(() => setShowDraftRestored(false), 4000);
@@ -385,8 +386,8 @@ function OnboardingWizard() {
     customBotCode,
     selectedPlan,
     waMethod,
-    pendingBusinessId: businessId || undefined,
-  }), [step, selectedCountry, city, state, zipCode, selectedGroup, category, selectedCapabilities, name, firstName, lastName, address, businessPhone, email, customBotCode, selectedPlan, waMethod, businessId]);
+    pendingBusinessId: pendingRetryId || undefined,
+  }), [step, selectedCountry, city, state, zipCode, selectedGroup, category, selectedCapabilities, name, firstName, lastName, address, businessPhone, email, customBotCode, selectedPlan, waMethod, pendingRetryId]);
 
   useOnboardingPersistence(user, formStateForPersistence, restoreDraft);
 
@@ -861,13 +862,13 @@ function OnboardingWizard() {
           wa_method: waMethod,
           wa_own_phone: selectedPhone?.display_phone_number || ownPhone || undefined,
           capabilities: selectedCapabilities.length > 0 ? selectedCapabilities : undefined,
-          ...(businessId ? { retryBusinessId: businessId } : {}),
+          ...(pendingRetryId ? { retryBusinessId: pendingRetryId } : {}),
         }),
       });
       const registerData = await registerRes.json();
       if (!registerRes.ok) {
         if (registerData.recoverable && registerData.businessId) {
-          setBusinessId(registerData.businessId);
+          setPendingRetryId(registerData.businessId);
           setError(registerData.error || 'Setup incomplete. Click "Complete Setup" to try again.');
         } else {
           setError(registerData.message || registerData.error || 'Registration failed');
@@ -947,15 +948,15 @@ function OnboardingWizard() {
           wa_method: waMethod,
           wa_own_phone: waMethod !== 'shared' ? ownPhone : undefined,
           capabilities: selectedCapabilities.length > 0 ? selectedCapabilities : undefined,
-          ...(businessId ? { retryBusinessId: businessId } : {}),
+          ...(pendingRetryId ? { retryBusinessId: pendingRetryId } : {}),
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         if (data.recoverable && data.businessId) {
           // Capability init failed but business was created — store for retry
-          setBusinessId(data.businessId);
-          setError(data.error || 'Setup incomplete. Click "Complete Setup" to try again.');
+          setPendingRetryId(data.businessId);
+          setError(data.error || 'Setup incomplete. Please try again.');
         } else {
           setError(data.message || data.error || 'Registration failed');
         }
