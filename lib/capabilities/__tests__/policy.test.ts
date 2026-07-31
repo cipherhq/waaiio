@@ -433,3 +433,77 @@ describe('canPerformAction', () => {
     })).toEqual({ allowed: true });
   });
 });
+
+// ══════════════════════════════════════════════════════════
+// Legacy zero-row eligibility through policy
+// ══════════════════════════════════════════════════════════
+
+describe('legacy zero-row through policy', () => {
+  // Simulate what dashboard/bot do: convert legacy defaults to ConfiguredCapability[]
+  // then run through getEffectiveCapabilities
+
+  function makeLegacyRows(...caps: string[]) {
+    return caps.map(cap => ({ capability: cap, is_enabled: true, sort_order: 0 }));
+  }
+
+  const pastDate = new Date(Date.now() - 86400000).toISOString();
+  const futureDate = new Date(Date.now() + 86400000).toISOString();
+
+  it('free tier, expired trial — growth defaults blocked', () => {
+    const legacyDefaults = ['scheduling', 'appointment', 'reservation', 'broadcast'];
+    const result = getEffectiveCapabilities({
+      configuredCapabilities: makeLegacyRows(...legacyDefaults),
+      overrides: [],
+      tier: 'free',
+      trialEndsAt: pastDate,
+    });
+    expect(result.effective).toEqual(['scheduling', 'appointment']);
+    expect(result.blocked.map(b => b.capability)).toEqual(['reservation', 'broadcast']);
+  });
+
+  it('free tier, active trial — all defaults effective', () => {
+    const legacyDefaults = ['scheduling', 'appointment', 'reservation', 'staff'];
+    const result = getEffectiveCapabilities({
+      configuredCapabilities: makeLegacyRows(...legacyDefaults),
+      overrides: [],
+      tier: 'free',
+      trialEndsAt: futureDate,
+    });
+    expect(result.effective).toEqual(['scheduling', 'appointment', 'reservation', 'staff']);
+    expect(result.blocked).toEqual([]);
+  });
+
+  it('growth tier — growth defaults effective, business defaults blocked', () => {
+    const legacyDefaults = ['scheduling', 'reservation', 'staff'];
+    const result = getEffectiveCapabilities({
+      configuredCapabilities: makeLegacyRows(...legacyDefaults),
+      overrides: [],
+      tier: 'growth',
+      trialEndsAt: null,
+    });
+    expect(result.effective).toEqual(['scheduling', 'reservation']);
+    expect(result.blocked).toEqual([{ capability: 'staff', reason: 'tier_required' }]);
+  });
+
+  it('business tier — all defaults effective', () => {
+    const legacyDefaults = ['scheduling', 'reservation', 'staff', 'crowdfunding'];
+    const result = getEffectiveCapabilities({
+      configuredCapabilities: makeLegacyRows(...legacyDefaults),
+      overrides: [],
+      tier: 'business',
+      trialEndsAt: null,
+    });
+    expect(result.effective).toEqual(['scheduling', 'reservation', 'staff', 'crowdfunding']);
+  });
+
+  it('free tier, no trial, with override — override bypasses tier', () => {
+    const legacyDefaults = ['scheduling', 'reservation'];
+    const result = getEffectiveCapabilities({
+      configuredCapabilities: makeLegacyRows(...legacyDefaults),
+      overrides: ['reservation'],
+      tier: 'free',
+      trialEndsAt: null,
+    });
+    expect(result.effective).toEqual(['scheduling', 'reservation']);
+  });
+});

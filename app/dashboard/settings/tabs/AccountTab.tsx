@@ -1249,22 +1249,15 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
               <button
                 onClick={async () => {
                   setCapSaving(true);
-                  const supabase = createClient();
                   // Merge: keep existing enabled + add newly selected
                   const allEnabled = [...new Set([...capabilities, ...newCapSelections])];
-                  // Disable all first
-                  await supabase
-                    .from('business_capabilities')
-                    .update({ is_enabled: false })
-                    .eq('business_id', business.id);
-                  // Enable selected
+                  // Enable all selected via server API
                   for (const cap of allEnabled) {
-                    await supabase
-                      .from('business_capabilities')
-                      .upsert(
-                        { business_id: business.id, capability: cap, is_enabled: true },
-                        { onConflict: 'business_id,capability' },
-                      );
+                    await fetch('/api/capabilities/toggle', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ businessId: business.id, capability: cap, enabled: true }),
+                    });
                   }
                   setCapSaving(false);
                   setShowCapModal(false);
@@ -1376,11 +1369,14 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
             const currentCaps = capabilities || [];
             const capsToRemove = currentCaps.filter((c: string) => !freeCaps.includes(c as CapabilityId));
             if (capsToRemove.length > 0) {
-              await supabase
-                .from('business_capabilities')
-                .delete()
-                .eq('business_id', business.id)
-                .in('capability', capsToRemove);
+              // Disable (not delete) non-free capabilities via server API
+              for (const cap of capsToRemove) {
+                await fetch('/api/capabilities/toggle', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ businessId: business.id, capability: cap, enabled: false }),
+                });
+              }
             }
             setDowngrading(false);
             setDowngraded(true);

@@ -112,21 +112,20 @@ export default function CapabilitiesPage() {
     newOrder.splice(dropIndex, 0, moved);
     setOrderedCaps(newOrder);
 
-    // Auto-save sort_order to database
+    // Auto-save sort_order via server API
     setSavingOrder(true);
-    const supabase = createClient();
     try {
       await Promise.all(
         newOrder.map((cap, i) =>
-          supabase
-            .from('business_capabilities')
-            .update({ sort_order: i })
-            .eq('business_id', business.id)
-            .eq('capability', cap),
+          fetch('/api/capabilities/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ businessId: business.id, capability: cap, sort_order: i }),
+          }),
         ),
       );
     } catch (err) {
-      console.error('Failed to save sort order:', err);
+      console.warn('Failed to save sort order:', err);
     }
     setSavingOrder(false);
   }, [dragIndex, orderedCaps, business.id]);
@@ -190,27 +189,32 @@ export default function CapabilitiesPage() {
 
   async function saveCapabilities(caps: CapabilityId[]) {
     setSaving(true);
-    const supabase = createClient();
 
     // Detect newly enabled capabilities (for provisioning)
     const newlyEnabled = caps.filter(cap => !business.capabilities.includes(cap));
 
-    // Disable all
-    await supabase
-      .from('business_capabilities')
-      .update({ is_enabled: false })
-      .eq('business_id', business.id);
+    // Determine which capabilities to disable and which to enable
+    const allKnown = new Set([...enabled, ...caps]);
+    const toDisable = [...allKnown].filter(cap => !caps.includes(cap));
 
-    // Enable selected — preserve sort_order from orderedCaps, new ones get 999
+    // Disable removed capabilities via server API
+    for (const cap of toDisable) {
+      await fetch('/api/capabilities/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ businessId: business.id, capability: cap, enabled: false }),
+      });
+    }
+
+    // Enable selected capabilities with sort_order via server API
     for (const cap of caps) {
       const existingIndex = orderedCaps.indexOf(cap);
       const sortOrder = existingIndex >= 0 ? existingIndex : 999;
-      await supabase
-        .from('business_capabilities')
-        .upsert(
-          { business_id: business.id, capability: cap, is_enabled: true, sort_order: sortOrder },
-          { onConflict: 'business_id,capability' },
-        );
+      await fetch('/api/capabilities/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ businessId: business.id, capability: cap, enabled: true, sort_order: sortOrder }),
+      });
     }
 
     // Auto-provision templates for newly enabled capabilities

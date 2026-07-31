@@ -939,10 +939,20 @@ function OnboardingWizard() {
           wa_method: waMethod,
           wa_own_phone: waMethod !== 'shared' ? ownPhone : undefined,
           capabilities: selectedCapabilities.length > 0 ? selectedCapabilities : undefined,
+          ...(businessId ? { retryBusinessId: businessId } : {}),
         }),
       });
       const data = await res.json();
-      if (!res.ok) { setError(data.message || 'Registration failed'); return; }
+      if (!res.ok) {
+        if (data.recoverable && data.businessId) {
+          // Capability init failed but business was created — store for retry
+          setBusinessId(data.businessId);
+          setError(data.error || 'Setup incomplete. Click "Complete Setup" to try again.');
+        } else {
+          setError(data.message || data.error || 'Registration failed');
+        }
+        return;
+      }
       setBusinessId(data.business_id);
       setBotCode(data.bot_code);
 

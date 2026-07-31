@@ -166,7 +166,7 @@ export default async function DashboardLayout({
   }
 
   // Load all capability rows (enabled AND disabled) for policy resolution
-  const { data: capRows } = await supabase
+  const { data: capRows, error: capError } = await supabase
     .from('business_capabilities')
     .select('capability, is_enabled, sort_order')
     .eq('business_id', business.id)
@@ -174,7 +174,7 @@ export default async function DashboardLayout({
     .order('capability', { ascending: true });
 
   // Load capability overrides
-  const { data: overrideRows } = await supabase
+  const { data: overrideRows, error: overrideError } = await supabase
     .from('capability_overrides')
     .select('capability')
     .eq('business_id', business.id);
@@ -184,20 +184,35 @@ export default async function DashboardLayout({
   );
 
   let capabilities: CapabilityId[];
-  if (capRows && capRows.length > 0) {
+
+  if (capError) {
+    // DB read error — fail closed with empty capabilities rather than exposing defaults
+    console.warn('[DASHBOARD] Capability read failed:', capError.message);
+    capabilities = [];
+  } else if (capRows && capRows.length > 0) {
     // Use the authoritative policy resolver
     const policyResult = getEffectiveCapabilities({
       configuredCapabilities: capRows as ConfiguredCapability[],
-      overrides: capabilityOverrides,
+      overrides: overrideError ? [] : capabilityOverrides, // fail closed on override error
       tier: business.subscription_tier,
       trialEndsAt: business.trial_ends_at,
     });
     capabilities = policyResult.effective;
   } else {
-    // Zero-row fallback for legacy businesses without explicit configuration
-    capabilities = CATEGORY_DEFAULT_CAPABILITIES[business.category] ||
+    // Zero-row fallback for legacy businesses — route through policy for tier/trial filtering
+    const legacyDefaults = CATEGORY_DEFAULT_CAPABILITIES[business.category] ||
       [business.flow_type as CapabilityId] ||
       ['scheduling'];
+    const legacyRows = legacyDefaults.map((cap: CapabilityId) => ({
+      capability: cap, is_enabled: true, sort_order: 0,
+    }));
+    const policyResult = getEffectiveCapabilities({
+      configuredCapabilities: legacyRows,
+      overrides: overrideError ? [] : capabilityOverrides,
+      tier: business.subscription_tier,
+      trialEndsAt: business.trial_ends_at,
+    });
+    capabilities = policyResult.effective;
   }
 
   const businessWithCaps = { ...business, capabilities, capabilityOverrides };

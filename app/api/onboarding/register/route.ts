@@ -46,7 +46,41 @@ export async function POST(request: NextRequest) {
     await loadCountries();
     await loadCategories();
     const body = await request.json();
-    const { first_name, last_name, name, city, state, zip_code, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode } = body;
+    const { first_name, last_name, name, city, state, zip_code, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode, retryBusinessId } = body;
+
+    // ── Retry path: resume a pending business that failed capability init ──
+    if (retryBusinessId) {
+      const service = createServiceClient();
+      const { data: pendingBiz, error: retryError } = await service
+        .from('businesses')
+        .select('id, owner_id, status, category, bot_code')
+        .eq('id', retryBusinessId)
+        .eq('owner_id', user.id)
+        .eq('status', 'pending')
+        .maybeSingle();
+
+      if (retryError || !pendingBiz) {
+        return NextResponse.json(
+          { message: 'Cannot resume setup: business not found, not owned by you, or already active.' },
+          { status: 400 },
+        );
+      }
+
+      // Retry only the capability initialization (idempotent upsert)
+      const templateCaps = undefined; // Original template not available on retry — use submitted caps
+      const capsToInit = (capabilities as CapabilityId[] | undefined);
+      try {
+        await initCapabilities(service, pendingBiz.id, pendingBiz.category, capsToInit);
+      } catch (err) {
+        logger.error('[ONBOARDING] Retry initCapabilities failed:', err);
+        return NextResponse.json(
+          { error: 'Capability setup failed on retry. Please try again.', recoverable: true, businessId: pendingBiz.id },
+          { status: 500 },
+        );
+      }
+
+      return NextResponse.json({ business_id: pendingBiz.id, bot_code: pendingBiz.bot_code });
+    }
     const countryCode: CountryCode = isValidCountryCode(country) ? country : 'NG';
 
     // Validate country matches phone number to prevent fee arbitrage

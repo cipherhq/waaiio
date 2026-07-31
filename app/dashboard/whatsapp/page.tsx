@@ -161,12 +161,11 @@ export default function WhatsAppPage() {
     const newCustomLabel = (!trimmed || trimmed === defaultLabel) ? null : trimmed;
 
     setSavingLabel(capId);
-    const supabase = createClient();
-    await supabase
-      .from('business_capabilities')
-      .update({ custom_label: newCustomLabel })
-      .eq('business_id', business.id)
-      .eq('capability', capId);
+    await fetch('/api/capabilities/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ businessId: business.id, capability: capId, custom_label: newCustomLabel }),
+    });
 
     setCustomLabels(prev => {
       const next = { ...prev };
@@ -205,11 +204,14 @@ export default function WhatsAppPage() {
     setOrderedCaps(newOrder);
 
     setSavingOrder(true);
-    const supabase = createClient();
     try {
       await Promise.all(
         newOrder.map((cap, i) =>
-          supabase.from('business_capabilities').update({ sort_order: i }).eq('business_id', business.id).eq('capability', cap),
+          fetch('/api/capabilities/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ businessId: business.id, capability: cap, sort_order: i }),
+          }),
         ),
       );
     } catch { /* silent */ }

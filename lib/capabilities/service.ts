@@ -2,23 +2,32 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { type CapabilityId, CATEGORY_DEFAULT_CAPABILITIES } from './types';
 import { getCategoryDefaultCapabilities } from '@/lib/categoryConfig';
 
+/** Result of reading configured capabilities — distinguishes genuine zero rows from DB errors. */
+export type ConfiguredCapabilitiesResult =
+  | { ok: true; rows: Array<{ capability: string; is_enabled: boolean; sort_order: number }> }
+  | { ok: false; error: string };
+
 /**
  * Get all configured capability rows for a business.
- * Returns raw rows including disabled ones — callers use the policy resolver
- * to determine effective capabilities.
+ * Returns a typed result — callers MUST check `ok` before using rows.
+ * A DB error must never be treated as zero rows.
  */
 export async function getConfiguredCapabilities(
   supabase: SupabaseClient,
   businessId: string,
-): Promise<Array<{ capability: string; is_enabled: boolean; sort_order: number }>> {
-  const { data } = await supabase
+): Promise<ConfiguredCapabilitiesResult> {
+  const { data, error } = await supabase
     .from('business_capabilities')
     .select('capability, is_enabled, sort_order')
     .eq('business_id', businessId)
     .order('sort_order', { ascending: true })
     .order('capability', { ascending: true });
 
-  return data || [];
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  return { ok: true, rows: data || [] };
 }
 
 /**
@@ -36,18 +45,19 @@ export async function getEnabledCapabilities(
   businessId: string,
   category?: string,
 ): Promise<CapabilityId[]> {
-  const data = await getConfiguredCapabilities(supabase, businessId);
+  const result = await getConfiguredCapabilities(supabase, businessId);
 
-  if (data.length > 0) {
+  // On DB error, fail closed — return empty rather than exposing defaults
+  if (!result.ok) return [];
+
+  if (result.rows.length > 0) {
     // Return only explicitly enabled capabilities — do NOT auto-merge new defaults.
-    // New defaults require explicit owner activation (approved product decision).
-    return data
+    return result.rows
       .filter(row => row.is_enabled)
       .map(row => row.capability as CapabilityId);
   }
 
   // Zero-row fallback for legacy businesses without explicit configuration.
-  // Preserved for backward compatibility until all businesses have explicit rows.
   if (category) {
     const dbCaps = getCategoryDefaultCapabilities(category);
     return (dbCaps as CapabilityId[]) || CATEGORY_DEFAULT_CAPABILITIES[category] || ['scheduling'];
