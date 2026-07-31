@@ -7852,6 +7852,20 @@ describe('Batch 9 final closeout tests', () => {
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
+  // Chronology: started before merge but completed after — started_at must independently fail
+  it('rejects repair started before PR #81 merge even if completed after', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateB9Evidence(tmpDir, d => {
+        d.repairs[0].started_at = '2026-07-31T04:48:33.000Z';
+        d.repairs[0].completed_at = '2026-07-31T04:48:35.000Z';
+      });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/started_at.*not after PR merge/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
   // Prior-batch pre map missing
   it('rejects missing batch_8_pre_occurrence_map', () => {
     const tmpDir = createTestFixture();

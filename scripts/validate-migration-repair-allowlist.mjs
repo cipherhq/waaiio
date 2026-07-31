@@ -4323,6 +4323,10 @@ function validateRepairCloseout(cfg) {
       if (endMs < prevEndMs) { fail(`Repair ${r.version} completion time moves backwards`); tsErrors++; }
       prevEndMs = endMs;
     }
+    if (startMs !== null && startMs <= prMergeMs) {
+      fail(`Repair ${r.version} started_at ${r[f.startedAt]} not after PR merge`);
+      tsErrors++;
+    }
     if (endMs !== null && endMs <= prMergeMs) {
       fail(`Repair ${r.version} ${f.completedAt} ${r[f.completedAt]} not after PR merge`);
       tsErrors++;
