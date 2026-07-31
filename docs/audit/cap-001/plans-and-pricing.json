@@ -1,100 +1,149 @@
 {
   "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-  "tier_type": "SubscriptionTier",
-  "tier_type_path": "lib/capabilities/types.ts",
-  "tiers": [
-    {
-      "id": "free",
-      "marketing_name": "Starter",
-      "code_name": "free"
+  "schema_type": "structured_summary",
+  "tier_type": {
+    "name": "SubscriptionTier",
+    "path": "lib/capabilities/types.ts",
+    "values": [
+      "free",
+      "growth",
+      "business"
+    ]
+  },
+  "tier_marketing_names": {
+    "free": "Starter",
+    "growth": "Pro",
+    "business": "Premium",
+    "path": "lib/constants.ts"
+  },
+  "pricing_resolution": {
+    "display_pricing": {
+      "resolver": "getPricingTiers(countryCode)",
+      "path": "lib/constants.ts:1173-1217",
+      "resolution_order": [
+        "1. Database country override (countries.pricing JSONB, cached in memory)",
+        "2. Hardcoded COUNTRY_PRICING fallback",
+        "3. PRICING_TIERS base values"
+      ],
+      "note": "Display pricing determines subscription prices shown to users. It is NOT the same path used for platform fee calculation."
     },
-    {
-      "id": "growth",
-      "marketing_name": "Pro",
-      "code_name": "growth"
+    "fee_calculation": {
+      "resolver": "getPlatformFees()",
+      "path": "lib/getPlatformFees.ts",
+      "resolution_order": [
+        "1. Trial check — all fees = 0 if isInTrial",
+        "2. platform_settings DB table (admin-configurable, 60s cache)",
+        "3. Per-business overrides (businesses table custom fields)",
+        "4. Micro-transaction protection (waive flat fee if > 10% of amount)",
+        "5. Fallback to PRICING_TIERS hardcoded values if DB unavailable"
+      ],
+      "note": "This is the active non-deprecated fee calculator. Country-specific flat fees from COUNTRY_PRICING are NOT used here."
     },
-    {
-      "id": "business",
-      "marketing_name": "Premium",
-      "code_name": "business"
-    }
-  ],
-  "pricing_sources": [
-    {
-      "name": "PRICING_TIERS",
-      "path": "lib/constants.ts",
-      "scope": "default (NG)",
+    "deprecated_calculator": {
+      "name": "calculatePlatformFee()",
+      "path": "lib/constants.ts:1072",
+      "note": "Reads directly from PRICING_TIERS in memory. Deprecated but still present."
+    },
+    "unresolved_differences": [
+      "Display pricing (COUNTRY_PRICING) shows country-specific flat fees",
+      "Fee calculation (getPlatformFees) reads from platform_settings DB table",
+      "Whether platform_settings mirrors COUNTRY_PRICING values or diverges is unknown without DB access",
+      "Marketing pricing page and actual transaction fees may differ"
+    ]
+  },
+  "fee_structure": {
+    "fee_percentage": {
+      "free": 2.5,
+      "growth": 1.5,
+      "business": 1.5,
+      "source": "PRICING_TIERS in lib/constants.ts",
       "confidence": "high"
     },
-    {
-      "name": "COUNTRY_PRICING",
-      "path": "lib/constants.ts",
-      "scope": "legacy multi-country",
-      "confidence": "high"
-    },
-    {
-      "name": "getPricingTiers(countryCode)",
-      "path": "lib/constants.ts",
-      "scope": "dynamic DB-backed per-country",
-      "confidence": "medium"
-    },
-    {
-      "name": "pricing page",
-      "path": "app/(marketing)/pricing/page.tsx",
-      "scope": "public display",
-      "confidence": "high"
-    }
-  ],
-  "platform_fee_rules": {
-    "path": "lib/constants.ts",
-    "tiers": {
-      "free": {
-        "fee_percentage": 2.5,
-        "fee_flat": 0
+    "fee_flat": {
+      "resolution": "country_dependent",
+      "resolver": "getPlatformFees() reads platform_settings DB; getPricingTiers() reads countries.pricing or COUNTRY_PRICING fallback",
+      "database_override": "platform_settings table (for fee calculation) and countries.pricing JSONB (for display)",
+      "fallback_source": "COUNTRY_PRICING in lib/constants.ts",
+      "country_fallback_values": {
+        "NG": {
+          "free": 150,
+          "growth": 50,
+          "business": 75,
+          "currency": "NGN"
+        },
+        "US": {
+          "free": 0.5,
+          "growth": 0.25,
+          "business": 0.35,
+          "currency": "USD"
+        },
+        "GB": {
+          "free": 0.35,
+          "growth": 0.2,
+          "business": 0.25,
+          "currency": "GBP"
+        },
+        "CA": {
+          "free": 0.5,
+          "growth": 0.25,
+          "business": 0.35,
+          "currency": "CAD"
+        },
+        "GH": {
+          "free": 3,
+          "growth": 2,
+          "business": 1.5,
+          "currency": "GHS"
+        },
+        "IN": {
+          "free": 10,
+          "growth": 5,
+          "business": 3,
+          "currency": "INR"
+        }
       },
-      "growth": {
-        "fee_percentage": 1.5,
-        "fee_flat": 50
-      },
-      "business": {
-        "fee_percentage": 1.5,
-        "fee_flat": 75
-      }
-    },
-    "trial_override": "all fees = 0 during trial"
+      "confidence": "medium",
+      "note": "Flat fee values shown are COUNTRY_PRICING fallbacks. Actual fee calculation uses platform_settings DB table which may have different values."
+    }
   },
   "trial_behavior": {
     "TRIAL_DAYS": 30,
-    "path": "lib/constants.ts",
+    "constants_path": "lib/constants.ts",
     "implementation": "isInTrial checks business.trial_ends_at > now()",
-    "migration_default": "7 days (legacy migration default; overridden programmatically at signup)"
+    "fee_override": "all platform fees = 0 during trial",
+    "migration_default_note": "Migration 002 default is 7 days (legacy); actual value set programmatically at signup using TRIAL_DAYS=30"
   },
   "usage_limits": {
+    "path": "lib/constants.ts",
     "TIER_TRANSACTION_LIMITS": {
-      "path": "lib/constants.ts",
       "free": {
         "bookings": 50,
-        "orders": 50
+        "orders": 50,
+        "tickets_per_event": 50,
+        "giving": 50,
+        "invoices": 20
       },
       "growth": {
         "bookings": 300,
-        "orders": 500
+        "orders": 500,
+        "tickets_per_event": 500,
+        "giving": 300,
+        "invoices": 100
       },
-      "business": "unlimited"
+      "business": "unlimited (all -1)"
     },
     "BROADCAST_LIMITS": {
-      "path": "lib/constants.ts",
       "free": {
-        "max": 0
+        "maxBroadcasts": 0,
+        "maxRecipients": 0
       },
       "growth": {
-        "max": 10,
-        "recipients": 500
+        "maxBroadcasts": 10,
+        "maxRecipients": 500
       },
       "business": "unlimited"
     },
     "CONVERSATION_LIMITS": {
-      "path": "lib/constants.ts",
       "free": 200,
       "growth": 1000,
       "business": 5000
@@ -112,24 +161,33 @@
       "stripe_subscription_id",
       "paystack_subscription_code"
     ],
-    "business_column": "businesses.subscription_tier"
+    "business_tier_column": "businesses.subscription_tier (enum: free|growth|business)",
+    "trial_column": "businesses.trial_ends_at"
   },
   "admin_overrides": {
     "table": "capability_overrides",
     "api_route": "app/api/admin/businesses/[id]/capabilities/route.ts",
-    "mechanism": "per-capability grant/revoke with audit logging"
+    "mechanism": "per-capability grant/revoke bypassing tier requirement, with audit logging"
   },
-  "upgrade_enforcement": {
-    "api_route": "app/api/subscriptions/cancel/route.ts",
+  "annual_billing": {
+    "discount_resolver": "getAnnualDiscountSync()",
+    "path": "lib/platformSettings.ts:250",
+    "default_discount": "20%",
+    "source": "platform_settings.annual_discount_percentage",
+    "billing_interval_constraint": "month|year (migration 215)"
+  },
+  "upgrade_downgrade": {
+    "cancel_route": "app/api/subscriptions/cancel/route.ts",
     "unresolved_questions": [
       "No explicit upgrade API route found — upgrade may be handled by payment provider callbacks",
       "Downgrade behavior unclear — does cancellation immediately drop to free or wait until period end?"
     ]
   },
   "confidence": "medium",
+  "evidence_method": "lib/constants.ts, lib/getPlatformFees.ts, lib/platformSettings.ts static analysis",
   "unresolved_questions": [
-    "Annual billing discount rules need deeper tracing (getAnnualDiscountSync)",
-    "Country-specific pricing from DB (countries table) not fully mapped",
+    "platform_settings DB values may differ from COUNTRY_PRICING/PRICING_TIERS hardcodes",
+    "Display pricing vs executed fee calculation path not fully reconciled",
     "Subscription status enum values not fully enumerated from migrations"
   ]
 }

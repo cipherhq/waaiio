@@ -9,8 +9,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree webhook route.ts enumeration"
+    "evidence_method": "git ls-tree webhook route.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "webhook:payments:paypal-webhook",
@@ -22,8 +30,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree webhook route.ts enumeration"
+    "evidence_method": "git ls-tree webhook route.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "webhook:payments:square-webhook",
@@ -35,8 +51,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree webhook route.ts enumeration"
+    "evidence_method": "git ls-tree webhook route.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "webhook:payments:stripe-webhook",
@@ -48,8 +72,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree webhook route.ts enumeration"
+    "evidence_method": "git ls-tree webhook route.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "webhook:payments:webhook",
@@ -61,8 +93,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree webhook route.ts enumeration"
+    "evidence_method": "git ls-tree webhook route.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "webhook:webhook:meta-cloud",
@@ -74,34 +114,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree webhook route.ts enumeration"
-  },
-  {
-    "id": "webhook:webhooks:flutterwave",
-    "name": "webhooks/flutterwave",
-    "type": "webhook",
-    "domain": "webhooks",
-    "paths": [
-      "app/api/webhooks/flutterwave/route.ts"
-    ],
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree webhook route.ts enumeration"
-  },
-  {
-    "id": "webhook:webhooks:paystack-transfer",
-    "name": "webhooks/paystack-transfer",
-    "type": "webhook",
-    "domain": "webhooks",
-    "paths": [
-      "app/api/webhooks/paystack-transfer/route.ts"
-    ],
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree webhook route.ts enumeration"
+    "evidence_method": "git ls-tree webhook route.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "webhook:webhooks",
@@ -113,8 +135,58 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree webhook route.ts enumeration"
+    "evidence_method": "git ls-tree webhook route.ts enumeration",
+    "unresolved_questions": []
+  },
+  {
+    "id": "webhook:webhooks:flutterwave",
+    "name": "webhooks/flutterwave",
+    "type": "webhook",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/webhooks/flutterwave/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree webhook route.ts enumeration",
+    "unresolved_questions": []
+  },
+  {
+    "id": "webhook:webhooks:paystack-transfer",
+    "name": "webhooks/paystack-transfer",
+    "type": "webhook",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/webhooks/paystack-transfer/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree webhook route.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "webhook:webhooks:stripe-transfer",
@@ -126,7 +198,15 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree webhook route.ts enumeration"
+    "evidence_method": "git ls-tree webhook route.ts enumeration",
+    "unresolved_questions": []
   }
 ]

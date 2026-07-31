@@ -1,52 +1,94 @@
 [
   {
-    "id": "app:main",
-    "name": "Main App (Next.js)",
-    "type": "application",
-    "paths": [
-      "app/",
-      "lib/",
-      "components/"
-    ],
-    "technology": "Next.js 14 + React 18 + TypeScript + Tailwind CSS",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high"
-  },
-  {
     "id": "app:admin",
     "name": "Admin Panel (Vite)",
     "type": "application",
+    "domain": "applications",
     "paths": [
       "admin/"
     ],
-    "technology": "Vite + React 18 + TypeScript",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
-    "confidence": "high"
+    "registered_or_reachable": "yes",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "directory inspection",
+    "unresolved_questions": [],
+    "technology": "Vite + React 18 + TypeScript"
   },
   {
     "id": "app:bot",
     "name": "WhatsApp Bot Service",
     "type": "service",
+    "domain": "applications",
     "paths": [
       "lib/bot/"
     ],
-    "technology": "Node.js + Meta Cloud API",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
-    "confidence": "high"
+    "registered_or_reachable": "yes",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "directory inspection",
+    "unresolved_questions": [],
+    "technology": "Node.js + Meta Cloud API"
   },
   {
     "id": "app:edge-functions",
     "name": "Supabase Edge Functions",
     "type": "service",
+    "domain": "applications",
     "paths": [
       "supabase/functions/"
     ],
-    "technology": "Deno / Supabase Edge Runtime",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
-    "confidence": "high"
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "directory inspection",
+    "unresolved_questions": [
+      "Deployment status of individual Edge Functions not verified"
+    ],
+    "technology": "Deno / Supabase Edge Runtime"
+  },
+  {
+    "id": "app:main",
+    "name": "Main App (Next.js)",
+    "type": "application",
+    "domain": "applications",
+    "paths": [
+      "app/",
+      "lib/",
+      "components/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "yes",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "directory inspection",
+    "unresolved_questions": [],
+    "technology": "Next.js 14 + React 18 + TypeScript + Tailwind CSS"
   }
 ]

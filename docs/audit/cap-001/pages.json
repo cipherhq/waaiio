@@ -7,11 +7,19 @@
     "paths": [
       "admin/src/pages/AIMarketplace.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:AISetupLog",
@@ -21,11 +29,19 @@
     "paths": [
       "admin/src/pages/AISetupLog.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:AIUsage",
@@ -35,11 +51,19 @@
     "paths": [
       "admin/src/pages/AIUsage.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:AdminPermissions",
@@ -49,11 +73,19 @@
     "paths": [
       "admin/src/pages/AdminPermissions.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:AdminTeam",
@@ -63,11 +95,19 @@
     "paths": [
       "admin/src/pages/AdminTeam.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Alerts",
@@ -77,11 +117,19 @@
     "paths": [
       "admin/src/pages/Alerts.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:AuditLog",
@@ -91,11 +139,19 @@
     "paths": [
       "admin/src/pages/AuditLog.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Bookings",
@@ -105,11 +161,19 @@
     "paths": [
       "admin/src/pages/Bookings.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:BotKeywords",
@@ -119,11 +183,19 @@
     "paths": [
       "admin/src/pages/BotKeywords.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:BotManagement",
@@ -133,11 +205,19 @@
     "paths": [
       "admin/src/pages/BotManagement.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Broadcasts",
@@ -147,11 +227,19 @@
     "paths": [
       "admin/src/pages/Broadcasts.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Businesses",
@@ -161,11 +249,19 @@
     "paths": [
       "admin/src/pages/Businesses.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Campaigns",
@@ -175,11 +271,19 @@
     "paths": [
       "admin/src/pages/Campaigns.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:CategoryTemplates",
@@ -189,11 +293,19 @@
     "paths": [
       "admin/src/pages/CategoryTemplates.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:ChatHistory",
@@ -203,11 +315,19 @@
     "paths": [
       "admin/src/pages/ChatHistory.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:ContentManagement",
@@ -217,11 +337,19 @@
     "paths": [
       "admin/src/pages/ContentManagement.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:ConversationUsage",
@@ -231,11 +359,19 @@
     "paths": [
       "admin/src/pages/ConversationUsage.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Countries",
@@ -245,11 +381,19 @@
     "paths": [
       "admin/src/pages/Countries.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Dashboard",
@@ -259,11 +403,19 @@
     "paths": [
       "admin/src/pages/Dashboard.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:DemoRequests",
@@ -273,11 +425,19 @@
     "paths": [
       "admin/src/pages/DemoRequests.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:EngagementActivity",
@@ -287,11 +447,19 @@
     "paths": [
       "admin/src/pages/EngagementActivity.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Events",
@@ -301,11 +469,19 @@
     "paths": [
       "admin/src/pages/Events.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:FeeInvoices",
@@ -315,11 +491,19 @@
     "paths": [
       "admin/src/pages/FeeInvoices.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Finance",
@@ -329,11 +513,19 @@
     "paths": [
       "admin/src/pages/Finance.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Giving",
@@ -343,11 +535,19 @@
     "paths": [
       "admin/src/pages/Giving.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:ImpersonationAudit",
@@ -357,11 +557,19 @@
     "paths": [
       "admin/src/pages/ImpersonationAudit.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:ImpersonationMode",
@@ -371,11 +579,19 @@
     "paths": [
       "admin/src/pages/ImpersonationMode.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:LLMClassifications",
@@ -385,11 +601,19 @@
     "paths": [
       "admin/src/pages/LLMClassifications.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Login",
@@ -399,11 +623,19 @@
     "paths": [
       "admin/src/pages/Login.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Notifications",
@@ -413,11 +645,19 @@
     "paths": [
       "admin/src/pages/Notifications.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Orders",
@@ -427,11 +667,19 @@
     "paths": [
       "admin/src/pages/Orders.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Payments",
@@ -441,11 +689,19 @@
     "paths": [
       "admin/src/pages/Payments.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Payouts",
@@ -455,11 +711,19 @@
     "paths": [
       "admin/src/pages/Payouts.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:PendingTransfers",
@@ -469,11 +733,19 @@
     "paths": [
       "admin/src/pages/PendingTransfers.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:PlatformSettings",
@@ -483,11 +755,19 @@
     "paths": [
       "admin/src/pages/PlatformSettings.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:QueueManagement",
@@ -497,11 +777,19 @@
     "paths": [
       "admin/src/pages/QueueManagement.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:RecurringPayments",
@@ -511,11 +799,19 @@
     "paths": [
       "admin/src/pages/RecurringPayments.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Reports",
@@ -525,11 +821,19 @@
     "paths": [
       "admin/src/pages/Reports.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:ResellerFinancials",
@@ -539,11 +843,19 @@
     "paths": [
       "admin/src/pages/ResellerFinancials.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:ResellerPayouts",
@@ -553,11 +865,19 @@
     "paths": [
       "admin/src/pages/ResellerPayouts.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Resellers",
@@ -567,11 +887,19 @@
     "paths": [
       "admin/src/pages/Resellers.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Subscriptions",
@@ -581,11 +909,19 @@
     "paths": [
       "admin/src/pages/Subscriptions.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Support",
@@ -595,11 +931,19 @@
     "paths": [
       "admin/src/pages/Support.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Surveys",
@@ -609,11 +953,19 @@
     "paths": [
       "admin/src/pages/Surveys.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:SystemHealth",
@@ -623,11 +975,19 @@
     "paths": [
       "admin/src/pages/SystemHealth.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Tickets",
@@ -637,11 +997,19 @@
     "paths": [
       "admin/src/pages/Tickets.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Users",
@@ -651,11 +1019,19 @@
     "paths": [
       "admin/src/pages/Users.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:Verification",
@@ -665,11 +1041,19 @@
     "paths": [
       "admin/src/pages/Verification.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:WhatsAppChannels",
@@ -679,11 +1063,19 @@
     "paths": [
       "admin/src/pages/WhatsAppChannels.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:WhatsAppCustomers",
@@ -693,11 +1085,19 @@
     "paths": [
       "admin/src/pages/WhatsAppCustomers.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:admin:WhatsAppTemplates",
@@ -707,11 +1107,19 @@
     "paths": [
       "admin/src/pages/WhatsAppTemplates.tsx"
     ],
-    "persona": "platform_admin",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "platform_admin"
   },
   {
     "id": "page:auth:forgot-password",
@@ -721,11 +1129,19 @@
     "paths": [
       "app/(auth)/forgot-password/page.tsx"
     ],
-    "persona": "public",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
   },
   {
     "id": "page:auth:login",
@@ -735,11 +1151,19 @@
     "paths": [
       "app/(auth)/login/page.tsx"
     ],
-    "persona": "public",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
   },
   {
     "id": "page:auth:reset-password",
@@ -749,11 +1173,19 @@
     "paths": [
       "app/(auth)/reset-password/page.tsx"
     ],
-    "persona": "public",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
   },
   {
     "id": "page:auth:signup",
@@ -763,291 +1195,19 @@
     "paths": [
       "app/(auth)/signup/page.tsx"
     ],
-    "persona": "public",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:about",
-    "name": "about",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/about/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:acceptable-use",
-    "name": "acceptable-use",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/acceptable-use/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:aml-kyc",
-    "name": "aml-kyc",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/aml-kyc/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:blog/[slug]",
-    "name": "blog/[slug]",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/blog/[slug]/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:blog",
-    "name": "blog",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/blog/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:contact",
-    "name": "contact",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/contact/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:cookies",
-    "name": "cookies",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/cookies/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:directory",
-    "name": "directory",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/directory/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:dmca",
-    "name": "dmca",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/dmca/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:do-not-sell",
-    "name": "do-not-sell",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/do-not-sell/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:dpa",
-    "name": "dpa",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/dpa/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:features",
-    "name": "features",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/features/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:help",
-    "name": "help",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/help/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:page.tsx",
-    "name": "page.tsx",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:pricing",
-    "name": "pricing",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/pricing/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:privacy",
-    "name": "privacy",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/privacy/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:refund-policy",
-    "name": "refund-policy",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/refund-policy/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:reseller-setup",
-    "name": "reseller-setup",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/reseller-setup/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:terms",
-    "name": "terms",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/terms/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:marketing:white-label",
-    "name": "white-label",
-    "type": "page",
-    "domain": "marketing",
-    "paths": [
-      "app/(marketing)/white-label/page.tsx"
-    ],
-    "persona": "public",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
   },
   {
     "id": "page:dashboard:activity",
@@ -1057,11 +1217,19 @@
     "paths": [
       "app/dashboard/activity/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:ai-activity",
@@ -1071,11 +1239,19 @@
     "paths": [
       "app/dashboard/ai-activity/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:ai-settings",
@@ -1085,11 +1261,19 @@
     "paths": [
       "app/dashboard/ai-settings/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:alerts",
@@ -1099,25 +1283,19 @@
     "paths": [
       "app/dashboard/alerts/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:analytics/dropoffs",
-    "name": "analytics/dropoffs",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/analytics/dropoffs/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:analytics",
@@ -1127,11 +1305,41 @@
     "paths": [
       "app/dashboard/analytics/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:analytics/dropoffs",
+    "name": "analytics/dropoffs",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/analytics/dropoffs/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:appointments-management",
@@ -1141,11 +1349,19 @@
     "paths": [
       "app/dashboard/appointments-management/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:attendance",
@@ -1155,11 +1371,19 @@
     "paths": [
       "app/dashboard/attendance/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:billing",
@@ -1169,11 +1393,19 @@
     "paths": [
       "app/dashboard/billing/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:broadcasts",
@@ -1183,11 +1415,19 @@
     "paths": [
       "app/dashboard/broadcasts/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:calendar",
@@ -1197,11 +1437,19 @@
     "paths": [
       "app/dashboard/calendar/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:campaigns",
@@ -1211,11 +1459,19 @@
     "paths": [
       "app/dashboard/campaigns/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:capabilities",
@@ -1225,11 +1481,19 @@
     "paths": [
       "app/dashboard/capabilities/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:chat",
@@ -1239,11 +1503,19 @@
     "paths": [
       "app/dashboard/chat/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:contracts",
@@ -1253,11 +1525,19 @@
     "paths": [
       "app/dashboard/contracts/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:customers",
@@ -1267,11 +1547,19 @@
     "paths": [
       "app/dashboard/customers/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:discovery",
@@ -1281,39 +1569,19 @@
     "paths": [
       "app/dashboard/discovery/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:events/checkin",
-    "name": "events/checkin",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/events/checkin/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:events/invites",
-    "name": "events/invites",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/events/invites/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:events",
@@ -1323,11 +1591,63 @@
     "paths": [
       "app/dashboard/events/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:events/checkin",
+    "name": "events/checkin",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/events/checkin/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:events/invites",
+    "name": "events/invites",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/events/invites/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:events/scan",
@@ -1337,11 +1657,19 @@
     "paths": [
       "app/dashboard/events/scan/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:faq",
@@ -1351,11 +1679,19 @@
     "paths": [
       "app/dashboard/faq/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:feedback",
@@ -1365,11 +1701,19 @@
     "paths": [
       "app/dashboard/feedback/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:financials",
@@ -1379,11 +1723,19 @@
     "paths": [
       "app/dashboard/financials/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:flow-editor",
@@ -1393,11 +1745,19 @@
     "paths": [
       "app/dashboard/flow-editor/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:forms",
@@ -1407,11 +1767,19 @@
     "paths": [
       "app/dashboard/forms/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:giving",
@@ -1421,53 +1789,19 @@
     "paths": [
       "app/dashboard/giving/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:growth/campaigns",
-    "name": "growth/campaigns",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/growth/campaigns/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:growth/contacts",
-    "name": "growth/contacts",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/growth/contacts/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:growth/import",
-    "name": "growth/import",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/growth/import/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:growth",
@@ -1477,11 +1811,85 @@
     "paths": [
       "app/dashboard/growth/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:growth/campaigns",
+    "name": "growth/campaigns",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/growth/campaigns/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:growth/contacts",
+    "name": "growth/contacts",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/growth/contacts/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:growth/import",
+    "name": "growth/import",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/growth/import/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:guests",
@@ -1491,11 +1899,19 @@
     "paths": [
       "app/dashboard/guests/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:help",
@@ -1505,11 +1921,19 @@
     "paths": [
       "app/dashboard/help/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:impersonate",
@@ -1519,11 +1943,19 @@
     "paths": [
       "app/dashboard/impersonate/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:insights",
@@ -1533,11 +1965,19 @@
     "paths": [
       "app/dashboard/insights/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:integrations",
@@ -1547,11 +1987,19 @@
     "paths": [
       "app/dashboard/integrations/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:invoices",
@@ -1561,11 +2009,19 @@
     "paths": [
       "app/dashboard/invoices/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:keyword-campaigns",
@@ -1575,11 +2031,19 @@
     "paths": [
       "app/dashboard/keyword-campaigns/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:keywords",
@@ -1589,11 +2053,19 @@
     "paths": [
       "app/dashboard/keywords/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:locations",
@@ -1603,11 +2075,19 @@
     "paths": [
       "app/dashboard/locations/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:loyalty",
@@ -1617,11 +2097,19 @@
     "paths": [
       "app/dashboard/loyalty/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:membership",
@@ -1631,11 +2119,19 @@
     "paths": [
       "app/dashboard/membership/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:notifications",
@@ -1645,11 +2141,19 @@
     "paths": [
       "app/dashboard/notifications/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:orders",
@@ -1659,11 +2163,19 @@
     "paths": [
       "app/dashboard/orders/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:orders/quotes",
@@ -1673,11 +2185,19 @@
     "paths": [
       "app/dashboard/orders/quotes/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:packages",
@@ -1687,11 +2207,19 @@
     "paths": [
       "app/dashboard/packages/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:page.tsx",
@@ -1701,11 +2229,19 @@
     "paths": [
       "app/dashboard/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:pages",
@@ -1715,11 +2251,19 @@
     "paths": [
       "app/dashboard/pages/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:parties",
@@ -1729,11 +2273,19 @@
     "paths": [
       "app/dashboard/parties/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:payment-request",
@@ -1743,11 +2295,19 @@
     "paths": [
       "app/dashboard/payment-request/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:payments",
@@ -1757,11 +2317,19 @@
     "paths": [
       "app/dashboard/payments/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:payments/pending",
@@ -1771,25 +2339,19 @@
     "paths": [
       "app/dashboard/payments/pending/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:payouts/history",
-    "name": "payouts/history",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/payouts/history/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:payouts",
@@ -1799,11 +2361,41 @@
     "paths": [
       "app/dashboard/payouts/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:payouts/history",
+    "name": "payouts/history",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/payouts/history/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:polls",
@@ -1813,11 +2405,19 @@
     "paths": [
       "app/dashboard/polls/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:products",
@@ -1827,11 +2427,19 @@
     "paths": [
       "app/dashboard/products/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:products/volume-discounts",
@@ -1841,11 +2449,19 @@
     "paths": [
       "app/dashboard/products/volume-discounts/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:promo-codes",
@@ -1855,39 +2471,19 @@
     "paths": [
       "app/dashboard/promo-codes/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:properties/[id]",
-    "name": "properties/[id]",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/properties/[id]/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:properties/checkin",
-    "name": "properties/checkin",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/properties/checkin/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:properties",
@@ -1897,11 +2493,63 @@
     "paths": [
       "app/dashboard/properties/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:properties/[id]",
+    "name": "properties/[id]",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/properties/[id]/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:properties/checkin",
+    "name": "properties/checkin",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/properties/checkin/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:qr-code",
@@ -1911,11 +2559,19 @@
     "paths": [
       "app/dashboard/qr-code/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:queue",
@@ -1925,11 +2581,19 @@
     "paths": [
       "app/dashboard/queue/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:recurring",
@@ -1939,11 +2603,19 @@
     "paths": [
       "app/dashboard/recurring/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:referrals",
@@ -1953,11 +2625,19 @@
     "paths": [
       "app/dashboard/referrals/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:reports",
@@ -1967,67 +2647,19 @@
     "paths": [
       "app/dashboard/reports/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:reseller/accounts",
-    "name": "reseller/accounts",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/reseller/accounts/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:reseller/analytics",
-    "name": "reseller/analytics",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/reseller/analytics/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:reseller/billing",
-    "name": "reseller/billing",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/reseller/billing/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:reseller/branding",
-    "name": "reseller/branding",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/reseller/branding/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:reseller",
@@ -2037,11 +2669,107 @@
     "paths": [
       "app/dashboard/reseller/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:reseller/accounts",
+    "name": "reseller/accounts",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/reseller/accounts/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:reseller/analytics",
+    "name": "reseller/analytics",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/reseller/analytics/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:reseller/billing",
+    "name": "reseller/billing",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/reseller/billing/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:reseller/branding",
+    "name": "reseller/branding",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/reseller/branding/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:reseller/payouts",
@@ -2051,11 +2779,19 @@
     "paths": [
       "app/dashboard/reseller/payouts/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:reseller/subscription",
@@ -2065,11 +2801,19 @@
     "paths": [
       "app/dashboard/reseller/subscription/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:reservations",
@@ -2079,11 +2823,19 @@
     "paths": [
       "app/dashboard/reservations/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:rules",
@@ -2093,11 +2845,19 @@
     "paths": [
       "app/dashboard/rules/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:scan-to-pay",
@@ -2107,11 +2867,19 @@
     "paths": [
       "app/dashboard/scan-to-pay/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:sequences",
@@ -2121,11 +2889,19 @@
     "paths": [
       "app/dashboard/sequences/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:services",
@@ -2135,11 +2911,19 @@
     "paths": [
       "app/dashboard/services/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:settings",
@@ -2149,11 +2933,19 @@
     "paths": [
       "app/dashboard/settings/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:setup-assistant",
@@ -2163,11 +2955,19 @@
     "paths": [
       "app/dashboard/setup-assistant/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:staff",
@@ -2177,11 +2977,19 @@
     "paths": [
       "app/dashboard/staff/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:support",
@@ -2191,11 +2999,19 @@
     "paths": [
       "app/dashboard/support/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:surveys",
@@ -2205,11 +3021,19 @@
     "paths": [
       "app/dashboard/surveys/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:team",
@@ -2219,11 +3043,19 @@
     "paths": [
       "app/dashboard/team/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:tickets",
@@ -2233,11 +3065,19 @@
     "paths": [
       "app/dashboard/tickets/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:verification",
@@ -2247,11 +3087,19 @@
     "paths": [
       "app/dashboard/verification/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:waitlist",
@@ -2261,11 +3109,19 @@
     "paths": [
       "app/dashboard/waitlist/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:waivers",
@@ -2275,39 +3131,19 @@
     "paths": [
       "app/dashboard/waivers/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:whatsapp-usage",
-    "name": "whatsapp-usage",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/whatsapp-usage/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
-  },
-  {
-    "id": "page:dashboard:whatsapp/connect",
-    "name": "whatsapp/connect",
-    "type": "page",
-    "domain": "dashboard",
-    "paths": [
-      "app/dashboard/whatsapp/connect/page.tsx"
-    ],
-    "persona": "business_owner",
-    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
-    "structurally_present": true,
-    "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:whatsapp",
@@ -2317,11 +3153,63 @@
     "paths": [
       "app/dashboard/whatsapp/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:whatsapp-usage",
+    "name": "whatsapp-usage",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/whatsapp-usage/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:dashboard:whatsapp/connect",
+    "name": "whatsapp/connect",
+    "type": "page",
+    "domain": "dashboard",
+    "paths": [
+      "app/dashboard/whatsapp/connect/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   },
   {
     "id": "page:dashboard:whatsapp/templates",
@@ -2331,11 +3219,459 @@
     "paths": [
       "app/dashboard/whatsapp/templates/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
+  },
+  {
+    "id": "page:marketing:about",
+    "name": "about",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/about/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:acceptable-use",
+    "name": "acceptable-use",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/acceptable-use/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:aml-kyc",
+    "name": "aml-kyc",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/aml-kyc/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:blog",
+    "name": "blog",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/blog/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:blog/[slug]",
+    "name": "blog/[slug]",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/blog/[slug]/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:contact",
+    "name": "contact",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/contact/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:cookies",
+    "name": "cookies",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/cookies/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:directory",
+    "name": "directory",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/directory/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:dmca",
+    "name": "dmca",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/dmca/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:do-not-sell",
+    "name": "do-not-sell",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/do-not-sell/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:dpa",
+    "name": "dpa",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/dpa/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:features",
+    "name": "features",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/features/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:help",
+    "name": "help",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/help/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:page.tsx",
+    "name": "page.tsx",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:pricing",
+    "name": "pricing",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/pricing/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:privacy",
+    "name": "privacy",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/privacy/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:refund-policy",
+    "name": "refund-policy",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/refund-policy/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:reseller-setup",
+    "name": "reseller-setup",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/reseller-setup/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:terms",
+    "name": "terms",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/terms/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
+  },
+  {
+    "id": "page:marketing:white-label",
+    "name": "white-label",
+    "type": "page",
+    "domain": "marketing",
+    "paths": [
+      "app/(marketing)/white-label/page.tsx"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "public"
   },
   {
     "id": "page:onboarding:get-started",
@@ -2345,10 +3681,18 @@
     "paths": [
       "app/get-started/page.tsx"
     ],
-    "persona": "business_owner",
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree page.tsx/tsx enumeration"
+    "evidence_method": "git ls-tree page.tsx enumeration",
+    "unresolved_questions": [],
+    "persona": "business_owner"
   }
 ]

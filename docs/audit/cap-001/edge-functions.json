@@ -9,8 +9,18 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   },
   {
     "id": "edge:birthday-campaign",
@@ -22,8 +32,18 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   },
   {
     "id": "edge:booking-reminders",
@@ -35,8 +55,18 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   },
   {
     "id": "edge:chat-timeout",
@@ -48,8 +78,18 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   },
   {
     "id": "edge:contract-reminders",
@@ -61,8 +101,18 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   },
   {
     "id": "edge:customer-reengagement",
@@ -74,8 +124,18 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   },
   {
     "id": "edge:daily-summary",
@@ -87,8 +147,18 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   },
   {
     "id": "edge:generate-sign-link",
@@ -100,8 +170,18 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   },
   {
     "id": "edge:low-stock-alerts",
@@ -113,8 +193,18 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   },
   {
     "id": "edge:noshow-reschedule",
@@ -126,8 +216,18 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   },
   {
     "id": "edge:process-sequences",
@@ -139,8 +239,18 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   },
   {
     "id": "edge:recurring-reminder",
@@ -152,8 +262,18 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   },
   {
     "id": "edge:session-cleanup",
@@ -165,8 +285,18 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   },
   {
     "id": "edge:waitlist-expiration",
@@ -178,7 +308,17 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "unknown",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration",
+    "unresolved_questions": [
+      "Deployment and scheduling status not verified without production access"
+    ]
   }
 ]

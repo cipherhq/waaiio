@@ -1,36 +1,49 @@
 {
   "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+  "schema_type": "structured_summary",
   "migration_file_count": 242,
   "counting_rules": {
-    "method": "regex scanning of CREATE/DROP statements across all migration SQL files",
-    "limitation": "raw declaration counts; does not account for cumulative drops, replacements, or renames without a local schema build",
-    "confidence": "medium — creation counts are accurate, final live-object counts require local Supabase build"
+    "parser": "Python regex scanning of CREATE/DROP statements across all migration SQL files",
+    "limitation": "Raw declaration counts. Does not account for cumulative replacements (CREATE OR REPLACE overwrites without DROP). A local Supabase schema build is required to establish definitive final-state counts.",
+    "generated_types_note": "lib/supabase/database.types.ts does not exist in this repository. No generated type definitions are available for cross-reference."
   },
   "tables": {
-    "raw_create_table_names": 139,
-    "raw_drop_table_names": 0,
-    "expected_final_tables": 139,
+    "raw_create_table_occurrences": 139,
+    "unique_declared_table_names": 139,
+    "raw_drop_table_occurrences": 0,
     "dropped_table_names": [],
+    "expected_final_tables": null,
+    "note": "No DROP TABLE statements found. All 139 declared tables are expected to exist, but this is not proven without a schema build.",
     "confidence": "medium"
   },
   "rls_policies": {
-    "raw_create_policy_count": 471,
-    "note": "includes policies later dropped and replaced; final count requires cumulative analysis",
+    "raw_create_policy_occurrences": 471,
+    "raw_drop_policy_occurrences": 74,
+    "unique_policy_names": null,
+    "expected_final_policies": null,
+    "note": "74 DROP POLICY statements exist. Many policies are dropped and replaced. Final count requires cumulative analysis.",
     "confidence": "low"
   },
   "functions_rpcs": {
-    "raw_create_function_count": 83,
-    "note": "includes CREATE OR REPLACE which may be redefinitions; unique function count requires signature analysis",
+    "raw_create_function_occurrences": 83,
+    "raw_drop_function_occurrences": 5,
+    "unique_function_names": null,
+    "expected_final_functions": null,
+    "note": "CREATE OR REPLACE counts as a creation. Same function may be redefined multiple times. Final unique function count requires signature analysis.",
     "confidence": "low"
   },
   "triggers": {
-    "raw_create_trigger_count": 69,
-    "note": "includes triggers later dropped and recreated",
+    "raw_create_trigger_occurrences": 69,
+    "raw_drop_trigger_occurrences": 16,
+    "expected_final_triggers": null,
+    "note": "16 DROP TRIGGER statements exist. Some triggers are dropped and recreated. Discovery report said 66 but inventory regex found 69; difference is due to improved regex including CREATE OR REPLACE TRIGGER.",
     "confidence": "low"
   },
   "indexes": {
-    "raw_create_index_count": 385,
-    "note": "includes indexes later dropped; also IF NOT EXISTS may indicate idempotent reruns",
+    "raw_create_index_occurrences": 385,
+    "raw_drop_index_occurrences": 4,
+    "expected_final_indexes": null,
+    "note": "4 DROP INDEX statements exist. Some indexes are dropped. Discovery report said 401 but inventory regex found 385; minor regex sensitivity differences.",
     "confidence": "low"
   }
 }

@@ -8,7 +8,7 @@ Structural inventory of the Waaiio repository for the Product Completeness and C
 
 - **Commit:** `2e659dcd131ad06eb0b8f39adc8735bf337056ea`
 - **Branch:** `main` (post-PR #82 merge, Issue #53 closed)
-- **Generated:** 2026-07-31
+- **Generated:** 2026-07-31 (corrected 2026-08-01)
 
 ## Scope
 
@@ -41,8 +41,9 @@ Every count states its exact method:
 - **Bot flows:** `.flow.ts` files under `lib/bot/flows/`. The primary `FlowType` registry contains 7 entries; the `EXTENDED_REGISTRY` contains 19 entries (including pseudo-flows). This inventory counts 18 flow _files_.
 - **Payment providers:** Adapter files registered in `lib/payments/factory.ts`. Five adapters are registered. Registration does not imply production readiness — Square and PayPal have unresolved questions.
 - **Capabilities:** Members of the `CapabilityId` union type in `lib/capabilities/types.ts`. 31 members exist. CLAUDE.md documentation lists 25 by name.
-- **Database objects:** Raw `CREATE TABLE/POLICY/FUNCTION/TRIGGER/INDEX` statement counts from migration SQL files via regex. These are **declaration counts, not final live-object counts**. Policies, functions, and triggers may be dropped or replaced by later migrations. A local Supabase schema build is required to establish definitive final counts.
+- **Database objects:** Raw `CREATE` and `DROP` statement counts from migration SQL files via Python regex. These are **declaration counts, not final live-object counts**. For each object type, both creation and drop occurrences are reported. `CREATE OR REPLACE FUNCTION` counts as a creation (the same function may be redefined multiple times). Final live counts require either cumulative migration analysis or a local Supabase schema build.
 - **Migration files:** 242 SQL files under `supabase/migrations/`.
+- **Generated types:** `lib/supabase/database.types.ts` does **not** exist in this repository. No generated Supabase type definitions are available for cross-reference.
 
 ## Key Distinctions
 
@@ -59,18 +60,30 @@ Functional completeness tracing is deferred to Phase 2 (deep-audit groups).
 
 ### Raw migration declarations vs. cumulative final schema
 
-Migration SQL files are append-only. A `CREATE POLICY` in migration 149 may be `DROP`ped in migration 293. The raw counts in `database-declarations.json` reflect:
+Migration SQL files are append-only. A `CREATE POLICY` in migration 149 may be `DROP`ped in migration 293. `database-declarations.json` reports both creation and drop counts for each object type:
 
-- How many `CREATE` statements exist across all migration files
-- How many unique table names were declared
-- How many `DROP TABLE` statements exist
+- **Tables:** 139 unique names created, 0 dropped. High confidence that 139 tables exist.
+- **RLS policies:** 471 created, 74 dropped. Final count unknown — `expected_final_policies: null`.
+- **Functions/RPCs:** 83 created (including `CREATE OR REPLACE`), 5 dropped. Final count unknown.
+- **Triggers:** 69 created, 16 dropped. Final count unknown.
+- **Indexes:** 385 created, 4 dropped. Final count unknown.
 
-They do **not** reflect the final production schema state. Establishing that requires either:
+The `confidence` field is `"low"` for policies, functions, triggers and indexes. Table count confidence is `"medium"` (no drops found, but schema build not performed).
 
-- Cumulative migration analysis (tracing every DROP/ALTER/REPLACE)
-- A local `supabase db reset` to build the final schema
+The initial discovery report cited different trigger (66) and index (401) counts. The inventory regex is the corrected method — the difference is due to improved `CREATE OR REPLACE TRIGGER` matching and minor regex sensitivity.
 
-The `confidence` field is set to `"low"` for RLS policies, functions, triggers, and indexes because of this limitation.
+### Pricing resolution paths
+
+Display pricing and fee calculation use **different resolution paths**:
+
+- **Display pricing** (`getPricingTiers`): resolves from DB `countries.pricing` → `COUNTRY_PRICING` fallback → `PRICING_TIERS` base. Used on pricing pages and billing dashboards.
+- **Fee calculation** (`getPlatformFees`): resolves from `platform_settings` DB table (admin-configurable, 60s cache) → per-business overrides → `PRICING_TIERS` fallback. Used for actual transaction fee computation.
+
+Marketing-page pricing may not equal the amount used during payment, ledger, or payout calculations. This is documented in `plans-and-pricing.json` and remains an unresolved question until those paths are traced in the deep audit.
+
+### Generated database types
+
+`lib/supabase/database.types.ts` does **not** exist in this repository. References to generated Supabase types in documentation or code comments cannot be cross-referenced against a committed types file.
 
 ### Capability count correction
 
@@ -117,24 +130,24 @@ These are inventoried separately in `feature-controls.json`.
 
 | File | Contents | Record Type |
 |------|----------|-------------|
-| `manifest.json` | Inventory metadata and per-file record counts | structured |
-| `applications.json` | 4 applications/services | list |
-| `pages.json` | 168 pages (92 dashboard, 20 marketing, 4 auth, 1 onboarding, 51 admin) | list |
-| `api-routes.json` | 245 API route files | list |
-| `capabilities.json` | 31 capabilities with tier requirements | list |
-| `services.json` | 18 bot flow files | list |
-| `payment-providers.json` | 5 payment provider adapters | list |
-| `webhooks.json` | 10 webhook route files | list |
-| `scheduled-jobs.json` | 27 cron job routes | list |
-| `edge-functions.json` | 14 Supabase Edge Functions | list |
-| `notifications.json` | Email (28 templates) + WhatsApp notification system | structured |
-| `analytics-and-monitoring.json` | PostHog + Sentry configuration | structured |
-| `database-declarations.json` | Migration-derived schema declaration counts | structured |
-| `tests.json` | 165 test files | list |
-| `plans-and-pricing.json` | 3 subscription tiers, pricing, fees, limits | structured |
-| `roles-and-permissions.json` | 4 platform admin + 6 business roles | structured |
-| `feature-controls.json` | 5 control system types | structured |
-| `documentation-discrepancies.json` | 7 CLAUDE.md vs. repository discrepancies | list |
+| `manifest.json` | Inventory metadata and per-file record counts | structured_summary |
+| `applications.json` | 4 applications/services | record_list |
+| `pages.json` | 168 pages (92 dashboard, 20 marketing, 4 auth, 1 onboarding, 51 admin) | record_list |
+| `api-routes.json` | 245 API route files | record_list |
+| `capabilities.json` | 31 capabilities with tier requirements | record_list |
+| `services.json` | 18 bot flow files | record_list |
+| `payment-providers.json` | 5 payment provider adapters | record_list |
+| `webhooks.json` | 10 webhook route files | record_list |
+| `scheduled-jobs.json` | 27 cron job routes | record_list |
+| `edge-functions.json` | 14 Supabase Edge Functions | record_list |
+| `notifications.json` | Email (28 templates) + WhatsApp notification system | structured_summary |
+| `analytics-and-monitoring.json` | PostHog + Sentry configuration | structured_summary |
+| `database-declarations.json` | Migration-derived schema declaration counts (with creation AND drop counts) | structured_summary |
+| `tests.json` | 165 test files | record_list |
+| `plans-and-pricing.json` | 3 subscription tiers, dual pricing/fee resolution paths, limits | structured_summary |
+| `roles-and-permissions.json` | 4 platform admin + 6 business roles (enum verified unchanged) | structured_summary |
+| `feature-controls.json` | 5 control system types (capability, plan, override, env, PostHog) | structured_summary |
+| `documentation-discrepancies.json` | 8 documentation vs. repository discrepancies | record_list |
 
 ## Relation to Later Work
 

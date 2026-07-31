@@ -1,5 +1,6 @@
 {
   "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+  "schema_type": "structured_summary",
   "email": {
     "provider": "Resend",
     "client_path": "lib/email/client.ts",
@@ -44,5 +45,6 @@
     "template_sender": "lib/channels/send-with-template.ts",
     "fallback": "lib/channels/send-or-email.ts"
   },
-  "confidence": "high"
+  "confidence": "high",
+  "evidence_method": "lib/email/templates.ts export enumeration"
 }

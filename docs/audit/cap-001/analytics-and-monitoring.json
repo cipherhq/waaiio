@@ -1,5 +1,6 @@
 {
   "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+  "schema_type": "structured_summary",
   "posthog": {
     "client": "lib/posthog/client.ts",
     "server": "lib/posthog/server.ts",
@@ -14,5 +15,6 @@
     "traces_sample_rate": 0.1,
     "env_dsn": "NEXT_PUBLIC_SENTRY_DSN"
   },
-  "confidence": "high"
+  "confidence": "high",
+  "evidence_method": "Config file inspection"
 }

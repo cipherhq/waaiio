@@ -9,8 +9,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:auth:login-1.test.ts",
@@ -22,8 +30,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:auth:login-2.test.ts",
@@ -35,8 +51,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:auth:login-3.test.ts",
@@ -48,8 +72,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:auth:login-4.test.ts",
@@ -61,8 +93,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:auth:signup-redirect.test.ts",
@@ -74,8 +114,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:analytics-insights.test.ts",
@@ -87,8 +135,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:chat.test.ts",
@@ -100,8 +156,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:customers.test.ts",
@@ -113,8 +177,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:invoices-1.test.ts",
@@ -126,8 +198,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:invoices-2.test.ts",
@@ -139,8 +219,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:login-and-session.test.ts",
@@ -152,8 +240,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:logout.test.ts",
@@ -165,8 +261,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:marketing-features-1.test.ts",
@@ -178,8 +282,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:marketing-features-2.test.ts",
@@ -191,8 +303,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:navigation-1.test.ts",
@@ -204,8 +324,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:navigation-2.test.ts",
@@ -217,8 +345,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:navigation-3.test.ts",
@@ -230,8 +366,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:navigation-4.test.ts",
@@ -243,8 +387,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:orders-products.test.ts",
@@ -256,8 +408,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:overview-1.test.ts",
@@ -269,8 +429,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:overview-2.test.ts",
@@ -282,8 +450,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:payouts-financials.test.ts",
@@ -295,8 +471,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:reservations.test.ts",
@@ -308,8 +492,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:services.test.ts",
@@ -321,8 +513,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:settings-1.test.ts",
@@ -334,8 +534,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:dashboard:settings-2.test.ts",
@@ -347,8 +555,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:error-pages-1.test.ts",
@@ -360,8 +576,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:error-pages-2.test.ts",
@@ -373,8 +597,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:homepage-1.test.ts",
@@ -386,8 +618,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:homepage-2.test.ts",
@@ -399,8 +639,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:homepage-3.test.ts",
@@ -412,8 +660,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:legal-pages-1.test.ts",
@@ -425,8 +681,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:legal-pages-2.test.ts",
@@ -438,8 +702,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:marketing-pages-1.test.ts",
@@ -451,8 +723,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:marketing-pages-2.test.ts",
@@ -464,8 +744,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:navigation-1.test.ts",
@@ -477,8 +765,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:navigation-2.test.ts",
@@ -490,8 +786,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:navigation-3.test.ts",
@@ -503,8 +807,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:pricing-1.test.ts",
@@ -516,8 +828,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:pricing-2.test.ts",
@@ -529,8 +849,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:pricing-3.test.ts",
@@ -542,8 +870,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:seo-and-meta-1.test.ts",
@@ -555,8 +891,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:__shortest__:website:seo-and-meta-2.test.ts",
@@ -568,8 +912,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:auth:login-1.test.ts",
@@ -581,8 +933,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:auth:login-2.test.ts",
@@ -594,8 +954,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:auth:login-3.test.ts",
@@ -607,8 +975,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:auth:security.test.ts",
@@ -620,8 +996,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:businesses:businesses-page-1.test.ts",
@@ -633,8 +1017,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:businesses:businesses-page-2.test.ts",
@@ -646,8 +1038,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:businesses:category-templates.test.ts",
@@ -659,8 +1059,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:businesses:impersonation.test.ts",
@@ -672,8 +1080,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:businesses:verification.test.ts",
@@ -685,8 +1101,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:communication:bot-keywords.test.ts",
@@ -698,8 +1122,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:communication:bot-management.test.ts",
@@ -711,8 +1143,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:communication:broadcasts.test.ts",
@@ -724,8 +1164,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:communication:notifications.test.ts",
@@ -737,8 +1185,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:communication:support.test.ts",
@@ -750,8 +1206,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:communication:whatsapp-channels.test.ts",
@@ -763,8 +1227,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:content-system:audit-log.test.ts",
@@ -776,8 +1248,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:content-system:campaigns.test.ts",
@@ -789,8 +1269,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:content-system:content-management.test.ts",
@@ -802,8 +1290,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:content-system:countries.test.ts",
@@ -815,8 +1311,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:content-system:events.test.ts",
@@ -828,8 +1332,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:content-system:platform-settings.test.ts",
@@ -841,8 +1353,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:dashboard:overview.test.ts",
@@ -854,8 +1374,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:finance:finance-page.test.ts",
@@ -867,8 +1395,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:finance:payouts.test.ts",
@@ -880,8 +1416,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:giving:giving.test.ts",
@@ -893,8 +1437,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:healthcare:queue-management.test.ts",
@@ -906,8 +1458,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:healthcare:reports.test.ts",
@@ -919,8 +1479,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:navigation:sidebar-navigation-1.test.ts",
@@ -932,8 +1500,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:navigation:sidebar-navigation-2.test.ts",
@@ -945,8 +1521,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:navigation:spa-routing-1.test.ts",
@@ -958,8 +1542,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:navigation:spa-routing-2.test.ts",
@@ -971,8 +1563,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:operations:bookings.test.ts",
@@ -984,8 +1584,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:operations:orders.test.ts",
@@ -997,8 +1605,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:operations:payments.test.ts",
@@ -1010,8 +1626,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:operations:recurring.test.ts",
@@ -1023,8 +1647,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:operations:subscriptions.test.ts",
@@ -1036,8 +1668,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:operations:tickets.test.ts",
@@ -1049,8 +1689,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:users:admin-team.test.ts",
@@ -1062,8 +1710,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:users:customers-page.test.ts",
@@ -1075,8 +1731,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:admin:__shortest__:users:users-page.test.ts",
@@ -1088,8 +1752,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:admin-provision.test.ts",
@@ -1101,8 +1773,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:admin-role-escalation.test.ts",
@@ -1114,8 +1794,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:attendance-rls.test.ts",
@@ -1127,8 +1815,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:console-error-cleanup.test.ts",
@@ -1140,8 +1836,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:cron-observability.test.ts",
@@ -1153,8 +1857,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:encryption.test.ts",
@@ -1166,8 +1878,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:error-normalization.test.ts",
@@ -1179,8 +1899,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:fin-001-containment.test.ts",
@@ -1192,8 +1920,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:fin-002-atomic-payout.test.ts",
@@ -1205,8 +1941,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:flutterwave-split-recurring.test.ts",
@@ -1218,8 +1962,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:getPlatformFees.test.ts",
@@ -1231,8 +1983,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:log-redaction.test.ts",
@@ -1244,8 +2004,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:migration-295-rpc-permissions-db.test.ts",
@@ -1257,8 +2025,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:migration-295-rpc-permissions.test.ts",
@@ -1270,8 +2046,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:migration-296-rpc-permissions-db.test.ts",
@@ -1283,8 +2067,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:migration-296-rpc-permissions.test.ts",
@@ -1296,8 +2088,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:migration-297-trigger-db.test.ts",
@@ -1309,8 +2109,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:migration-297-trigger.test.ts",
@@ -1322,8 +2130,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:migration-298-backfill-db.test.ts",
@@ -1335,8 +2151,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:migration-298-backfill.test.ts",
@@ -1348,8 +2172,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:migration-repair-validator.test.ts",
@@ -1361,8 +2193,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:observability.test.ts",
@@ -1374,8 +2214,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:otp-authentication-template.test.ts",
@@ -1387,8 +2235,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:otp-delivery-observability.test.ts",
@@ -1400,8 +2256,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:p0-table-exposure-db.test.ts",
@@ -1413,8 +2277,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:p0-table-exposure.test.ts",
@@ -1426,8 +2298,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:payment-observability.test.ts",
@@ -1439,8 +2319,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:payment-source-classification.test.ts",
@@ -1452,8 +2340,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:paystack-split-recurring.test.ts",
@@ -1465,8 +2361,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:phone-otp-challenge.test.ts",
@@ -1478,8 +2382,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:route-handler-redaction.test.ts",
@@ -1491,8 +2403,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:secret-scanner-migration-json.test.ts",
@@ -1504,8 +2424,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:__tests__:webhook-observability.test.ts",
@@ -1517,8 +2445,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:alerts:__tests__:create-alert.test.ts",
@@ -1530,8 +2466,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:bot-conversations-verbose.test.ts",
@@ -1543,8 +2487,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:bot-conversations.test.ts",
@@ -1556,8 +2508,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:business-knowledge.test.ts",
@@ -1569,8 +2529,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:catalog-order.test.ts",
@@ -1582,8 +2550,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:confidence-policy.test.ts",
@@ -1595,8 +2571,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:conversation-orchestrator.test.ts",
@@ -1608,8 +2592,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:conversation-safety.test.ts",
@@ -1621,8 +2613,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:correction-parser.test.ts",
@@ -1634,8 +2634,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:customer-ltv.test.ts",
@@ -1647,8 +2655,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:flow-analytics.test.ts",
@@ -1660,8 +2676,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:opt-out-compliance.test.ts",
@@ -1673,8 +2697,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:privacy-logging.test.ts",
@@ -1686,8 +2718,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:session-concurrency.test.ts",
@@ -1699,8 +2739,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:smart-intent.test.ts",
@@ -1712,8 +2760,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:__tests__:webhook-state-machine.test.ts",
@@ -1725,8 +2781,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:capability-selection.flow.test.ts",
@@ -1738,8 +2802,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:crowdfunding-donation-toggles.test.ts",
@@ -1751,8 +2823,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:invoice.flow.test.ts",
@@ -1764,8 +2844,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:keyword-detection.test.ts",
@@ -1777,8 +2865,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:logistics-steps.test.ts",
@@ -1790,8 +2886,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:loyalty.flow.test.ts",
@@ -1803,8 +2907,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:my-account.flow.test.ts",
@@ -1816,8 +2928,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:ordering.flow.test.ts",
@@ -1829,8 +2949,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:payment-webhook.test.ts",
@@ -1842,8 +2970,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:payment.flow.test.ts",
@@ -1855,8 +2991,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:rate-limit.test.ts",
@@ -1868,8 +3012,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:referral-steps.test.ts",
@@ -1881,8 +3033,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:reservation.flow.test.ts",
@@ -1894,8 +3054,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:sanitize.test.ts",
@@ -1907,8 +3075,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:scheduling.flow.test.ts",
@@ -1920,8 +3096,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:__tests__:ticketing.flow.test.ts",
@@ -1933,8 +3117,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:shared:__tests__:bank-transfer.test.ts",
@@ -1946,8 +3138,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:shared:__tests__:notifications.test.ts",
@@ -1959,8 +3159,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:shared:__tests__:notify-owner.test.ts",
@@ -1972,8 +3180,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:bot:flows:shared:__tests__:payment.test.ts",
@@ -1985,8 +3201,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:growth:__tests__:consent-service.test.ts",
@@ -1998,8 +3222,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:growth:__tests__:credit-concurrency.test.ts",
@@ -2011,8 +3243,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:growth:__tests__:credit-service.test.ts",
@@ -2024,8 +3264,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:growth:__tests__:eligibility-service.test.ts",
@@ -2037,8 +3285,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:marketplace:__tests__:search.test.ts",
@@ -2050,8 +3306,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:payments:__tests__:payment-linkage.test.ts",
@@ -2063,8 +3327,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:payments:__tests__:process-success.test.ts",
@@ -2076,8 +3348,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:payments:__tests__:refund-handler.test.ts",
@@ -2089,8 +3369,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:payments:__tests__:webhook-amount.test.ts",
@@ -2102,8 +3390,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:payments:__tests__:webhook-handler.test.ts",
@@ -2115,8 +3411,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:payments:__tests__:webhook-idempotency.test.ts",
@@ -2128,8 +3432,16 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   },
   {
     "id": "test:lib:utils:__tests__:phone.test.ts",
@@ -2141,7 +3453,15 @@
     ],
     "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
     "structurally_present": true,
+    "registered_or_reachable": "not_applicable",
+    "gate_types": [],
+    "related_capabilities": [],
+    "related_roles": [],
+    "related_database_objects": [],
+    "related_providers": [],
+    "test_references": [],
     "confidence": "high",
-    "evidence_method": "git ls-tree *.test.ts enumeration"
+    "evidence_method": "git ls-tree *.test.ts enumeration",
+    "unresolved_questions": []
   }
 ]

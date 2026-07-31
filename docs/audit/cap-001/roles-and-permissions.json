@@ -1,5 +1,6 @@
 {
   "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+  "schema_type": "structured_summary",
   "platform_admin_roles": {
     "type": "PlatformAdminRole",
     "values": [
@@ -12,8 +13,10 @@
       "lib/admin-auth.ts",
       "admin/src/lib/adminAuth.ts"
     ],
-    "auth_source": "app_metadata.role",
-    "full_admin": "admin only"
+    "auth_source": "app_metadata.role (never raw_user_meta_data or profiles.role)",
+    "full_admin_check": "role === 'admin'",
+    "confidence": "high",
+    "evidence_method": "Static analysis of lib/admin-auth.ts and admin/src/lib/adminAuth.ts"
   },
   "business_roles": {
     "type": "business_role (PostgreSQL enum)",
@@ -26,19 +29,20 @@
       "support"
     ],
     "origin_migration": "supabase/migrations/099_business_members.sql",
+    "later_modifications": "None found. All migrations 100-298 searched for ALTER TYPE business_role — no matches.",
+    "generated_types_cross_reference": "Not available — lib/supabase/database.types.ts does not exist in repository",
     "table": "business_members",
-    "helper_function": "check_business_role (SECURITY DEFINER RPC)",
+    "helper_function": "check_business_role(p_user_id, p_business_id, p_required_roles[]) — SECURITY DEFINER RPC",
     "owner_bypass": true,
-    "unresolved_questions": [
-      "Check if later migrations altered the business_role enum"
-    ]
+    "confidence": "high",
+    "evidence_method": "Searched all migrations after 099 for ALTER TYPE business_role; none found. Enum unchanged since creation."
   },
   "authorization_helpers": [
     {
       "name": "authenticateRequest",
       "path": "lib/api-auth.ts",
       "scope": "Next.js API routes",
-      "checks": "cookie session + optional business ownership"
+      "checks": "cookie session + optional business ownership via businesses.owner_id = auth.uid()"
     },
     {
       "name": "requirePlatformAdmin",
@@ -53,20 +57,24 @@
       "checks": "app_metadata.role"
     },
     {
-      "name": "createClient",
+      "name": "createClient (browser)",
       "path": "lib/supabase/client.ts",
-      "scope": "browser (respects RLS)"
+      "scope": "browser (respects RLS)",
+      "checks": "Supabase auth session"
     },
     {
       "name": "createClient (server)",
       "path": "lib/supabase/server.ts",
-      "scope": "SSR (reads cookies, respects RLS)"
+      "scope": "SSR (reads cookies, respects RLS)",
+      "checks": "cookie-based auth"
     },
     {
       "name": "createServiceClient",
       "path": "lib/supabase/service.ts",
-      "scope": "admin/cron (bypasses RLS)"
+      "scope": "admin/cron (bypasses RLS)",
+      "checks": "service role key"
     }
   ],
-  "confidence": "high"
+  "confidence": "high",
+  "evidence_method": "Static analysis of auth helpers + migration search for enum changes"
 }
