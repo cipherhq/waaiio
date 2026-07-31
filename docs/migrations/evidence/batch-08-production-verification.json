@@ -1,0 +1,3869 @@
+{
+  "task_identifier": "batch-08-production-verification",
+  "repository_sha": "21cbf57ff76d30538fe493069148e673451431c6",
+  "linked_project_ref": "cxcmiqotkowhxinjbytg",
+  "issue_number": 53,
+  "batch_number": 8,
+  "verification_timestamp": "2026-07-30T19:49:36.134Z",
+  "versions": [
+    "227",
+    "228",
+    "229",
+    "230",
+    "231",
+    "232",
+    "233",
+    "234",
+    "235",
+    "236",
+    "237",
+    "238",
+    "239",
+    "240",
+    "241"
+  ],
+  "total_migrations": 15,
+  "total_objects_checked": 111,
+  "migrations": [
+    {
+      "migration_version": "227",
+      "migration_filename": "227_customer_ltv_tier.sql",
+      "migration_checksum": "c9d46af9a8077937475a3f54f419e4765355379e8bead3fff768a3ab48db1e89",
+      "expected_object_digest": "e78c1b42d3f5a7837ae96c031bf9a1701035a34af0d89a7f89beb88427dd742e",
+      "expected_object_count": 2,
+      "objects": [
+        {
+          "object_type": "column",
+          "object_name": "customer_profiles.ltv_tier",
+          "expected_properties": {
+            "table": "customer_profiles",
+            "column": "ltv_tier",
+            "data_type": "character varying",
+            "character_maximum_length": 20,
+            "column_default": "'new'::character varying",
+            "is_nullable": "YES"
+          },
+          "verified_properties": {
+            "table": "customer_profiles",
+            "column": "ltv_tier",
+            "data_type": "character varying",
+            "character_maximum_length": 20,
+            "column_default": "'new'::character varying",
+            "is_nullable": "YES"
+          },
+          "compared_property_paths": [
+            "data_type",
+            "character_maximum_length",
+            "column_default",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "227",
+          "migration_filename": "227_customer_ltv_tier.sql",
+          "migration_checksum": "c9d46af9a8077937475a3f54f419e4765355379e8bead3fff768a3ab48db1e89",
+          "expected_object_digest": "e78c1b42d3f5a7837ae96c031bf9a1701035a34af0d89a7f89beb88427dd742e"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_customer_profiles_ltv_tier",
+          "expected_properties": {
+            "indexname": "idx_customer_profiles_ltv_tier",
+            "indexdef": "CREATE INDEX idx_customer_profiles_ltv_tier ON public.customer_profiles USING btree (business_id, ltv_tier)"
+          },
+          "verified_properties": {
+            "indexname": "idx_customer_profiles_ltv_tier",
+            "indexdef": "CREATE INDEX idx_customer_profiles_ltv_tier ON public.customer_profiles USING btree (business_id, ltv_tier)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "227",
+          "migration_filename": "227_customer_ltv_tier.sql",
+          "migration_checksum": "c9d46af9a8077937475a3f54f419e4765355379e8bead3fff768a3ab48db1e89",
+          "expected_object_digest": "e78c1b42d3f5a7837ae96c031bf9a1701035a34af0d89a7f89beb88427dd742e"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 2,
+        "equivalent_stricter": 0,
+        "superseded": 0,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "7e4da6821830dbaa213b32d0863d8e7e708b0318282b8d44960eddd0283bd05a"
+    },
+    {
+      "migration_version": "228",
+      "migration_filename": "228_add_pending_subscription_status.sql",
+      "migration_checksum": "d20104099900339f20057ac38c710b0f17c4f707f243d8cfaa563b2695d11939",
+      "expected_object_digest": "67831068789efe58ba0db56fdabb2d0e4845165d263fd5f9f2a67554bc16f785",
+      "expected_object_count": 1,
+      "objects": [
+        {
+          "object_type": "constraint",
+          "object_name": "customer_subscriptions_status_check",
+          "expected_properties": {
+            "conname": "customer_subscriptions_status_check",
+            "constraint_def": "CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'paused'::character varying, 'cancelled'::character varying, 'past_due'::character varying, 'pending'::character varying, 'failed'::character varying])::text[])))"
+          },
+          "verified_properties": {
+            "conname": "customer_subscriptions_status_check",
+            "constraint_def": "CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'paused'::character varying, 'cancelled'::character varying, 'past_due'::character varying, 'pending'::character varying, 'failed'::character varying])::text[])))"
+          },
+          "compared_property_paths": [
+            "conname",
+            "constraint_def"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "228",
+          "migration_filename": "228_add_pending_subscription_status.sql",
+          "migration_checksum": "d20104099900339f20057ac38c710b0f17c4f707f243d8cfaa563b2695d11939",
+          "expected_object_digest": "67831068789efe58ba0db56fdabb2d0e4845165d263fd5f9f2a67554bc16f785"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 1,
+        "equivalent_stricter": 0,
+        "superseded": 0,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "99979e91a59f1a5a418291c006601759870ee99d2e1e14bdf54407facb1b79b0"
+    },
+    {
+      "migration_version": "229",
+      "migration_filename": "229_attendance_log.sql",
+      "migration_checksum": "0eab50ca0d21788f63818b981a5d58bb2287a44dc2e37a8e15d90b56fbcd3d29",
+      "expected_object_digest": "f26c7af5bec2747eaae72112ac718f7746a57974f0d0468fd6aacb825f38116f",
+      "expected_object_count": 7,
+      "objects": [
+        {
+          "object_type": "table",
+          "object_name": "attendance_log",
+          "expected_properties": {
+            "table_name": "attendance_log",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table_name": "attendance_log",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "table_name",
+            "schema",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "229",
+          "migration_filename": "229_attendance_log.sql",
+          "migration_checksum": "0eab50ca0d21788f63818b981a5d58bb2287a44dc2e37a8e15d90b56fbcd3d29",
+          "expected_object_digest": "f26c7af5bec2747eaae72112ac718f7746a57974f0d0468fd6aacb825f38116f"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_attendance_business",
+          "expected_properties": {
+            "indexdef": "CREATE INDEX idx_attendance_business ON public.attendance_log USING btree (business_id, checked_in_at DESC)"
+          },
+          "verified_properties": {
+            "indexdef": "CREATE INDEX idx_attendance_business ON public.attendance_log USING btree (business_id, checked_in_at DESC)"
+          },
+          "compared_property_paths": [
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "229",
+          "migration_filename": "229_attendance_log.sql",
+          "migration_checksum": "0eab50ca0d21788f63818b981a5d58bb2287a44dc2e37a8e15d90b56fbcd3d29",
+          "expected_object_digest": "f26c7af5bec2747eaae72112ac718f7746a57974f0d0468fd6aacb825f38116f"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_attendance_phone",
+          "expected_properties": {
+            "indexdef": "CREATE INDEX idx_attendance_phone ON public.attendance_log USING btree (business_id, customer_phone, checked_in_at DESC)"
+          },
+          "verified_properties": {
+            "indexdef": "CREATE INDEX idx_attendance_phone ON public.attendance_log USING btree (business_id, customer_phone, checked_in_at DESC)"
+          },
+          "compared_property_paths": [
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "229",
+          "migration_filename": "229_attendance_log.sql",
+          "migration_checksum": "0eab50ca0d21788f63818b981a5d58bb2287a44dc2e37a8e15d90b56fbcd3d29",
+          "expected_object_digest": "f26c7af5bec2747eaae72112ac718f7746a57974f0d0468fd6aacb825f38116f"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "attendance_log.rls_enabled",
+          "expected_properties": {
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "229",
+          "migration_filename": "229_attendance_log.sql",
+          "migration_checksum": "0eab50ca0d21788f63818b981a5d58bb2287a44dc2e37a8e15d90b56fbcd3d29",
+          "expected_object_digest": "f26c7af5bec2747eaae72112ac718f7746a57974f0d0468fd6aacb825f38116f"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "attendance_log.owners_read",
+          "expected_properties": {
+            "polname": "owners_read",
+            "polcmd": "r",
+            "table": "attendance_log"
+          },
+          "verified_properties": {
+            "polname": "owners_read",
+            "polcmd": "r",
+            "table": "attendance_log"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "229",
+          "migration_filename": "229_attendance_log.sql",
+          "migration_checksum": "0eab50ca0d21788f63818b981a5d58bb2287a44dc2e37a8e15d90b56fbcd3d29",
+          "expected_object_digest": "f26c7af5bec2747eaae72112ac718f7746a57974f0d0468fd6aacb825f38116f"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "attendance_log.service_insert",
+          "expected_properties": {
+            "polname": "service_insert",
+            "polcmd": "a",
+            "table": "attendance_log"
+          },
+          "verified_properties": {
+            "policy_exists": false
+          },
+          "compared_property_paths": [
+            "policy_exists"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "superseded",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "superseded_by": "migration_230",
+          "supersession_detail": "Migration 230 drops service_insert policy as unsafe (ATT-01). Service role bypasses RLS, so the policy was unnecessary and dangerous.",
+          "continued_behavior_proof": "Service role INSERT still works because service_role bypasses RLS entirely.",
+          "migration_version": "229",
+          "migration_filename": "229_attendance_log.sql",
+          "migration_checksum": "0eab50ca0d21788f63818b981a5d58bb2287a44dc2e37a8e15d90b56fbcd3d29",
+          "expected_object_digest": "f26c7af5bec2747eaae72112ac718f7746a57974f0d0468fd6aacb825f38116f"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "attendance_log.owners_delete",
+          "expected_properties": {
+            "polname": "owners_delete",
+            "polcmd": "d",
+            "table": "attendance_log"
+          },
+          "verified_properties": {
+            "polname": "owners_delete",
+            "polcmd": "d",
+            "table": "attendance_log"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "229",
+          "migration_filename": "229_attendance_log.sql",
+          "migration_checksum": "0eab50ca0d21788f63818b981a5d58bb2287a44dc2e37a8e15d90b56fbcd3d29",
+          "expected_object_digest": "f26c7af5bec2747eaae72112ac718f7746a57974f0d0468fd6aacb825f38116f"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 6,
+        "equivalent_stricter": 0,
+        "superseded": 1,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "69a54095486645e9e979991cc67726ff92d78763d1dceca88cccd2e6a70eb3ae"
+    },
+    {
+      "migration_version": "230",
+      "migration_filename": "230_attendance_rls_hardening.sql",
+      "migration_checksum": "61d477bf4e09ac0f72e3003e0e7ab08ac7c2ccaa44dad6728aa40bebf0c880a7",
+      "expected_object_digest": "497ab8873a509e346d5034c6bfa7f80649fd56b317a00966f3f41a7057cdf42f",
+      "expected_object_count": 7,
+      "objects": [
+        {
+          "object_type": "policy",
+          "object_name": "attendance_log.service_insert_drop",
+          "expected_properties": {
+            "action": "DROP POLICY",
+            "polname": "service_insert",
+            "table": "attendance_log"
+          },
+          "verified_properties": {
+            "policy_exists": false
+          },
+          "compared_property_paths": [
+            "policy_exists"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "230",
+          "migration_filename": "230_attendance_rls_hardening.sql",
+          "migration_checksum": "61d477bf4e09ac0f72e3003e0e7ab08ac7c2ccaa44dad6728aa40bebf0c880a7",
+          "expected_object_digest": "497ab8873a509e346d5034c6bfa7f80649fd56b317a00966f3f41a7057cdf42f"
+        },
+        {
+          "object_type": "constraint",
+          "object_name": "chk_attendance_name_length",
+          "expected_properties": {
+            "conname": "chk_attendance_name_length",
+            "constraint_def": "CHECK ((length(customer_name) <= 200))"
+          },
+          "verified_properties": {
+            "conname": "chk_attendance_name_length",
+            "constraint_def": "CHECK ((length(customer_name) <= 200))"
+          },
+          "compared_property_paths": [
+            "conname",
+            "constraint_def"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "230",
+          "migration_filename": "230_attendance_rls_hardening.sql",
+          "migration_checksum": "61d477bf4e09ac0f72e3003e0e7ab08ac7c2ccaa44dad6728aa40bebf0c880a7",
+          "expected_object_digest": "497ab8873a509e346d5034c6bfa7f80649fd56b317a00966f3f41a7057cdf42f"
+        },
+        {
+          "object_type": "constraint",
+          "object_name": "chk_attendance_phone_length",
+          "expected_properties": {
+            "conname": "chk_attendance_phone_length",
+            "constraint_def": "CHECK (((customer_phone IS NULL) OR (length(customer_phone) <= 30)))"
+          },
+          "verified_properties": {
+            "conname": "chk_attendance_phone_length",
+            "constraint_def": "CHECK (((customer_phone IS NULL) OR (length(customer_phone) <= 30)))"
+          },
+          "compared_property_paths": [
+            "conname",
+            "constraint_def"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "230",
+          "migration_filename": "230_attendance_rls_hardening.sql",
+          "migration_checksum": "61d477bf4e09ac0f72e3003e0e7ab08ac7c2ccaa44dad6728aa40bebf0c880a7",
+          "expected_object_digest": "497ab8873a509e346d5034c6bfa7f80649fd56b317a00966f3f41a7057cdf42f"
+        },
+        {
+          "object_type": "constraint",
+          "object_name": "chk_attendance_email_length",
+          "expected_properties": {
+            "conname": "chk_attendance_email_length",
+            "constraint_def": "CHECK (((customer_email IS NULL) OR (length(customer_email) <= 320)))"
+          },
+          "verified_properties": {
+            "conname": "chk_attendance_email_length",
+            "constraint_def": "CHECK (((customer_email IS NULL) OR (length(customer_email) <= 320)))"
+          },
+          "compared_property_paths": [
+            "conname",
+            "constraint_def"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "230",
+          "migration_filename": "230_attendance_rls_hardening.sql",
+          "migration_checksum": "61d477bf4e09ac0f72e3003e0e7ab08ac7c2ccaa44dad6728aa40bebf0c880a7",
+          "expected_object_digest": "497ab8873a509e346d5034c6bfa7f80649fd56b317a00966f3f41a7057cdf42f"
+        },
+        {
+          "object_type": "constraint",
+          "object_name": "chk_attendance_notes_length",
+          "expected_properties": {
+            "conname": "chk_attendance_notes_length",
+            "constraint_def": "CHECK (((notes IS NULL) OR (length(notes) <= 2000)))"
+          },
+          "verified_properties": {
+            "conname": "chk_attendance_notes_length",
+            "constraint_def": "CHECK (((notes IS NULL) OR (length(notes) <= 2000)))"
+          },
+          "compared_property_paths": [
+            "conname",
+            "constraint_def"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "230",
+          "migration_filename": "230_attendance_rls_hardening.sql",
+          "migration_checksum": "61d477bf4e09ac0f72e3003e0e7ab08ac7c2ccaa44dad6728aa40bebf0c880a7",
+          "expected_object_digest": "497ab8873a509e346d5034c6bfa7f80649fd56b317a00966f3f41a7057cdf42f"
+        },
+        {
+          "object_type": "constraint",
+          "object_name": "chk_attendance_source",
+          "expected_properties": {
+            "conname": "chk_attendance_source",
+            "constraint_def": "CHECK ((source = ANY (ARRAY['web'::text, 'whatsapp'::text, 'manual'::text])))"
+          },
+          "verified_properties": {
+            "conname": "chk_attendance_source",
+            "constraint_def": "CHECK ((source = ANY (ARRAY['web'::text, 'whatsapp'::text, 'manual'::text])))"
+          },
+          "compared_property_paths": [
+            "conname",
+            "constraint_def"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "230",
+          "migration_filename": "230_attendance_rls_hardening.sql",
+          "migration_checksum": "61d477bf4e09ac0f72e3003e0e7ab08ac7c2ccaa44dad6728aa40bebf0c880a7",
+          "expected_object_digest": "497ab8873a509e346d5034c6bfa7f80649fd56b317a00966f3f41a7057cdf42f"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "attendance_log.admin_ops_read",
+          "expected_properties": {
+            "polname": "admin_ops_read",
+            "polcmd": "r",
+            "table": "attendance_log"
+          },
+          "verified_properties": {
+            "polname": "admin_ops_read",
+            "polcmd": "r",
+            "table": "attendance_log"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "230",
+          "migration_filename": "230_attendance_rls_hardening.sql",
+          "migration_checksum": "61d477bf4e09ac0f72e3003e0e7ab08ac7c2ccaa44dad6728aa40bebf0c880a7",
+          "expected_object_digest": "497ab8873a509e346d5034c6bfa7f80649fd56b317a00966f3f41a7057cdf42f"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 7,
+        "equivalent_stricter": 0,
+        "superseded": 0,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "9ad5e0d9bda3a23c265a30cda6c2dfc4d01673f1dff81dca1511d477297cb71a"
+    },
+    {
+      "migration_version": "231",
+      "migration_filename": "231_atomic_catalog_order.sql",
+      "migration_checksum": "d9b84ba7d8f69a472465106eccc7e94c4db984e88a5a4936c393dd8d3ac3d2c2",
+      "expected_object_digest": "13fe3bcb01e51aa7f9631a075373d6eac397ea29427be96f6cb986397eedc5a1",
+      "expected_object_count": 1,
+      "objects": [
+        {
+          "object_type": "function",
+          "object_name": "create_catalog_order_atomic",
+          "expected_properties": {
+            "proname": "create_catalog_order_atomic",
+            "args": "p_business_id uuid, p_user_id uuid, p_delivery_phone text, p_meta_message_id text, p_customer_note text, p_items jsonb",
+            "security_definer": true,
+            "definition_sha256": "a0e76b33988da4247097eb411e6a37ed8e83ca8c0091487af96bfdc918f9fe00"
+          },
+          "verified_properties": {
+            "proname": "create_catalog_order_atomic",
+            "args": "p_business_id uuid, p_user_id uuid, p_delivery_phone text, p_meta_message_id text, p_customer_note text, p_items jsonb",
+            "security_definer": true,
+            "definition_sha256": "e6824d66dac39b6580b3f599aa6bc9228383b5d2ef13b4038ad3374d6203d74c"
+          },
+          "compared_property_paths": [
+            "proname",
+            "args",
+            "security_definer",
+            "definition_sha256"
+          ],
+          "property_mismatches": [
+            {
+              "path": "definition_sha256",
+              "expected": "a0e76b33988da4247097eb411e6a37ed8e83ca8c0091487af96bfdc918f9fe00",
+              "verified": "e6824d66dac39b6580b3f599aa6bc9228383b5d2ef13b4038ad3374d6203d74c",
+              "result": "superseded_by_later_migration"
+            }
+          ],
+          "property_comparison_result": "superseded",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_proc",
+          "query_category": "function_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "superseded_by": "migration_235",
+          "supersession_detail": "Migration 235 replaces the function body via CREATE OR REPLACE to add quantity validation (items array validation, per-item quantity bounds 1-100, max 50 items). Same signature retained.",
+          "continued_behavior_proof": "Function exists with same name and signature. The 235 version is a strict superset that adds input validation before executing the same order creation logic.",
+          "migration_version": "231",
+          "migration_filename": "231_atomic_catalog_order.sql",
+          "migration_checksum": "d9b84ba7d8f69a472465106eccc7e94c4db984e88a5a4936c393dd8d3ac3d2c2",
+          "expected_object_digest": "13fe3bcb01e51aa7f9631a075373d6eac397ea29427be96f6cb986397eedc5a1"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 0,
+        "equivalent_stricter": 0,
+        "superseded": 1,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "ff1834a7727177de765861221deffd48061ecd6d83898e7da8791bf34217c7e5"
+    },
+    {
+      "migration_version": "232",
+      "migration_filename": "232_webhook_event_state_machine.sql",
+      "migration_checksum": "df8b6b626301eceb40d6340f7beb9b82704f774ef8dea31eb516b849209ea5d9",
+      "expected_object_digest": "d42cf1333fabfccb293ff92d999c5ebfe0483be0e61d0c06020e58dc9a7d53e6",
+      "expected_object_count": 3,
+      "objects": [
+        {
+          "object_type": "column",
+          "object_name": "processed_webhook_events.status",
+          "expected_properties": {
+            "column_name": "status",
+            "data_type": "text",
+            "column_default": "'completed'::text",
+            "is_nullable": "YES"
+          },
+          "verified_properties": {
+            "column_name": "status",
+            "data_type": "text",
+            "column_default": "'completed'::text",
+            "is_nullable": "YES"
+          },
+          "compared_property_paths": [
+            "data_type",
+            "column_default",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "232",
+          "migration_filename": "232_webhook_event_state_machine.sql",
+          "migration_checksum": "df8b6b626301eceb40d6340f7beb9b82704f774ef8dea31eb516b849209ea5d9",
+          "expected_object_digest": "d42cf1333fabfccb293ff92d999c5ebfe0483be0e61d0c06020e58dc9a7d53e6"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_webhook_events_retry",
+          "expected_properties": {
+            "indexdef": "CREATE INDEX idx_webhook_events_retry ON public.processed_webhook_events USING btree (status, last_attempted_at) WHERE (status = ANY (ARRAY['failed'::text, 'processing'::text]))"
+          },
+          "verified_properties": {
+            "indexdef": "CREATE INDEX idx_webhook_events_retry ON public.processed_webhook_events USING btree (status, last_attempted_at) WHERE (status = ANY (ARRAY['failed'::text, 'processing'::text]))"
+          },
+          "compared_property_paths": [
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "232",
+          "migration_filename": "232_webhook_event_state_machine.sql",
+          "migration_checksum": "df8b6b626301eceb40d6340f7beb9b82704f774ef8dea31eb516b849209ea5d9",
+          "expected_object_digest": "d42cf1333fabfccb293ff92d999c5ebfe0483be0e61d0c06020e58dc9a7d53e6"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_webhook_events_completed",
+          "expected_properties": {
+            "indexdef": "CREATE INDEX idx_webhook_events_completed ON public.processed_webhook_events USING btree (completed_at) WHERE (status = 'completed'::text)"
+          },
+          "verified_properties": {
+            "indexdef": "CREATE INDEX idx_webhook_events_completed ON public.processed_webhook_events USING btree (completed_at) WHERE (status = 'completed'::text)"
+          },
+          "compared_property_paths": [
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "232",
+          "migration_filename": "232_webhook_event_state_machine.sql",
+          "migration_checksum": "df8b6b626301eceb40d6340f7beb9b82704f774ef8dea31eb516b849209ea5d9",
+          "expected_object_digest": "d42cf1333fabfccb293ff92d999c5ebfe0483be0e61d0c06020e58dc9a7d53e6"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 3,
+        "equivalent_stricter": 0,
+        "superseded": 0,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "f63430ba4916bdd3639edbeee0fd9224023ae54d4a6b36e22dc7460a15eb39e3"
+    },
+    {
+      "migration_version": "233",
+      "migration_filename": "233_atomic_recurring_charge.sql",
+      "migration_checksum": "12421515136eeb3f1a0679699650155d8fed14d8fbce1b7097bf3a634833f80b",
+      "expected_object_digest": "0ffd5df0224d3fa191b07dcc456b7e1e5163aeb551873ffe75ec1fff07e26692",
+      "expected_object_count": 3,
+      "objects": [
+        {
+          "object_type": "function",
+          "object_name": "process_recurring_charge",
+          "expected_properties": {
+            "proname": "process_recurring_charge",
+            "args": "p_event_id text, p_event_type text, p_gateway_ref text, p_auth_code text, p_cust_code text, p_amount_kobo bigint, p_currency text, p_channel text, p_card_last_four text, p_card_brand text",
+            "security_definer": true,
+            "definition_sha256": "0266ec2f7117f38c9e22d3bb64f14ccd1745578dc5ba4470101dddf0c6e7c26a"
+          },
+          "verified_properties": {
+            "proname": "process_recurring_charge",
+            "args": "p_event_id text, p_event_type text, p_gateway_ref text, p_auth_code text, p_cust_code text, p_amount_kobo bigint, p_currency text, p_channel text, p_card_last_four text, p_card_brand text",
+            "security_definer": true,
+            "definition_sha256": "e9ba948272e9b45af73550fb6307131f2be04aaeb6fed166400b2c9791d130be"
+          },
+          "compared_property_paths": [
+            "proname",
+            "args",
+            "security_definer",
+            "definition_sha256"
+          ],
+          "property_mismatches": [
+            {
+              "path": "definition_sha256",
+              "expected": "0266ec2f7117f38c9e22d3bb64f14ccd1745578dc5ba4470101dddf0c6e7c26a",
+              "verified": "e9ba948272e9b45af73550fb6307131f2be04aaeb6fed166400b2c9791d130be",
+              "result": "superseded_by_later_migration"
+            }
+          ],
+          "property_comparison_result": "superseded",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_proc",
+          "query_category": "function_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "superseded_by": "migration_244",
+          "supersession_detail": "Migration 244 replaces the function body via CREATE OR REPLACE to add payment_source='subscription' to the booking INSERT. Same signature retained.",
+          "continued_behavior_proof": "Function exists with same name and signature. The 244 version adds payment_source column to the INSERT while preserving all original transaction logic.",
+          "migration_version": "233",
+          "migration_filename": "233_atomic_recurring_charge.sql",
+          "migration_checksum": "12421515136eeb3f1a0679699650155d8fed14d8fbce1b7097bf3a634833f80b",
+          "expected_object_digest": "0ffd5df0224d3fa191b07dcc456b7e1e5163aeb551873ffe75ec1fff07e26692"
+        },
+        {
+          "object_type": "grant",
+          "object_name": "process_recurring_charge.revoke_public",
+          "expected_properties": {
+            "function": "process_recurring_charge",
+            "public_has_execute": false
+          },
+          "verified_properties": {
+            "function": "process_recurring_charge",
+            "grantees": [
+              "postgres",
+              "service_role"
+            ],
+            "public_has_execute": false
+          },
+          "compared_property_paths": [
+            "public_has_execute"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "equivalent_stricter",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.routine_privileges",
+          "query_category": "grant_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "equivalent_stricter_by": "migration_295",
+          "stricter_detail": "Migration 295 explicitly revokes EXECUTE from anon and authenticated (not just PUBLIC), closing the Supabase ALTER DEFAULT PRIVILEGES gap.",
+          "migration_version": "233",
+          "migration_filename": "233_atomic_recurring_charge.sql",
+          "migration_checksum": "12421515136eeb3f1a0679699650155d8fed14d8fbce1b7097bf3a634833f80b",
+          "expected_object_digest": "0ffd5df0224d3fa191b07dcc456b7e1e5163aeb551873ffe75ec1fff07e26692"
+        },
+        {
+          "object_type": "grant",
+          "object_name": "process_recurring_charge.grant_service_role",
+          "expected_properties": {
+            "function": "process_recurring_charge",
+            "service_role_has_execute": true
+          },
+          "verified_properties": {
+            "function": "process_recurring_charge",
+            "service_role_has_execute": true
+          },
+          "compared_property_paths": [
+            "service_role_has_execute"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.routine_privileges",
+          "query_category": "grant_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "233",
+          "migration_filename": "233_atomic_recurring_charge.sql",
+          "migration_checksum": "12421515136eeb3f1a0679699650155d8fed14d8fbce1b7097bf3a634833f80b",
+          "expected_object_digest": "0ffd5df0224d3fa191b07dcc456b7e1e5163aeb551873ffe75ec1fff07e26692"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 1,
+        "equivalent_stricter": 1,
+        "superseded": 1,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "183a9269b353ad6e687c87e28d3ef6fc71509fa060812b1fa66b94c7ede976b8"
+    },
+    {
+      "migration_version": "234",
+      "migration_filename": "234_revoke_catalog_order_public.sql",
+      "migration_checksum": "08c2ce67f3512af81e46230259b9c1d0c45eae2df8363ee8e8fbd6045ab0ee83",
+      "expected_object_digest": "dcf0a635fce7a518dd968586d0d74cd552305eb79f7acf8d42da43155891da6a",
+      "expected_object_count": 2,
+      "objects": [
+        {
+          "object_type": "grant",
+          "object_name": "create_catalog_order_atomic.revoke_public",
+          "expected_properties": {
+            "function": "create_catalog_order_atomic",
+            "public_has_execute": false
+          },
+          "verified_properties": {
+            "function": "create_catalog_order_atomic",
+            "grantees": [
+              "postgres",
+              "service_role"
+            ],
+            "public_has_execute": false
+          },
+          "compared_property_paths": [
+            "public_has_execute"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.routine_privileges",
+          "query_category": "grant_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "234",
+          "migration_filename": "234_revoke_catalog_order_public.sql",
+          "migration_checksum": "08c2ce67f3512af81e46230259b9c1d0c45eae2df8363ee8e8fbd6045ab0ee83",
+          "expected_object_digest": "dcf0a635fce7a518dd968586d0d74cd552305eb79f7acf8d42da43155891da6a"
+        },
+        {
+          "object_type": "grant",
+          "object_name": "create_catalog_order_atomic.grant_service_role",
+          "expected_properties": {
+            "function": "create_catalog_order_atomic",
+            "service_role_has_execute": true
+          },
+          "verified_properties": {
+            "function": "create_catalog_order_atomic",
+            "service_role_has_execute": true
+          },
+          "compared_property_paths": [
+            "service_role_has_execute"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.routine_privileges",
+          "query_category": "grant_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "234",
+          "migration_filename": "234_revoke_catalog_order_public.sql",
+          "migration_checksum": "08c2ce67f3512af81e46230259b9c1d0c45eae2df8363ee8e8fbd6045ab0ee83",
+          "expected_object_digest": "dcf0a635fce7a518dd968586d0d74cd552305eb79f7acf8d42da43155891da6a"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 2,
+        "equivalent_stricter": 0,
+        "superseded": 0,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "7e82bcd9d82b4ca91f77c17b75260270d4c414f1952976d6a29baeb7abd2793c"
+    },
+    {
+      "migration_version": "235",
+      "migration_filename": "235_catalog_order_quantity_validation.sql",
+      "migration_checksum": "53f59de87553e701fc11af6b1b6c7b97961cb7c20f696a5324c5e34b26a7305b",
+      "expected_object_digest": "30cf0e34277436043300bfdb237a050f23171ac502361faa75f38ea13d5e5243",
+      "expected_object_count": 1,
+      "objects": [
+        {
+          "object_type": "function",
+          "object_name": "create_catalog_order_atomic",
+          "expected_properties": {
+            "proname": "create_catalog_order_atomic",
+            "args": "p_business_id uuid, p_user_id uuid, p_delivery_phone text, p_meta_message_id text, p_customer_note text, p_items jsonb",
+            "security_definer": true,
+            "definition_sha256": "e6824d66dac39b6580b3f599aa6bc9228383b5d2ef13b4038ad3374d6203d74c"
+          },
+          "verified_properties": {
+            "proname": "create_catalog_order_atomic",
+            "args": "p_business_id uuid, p_user_id uuid, p_delivery_phone text, p_meta_message_id text, p_customer_note text, p_items jsonb",
+            "security_definer": true,
+            "definition_sha256": "e6824d66dac39b6580b3f599aa6bc9228383b5d2ef13b4038ad3374d6203d74c"
+          },
+          "compared_property_paths": [
+            "proname",
+            "args",
+            "security_definer",
+            "definition_sha256"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_proc",
+          "query_category": "function_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "235",
+          "migration_filename": "235_catalog_order_quantity_validation.sql",
+          "migration_checksum": "53f59de87553e701fc11af6b1b6c7b97961cb7c20f696a5324c5e34b26a7305b",
+          "expected_object_digest": "30cf0e34277436043300bfdb237a050f23171ac502361faa75f38ea13d5e5243"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 1,
+        "equivalent_stricter": 0,
+        "superseded": 0,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "4e256c40034810e87adb21d85f3989034fc56d967e3d1419584c4719a41cd3f5"
+    },
+    {
+      "migration_version": "236",
+      "migration_filename": "236_session_versioning.sql",
+      "migration_checksum": "cbfbdaf42f9ad610bcbad18cebe291ff82d33f8789e65363ae5fe463a0929dd2",
+      "expected_object_digest": "74b6b623fb64ba4f79b807c7bddfcba5f88219b884087882a78b1cbf0bd08e2d",
+      "expected_object_count": 4,
+      "objects": [
+        {
+          "object_type": "column",
+          "object_name": "bot_sessions.version",
+          "expected_properties": {
+            "column_name": "version",
+            "data_type": "bigint",
+            "column_default": "0",
+            "is_nullable": "NO"
+          },
+          "verified_properties": {
+            "column_name": "version",
+            "data_type": "bigint",
+            "column_default": "0",
+            "is_nullable": "NO"
+          },
+          "compared_property_paths": [
+            "data_type",
+            "column_default",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "236",
+          "migration_filename": "236_session_versioning.sql",
+          "migration_checksum": "cbfbdaf42f9ad610bcbad18cebe291ff82d33f8789e65363ae5fe463a0929dd2",
+          "expected_object_digest": "74b6b623fb64ba4f79b807c7bddfcba5f88219b884087882a78b1cbf0bd08e2d"
+        },
+        {
+          "object_type": "function",
+          "object_name": "update_session_cas",
+          "expected_properties": {
+            "proname": "update_session_cas",
+            "args": "p_session_id uuid, p_expected_version bigint, p_current_step text, p_session_data jsonb, p_conversation_log jsonb, p_step_history text[]",
+            "security_definer": true,
+            "repository_definition_sha256": "14eab786c96c68a107b813ab6b1ceb2b3e2345673440b261d59bb081d09ff2af",
+            "normalized_executable_sha256": "3d8197ddb16ed3c057839b47ee2def16f7c8e937239f9ed2cffff8531e4d1fcf",
+            "schema": "public",
+            "identity_arguments": "p_session_id uuid, p_expected_version bigint, p_current_step text, p_session_data jsonb, p_conversation_log jsonb, p_step_history text[]",
+            "return_type": "jsonb",
+            "language": "plpgsql",
+            "volatility": "VOLATILE",
+            "parallel_safety": "UNSAFE",
+            "leakproof": false,
+            "configuration": [
+              "search_path=public"
+            ]
+          },
+          "verified_properties": {
+            "proname": "update_session_cas",
+            "args": "p_session_id uuid, p_expected_version bigint, p_current_step text, p_session_data jsonb, p_conversation_log jsonb, p_step_history text[]",
+            "security_definer": true,
+            "production_definition_sha256": "7df85cfe54243452810229ea236d41c98c45dcae5029a9091c48d43000dfc20b",
+            "normalized_executable_sha256": "3d8197ddb16ed3c057839b47ee2def16f7c8e937239f9ed2cffff8531e4d1fcf",
+            "schema": "public",
+            "identity_arguments": "p_session_id uuid, p_expected_version bigint, p_current_step text, p_session_data jsonb, p_conversation_log jsonb, p_step_history text[]",
+            "return_type": "jsonb",
+            "language": "plpgsql",
+            "volatility": "VOLATILE",
+            "parallel_safety": "UNSAFE",
+            "leakproof": false,
+            "configuration": [
+              "search_path=public"
+            ]
+          },
+          "compared_property_paths": [
+            "schema",
+            "identity_arguments",
+            "return_type",
+            "language",
+            "security_definer",
+            "volatility",
+            "parallel_safety",
+            "leakproof",
+            "configuration",
+            "normalized_executable_sha256"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "normalized_executable_sql_exact_match_with_comment_only_raw_definition_difference",
+          "verification_source": "pg_proc",
+          "query_category": "function_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "236",
+          "migration_filename": "236_session_versioning.sql",
+          "migration_checksum": "cbfbdaf42f9ad610bcbad18cebe291ff82d33f8789e65363ae5fe463a0929dd2",
+          "expected_object_digest": "74b6b623fb64ba4f79b807c7bddfcba5f88219b884087882a78b1cbf0bd08e2d",
+          "non_executable_source_differences": [
+            {
+              "type": "sql_line_comment",
+              "repository_text": "-- Version mismatch \u2014 return the current state so caller can retry",
+              "deployed_candidate_text": null,
+              "executable_effect": "none"
+            }
+          ],
+          "raw_definition_comparison": {
+            "repository_definition_sha256": "14eab786c96c68a107b813ab6b1ceb2b3e2345673440b261d59bb081d09ff2af",
+            "production_definition_sha256": "7df85cfe54243452810229ea236d41c98c45dcae5029a9091c48d43000dfc20b",
+            "raw_hashes_equal": false,
+            "difference_type": "single_non_executable_sql_comment",
+            "comment_only_difference_proven": true
+          },
+          "executable_equivalence_derivation": {
+            "source_commit_sha": "58a8d11f570851b69c2cd1c74fcde805188944dc",
+            "source_blob_sha": "53ef69d6d25dc96e4cb64a59837b91fb04fa8092",
+            "current_repository_commit_sha": "21cbf57ff76d30538fe493069148e673451431c6",
+            "exact_removed_comment": "-- Version mismatch \u2014 return the current state so caller can retry",
+            "other_source_differences": [],
+            "repository_derived_candidate_definition_sha256": "7df85cfe54243452810229ea236d41c98c45dcae5029a9091c48d43000dfc20b",
+            "production_observed_definition_sha256": "7df85cfe54243452810229ea236d41c98c45dcae5029a9091c48d43000dfc20b",
+            "candidate_matches_production": true,
+            "normalized_executable_sha256_current": "3d8197ddb16ed3c057839b47ee2def16f7c8e937239f9ed2cffff8531e4d1fcf",
+            "normalized_executable_sha256_deployed_candidate": "3d8197ddb16ed3c057839b47ee2def16f7c8e937239f9ed2cffff8531e4d1fcf",
+            "normalized_executable_sql_equal": true,
+            "no_later_migration_modification_through": 298,
+            "production_source_was_not_queried": true,
+            "no_committed_matching_blob_exists": true
+          },
+          "explanation": "The production definition matches a deterministic repository-derived deployed-source candidate. The current repository migration differs only by one non-executable SQL comment. Raw pg_get_functiondef hashes differ, while normalized executable SQL and durable behavior match exactly."
+        },
+        {
+          "object_type": "grant",
+          "object_name": "update_session_cas.revoke_public",
+          "expected_properties": {
+            "function": "update_session_cas",
+            "public_has_execute": false
+          },
+          "verified_properties": {
+            "function": "update_session_cas",
+            "grantees": [
+              "postgres",
+              "service_role"
+            ],
+            "public_has_execute": false
+          },
+          "compared_property_paths": [
+            "public_has_execute"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.routine_privileges",
+          "query_category": "grant_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "236",
+          "migration_filename": "236_session_versioning.sql",
+          "migration_checksum": "cbfbdaf42f9ad610bcbad18cebe291ff82d33f8789e65363ae5fe463a0929dd2",
+          "expected_object_digest": "74b6b623fb64ba4f79b807c7bddfcba5f88219b884087882a78b1cbf0bd08e2d"
+        },
+        {
+          "object_type": "grant",
+          "object_name": "update_session_cas.grant_service_role",
+          "expected_properties": {
+            "function": "update_session_cas",
+            "service_role_has_execute": true
+          },
+          "verified_properties": {
+            "function": "update_session_cas",
+            "service_role_has_execute": true
+          },
+          "compared_property_paths": [
+            "service_role_has_execute"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.routine_privileges",
+          "query_category": "grant_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "236",
+          "migration_filename": "236_session_versioning.sql",
+          "migration_checksum": "cbfbdaf42f9ad610bcbad18cebe291ff82d33f8789e65363ae5fe463a0929dd2",
+          "expected_object_digest": "74b6b623fb64ba4f79b807c7bddfcba5f88219b884087882a78b1cbf0bd08e2d"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 4,
+        "equivalent_stricter": 0,
+        "superseded": 0,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "0bba24d1ddb7dcdbe432bd0cb56939e031a827e5480c57e1949656b2acfc8f60"
+    },
+    {
+      "migration_version": "237",
+      "migration_filename": "237_opt_out_suppression.sql",
+      "migration_checksum": "4fc9f9e4afd5edc10f91602bc4b02c61a00e3bdd0564b3bf6b1e44848596deef",
+      "expected_object_digest": "f7f68b2c2d043ddf2a719c71ab0ab368d9ada7d21febfd830341b77600d81260",
+      "expected_object_count": 5,
+      "objects": [
+        {
+          "object_type": "table",
+          "object_name": "messaging_opt_outs",
+          "expected_properties": {
+            "table_name": "messaging_opt_outs",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table_name": "messaging_opt_outs",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "table_name",
+            "schema",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "237",
+          "migration_filename": "237_opt_out_suppression.sql",
+          "migration_checksum": "4fc9f9e4afd5edc10f91602bc4b02c61a00e3bdd0564b3bf6b1e44848596deef",
+          "expected_object_digest": "f7f68b2c2d043ddf2a719c71ab0ab368d9ada7d21febfd830341b77600d81260"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_opt_out_unique",
+          "expected_properties": {
+            "indexdef": "CREATE UNIQUE INDEX idx_opt_out_unique ON public.messaging_opt_outs USING btree (phone, COALESCE(business_id, '00000000-0000-0000-0000-000000000000'::uuid), channel) WHERE (resubscribed_at IS NULL)"
+          },
+          "verified_properties": {
+            "indexdef": "CREATE UNIQUE INDEX idx_opt_out_unique ON public.messaging_opt_outs USING btree (phone, COALESCE(business_id, '00000000-0000-0000-0000-000000000000'::uuid), channel) WHERE (resubscribed_at IS NULL)"
+          },
+          "compared_property_paths": [
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "237",
+          "migration_filename": "237_opt_out_suppression.sql",
+          "migration_checksum": "4fc9f9e4afd5edc10f91602bc4b02c61a00e3bdd0564b3bf6b1e44848596deef",
+          "expected_object_digest": "f7f68b2c2d043ddf2a719c71ab0ab368d9ada7d21febfd830341b77600d81260"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_opt_out_phone",
+          "expected_properties": {
+            "indexdef": "CREATE INDEX idx_opt_out_phone ON public.messaging_opt_outs USING btree (phone, channel)"
+          },
+          "verified_properties": {
+            "indexdef": "CREATE INDEX idx_opt_out_phone ON public.messaging_opt_outs USING btree (phone, channel)"
+          },
+          "compared_property_paths": [
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "237",
+          "migration_filename": "237_opt_out_suppression.sql",
+          "migration_checksum": "4fc9f9e4afd5edc10f91602bc4b02c61a00e3bdd0564b3bf6b1e44848596deef",
+          "expected_object_digest": "f7f68b2c2d043ddf2a719c71ab0ab368d9ada7d21febfd830341b77600d81260"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "messaging_opt_outs.rls_enabled",
+          "expected_properties": {
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "237",
+          "migration_filename": "237_opt_out_suppression.sql",
+          "migration_checksum": "4fc9f9e4afd5edc10f91602bc4b02c61a00e3bdd0564b3bf6b1e44848596deef",
+          "expected_object_digest": "f7f68b2c2d043ddf2a719c71ab0ab368d9ada7d21febfd830341b77600d81260"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "messaging_opt_outs.owners_read",
+          "expected_properties": {
+            "polname": "owners_read",
+            "polcmd": "r",
+            "table": "messaging_opt_outs"
+          },
+          "verified_properties": {
+            "polname": "owners_read",
+            "polcmd": "r",
+            "table": "messaging_opt_outs"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "237",
+          "migration_filename": "237_opt_out_suppression.sql",
+          "migration_checksum": "4fc9f9e4afd5edc10f91602bc4b02c61a00e3bdd0564b3bf6b1e44848596deef",
+          "expected_object_digest": "f7f68b2c2d043ddf2a719c71ab0ab368d9ada7d21febfd830341b77600d81260"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 5,
+        "equivalent_stricter": 0,
+        "superseded": 0,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "342561cfbf82ea7582006f946092734fa66d7001772a00b2e70f0bb2220d84e5"
+    },
+    {
+      "migration_version": "238",
+      "migration_filename": "238_remove_gupshup.sql",
+      "migration_checksum": "f3c084016ed17f75aa8d220420fc30c3fcea46ed3ca5bb77a271d371051ed8b6",
+      "expected_object_digest": "3678c908ab373d89fa81131834c0b4d637cc2eded78cb26c69dac3734a889847",
+      "expected_object_count": 2,
+      "objects": [
+        {
+          "object_type": "constraint",
+          "object_name": "chk_active_provider_meta",
+          "expected_properties": {
+            "conname": "chk_active_provider_meta",
+            "constraint_def": "CHECK (((is_active = false) OR ((provider)::text = 'meta_cloud'::text)))"
+          },
+          "verified_properties": {
+            "conname": "chk_active_provider_meta",
+            "constraint_def": "CHECK (((is_active = false) OR ((provider)::text = 'meta_cloud'::text)))"
+          },
+          "compared_property_paths": [
+            "conname",
+            "constraint_def"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_constraint",
+          "query_category": "constraint_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "238",
+          "migration_filename": "238_remove_gupshup.sql",
+          "migration_checksum": "f3c084016ed17f75aa8d220420fc30c3fcea46ed3ca5bb77a271d371051ed8b6",
+          "expected_object_digest": "3678c908ab373d89fa81131834c0b4d637cc2eded78cb26c69dac3734a889847"
+        },
+        {
+          "object_type": "column",
+          "object_name": "whatsapp_channels.provider_default",
+          "expected_properties": {
+            "column_name": "provider",
+            "column_default": "'meta_cloud'::character varying"
+          },
+          "verified_properties": {
+            "column_name": "provider",
+            "column_default": "'meta_cloud'::character varying"
+          },
+          "compared_property_paths": [
+            "column_default"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "238",
+          "migration_filename": "238_remove_gupshup.sql",
+          "migration_checksum": "f3c084016ed17f75aa8d220420fc30c3fcea46ed3ca5bb77a271d371051ed8b6",
+          "expected_object_digest": "3678c908ab373d89fa81131834c0b4d637cc2eded78cb26c69dac3734a889847"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 2,
+        "equivalent_stricter": 0,
+        "superseded": 0,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "a6b79784ecb41cf39e8eba20f839465bac84a05167fde14c76eb8d0d39c4e166"
+    },
+    {
+      "migration_version": "239",
+      "migration_filename": "239_ai_conversation_config.sql",
+      "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+      "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a",
+      "expected_object_count": 13,
+      "objects": [
+        {
+          "object_type": "table",
+          "object_name": "ai_conversation_config",
+          "expected_properties": {
+            "table_name": "ai_conversation_config",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table_name": "ai_conversation_config",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "table_name",
+            "schema",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "239",
+          "migration_filename": "239_ai_conversation_config.sql",
+          "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+          "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "ai_conversation_config.rls_enabled",
+          "expected_properties": {
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "239",
+          "migration_filename": "239_ai_conversation_config.sql",
+          "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+          "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "ai_conversation_config.owners_manage",
+          "expected_properties": {
+            "polname": "owners_manage",
+            "polcmd": "*",
+            "table": "ai_conversation_config"
+          },
+          "verified_properties": {
+            "polname": "owners_manage",
+            "polcmd": "*",
+            "table": "ai_conversation_config"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "239",
+          "migration_filename": "239_ai_conversation_config.sql",
+          "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+          "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a"
+        },
+        {
+          "object_type": "column",
+          "object_name": "businesses.latitude",
+          "expected_properties": {
+            "column_name": "latitude",
+            "data_type": "numeric",
+            "is_nullable": "YES"
+          },
+          "verified_properties": {
+            "column_name": "latitude",
+            "data_type": "numeric",
+            "is_nullable": "YES"
+          },
+          "compared_property_paths": [
+            "data_type",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "239",
+          "migration_filename": "239_ai_conversation_config.sql",
+          "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+          "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a"
+        },
+        {
+          "object_type": "column",
+          "object_name": "businesses.longitude",
+          "expected_properties": {
+            "column_name": "longitude",
+            "data_type": "numeric",
+            "is_nullable": "YES"
+          },
+          "verified_properties": {
+            "column_name": "longitude",
+            "data_type": "numeric",
+            "is_nullable": "YES"
+          },
+          "compared_property_paths": [
+            "data_type",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "239",
+          "migration_filename": "239_ai_conversation_config.sql",
+          "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+          "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a"
+        },
+        {
+          "object_type": "column",
+          "object_name": "businesses.discovery_enabled",
+          "expected_properties": {
+            "column_name": "discovery_enabled",
+            "data_type": "boolean",
+            "column_default": "false",
+            "is_nullable": "YES"
+          },
+          "verified_properties": {
+            "column_name": "discovery_enabled",
+            "data_type": "boolean",
+            "column_default": "false",
+            "is_nullable": "YES"
+          },
+          "compared_property_paths": [
+            "data_type",
+            "column_default",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "239",
+          "migration_filename": "239_ai_conversation_config.sql",
+          "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+          "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_businesses_name_trgm",
+          "expected_properties": {
+            "indexdef": "CREATE INDEX idx_businesses_name_trgm ON public.businesses USING gin (name gin_trgm_ops)"
+          },
+          "verified_properties": {
+            "indexdef": "CREATE INDEX idx_businesses_name_trgm ON public.businesses USING gin (name gin_trgm_ops)"
+          },
+          "compared_property_paths": [
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "239",
+          "migration_filename": "239_ai_conversation_config.sql",
+          "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+          "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_businesses_discovery",
+          "expected_properties": {
+            "indexdef": "CREATE INDEX idx_businesses_discovery ON public.businesses USING btree (discovery_enabled, status, category) WHERE ((discovery_enabled = true) AND (status = 'active'::restaurant_status))"
+          },
+          "verified_properties": {
+            "indexdef": "CREATE INDEX idx_businesses_discovery ON public.businesses USING btree (discovery_enabled, status, category) WHERE ((discovery_enabled = true) AND (status = 'active'::restaurant_status))"
+          },
+          "compared_property_paths": [
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "239",
+          "migration_filename": "239_ai_conversation_config.sql",
+          "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+          "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_businesses_location",
+          "expected_properties": {
+            "indexdef": "CREATE INDEX idx_businesses_location ON public.businesses USING btree (latitude, longitude) WHERE ((latitude IS NOT NULL) AND (longitude IS NOT NULL))"
+          },
+          "verified_properties": {
+            "indexdef": "CREATE INDEX idx_businesses_location ON public.businesses USING btree (latitude, longitude) WHERE ((latitude IS NOT NULL) AND (longitude IS NOT NULL))"
+          },
+          "compared_property_paths": [
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "239",
+          "migration_filename": "239_ai_conversation_config.sql",
+          "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+          "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a"
+        },
+        {
+          "object_type": "table",
+          "object_name": "ai_classification_log",
+          "expected_properties": {
+            "table_name": "ai_classification_log",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table_name": "ai_classification_log",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "table_name",
+            "schema",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "239",
+          "migration_filename": "239_ai_conversation_config.sql",
+          "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+          "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_ai_class_log_business",
+          "expected_properties": {
+            "indexdef": "CREATE INDEX idx_ai_class_log_business ON public.ai_classification_log USING btree (business_id, created_at DESC)"
+          },
+          "verified_properties": {
+            "indexdef": "CREATE INDEX idx_ai_class_log_business ON public.ai_classification_log USING btree (business_id, created_at DESC)"
+          },
+          "compared_property_paths": [
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "239",
+          "migration_filename": "239_ai_conversation_config.sql",
+          "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+          "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_ai_class_log_intent",
+          "expected_properties": {
+            "indexdef": "CREATE INDEX idx_ai_class_log_intent ON public.ai_classification_log USING btree (intent, created_at DESC)"
+          },
+          "verified_properties": {
+            "indexdef": "CREATE INDEX idx_ai_class_log_intent ON public.ai_classification_log USING btree (intent, created_at DESC)"
+          },
+          "compared_property_paths": [
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "239",
+          "migration_filename": "239_ai_conversation_config.sql",
+          "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+          "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "ai_classification_log.admin_read",
+          "expected_properties": {
+            "polname": "admin_read",
+            "polcmd": "r",
+            "table": "ai_classification_log"
+          },
+          "verified_properties": {
+            "polname": "admin_read",
+            "polcmd": "r",
+            "table": "ai_classification_log"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "239",
+          "migration_filename": "239_ai_conversation_config.sql",
+          "migration_checksum": "79208a336ca67b1c9b3b1f25f4972e95ef80693940415ea265d69aa0dc490762",
+          "expected_object_digest": "a66748e85559641127dc834305203324872af43cb62548906a14a78eb8e1df5a"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 13,
+        "equivalent_stricter": 0,
+        "superseded": 0,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "4ee89ef91c4f9ef90aedd17b8e66fba5df80b4383da85ebb600c24d8284df14a"
+    },
+    {
+      "migration_version": "240",
+      "migration_filename": "240_ai_classification_log_owner_rls.sql",
+      "migration_checksum": "dbd605ad4e773f4fae74c47e6127d2b1ab4be82cb3783d61ac35eab7f0435a94",
+      "expected_object_digest": "bbf95fed17300942211122b352cff0d894e5f3839d9e7fe02b35bd297276f079",
+      "expected_object_count": 1,
+      "objects": [
+        {
+          "object_type": "policy",
+          "object_name": "ai_classification_log.owners_read_own",
+          "expected_properties": {
+            "polname": "owners_read_own",
+            "polcmd": "r",
+            "table": "ai_classification_log"
+          },
+          "verified_properties": {
+            "polname": "owners_read_own",
+            "polcmd": "r",
+            "table": "ai_classification_log"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "240",
+          "migration_filename": "240_ai_classification_log_owner_rls.sql",
+          "migration_checksum": "dbd605ad4e773f4fae74c47e6127d2b1ab4be82cb3783d61ac35eab7f0435a94",
+          "expected_object_digest": "bbf95fed17300942211122b352cff0d894e5f3839d9e7fe02b35bd297276f079"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 1,
+        "equivalent_stricter": 0,
+        "superseded": 0,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "52d4e9714e9719dda0fe195f95a72d922887ef8888baa5eddecfd5a5768f78fb"
+    },
+    {
+      "migration_version": "241",
+      "migration_filename": "241_growth_engine.sql",
+      "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+      "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1",
+      "expected_object_count": 59,
+      "objects": [
+        {
+          "object_type": "column",
+          "object_name": "businesses.growth_enabled",
+          "expected_properties": {
+            "column_name": "growth_enabled",
+            "data_type": "boolean",
+            "column_default": "false",
+            "is_nullable": "YES"
+          },
+          "verified_properties": {
+            "column_name": "growth_enabled",
+            "data_type": "boolean",
+            "column_default": "false",
+            "is_nullable": "YES"
+          },
+          "compared_property_paths": [
+            "data_type",
+            "column_default",
+            "is_nullable"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "information_schema.columns",
+          "query_category": "column_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "table",
+          "object_name": "growth_imports",
+          "expected_properties": {
+            "table_name": "growth_imports",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table_name": "growth_imports",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "table_name",
+            "schema",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "table",
+          "object_name": "growth_contacts",
+          "expected_properties": {
+            "table_name": "growth_contacts",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table_name": "growth_contacts",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "table_name",
+            "schema",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "table",
+          "object_name": "customer_consents",
+          "expected_properties": {
+            "table_name": "customer_consents",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table_name": "customer_consents",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "table_name",
+            "schema",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "table",
+          "object_name": "growth_campaigns",
+          "expected_properties": {
+            "table_name": "growth_campaigns",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table_name": "growth_campaigns",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "table_name",
+            "schema",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "table",
+          "object_name": "growth_campaign_recipients",
+          "expected_properties": {
+            "table_name": "growth_campaign_recipients",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table_name": "growth_campaign_recipients",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "table_name",
+            "schema",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "table",
+          "object_name": "growth_credits",
+          "expected_properties": {
+            "table_name": "growth_credits",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table_name": "growth_credits",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "table_name",
+            "schema",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "table",
+          "object_name": "growth_credit_transactions",
+          "expected_properties": {
+            "table_name": "growth_credit_transactions",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table_name": "growth_credit_transactions",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "table_name",
+            "schema",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "table",
+          "object_name": "growth_pricing",
+          "expected_properties": {
+            "table_name": "growth_pricing",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "table_name": "growth_pricing",
+            "schema": "public",
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "table_name",
+            "schema",
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "table_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "growth_imports.rls_enabled",
+          "expected_properties": {
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "growth_contacts.rls_enabled",
+          "expected_properties": {
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "customer_consents.rls_enabled",
+          "expected_properties": {
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "growth_campaigns.rls_enabled",
+          "expected_properties": {
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "growth_campaign_recipients.rls_enabled",
+          "expected_properties": {
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "growth_credits.rls_enabled",
+          "expected_properties": {
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "growth_credit_transactions.rls_enabled",
+          "expected_properties": {
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "rls",
+          "object_name": "growth_pricing.rls_enabled",
+          "expected_properties": {
+            "rls_enabled": true
+          },
+          "verified_properties": {
+            "rls_enabled": true
+          },
+          "compared_property_paths": [
+            "rls_enabled"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_tables",
+          "query_category": "rls_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_contacts.growth_contacts_select",
+          "expected_properties": {
+            "polname": "growth_contacts_select",
+            "polcmd": "r",
+            "table": "growth_contacts"
+          },
+          "verified_properties": {
+            "polname": "growth_contacts_select",
+            "polcmd": "r",
+            "table": "growth_contacts"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_contacts.growth_contacts_insert",
+          "expected_properties": {
+            "polname": "growth_contacts_insert",
+            "polcmd": "a",
+            "table": "growth_contacts"
+          },
+          "verified_properties": {
+            "polname": "growth_contacts_insert",
+            "polcmd": "a",
+            "table": "growth_contacts"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_contacts.growth_contacts_update",
+          "expected_properties": {
+            "polname": "growth_contacts_update",
+            "polcmd": "w",
+            "table": "growth_contacts"
+          },
+          "verified_properties": {
+            "polname": "growth_contacts_update",
+            "polcmd": "w",
+            "table": "growth_contacts"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_contacts.growth_contacts_delete",
+          "expected_properties": {
+            "polname": "growth_contacts_delete",
+            "polcmd": "d",
+            "table": "growth_contacts"
+          },
+          "verified_properties": {
+            "polname": "growth_contacts_delete",
+            "polcmd": "d",
+            "table": "growth_contacts"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_imports.growth_imports_select",
+          "expected_properties": {
+            "polname": "growth_imports_select",
+            "polcmd": "r",
+            "table": "growth_imports"
+          },
+          "verified_properties": {
+            "polname": "growth_imports_select",
+            "polcmd": "r",
+            "table": "growth_imports"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_imports.growth_imports_insert",
+          "expected_properties": {
+            "polname": "growth_imports_insert",
+            "polcmd": "a",
+            "table": "growth_imports"
+          },
+          "verified_properties": {
+            "polname": "growth_imports_insert",
+            "polcmd": "a",
+            "table": "growth_imports"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_imports.growth_imports_update",
+          "expected_properties": {
+            "polname": "growth_imports_update",
+            "polcmd": "w",
+            "table": "growth_imports"
+          },
+          "verified_properties": {
+            "polname": "growth_imports_update",
+            "polcmd": "w",
+            "table": "growth_imports"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_imports.growth_imports_delete",
+          "expected_properties": {
+            "polname": "growth_imports_delete",
+            "polcmd": "d",
+            "table": "growth_imports"
+          },
+          "verified_properties": {
+            "polname": "growth_imports_delete",
+            "polcmd": "d",
+            "table": "growth_imports"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "customer_consents.customer_consents_select",
+          "expected_properties": {
+            "polname": "customer_consents_select",
+            "polcmd": "r",
+            "table": "customer_consents"
+          },
+          "verified_properties": {
+            "polname": "customer_consents_select",
+            "polcmd": "r",
+            "table": "customer_consents"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "customer_consents.customer_consents_service_insert",
+          "expected_properties": {
+            "polname": "customer_consents_service_insert",
+            "polcmd": "a",
+            "table": "customer_consents"
+          },
+          "verified_properties": {
+            "policy_exists": false
+          },
+          "compared_property_paths": [
+            "policy_exists"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "superseded",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "superseded_by": "migration_242",
+          "supersession_detail": "Migration 242 drops customer_consents_service_insert as unsafe (WITH CHECK (true) allows any role to insert). Service role bypasses RLS, so policy was unnecessary.",
+          "continued_behavior_proof": "Service role INSERT still works because service_role bypasses RLS entirely.",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_campaigns.growth_campaigns_select",
+          "expected_properties": {
+            "polname": "growth_campaigns_select",
+            "polcmd": "r",
+            "table": "growth_campaigns"
+          },
+          "verified_properties": {
+            "polname": "growth_campaigns_select",
+            "polcmd": "r",
+            "table": "growth_campaigns"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_campaigns.growth_campaigns_insert",
+          "expected_properties": {
+            "polname": "growth_campaigns_insert",
+            "polcmd": "a",
+            "table": "growth_campaigns"
+          },
+          "verified_properties": {
+            "polname": "growth_campaigns_insert",
+            "polcmd": "a",
+            "table": "growth_campaigns"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_campaigns.growth_campaigns_update",
+          "expected_properties": {
+            "polname": "growth_campaigns_update",
+            "polcmd": "w",
+            "table": "growth_campaigns"
+          },
+          "verified_properties": {
+            "polname": "growth_campaigns_update",
+            "polcmd": "w",
+            "table": "growth_campaigns"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_campaigns.growth_campaigns_delete",
+          "expected_properties": {
+            "polname": "growth_campaigns_delete",
+            "polcmd": "d",
+            "table": "growth_campaigns"
+          },
+          "verified_properties": {
+            "polname": "growth_campaigns_delete",
+            "polcmd": "d",
+            "table": "growth_campaigns"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_campaign_recipients.growth_campaign_recipients_select",
+          "expected_properties": {
+            "polname": "growth_campaign_recipients_select",
+            "polcmd": "r",
+            "table": "growth_campaign_recipients"
+          },
+          "verified_properties": {
+            "polname": "growth_campaign_recipients_select",
+            "polcmd": "r",
+            "table": "growth_campaign_recipients"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_credits.growth_credits_select",
+          "expected_properties": {
+            "polname": "growth_credits_select",
+            "polcmd": "r",
+            "table": "growth_credits"
+          },
+          "verified_properties": {
+            "polname": "growth_credits_select",
+            "polcmd": "r",
+            "table": "growth_credits"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_credits.growth_credits_insert",
+          "expected_properties": {
+            "polname": "growth_credits_insert",
+            "polcmd": "a",
+            "table": "growth_credits"
+          },
+          "verified_properties": {
+            "polname": "growth_credits_insert",
+            "polcmd": "a",
+            "table": "growth_credits"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_credits.growth_credits_update",
+          "expected_properties": {
+            "polname": "growth_credits_update",
+            "polcmd": "w",
+            "table": "growth_credits"
+          },
+          "verified_properties": {
+            "polname": "growth_credits_update",
+            "polcmd": "w",
+            "table": "growth_credits"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_credits.growth_credits_delete",
+          "expected_properties": {
+            "polname": "growth_credits_delete",
+            "polcmd": "d",
+            "table": "growth_credits"
+          },
+          "verified_properties": {
+            "polname": "growth_credits_delete",
+            "polcmd": "d",
+            "table": "growth_credits"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_credit_transactions.growth_credit_transactions_select",
+          "expected_properties": {
+            "polname": "growth_credit_transactions_select",
+            "polcmd": "r",
+            "table": "growth_credit_transactions"
+          },
+          "verified_properties": {
+            "polname": "growth_credit_transactions_select",
+            "polcmd": "r",
+            "table": "growth_credit_transactions"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_credit_transactions.growth_credit_transactions_insert",
+          "expected_properties": {
+            "polname": "growth_credit_transactions_insert",
+            "polcmd": "a",
+            "table": "growth_credit_transactions"
+          },
+          "verified_properties": {
+            "polname": "growth_credit_transactions_insert",
+            "polcmd": "a",
+            "table": "growth_credit_transactions"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_pricing.growth_pricing_admin_select",
+          "expected_properties": {
+            "polname": "growth_pricing_admin_select",
+            "polcmd": "r",
+            "table": "growth_pricing"
+          },
+          "verified_properties": {
+            "polname": "growth_pricing_admin_select",
+            "polcmd": "r",
+            "table": "growth_pricing"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_pricing.growth_pricing_service_insert",
+          "expected_properties": {
+            "polname": "growth_pricing_service_insert",
+            "polcmd": "a",
+            "table": "growth_pricing"
+          },
+          "verified_properties": {
+            "polname": "growth_pricing_service_insert",
+            "polcmd": "a",
+            "table": "growth_pricing"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "policy",
+          "object_name": "growth_pricing.growth_pricing_service_update",
+          "expected_properties": {
+            "polname": "growth_pricing_service_update",
+            "polcmd": "w",
+            "table": "growth_pricing"
+          },
+          "verified_properties": {
+            "polname": "growth_pricing_service_update",
+            "polcmd": "w",
+            "table": "growth_pricing"
+          },
+          "compared_property_paths": [
+            "polname",
+            "polcmd"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_policy",
+          "query_category": "policy_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_contacts_business_created",
+          "expected_properties": {
+            "indexname": "idx_growth_contacts_business_created",
+            "indexdef": "CREATE INDEX idx_growth_contacts_business_created ON public.growth_contacts USING btree (business_id, created_at)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_contacts_business_created",
+            "indexdef": "CREATE INDEX idx_growth_contacts_business_created ON public.growth_contacts USING btree (business_id, created_at)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_contacts_phone",
+          "expected_properties": {
+            "indexname": "idx_growth_contacts_phone",
+            "indexdef": "CREATE INDEX idx_growth_contacts_phone ON public.growth_contacts USING btree (phone)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_contacts_phone",
+            "indexdef": "CREATE INDEX idx_growth_contacts_phone ON public.growth_contacts USING btree (phone)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_contacts_import",
+          "expected_properties": {
+            "indexname": "idx_growth_contacts_import",
+            "indexdef": "CREATE INDEX idx_growth_contacts_import ON public.growth_contacts USING btree (import_id)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_contacts_import",
+            "indexdef": "CREATE INDEX idx_growth_contacts_import ON public.growth_contacts USING btree (import_id)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_imports_business_created",
+          "expected_properties": {
+            "indexname": "idx_growth_imports_business_created",
+            "indexdef": "CREATE INDEX idx_growth_imports_business_created ON public.growth_imports USING btree (business_id, created_at)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_imports_business_created",
+            "indexdef": "CREATE INDEX idx_growth_imports_business_created ON public.growth_imports USING btree (business_id, created_at)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_customer_consents_business_phone",
+          "expected_properties": {
+            "indexname": "idx_customer_consents_business_phone",
+            "indexdef": "CREATE INDEX idx_customer_consents_business_phone ON public.customer_consents USING btree (business_id, phone)"
+          },
+          "verified_properties": {
+            "indexname": "idx_customer_consents_business_phone",
+            "indexdef": "CREATE INDEX idx_customer_consents_business_phone ON public.customer_consents USING btree (business_id, phone)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_customer_consents_business_created",
+          "expected_properties": {
+            "indexname": "idx_customer_consents_business_created",
+            "indexdef": "CREATE INDEX idx_customer_consents_business_created ON public.customer_consents USING btree (business_id, created_at)"
+          },
+          "verified_properties": {
+            "indexname": "idx_customer_consents_business_created",
+            "indexdef": "CREATE INDEX idx_customer_consents_business_created ON public.customer_consents USING btree (business_id, created_at)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_customer_consents_phone_channel",
+          "expected_properties": {
+            "indexname": "idx_customer_consents_phone_channel",
+            "indexdef": "CREATE INDEX idx_customer_consents_phone_channel ON public.customer_consents USING btree (phone, channel, purpose)"
+          },
+          "verified_properties": {
+            "indexname": "idx_customer_consents_phone_channel",
+            "indexdef": "CREATE INDEX idx_customer_consents_phone_channel ON public.customer_consents USING btree (phone, channel, purpose)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_campaigns_business_created",
+          "expected_properties": {
+            "indexname": "idx_growth_campaigns_business_created",
+            "indexdef": "CREATE INDEX idx_growth_campaigns_business_created ON public.growth_campaigns USING btree (business_id, created_at)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_campaigns_business_created",
+            "indexdef": "CREATE INDEX idx_growth_campaigns_business_created ON public.growth_campaigns USING btree (business_id, created_at)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_campaigns_status",
+          "expected_properties": {
+            "indexname": "idx_growth_campaigns_status",
+            "indexdef": "CREATE INDEX idx_growth_campaigns_status ON public.growth_campaigns USING btree (status)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_campaigns_status",
+            "indexdef": "CREATE INDEX idx_growth_campaigns_status ON public.growth_campaigns USING btree (status)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_campaign_recipients_campaign",
+          "expected_properties": {
+            "indexname": "idx_growth_campaign_recipients_campaign",
+            "indexdef": "CREATE INDEX idx_growth_campaign_recipients_campaign ON public.growth_campaign_recipients USING btree (campaign_id)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_campaign_recipients_campaign",
+            "indexdef": "CREATE INDEX idx_growth_campaign_recipients_campaign ON public.growth_campaign_recipients USING btree (campaign_id)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_campaign_recipients_phone",
+          "expected_properties": {
+            "indexname": "idx_growth_campaign_recipients_phone",
+            "indexdef": "CREATE INDEX idx_growth_campaign_recipients_phone ON public.growth_campaign_recipients USING btree (phone)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_campaign_recipients_phone",
+            "indexdef": "CREATE INDEX idx_growth_campaign_recipients_phone ON public.growth_campaign_recipients USING btree (phone)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_campaign_recipients_status",
+          "expected_properties": {
+            "indexname": "idx_growth_campaign_recipients_status",
+            "indexdef": "CREATE INDEX idx_growth_campaign_recipients_status ON public.growth_campaign_recipients USING btree (status)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_campaign_recipients_status",
+            "indexdef": "CREATE INDEX idx_growth_campaign_recipients_status ON public.growth_campaign_recipients USING btree (status)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_credits_business",
+          "expected_properties": {
+            "indexname": "idx_growth_credits_business",
+            "indexdef": "CREATE INDEX idx_growth_credits_business ON public.growth_credits USING btree (business_id)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_credits_business",
+            "indexdef": "CREATE INDEX idx_growth_credits_business ON public.growth_credits USING btree (business_id)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_credits_business_remaining",
+          "expected_properties": {
+            "indexname": "idx_growth_credits_business_remaining",
+            "indexdef": "CREATE INDEX idx_growth_credits_business_remaining ON public.growth_credits USING btree (business_id, remaining) WHERE (remaining > 0)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_credits_business_remaining",
+            "indexdef": "CREATE INDEX idx_growth_credits_business_remaining ON public.growth_credits USING btree (business_id, remaining) WHERE (remaining > 0)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_credit_transactions_business",
+          "expected_properties": {
+            "indexname": "idx_growth_credit_transactions_business",
+            "indexdef": "CREATE INDEX idx_growth_credit_transactions_business ON public.growth_credit_transactions USING btree (business_id, created_at)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_credit_transactions_business",
+            "indexdef": "CREATE INDEX idx_growth_credit_transactions_business ON public.growth_credit_transactions USING btree (business_id, created_at)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_credit_transactions_campaign",
+          "expected_properties": {
+            "indexname": "idx_growth_credit_transactions_campaign",
+            "indexdef": "CREATE INDEX idx_growth_credit_transactions_campaign ON public.growth_credit_transactions USING btree (campaign_id)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_credit_transactions_campaign",
+            "indexdef": "CREATE INDEX idx_growth_credit_transactions_campaign ON public.growth_credit_transactions USING btree (campaign_id)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_pricing_country_channel",
+          "expected_properties": {
+            "indexname": "idx_growth_pricing_country_channel",
+            "indexdef": "CREATE INDEX idx_growth_pricing_country_channel ON public.growth_pricing USING btree (country_code, channel)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_pricing_country_channel",
+            "indexdef": "CREATE INDEX idx_growth_pricing_country_channel ON public.growth_pricing USING btree (country_code, channel)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        },
+        {
+          "object_type": "index",
+          "object_name": "idx_growth_pricing_active",
+          "expected_properties": {
+            "indexname": "idx_growth_pricing_active",
+            "indexdef": "CREATE INDEX idx_growth_pricing_active ON public.growth_pricing USING btree (is_active) WHERE (is_active = true)"
+          },
+          "verified_properties": {
+            "indexname": "idx_growth_pricing_active",
+            "indexdef": "CREATE INDEX idx_growth_pricing_active ON public.growth_pricing USING btree (is_active) WHERE (is_active = true)"
+          },
+          "compared_property_paths": [
+            "indexname",
+            "indexdef"
+          ],
+          "property_mismatches": [],
+          "property_comparison_result": "exact_match",
+          "comparison_basis": "production_metadata_query",
+          "verification_source": "pg_indexes",
+          "query_category": "index_metadata",
+          "verified_at": "2026-07-30T19:47:52.870Z",
+          "migration_version": "241",
+          "migration_filename": "241_growth_engine.sql",
+          "migration_checksum": "e3fe28bcead179c8de3b7f63f5884b05a4d14834a52d9993b29a794cc0c23cad",
+          "expected_object_digest": "16c760fe28952a68e95f37f436fcb01d929c7f70f578a749cee5f8a5e30b22a1"
+        }
+      ],
+      "classification": "VERIFIED_APPLIED_UNTRACKED",
+      "result_counts": {
+        "exact_match": 58,
+        "equivalent_stricter": 0,
+        "superseded": 1,
+        "failed": 0,
+        "ambiguous": 0
+      },
+      "migration_evidence_digest": "33b31bb929a7ecf9fb273745f211bd0f53713f5258d9dd6eb85b1c1ea2f5b5f1"
+    }
+  ],
+  "classification_counts": {
+    "VERIFIED_APPLIED_UNTRACKED": 15
+  },
+  "result_totals": {
+    "exact_match": 106,
+    "equivalent_stricter": 1,
+    "superseded": 4,
+    "failed": 0,
+    "ambiguous": 0
+  },
+  "total_compared_property_paths": 222,
+  "pre_verification_history_summary": {
+    "total_remote_count": 209,
+    "range_101_246_count": 113,
+    "migration_298_count": 1
+  },
+  "pre_verification_occurrence_map": {
+    "227": 0,
+    "228": 0,
+    "229": 0,
+    "230": 0,
+    "231": 0,
+    "232": 0,
+    "233": 0,
+    "234": 0,
+    "235": 0,
+    "236": 0,
+    "237": 0,
+    "238": 0,
+    "239": 0,
+    "240": 0,
+    "241": 0
+  },
+  "pre_verification_ordered_snapshot": [
+    "001",
+    "002",
+    "003",
+    "004",
+    "005",
+    "006",
+    "007",
+    "008",
+    "009",
+    "010",
+    "011",
+    "012",
+    "013",
+    "014",
+    "015",
+    "016",
+    "017",
+    "018",
+    "019",
+    "020",
+    "021",
+    "022",
+    "023",
+    "024",
+    "025",
+    "026",
+    "027",
+    "028",
+    "029",
+    "030",
+    "031",
+    "032",
+    "033",
+    "034",
+    "035",
+    "036",
+    "037",
+    "038",
+    "039",
+    "040",
+    "041",
+    "042",
+    "056",
+    "057",
+    "058",
+    "059",
+    "060",
+    "061",
+    "062",
+    "063",
+    "064",
+    "065",
+    "066",
+    "067",
+    "068",
+    "069",
+    "070",
+    "071",
+    "072",
+    "073",
+    "074",
+    "075",
+    "076",
+    "077",
+    "078",
+    "079",
+    "080",
+    "081",
+    "082",
+    "083",
+    "084",
+    "085",
+    "086",
+    "087",
+    "088",
+    "089",
+    "090",
+    "091",
+    "092",
+    "093",
+    "094",
+    "095",
+    "096",
+    "097",
+    "098",
+    "099",
+    "100",
+    "102",
+    "103",
+    "104",
+    "106",
+    "108",
+    "109",
+    "110",
+    "111",
+    "112",
+    "113",
+    "114",
+    "115",
+    "116",
+    "117",
+    "118",
+    "119",
+    "120",
+    "121",
+    "123",
+    "124",
+    "125",
+    "127",
+    "128",
+    "129",
+    "131",
+    "132",
+    "133",
+    "134",
+    "135",
+    "136",
+    "137",
+    "138",
+    "139",
+    "140",
+    "141",
+    "142",
+    "143",
+    "144",
+    "145",
+    "146",
+    "147",
+    "148",
+    "149",
+    "150",
+    "151",
+    "152",
+    "153",
+    "154",
+    "155",
+    "156",
+    "157",
+    "158",
+    "159",
+    "161",
+    "162",
+    "165",
+    "166",
+    "167",
+    "168",
+    "169",
+    "170",
+    "171",
+    "172",
+    "173",
+    "174",
+    "175",
+    "176",
+    "177",
+    "178",
+    "179",
+    "180",
+    "181",
+    "182",
+    "183",
+    "184",
+    "185",
+    "186",
+    "188",
+    "189",
+    "190",
+    "191",
+    "192",
+    "193",
+    "194",
+    "195",
+    "196",
+    "197",
+    "198",
+    "199",
+    "200",
+    "201",
+    "202",
+    "203",
+    "204",
+    "205",
+    "206",
+    "207",
+    "208",
+    "209",
+    "210",
+    "211",
+    "212",
+    "213",
+    "214",
+    "215",
+    "218",
+    "219",
+    "220",
+    "221",
+    "223",
+    "224",
+    "225",
+    "244",
+    "247",
+    "248",
+    "292",
+    "293",
+    "294",
+    "295",
+    "296",
+    "297",
+    "298"
+  ],
+  "post_verification_history_summary": {
+    "total_remote_count": 209,
+    "range_101_246_count": 113,
+    "migration_298_count": 1
+  },
+  "post_verification_occurrence_map": {
+    "227": 0,
+    "228": 0,
+    "229": 0,
+    "230": 0,
+    "231": 0,
+    "232": 0,
+    "233": 0,
+    "234": 0,
+    "235": 0,
+    "236": 0,
+    "237": 0,
+    "238": 0,
+    "239": 0,
+    "240": 0,
+    "241": 0
+  },
+  "post_verification_ordered_snapshot": [
+    "001",
+    "002",
+    "003",
+    "004",
+    "005",
+    "006",
+    "007",
+    "008",
+    "009",
+    "010",
+    "011",
+    "012",
+    "013",
+    "014",
+    "015",
+    "016",
+    "017",
+    "018",
+    "019",
+    "020",
+    "021",
+    "022",
+    "023",
+    "024",
+    "025",
+    "026",
+    "027",
+    "028",
+    "029",
+    "030",
+    "031",
+    "032",
+    "033",
+    "034",
+    "035",
+    "036",
+    "037",
+    "038",
+    "039",
+    "040",
+    "041",
+    "042",
+    "056",
+    "057",
+    "058",
+    "059",
+    "060",
+    "061",
+    "062",
+    "063",
+    "064",
+    "065",
+    "066",
+    "067",
+    "068",
+    "069",
+    "070",
+    "071",
+    "072",
+    "073",
+    "074",
+    "075",
+    "076",
+    "077",
+    "078",
+    "079",
+    "080",
+    "081",
+    "082",
+    "083",
+    "084",
+    "085",
+    "086",
+    "087",
+    "088",
+    "089",
+    "090",
+    "091",
+    "092",
+    "093",
+    "094",
+    "095",
+    "096",
+    "097",
+    "098",
+    "099",
+    "100",
+    "102",
+    "103",
+    "104",
+    "106",
+    "108",
+    "109",
+    "110",
+    "111",
+    "112",
+    "113",
+    "114",
+    "115",
+    "116",
+    "117",
+    "118",
+    "119",
+    "120",
+    "121",
+    "123",
+    "124",
+    "125",
+    "127",
+    "128",
+    "129",
+    "131",
+    "132",
+    "133",
+    "134",
+    "135",
+    "136",
+    "137",
+    "138",
+    "139",
+    "140",
+    "141",
+    "142",
+    "143",
+    "144",
+    "145",
+    "146",
+    "147",
+    "148",
+    "149",
+    "150",
+    "151",
+    "152",
+    "153",
+    "154",
+    "155",
+    "156",
+    "157",
+    "158",
+    "159",
+    "161",
+    "162",
+    "165",
+    "166",
+    "167",
+    "168",
+    "169",
+    "170",
+    "171",
+    "172",
+    "173",
+    "174",
+    "175",
+    "176",
+    "177",
+    "178",
+    "179",
+    "180",
+    "181",
+    "182",
+    "183",
+    "184",
+    "185",
+    "186",
+    "188",
+    "189",
+    "190",
+    "191",
+    "192",
+    "193",
+    "194",
+    "195",
+    "196",
+    "197",
+    "198",
+    "199",
+    "200",
+    "201",
+    "202",
+    "203",
+    "204",
+    "205",
+    "206",
+    "207",
+    "208",
+    "209",
+    "210",
+    "211",
+    "212",
+    "213",
+    "214",
+    "215",
+    "218",
+    "219",
+    "220",
+    "221",
+    "223",
+    "224",
+    "225",
+    "244",
+    "247",
+    "248",
+    "292",
+    "293",
+    "294",
+    "295",
+    "296",
+    "297",
+    "298"
+  ],
+  "snapshots_exactly_equal": true,
+  "migration_history_unchanged": true,
+  "safety_confirmations": {
+    "all_queries_read_only": true,
+    "metadata_catalogues_only": true,
+    "no_record_contents_returned": true,
+    "no_customer_records_accessed": true,
+    "no_write_query_executed": true,
+    "no_migration_sql_executed": true,
+    "no_migration_repair": true,
+    "no_migration_up": true,
+    "no_supabase_db_push": true,
+    "no_management_api_write": true,
+    "no_schema_or_data_changed": true,
+    "no_migration_history_changed": true,
+    "no_repository_change": true,
+    "no_commit_push_or_pr": true,
+    "no_issue_53_mutation": true,
+    "no_deployment_occurred": true,
+    "no_token_recorded": true,
+    "no_repair_allowlist_created": true,
+    "no_repair_started": true
+  },
+  "superseded_v1_path": "/tmp/waaiio-batch-08-production-verification.json",
+  "superseded_v1_sha256": "bc5ac3169b34c663e45707b25c4fb48c70e7f22b561f90155f7457a57ddd44f5",
+  "v2_correction_reason": "per-object provenance added; canonical function-definition comparison completed; occurrence/safety/output-ownership metadata made explicit",
+  "superseded_v2_path": "/tmp/waaiio-batch-08-production-verification-v2.json",
+  "superseded_v2_sha256": "8e136a202cbf49234ad14484ce6a7721f66de96ff18e416719bf8410b92936de",
+  "v3_correction_reason": "Migration 236 executable SQL was independently proven equivalent to production. The raw pg_get_functiondef difference is caused solely by one non-executable SQL comment present in the repository migration but absent from the deployed source. No committed matching blob exists; circular expected-hash assignment was removed."
+}

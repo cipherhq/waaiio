@@ -7,6 +7,30 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-30
 
+### Operations: Wave 2 V3 canonical evidence with per-object provenance
+- Wave 2 verification complete: 19 versions, 153 objects with V3 canonical per-object provenance (migration_version, migration_filename, migration_checksum, expected_object_digest).
+- 13 function objects validated with definition-level evidence across both batches (9 Batch 8, 4 Batch 9).
+- Migration 236 has one comment-only raw-definition difference (normalized executable SQL identical; no committed matching blob exists).
+- V3 compared paths: Batch 8 = 222, Batch 9 = 148, Wave 2 = 370.
+- V3 canonical SHAs: Batch 8 `f2d54c69`, Batch 9 `ca531e1e`, Wave 2 `3d8550b4`. V1 and V2 superseded but preserved.
+- Batch 8 activated for repair (15 versions in allowlist). Batch 9 verified but deferred (4 versions).
+- Candidate registry cleared. All actionable verification candidates complete.
+- No new production query, no repair, no SQL, no deployment. Issue #53 remains open.
+  - **Files:** `docs/migrations/evidence/batch-08-production-verification.json`, `docs/migrations/evidence/batch-08-production-verification.md`, `docs/migrations/evidence/batch-09-production-verification.json`, `docs/migrations/evidence/batch-09-production-verification.md`, `docs/migrations/evidence/wave-02-production-verification.json`, `docs/migrations/evidence/wave-02-production-verification.md`, `docs/migrations/101-246-repair-runbook.md`, `docs/MIGRATION_REGISTRY.md`, `docs/engineering-status.json`, `docs/ENGINEERING_STATUS.md`
+  - **Affects:** Evidence integrity, V3 canonical provenance chain, repair process, Issue #53 tracking
+  - **Could break:** Nothing — evidence metadata update only; no migration SQL executed, no application-code change, no deployment.
+
+### Operations: Final Verification Wave 2 complete (Batches 8 and 9)
+- Wave 2 read-only production verification complete: 19 migrations (Batches 8 and 9), 153 objects, 140 exact matches, 2 equivalent-stricter, 11 superseded, 0 failed, 0 ambiguous, 351 compared property paths.
+- Production history unchanged: 209 remote, 113 in range 101-246, Migration 298 once, all Wave 2 version occurrences = 0.
+- All actionable verification candidates now verified (candidate registry empty).
+- Batch 8 activated for controlled migration-history repair (15 versions in allowlist).
+- Batch 9 verified but deferred — repair blocked until Batch 8 closeout.
+- No production write, no repair, no deployment, no migration SQL or schema/data change. Issue #53 remains open.
+  - **Files:** `docs/migrations/evidence/batch-08-production-verification.json`, `docs/migrations/evidence/batch-09-production-verification.json`, `docs/migrations/evidence/wave-02-production-verification.json`, `docs/migrations/evidence/*.md`, `docs/migrations/101-246-production-reconciliation.json`, `docs/migrations/101-246-repair-allowlist.json`, `docs/migrations/101-246-verification-candidates.json`, `docs/migrations/101-246-repair-runbook.md`, `docs/MIGRATION_REGISTRY.md`, `docs/engineering-status.json`, `docs/ENGINEERING_STATUS.md`, `scripts/validate-migration-repair-allowlist.mjs`, `lib/__tests__/migration-repair-validator.test.ts`
+  - **Affects:** Migration reconciliation, repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — evidence and metadata only; no migration SQL executed, no application-code change, no deployment.
+
 ### Operations: Batch 7 migration-history repair complete (15 versions)
 - Batch 7 repair complete: 15 versions (208, 209, 210, 211, 212, 213, 214, 215, 218, 219, 220, 221, 223, 224, 225). Remote count 194→209 (+15). 101-246 tracked count 98→113 (+15). 105 total completed migration-history repairs.
 - All 15 approved versions appear exactly once in remote schema_migrations. No unapproved history changes.

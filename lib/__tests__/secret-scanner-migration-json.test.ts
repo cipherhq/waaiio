@@ -270,4 +270,79 @@ describe('Secret scanner migration JSON exemption', () => {
       }
     });
   });
+
+  describe('Context-aware SHA exemption', () => {
+    const TWILIO_SID_PATTERN = 'AC[0-9a-f]{32}';
+
+    // 1. JSON digest fields remain allowed
+    it('allows recognized JSON digest field in prose file', () => {
+      const diff = buildDiff('scripts/validate-migration-repair-allowlist.mjs', [
+        `    "migration_evidence_digest": "${EXEMPT_CHECKSUM}",`,
+      ]);
+      const output = runFilter(diff, TWILIO_SID_PATTERN);
+      expect(output).toBe('');
+    });
+
+    // 2. Validator SHA constants remain allowed
+    it('allows validator SHA constant assignment', () => {
+      const diff = buildDiff('scripts/validate-migration-repair-allowlist.mjs', [
+        `const WAVE2_BATCH8_SHA = '${EXEMPT_CHECKSUM}';`,
+      ]);
+      const output = runFilter(diff, TWILIO_SID_PATTERN);
+      expect(output).toBe('');
+    });
+
+    // 3. Markdown SHA-labelled values remain allowed
+    it('allows Markdown SHA-256 labelled value', () => {
+      const diff = buildDiff('docs/ENGINEERING_STATUS.md', [
+        `Batch 8 SHA-256: \`${EXEMPT_CHECKSUM}\``,
+      ]);
+      const output = runFilter(diff, TWILIO_SID_PATTERN);
+      expect(output).toBe('');
+    });
+
+    // 4. Supabase token on same line as allowed SHA is still detected
+    it('detects Supabase token on same line as allowed SHA', () => {
+      // Build a line that has both a legitimate SHA constant AND a Twilio SID
+      const diff = buildDiff('scripts/validate-migration-repair-allowlist.mjs', [
+        `const WAVE2_BATCH8_SHA = '${EXEMPT_CHECKSUM}'; // ${FAKE_TWILIO_SID}`,
+      ]);
+      const output = runFilter(diff, TWILIO_SID_PATTERN);
+      expect(output).not.toBe('');
+      expect(output).toContain('validate-migration-repair-allowlist.mjs');
+    });
+
+    // 5. API key on same line as allowed SHA is still detected
+    it('detects API key on same line as allowed SHA in CHANGELOG', () => {
+      const diff = buildDiff('CHANGELOG.md', [
+        `SHA-256: \`${EXEMPT_CHECKSUM}\` token=${FAKE_TWILIO_SID}`,
+      ]);
+      const output = runFilter(diff, TWILIO_SID_PATTERN);
+      expect(output).not.toBe('');
+      expect(output).toContain('CHANGELOG.md');
+    });
+
+    // 6. Unlabeled 64-char value is not automatically exempted
+    it('does NOT exempt unlabeled 64-char hex in prose file', () => {
+      // A line with a 64-char hex that is NOT labelled as SHA/checksum/digest
+      // and happens to match a secret pattern
+      const diff = buildDiff('CHANGELOG.md', [
+        `Some text ${EXEMPT_CHECKSUM} more text`,
+      ]);
+      const output = runFilter(diff, TWILIO_SID_PATTERN);
+      // The EXEMPT_CHECKSUM starts with 'ac' which triggers Twilio SID pattern
+      // Since it's not labelled, it should NOT be exempt
+      expect(output).not.toBe('');
+    });
+
+    // 7. Exemption remains path-scoped
+    it('does NOT exempt SHA constant in non-prose file', () => {
+      const diff = buildDiff('lib/some-file.ts', [
+        `const BATCH_SHA = '${EXEMPT_CHECKSUM}';`,
+      ]);
+      const output = runFilter(diff, TWILIO_SID_PATTERN);
+      // lib/some-file.ts is NOT in the shaProseFileRegex
+      expect(output).not.toBe('');
+    });
+  });
 });

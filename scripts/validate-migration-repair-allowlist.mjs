@@ -6,11 +6,11 @@
  * Progressive invariants (multi-batch aware):
  * - Manifest has exactly 146 entries (one per version 101-246)
  * - ALIGNED_TRACKED = 113 (8 original + 15 Batch 1 + 15 Batch 2 + 15 Batch 3 + 15 Batch 4 + 15 Batch 5 + 15 Batch 6 + 15 Batch 7 repaired)
- * - VERIFIED_APPLIED_UNTRACKED = 0
- * - PENDING_PRODUCTION_REVERIFICATION = 19
+ * - VERIFIED_APPLIED_UNTRACKED = 19
+ * - PENDING_PRODUCTION_REVERIFICATION = 0
  * - NOT_VERIFIABLE_SAFELY = 12, SUPERSEDED = 2
- * - Active repair allowlist = 0 (empty)
- * - Verification candidates = 19 (exact PENDING set)
+ * - Active repair allowlist = 15 (Batch 8)
+ * - Verification candidates = 0 (all verified)
  * - The 124-candidate cohort: PENDING + VERIFIED + repaired candidates = 124
  * - Completed repair entries cross-validate against batch evidence
  * - All verification batch evidence files are discovered and validated
@@ -48,8 +48,8 @@ const VALID_SUPERSEDED_STATES = new Set([
 
 const EXPECTED_MANIFEST_COUNT = 146;
 const EXPECTED_ALIGNED = 113;
-const EXPECTED_VERIFIED = 0;
-const EXPECTED_PENDING = 19;
+const EXPECTED_VERIFIED = 19;
+const EXPECTED_PENDING = 0;
 const EXPECTED_NV = 12;
 const EXPECTED_SUPERSEDED = 2;
 const EXPECTED_CANDIDATE_COHORT = 124; // PENDING + VERIFIED + repaired candidates = 124
@@ -260,6 +260,29 @@ for (const e of approvedInManifest) {
     approvedErrors++;
   } else {
     for (const ev of e.evidence) {
+      // Wave 2 format uses expected_properties/verified_properties (no verified_state/result)
+      // Wave 1 and earlier format uses verified_state + result + expected_state
+      const isWave2Format = ev.expected_properties !== undefined && ev.verified_state === undefined;
+      if (isWave2Format) {
+        // Wave 2 format validation
+        if (!ev.verified_at) {
+          fail(`Version ${e.version}: evidence for ${ev.object_name} missing verified_at`);
+          approvedErrors++;
+        }
+        if (!ev.verification_source) {
+          fail(`Version ${e.version}: evidence for ${ev.object_name} missing verification_source`);
+          approvedErrors++;
+        }
+        if (!ev.property_comparison_result) {
+          fail(`Version ${e.version}: evidence for ${ev.object_name} missing property_comparison_result`);
+          approvedErrors++;
+        }
+        if (ev.property_comparison_result === 'failed' || ev.property_comparison_result === 'ambiguous') {
+          fail(`Version ${e.version}: evidence for ${ev.object_name} has ${ev.property_comparison_result} result`);
+          approvedErrors++;
+        }
+      } else {
+      // Legacy format validation
       if (!ev.verified_state) {
         fail(`Version ${e.version}: evidence for ${ev.object_name} missing verified_state`);
         approvedErrors++;
@@ -323,6 +346,7 @@ for (const e of approvedInManifest) {
         fail(`Version ${e.version}: evidence for ${ev.object_name} has result "ambiguous" — cannot be approved`);
         approvedErrors++;
       }
+      } // end legacy format else block
     }
   }
   if (e.current_classification !== 'VERIFIED_APPLIED_UNTRACKED') {
@@ -2856,9 +2880,9 @@ if (existsSync(WAVE1_B6_PATH) && existsSync(WAVE1_B7_PATH) && existsSync(WAVE1_W
   }
   if (safetyErrors === 0) w1pass('All safety confirmations true');
 
-  // 19. Manifest classifications = 83/30/19/12/2
+  // 19. Manifest classifications
   // (already checked above in main manifest checks)
-  w1pass('Manifest classifications verified in main checks (113/0/19/12/2)');
+  w1pass('Manifest classifications verified in main checks (113/19/0/12/2)');
 
   // 20. Batch 6 manifest entries are ALIGNED_TRACKED and completed
   let b6ManifestErrors = 0;
@@ -2873,9 +2897,9 @@ if (existsSync(WAVE1_B6_PATH) && existsSync(WAVE1_B7_PATH) && existsSync(WAVE1_W
   }
   if (b6ManifestErrors === 0) w1pass('Batch 6 manifest entries ALIGNED_TRACKED and completed');
 
-  // 21. Allowlist is empty (Batch 7 repair complete)
-  if (allowlist.length !== 0) { w1fail(`Allowlist length: ${allowlist.length}, expected 0`); }
-  else { w1pass('Allowlist is empty (Batch 7 repair complete)'); }
+  // 21. Allowlist contains Batch 8 (15 versions) after Wave 2 verification
+  if (allowlist.length !== 15) { w1fail(`Allowlist length: ${allowlist.length}, expected 15`); }
+  else { w1pass('Allowlist has 15 Batch 8 entries'); }
 
   // 22. Batch 7 manifest entries are ALIGNED_TRACKED and completed (repair done)
   let b7ManifestErrors = 0;
@@ -2897,16 +2921,1104 @@ if (existsSync(WAVE1_B6_PATH) && existsSync(WAVE1_B7_PATH) && existsSync(WAVE1_W
   if (b7InAllowlist.length > 0) { w1fail(`Batch 7 versions in allowlist: ${b7InAllowlist.join(',')}`); }
   if (b6InAllowlist.length === 0 && b7InAllowlist.length === 0) { w1pass('No Batch 6 or 7 version in allowlist'); }
 
-  // 24. Candidate file is exactly the 19 Batch 8 and 9 versions
-  const expectedCandidateVersions = ['227','228','229','230','231','232','233','234','235','236','237','238','239','240','241','242','243','245','246'];
-  const actualCandidateVersions = candidates.map(c => c.version);
-  if (JSON.stringify(actualCandidateVersions) !== JSON.stringify(expectedCandidateVersions)) {
-    w1fail(`Candidate versions: ${actualCandidateVersions.join(',')}, expected ${expectedCandidateVersions.join(',')}`);
-  } else { w1pass('Candidate file is exactly the 19 Batch 8-9 versions'); }
+  // 24. Candidate file is empty (all candidates verified in Wave 2)
+  if (candidates.length !== 0) {
+    w1fail(`Candidate count: ${candidates.length}, expected 0 (all verified)`);
+  } else { w1pass('Candidate file is empty (all verified)'); }
 
   // 25. Completed repair count verified in Batch 7 closeout section
   w1pass('Completed repair count verified in Batch 7 closeout checks');
 
+}
+
+// ══════════════════════════════════════════════════════════════
+// WAVE 2 (BATCHES 8-9) EVIDENCE VALIDATION
+// ══════════════════════════════════════════════════════════════
+console.log('\n--- Wave 2 Evidence Validation ---\n');
+
+// V3 canonical SHAs
+const WAVE2_BATCH8_SHA = 'f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95';
+const WAVE2_BATCH9_SHA = 'ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5';
+const WAVE2_WAVE_SHA = '3d8550b4967ed4fd95769575e2a70b60e091b904867c3804ca276d243be2d70d';
+
+// V1 audit SHAs
+const WAVE2_BATCH8_V1_SHA = 'bc5ac3169b34c663e45707b25c4fb48c70e7f22b561f90155f7457a57ddd44f5';
+const WAVE2_BATCH9_V1_SHA = '531f94b3c11e2c0c02d078e37a6e71f950d59fd9741818d1b81f93e34f51eff7';
+const WAVE2_WAVE_V1_SHA = '8008cd5817061972b5e6973fa7da59464d3483798e62fb803604cdefbe1413ae';
+
+// V2 audit SHAs
+const WAVE2_BATCH8_V2_SHA = '8e136a202cbf49234ad14484ce6a7721f66de96ff18e416719bf8410b92936de';
+const WAVE2_BATCH9_V2_SHA = '24d34f0b95484139cb1da95fc788a0976555a5763aab8ba295504654b5767e5d';
+const WAVE2_WAVE_V2_SHA = 'd3adc5de8895e38519ce33206b8a211dd9b88caa1b0cdbd322a7fe645cf239e1';
+
+const WAVE2_BATCH8_VERSIONS = ['227','228','229','230','231','232','233','234','235','236','237','238','239','240','241'];
+const WAVE2_BATCH9_VERSIONS = ['242','243','245','246'];
+const WAVE2_ALL_VERSIONS = [...WAVE2_BATCH8_VERSIONS, ...WAVE2_BATCH9_VERSIONS];
+
+const WAVE2_REQUIRED_SAFETY_KEYS = [
+  'all_queries_read_only',
+  'metadata_catalogues_only',
+  'no_commit_push_or_pr',
+  'no_customer_records_accessed',
+  'no_deployment_occurred',
+  'no_issue_53_mutation',
+  'no_management_api_write',
+  'no_migration_history_changed',
+  'no_migration_repair',
+  'no_migration_sql_executed',
+  'no_migration_up',
+  'no_record_contents_returned',
+  'no_repair_allowlist_created',
+  'no_repair_started',
+  'no_repository_change',
+  'no_schema_or_data_changed',
+  'no_supabase_db_push',
+  'no_token_recorded',
+  'no_write_query_executed',
+];
+
+const WAVE2_B8_PATH = resolve(EVIDENCE_DIR, 'batch-08-production-verification.json');
+const WAVE2_B9_PATH = resolve(EVIDENCE_DIR, 'batch-09-production-verification.json');
+const WAVE2_WAVE_PATH = resolve(EVIDENCE_DIR, 'wave-02-production-verification.json');
+
+const WAVE2_B8_V1_PATH = resolve(EVIDENCE_DIR, 'batch-08-production-verification-v1.json');
+const WAVE2_B9_V1_PATH = resolve(EVIDENCE_DIR, 'batch-09-production-verification-v1.json');
+const WAVE2_WAVE_V1_PATH = resolve(EVIDENCE_DIR, 'wave-02-production-verification-v1.json');
+
+const WAVE2_B8_V2_PATH = resolve(EVIDENCE_DIR, 'batch-08-production-verification-v2.json');
+const WAVE2_B9_V2_PATH = resolve(EVIDENCE_DIR, 'batch-09-production-verification-v2.json');
+const WAVE2_WAVE_V2_PATH = resolve(EVIDENCE_DIR, 'wave-02-production-verification-v2.json');
+
+let wave2Errors = 0;
+function w2fail(msg) { fail(`Wave 2: ${msg}`); wave2Errors++; }
+function w2pass(msg) { pass(`Wave 2: ${msg}`); }
+
+// 1. All three V3 canonical evidence files exist
+if (!existsSync(WAVE2_B8_PATH)) { w2fail('Batch 8 evidence file missing'); }
+else { w2pass('Batch 8 evidence file exists'); }
+if (!existsSync(WAVE2_B9_PATH)) { w2fail('Batch 9 evidence file missing'); }
+else { w2pass('Batch 9 evidence file exists'); }
+if (!existsSync(WAVE2_WAVE_PATH)) { w2fail('Wave 2 summary evidence file missing'); }
+else { w2pass('Wave 2 summary evidence file exists'); }
+
+// 1b. V1 audit files exist
+if (!existsSync(WAVE2_B8_V1_PATH)) { w2fail('Batch 8 V1 audit file missing'); }
+else { w2pass('Batch 8 V1 audit file exists'); }
+if (!existsSync(WAVE2_B9_V1_PATH)) { w2fail('Batch 9 V1 audit file missing'); }
+else { w2pass('Batch 9 V1 audit file exists'); }
+if (!existsSync(WAVE2_WAVE_V1_PATH)) { w2fail('Wave 2 V1 audit file missing'); }
+else { w2pass('Wave 2 V1 audit file exists'); }
+
+// 1c. V2 audit files exist
+if (!existsSync(WAVE2_B8_V2_PATH)) { w2fail('Batch 8 V2 audit file missing'); }
+else { w2pass('Batch 8 V2 audit file exists'); }
+if (!existsSync(WAVE2_B9_V2_PATH)) { w2fail('Batch 9 V2 audit file missing'); }
+else { w2pass('Batch 9 V2 audit file exists'); }
+if (!existsSync(WAVE2_WAVE_V2_PATH)) { w2fail('Wave 2 V2 audit file missing'); }
+else { w2pass('Wave 2 V2 audit file exists'); }
+
+if (existsSync(WAVE2_B8_PATH) && existsSync(WAVE2_B9_PATH) && existsSync(WAVE2_WAVE_PATH)) {
+  // 2. Exact V3 canonical SHA values match
+  const w2b8Content = readFileSync(WAVE2_B8_PATH);
+  const w2b9Content = readFileSync(WAVE2_B9_PATH);
+  const w2waveContent = readFileSync(WAVE2_WAVE_PATH);
+  const w2b8SHA = createHash('sha256').update(w2b8Content).digest('hex');
+  const w2b9SHA = createHash('sha256').update(w2b9Content).digest('hex');
+  const w2waveSHA = createHash('sha256').update(w2waveContent).digest('hex');
+
+  if (w2b8SHA !== WAVE2_BATCH8_SHA) { w2fail(`Batch 8 SHA mismatch: ${w2b8SHA}`); }
+  else { w2pass('Batch 8 SHA matches'); }
+  if (w2b9SHA !== WAVE2_BATCH9_SHA) { w2fail(`Batch 9 SHA mismatch: ${w2b9SHA}`); }
+  else { w2pass('Batch 9 SHA matches'); }
+  if (w2waveSHA !== WAVE2_WAVE_SHA) { w2fail(`Wave 2 summary SHA mismatch: ${w2waveSHA}`); }
+  else { w2pass('Wave 2 summary SHA matches'); }
+
+  // 2b. V1 audit SHAs match
+  if (existsSync(WAVE2_B8_V1_PATH)) {
+    const v1b8SHA = createHash('sha256').update(readFileSync(WAVE2_B8_V1_PATH)).digest('hex');
+    if (v1b8SHA !== WAVE2_BATCH8_V1_SHA) { w2fail(`Batch 8 V1 SHA mismatch: ${v1b8SHA}`); }
+    else { w2pass('Batch 8 V1 SHA matches'); }
+  }
+  if (existsSync(WAVE2_B9_V1_PATH)) {
+    const v1b9SHA = createHash('sha256').update(readFileSync(WAVE2_B9_V1_PATH)).digest('hex');
+    if (v1b9SHA !== WAVE2_BATCH9_V1_SHA) { w2fail(`Batch 9 V1 SHA mismatch: ${v1b9SHA}`); }
+    else { w2pass('Batch 9 V1 SHA matches'); }
+  }
+  if (existsSync(WAVE2_WAVE_V1_PATH)) {
+    const v1waveSHA = createHash('sha256').update(readFileSync(WAVE2_WAVE_V1_PATH)).digest('hex');
+    if (v1waveSHA !== WAVE2_WAVE_V1_SHA) { w2fail(`Wave 2 V1 SHA mismatch: ${v1waveSHA}`); }
+    else { w2pass('Wave 2 V1 SHA matches'); }
+  }
+
+  // 2c. V2 audit SHAs match
+  if (existsSync(WAVE2_B8_V2_PATH)) {
+    const v2b8SHA = createHash('sha256').update(readFileSync(WAVE2_B8_V2_PATH)).digest('hex');
+    if (v2b8SHA !== WAVE2_BATCH8_V2_SHA) { w2fail(`Batch 8 V2 SHA mismatch: ${v2b8SHA}`); }
+    else { w2pass('Batch 8 V2 SHA matches'); }
+  }
+  if (existsSync(WAVE2_B9_V2_PATH)) {
+    const v2b9SHA = createHash('sha256').update(readFileSync(WAVE2_B9_V2_PATH)).digest('hex');
+    if (v2b9SHA !== WAVE2_BATCH9_V2_SHA) { w2fail(`Batch 9 V2 SHA mismatch: ${v2b9SHA}`); }
+    else { w2pass('Batch 9 V2 SHA matches'); }
+  }
+  if (existsSync(WAVE2_WAVE_V2_PATH)) {
+    const v2waveSHA = createHash('sha256').update(readFileSync(WAVE2_WAVE_V2_PATH)).digest('hex');
+    if (v2waveSHA !== WAVE2_WAVE_V2_SHA) { w2fail(`Wave 2 V2 SHA mismatch: ${v2waveSHA}`); }
+    else { w2pass('Wave 2 V2 SHA matches'); }
+  }
+
+  const w2b8Data = JSON.parse(w2b8Content);
+  const w2b9Data = JSON.parse(w2b9Content);
+  const w2waveData = JSON.parse(w2waveContent);
+
+  // 2d. Independent recomputation of all totals
+  const W2_EXPECTED_RECOMP = {
+    B8: { migCount: 15, objCount: 111, results: { exact_match: 106, equivalent_stricter: 1, superseded: 4, failed: 0, ambiguous: 0 }, comparedPaths: 222 },
+    B9: { migCount: 4, objCount: 42, results: { exact_match: 34, equivalent_stricter: 1, superseded: 7, failed: 0, ambiguous: 0 }, comparedPaths: 148 },
+  };
+  let w2RecompErrors = 0;
+  let w2CombinedRecompMigCount = 0;
+  let w2CombinedRecompObjCount = 0;
+  const w2CombinedRecompResults = { exact_match: 0, equivalent_stricter: 0, superseded: 0, failed: 0, ambiguous: 0 };
+  let w2CombinedRecompPaths = 0;
+  let w2RecompFuncCount = 0;
+
+  for (const batchInfo of [{ data: w2b8Data, label: 'B8', key: 'B8' }, { data: w2b9Data, label: 'B9', key: 'B9' }]) {
+    const exp = W2_EXPECTED_RECOMP[batchInfo.key];
+    const batchData = batchInfo.data;
+
+    const actualMigCount = batchData.migrations.length;
+    const actualVersions = batchData.migrations.map(m => m.migration_version);
+    let actualObjCount = 0;
+    const actualResults = { exact_match: 0, equivalent_stricter: 0, superseded: 0, failed: 0, ambiguous: 0 };
+    let actualComparedPaths = 0;
+    let actualFuncCount = 0;
+
+    for (const m of batchData.migrations) {
+      actualObjCount += m.objects.length;
+      for (const o of m.objects) {
+        const r = o.property_comparison_result;
+        if (r in actualResults) actualResults[r]++;
+        actualComparedPaths += (o.compared_property_paths || []).length;
+        if (o.object_type === 'function') actualFuncCount++;
+      }
+    }
+
+    // Migration count: recomputed vs declared vs expected
+    if (actualMigCount !== batchData.total_migrations) {
+      w2fail(`Batch ${batchInfo.key} recomputed migration count ${actualMigCount} differs from declared ${batchData.total_migrations}`);
+      w2RecompErrors++;
+    }
+    if (actualMigCount !== exp.migCount) {
+      w2fail(`Batch ${batchInfo.key} recomputed migration count ${actualMigCount} differs from expected ${exp.migCount}`);
+      w2RecompErrors++;
+    }
+
+    // Versions: recomputed vs declared
+    if (JSON.stringify(actualVersions) !== JSON.stringify(batchData.versions)) {
+      w2fail(`Batch ${batchInfo.key} recomputed versions differ from declared versions`);
+      w2RecompErrors++;
+    }
+
+    // Object count: recomputed vs declared vs expected
+    if (actualObjCount !== batchData.total_objects_checked) {
+      w2fail(`Batch ${batchInfo.key} recomputed object count ${actualObjCount} differs from declared ${batchData.total_objects_checked}`);
+      w2RecompErrors++;
+    }
+    if (actualObjCount !== exp.objCount) {
+      w2fail(`Batch ${batchInfo.key} recomputed object count ${actualObjCount} differs from expected ${exp.objCount}`);
+      w2RecompErrors++;
+    }
+
+    // Result totals: recomputed vs declared vs expected
+    for (const rKey of Object.keys(actualResults)) {
+      if (actualResults[rKey] !== batchData.result_totals[rKey]) {
+        w2fail(`Batch ${batchInfo.key} recomputed ${rKey} ${actualResults[rKey]} differs from declared ${batchData.result_totals[rKey]}`);
+        w2RecompErrors++;
+      }
+      if (actualResults[rKey] !== exp.results[rKey]) {
+        w2fail(`Batch ${batchInfo.key} recomputed ${rKey} ${actualResults[rKey]} differs from expected ${exp.results[rKey]}`);
+        w2RecompErrors++;
+      }
+    }
+
+    // Compared paths: recomputed vs declared vs expected
+    if (actualComparedPaths !== batchData.total_compared_property_paths) {
+      w2fail(`Batch ${batchInfo.key} recomputed compared paths ${actualComparedPaths} differs from declared ${batchData.total_compared_property_paths}`);
+      w2RecompErrors++;
+    }
+    if (actualComparedPaths !== exp.comparedPaths) {
+      w2fail(`Batch ${batchInfo.key} recomputed compared paths ${actualComparedPaths} differs from expected ${exp.comparedPaths}`);
+      w2RecompErrors++;
+    }
+
+    w2CombinedRecompMigCount += actualMigCount;
+    w2CombinedRecompObjCount += actualObjCount;
+    for (const rKey of Object.keys(actualResults)) w2CombinedRecompResults[rKey] += actualResults[rKey];
+    w2CombinedRecompPaths += actualComparedPaths;
+    w2RecompFuncCount += actualFuncCount;
+  }
+
+  // Combined recomputation checks
+  if (w2CombinedRecompMigCount !== 19) {
+    w2fail(`Combined recomputed migration count ${w2CombinedRecompMigCount} differs from expected 19`);
+    w2RecompErrors++;
+  }
+  if (w2CombinedRecompObjCount !== 153) {
+    w2fail(`Combined recomputed object count ${w2CombinedRecompObjCount} differs from expected 153`);
+    w2RecompErrors++;
+  }
+  const expCombinedResults = { exact_match: 140, equivalent_stricter: 2, superseded: 11, failed: 0, ambiguous: 0 };
+  for (const rKey of Object.keys(expCombinedResults)) {
+    if (w2CombinedRecompResults[rKey] !== expCombinedResults[rKey]) {
+      w2fail(`Combined recomputed ${rKey} ${w2CombinedRecompResults[rKey]} differs from expected ${expCombinedResults[rKey]}`);
+      w2RecompErrors++;
+    }
+  }
+  if (w2CombinedRecompPaths !== 370) {
+    w2fail(`Combined recomputed compared paths ${w2CombinedRecompPaths} differs from expected 370`);
+    w2RecompErrors++;
+  }
+  if (w2RecompFuncCount !== 13) {
+    w2fail(`Recomputed function object count ${w2RecompFuncCount} expected 13`);
+    w2RecompErrors++;
+  }
+  if (w2RecompErrors === 0) w2pass('Independent recomputation of all totals matches declared and expected values');
+
+  // 3. Wave summary embeds exact Batch 8 and Batch 9 SHAs
+  if (w2waveData.batch_08_evidence_sha256 !== WAVE2_BATCH8_SHA) { w2fail(`Wave embeds wrong Batch 8 SHA: ${w2waveData.batch_08_evidence_sha256}`); }
+  else { w2pass('Wave embeds correct Batch 8 SHA'); }
+  if (w2waveData.batch_09_evidence_sha256 !== WAVE2_BATCH9_SHA) { w2fail(`Wave embeds wrong Batch 9 SHA: ${w2waveData.batch_09_evidence_sha256}`); }
+  else { w2pass('Wave embeds correct Batch 9 SHA'); }
+
+  // 4-5. Exact version sets and order
+  if (JSON.stringify(w2b8Data.versions) !== JSON.stringify(WAVE2_BATCH8_VERSIONS)) { w2fail('Batch 8 version set mismatch'); }
+  else { w2pass('Batch 8 exact version set'); }
+  if (JSON.stringify(w2b9Data.versions) !== JSON.stringify(WAVE2_BATCH9_VERSIONS)) { w2fail('Batch 9 version set mismatch'); }
+  else { w2pass('Batch 9 exact version set'); }
+
+  // Combined version set
+  if (JSON.stringify(w2waveData.combined_ordered_versions) !== JSON.stringify(WAVE2_ALL_VERSIONS)) { w2fail('Combined version set mismatch'); }
+  else { w2pass('Combined exact 19-version ordered set'); }
+
+  // 6-7. Batch object counts
+  if (w2b8Data.total_objects_checked !== 111) { w2fail(`Batch 8 objects: ${w2b8Data.total_objects_checked}, expected 111`); }
+  else { w2pass('Batch 8 objects = 111'); }
+  if (w2b9Data.total_objects_checked !== 42) { w2fail(`Batch 9 objects: ${w2b9Data.total_objects_checked}, expected 42`); }
+  else { w2pass('Batch 9 objects = 42'); }
+
+  // 8. Combined counts
+  if (w2waveData.actual_combined_object_count !== 153) { w2fail(`Combined objects: ${w2waveData.actual_combined_object_count}, expected 153`); }
+  else { w2pass('Combined objects = 153'); }
+  if (w2b8Data.total_migrations !== 15) { w2fail(`Batch 8 migrations: ${w2b8Data.total_migrations}, expected 15`); }
+  else { w2pass('Batch 8 migrations = 15'); }
+  if (w2b9Data.total_migrations !== 4) { w2fail(`Batch 9 migrations: ${w2b9Data.total_migrations}, expected 4`); }
+  else { w2pass('Batch 9 migrations = 4'); }
+
+  // 9-10. Result counts
+  const w2b8rt = w2b8Data.result_totals;
+  if (w2b8rt.exact_match !== 106 || w2b8rt.equivalent_stricter !== 1 || w2b8rt.superseded !== 4 || w2b8rt.failed !== 0 || w2b8rt.ambiguous !== 0) {
+    w2fail(`Batch 8 results: ${w2b8rt.exact_match}/${w2b8rt.equivalent_stricter}/${w2b8rt.superseded}/${w2b8rt.failed}/${w2b8rt.ambiguous}, expected 106/1/4/0/0`);
+  } else { w2pass('Batch 8 result counts = 106/1/4/0/0'); }
+
+  const w2b9rt = w2b9Data.result_totals;
+  if (w2b9rt.exact_match !== 34 || w2b9rt.equivalent_stricter !== 1 || w2b9rt.superseded !== 7 || w2b9rt.failed !== 0 || w2b9rt.ambiguous !== 0) {
+    w2fail(`Batch 9 results: ${w2b9rt.exact_match}/${w2b9rt.equivalent_stricter}/${w2b9rt.superseded}/${w2b9rt.failed}/${w2b9rt.ambiguous}, expected 34/1/7/0/0`);
+  } else { w2pass('Batch 9 result counts = 34/1/7/0/0'); }
+
+  // 11. Combined result counts
+  const w2crt = w2waveData.combined_result_totals;
+  if (w2crt.exact_match !== 140 || w2crt.equivalent_stricter !== 2 || w2crt.superseded !== 11 || w2crt.failed !== 0 || w2crt.ambiguous !== 0) {
+    w2fail(`Combined results: ${w2crt.exact_match}/${w2crt.equivalent_stricter}/${w2crt.superseded}/${w2crt.failed}/${w2crt.ambiguous}, expected 140/2/11/0/0`);
+  } else { w2pass('Combined result counts = 140/2/11/0/0'); }
+
+  // 12. Compared-path counts (V3 values)
+  if (w2b8Data.total_compared_property_paths !== 222) { w2fail(`Batch 8 compared paths: ${w2b8Data.total_compared_property_paths}, expected 222`); }
+  else { w2pass('Batch 8 compared paths = 222'); }
+  if (w2b9Data.total_compared_property_paths !== 148) { w2fail(`Batch 9 compared paths: ${w2b9Data.total_compared_property_paths}, expected 148`); }
+  else { w2pass('Batch 9 compared paths = 148'); }
+  if (w2waveData.combined_compared_property_paths !== 370) { w2fail(`Combined compared paths: ${w2waveData.combined_compared_property_paths}, expected 370`); }
+  else { w2pass('Combined compared paths = 370'); }
+
+  // 13-14. Every migration digest recomputes and is non-empty
+  function w2SortKeysRecursive(obj) {
+    if (Array.isArray(obj)) return obj.map(w2SortKeysRecursive);
+    if (obj && typeof obj === 'object') {
+      const sorted = {};
+      for (const key of Object.keys(obj).sort()) {
+        sorted[key] = w2SortKeysRecursive(obj[key]);
+      }
+      return sorted;
+    }
+    return obj;
+  }
+
+  // Escape non-ASCII characters in JSON serialization for digest computation
+  function w2EscapeNonAscii(str) {
+    return str.replace(/[\u0080-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+  }
+
+  let w2DigestErrors = 0;
+  for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+    for (const m of batchInfo.data.migrations) {
+      if (!m.migration_evidence_digest) {
+        w2fail(`${batchInfo.label} migration ${m.migration_version}: empty digest`);
+        w2DigestErrors++;
+        continue;
+      }
+      const clone = JSON.parse(JSON.stringify(m));
+      delete clone.migration_evidence_digest;
+      const sorted = w2SortKeysRecursive(clone);
+      const serialized = w2EscapeNonAscii(JSON.stringify(sorted));
+      const computed = createHash('sha256').update(serialized).digest('hex');
+      if (computed !== m.migration_evidence_digest) {
+        w2fail(`${batchInfo.label} migration ${m.migration_version}: digest mismatch (stored: ${m.migration_evidence_digest.slice(0,12)}..., computed: ${computed.slice(0,12)}...)`);
+        w2DigestErrors++;
+      }
+    }
+  }
+  if (w2DigestErrors === 0) w2pass('All 19 migration digests recompute correctly');
+
+  // 15. No failed or ambiguous result
+  let w2ResultErrors = 0;
+  for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+    for (const m of batchInfo.data.migrations) {
+      for (const o of m.objects || []) {
+        if (o.property_comparison_result === 'failed') { w2fail(`${batchInfo.label} ${m.migration_version}: failed result on ${o.object_name}`); w2ResultErrors++; }
+        if (o.property_comparison_result === 'ambiguous') { w2fail(`${batchInfo.label} ${m.migration_version}: ambiguous result on ${o.object_name}`); w2ResultErrors++; }
+      }
+    }
+  }
+  if (w2ResultErrors === 0) w2pass('No failed or ambiguous results');
+
+  // 15b. Object provenance validation: all 153 objects contain provenance fields matching parent migration
+  const PROVENANCE_FIELDS = ['migration_version', 'migration_filename', 'migration_checksum', 'expected_object_digest'];
+  let w2ProvErrors = 0;
+  for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+    for (const m of batchInfo.data.migrations) {
+      for (const o of m.objects || []) {
+        const missing = PROVENANCE_FIELDS.filter(f => o[f] === undefined || o[f] === null || o[f] === '');
+        if (missing.length > 0) {
+          w2fail(`${batchInfo.label} ${m.migration_version} ${o.object_name}: object provenance missing ${missing.join(',')}`);
+          w2ProvErrors++;
+        } else {
+          // Verify provenance matches parent migration
+          for (const f of PROVENANCE_FIELDS) {
+            if (o[f] !== m[f]) {
+              w2fail(`${batchInfo.label} ${m.migration_version} ${o.object_name}: object provenance mismatch on ${f} (object: ${o[f]}, migration: ${m[f]})`);
+              w2ProvErrors++;
+            }
+          }
+        }
+      }
+    }
+  }
+  if (w2ProvErrors === 0) w2pass('All 153 objects have correct provenance matching parent migration');
+
+  // 15c. Function object count validation: exactly 13 across B8+B9
+  let w2FuncCount = 0;
+  for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+    for (const m of batchInfo.data.migrations) {
+      for (const o of m.objects || []) {
+        if (o.object_type === 'function') w2FuncCount++;
+      }
+    }
+  }
+  if (w2FuncCount !== 13) { w2fail(`function object count: ${w2FuncCount}, expected 13`); }
+  else { w2pass('Function object count = 13'); }
+
+  // 15d. Function definition hash validation for exact_match non-exception functions
+  let w2FuncHashErrors = 0;
+  for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+    for (const m of batchInfo.data.migrations) {
+      for (const o of m.objects || []) {
+        if (o.object_type !== 'function') continue;
+        if (o.property_comparison_result !== 'exact_match') continue;
+        if (o.comparison_basis === 'normalized_executable_sql_exact_match_with_comment_only_raw_definition_difference') continue;
+        // For non-exception exact-match functions: check definition hashes
+        const repoHash = o.expected_properties.repository_definition_sha256 || o.expected_properties.definition_sha256;
+        const prodHash = o.verified_properties.production_definition_sha256 || o.verified_properties.definition_sha256;
+        if (!repoHash) {
+          w2fail(`${batchInfo.label} ${m.migration_version} ${o.object_name}: function definition hash missing in expected_properties`);
+          w2FuncHashErrors++;
+        } else if (!prodHash) {
+          w2fail(`${batchInfo.label} ${m.migration_version} ${o.object_name}: function definition hash missing in verified_properties`);
+          w2FuncHashErrors++;
+        } else if (repoHash !== prodHash) {
+          w2fail(`${batchInfo.label} ${m.migration_version} ${o.object_name}: function raw hashes differ (repo: ${repoHash.slice(0,12)}..., prod: ${prodHash.slice(0,12)}...)`);
+          w2FuncHashErrors++;
+        }
+      }
+    }
+  }
+  if (w2FuncHashErrors === 0) w2pass('All non-exception exact-match function definition hashes equal');
+
+  // 15e. Migration 236 exception validation
+  const w2Mig236 = w2b8Data.migrations.find(m => m.migration_version === '236');
+  if (!w2Mig236) { w2fail('Migration 236 not found in Batch 8'); }
+  else {
+    const m236Funcs = w2Mig236.objects.filter(o => o.object_type === 'function');
+    if (m236Funcs.length !== 1) { w2fail(`Migration 236: expected exactly 1 function object, got ${m236Funcs.length}`); }
+    else {
+      const f236 = m236Funcs[0];
+      let m236Errors = 0;
+
+      // comparison result and basis
+      if (f236.property_comparison_result !== 'exact_match') {
+        w2fail(`Migration 236 function: property_comparison_result = ${f236.property_comparison_result}, expected exact_match`);
+        m236Errors++;
+      }
+      if (f236.comparison_basis !== 'normalized_executable_sql_exact_match_with_comment_only_raw_definition_difference') {
+        w2fail(`Migration 236 function: wrong comparison_basis: ${f236.comparison_basis}`);
+        m236Errors++;
+      }
+
+      // expected_properties.repository_definition_sha256
+      if (f236.expected_properties.repository_definition_sha256 !== '14eab786c96c68a107b813ab6b1ceb2b3e2345673440b261d59bb081d09ff2af') {
+        w2fail(`Migration 236 function: expected repository_definition_sha256 mismatch: ${f236.expected_properties.repository_definition_sha256}`);
+        m236Errors++;
+      }
+
+      // verified_properties.production_definition_sha256
+      if (f236.verified_properties.production_definition_sha256 !== '7df85cfe54243452810229ea236d41c98c45dcae5029a9091c48d43000dfc20b') {
+        w2fail(`Migration 236 function: verified production_definition_sha256 mismatch: ${f236.verified_properties.production_definition_sha256}`);
+        m236Errors++;
+      }
+
+      // repository hash !== production hash (they must differ)
+      if (f236.expected_properties.repository_definition_sha256 === f236.verified_properties.production_definition_sha256) {
+        w2fail('Migration 236 function: repository hash must differ from production hash');
+        m236Errors++;
+      }
+
+      // raw_definition_comparison
+      const rdc = f236.raw_definition_comparison || {};
+      if (rdc.repository_definition_sha256 !== '14eab786c96c68a107b813ab6b1ceb2b3e2345673440b261d59bb081d09ff2af') {
+        w2fail(`Migration 236 function: raw_definition_comparison.repository_definition_sha256 mismatch`); m236Errors++;
+      }
+      if (rdc.production_definition_sha256 !== '7df85cfe54243452810229ea236d41c98c45dcae5029a9091c48d43000dfc20b') {
+        w2fail(`Migration 236 function: raw_definition_comparison.production_definition_sha256 mismatch`); m236Errors++;
+      }
+      if (rdc.raw_hashes_equal !== false) {
+        w2fail(`Migration 236 function: raw_hashes_equal = ${rdc.raw_hashes_equal}, expected false`); m236Errors++;
+      }
+      if (rdc.comment_only_difference_proven !== true) {
+        w2fail(`Migration 236 function: comment_only_difference_proven = ${rdc.comment_only_difference_proven}, expected true`); m236Errors++;
+      }
+
+      // executable_equivalence_derivation
+      const eed = f236.executable_equivalence_derivation || {};
+      if (eed.source_commit_sha !== '58a8d11f570851b69c2cd1c74fcde805188944dc') {
+        w2fail(`Migration 236 function: source_commit_sha mismatch`); m236Errors++;
+      }
+      if (eed.source_blob_sha !== '53ef69d6d25dc96e4cb64a59837b91fb04fa8092') {
+        w2fail(`Migration 236 function: source_blob_sha mismatch`); m236Errors++;
+      }
+      if (eed.repository_derived_candidate_definition_sha256 !== '7df85cfe54243452810229ea236d41c98c45dcae5029a9091c48d43000dfc20b') {
+        w2fail(`Migration 236 function: repository_derived_candidate_definition_sha256 mismatch`); m236Errors++;
+      }
+      if (eed.production_observed_definition_sha256 !== '7df85cfe54243452810229ea236d41c98c45dcae5029a9091c48d43000dfc20b') {
+        w2fail(`Migration 236 function: production_observed_definition_sha256 mismatch`); m236Errors++;
+      }
+      if (eed.repository_derived_candidate_definition_sha256 !== eed.production_observed_definition_sha256) {
+        w2fail(`Migration 236 function: candidate !== production`); m236Errors++;
+      }
+      if (eed.normalized_executable_sha256_current !== '3d8197ddb16ed3c057839b47ee2def16f7c8e937239f9ed2cffff8531e4d1fcf') {
+        w2fail(`Migration 236 function: normalized_executable_sha256_current mismatch`); m236Errors++;
+      }
+      if (eed.normalized_executable_sha256_deployed_candidate !== '3d8197ddb16ed3c057839b47ee2def16f7c8e937239f9ed2cffff8531e4d1fcf') {
+        w2fail(`Migration 236 function: normalized_executable_sha256_deployed_candidate mismatch`); m236Errors++;
+      }
+      if (eed.normalized_executable_sql_equal !== true) {
+        w2fail(`Migration 236 function: normalized_executable_sql_equal = ${eed.normalized_executable_sql_equal}, expected true`); m236Errors++;
+      }
+      if (eed.exact_removed_comment !== '-- Version mismatch \u2014 return the current state so caller can retry') {
+        w2fail(`Migration 236 function: exact_removed_comment mismatch`); m236Errors++;
+      }
+      if (!Array.isArray(eed.other_source_differences) || eed.other_source_differences.length !== 0) {
+        w2fail(`Migration 236 function: other_source_differences must be exactly []`); m236Errors++;
+      }
+      if (eed.no_committed_matching_blob_exists !== true) {
+        w2fail(`Migration 236 function: no_committed_matching_blob_exists = ${eed.no_committed_matching_blob_exists}, expected true`); m236Errors++;
+      }
+      if (eed.no_later_migration_modification_through !== 298) {
+        w2fail(`Migration 236 function: no_later_migration_modification_through = ${eed.no_later_migration_modification_through}, expected 298`); m236Errors++;
+      }
+      if (eed.production_source_was_not_queried !== true) {
+        w2fail(`Migration 236 function: production_source_was_not_queried = ${eed.production_source_was_not_queried}, expected true`); m236Errors++;
+      }
+
+      // non_executable_source_differences
+      const nesd = f236.non_executable_source_differences || [];
+      if (!Array.isArray(nesd) || nesd.length !== 1) {
+        w2fail(`Migration 236 function: non_executable_source_differences must have exactly 1 entry, got ${Array.isArray(nesd) ? nesd.length : 'not array'}`);
+        m236Errors++;
+      } else {
+        const entry = nesd[0];
+        if (entry.type !== 'sql_line_comment') {
+          w2fail(`Migration 236 function: non_executable_source_differences[0].type = ${entry.type}, expected sql_line_comment`); m236Errors++;
+        }
+        if (entry.repository_text !== '-- Version mismatch \u2014 return the current state so caller can retry') {
+          w2fail(`Migration 236 function: non_executable_source_differences[0].repository_text mismatch`); m236Errors++;
+        }
+        if (entry.deployed_candidate_text !== null) {
+          w2fail(`Migration 236 function: non_executable_source_differences[0].deployed_candidate_text = ${entry.deployed_candidate_text}, expected null`); m236Errors++;
+        }
+        if (entry.executable_effect !== 'none') {
+          w2fail(`Migration 236 function: non_executable_source_differences[0].executable_effect = ${entry.executable_effect}, expected none`); m236Errors++;
+        }
+      }
+
+      if (m236Errors === 0) w2pass('Migration 236 comment-only exception fully validated');
+    }
+
+    // No other function in any migration may use the comment-only exception basis
+    let m236ExclusivityErrors = 0;
+    for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+      for (const m of batchInfo.data.migrations) {
+        if (m.migration_version === '236') continue;
+        for (const o of m.objects || []) {
+          if (o.object_type === 'function' && o.comparison_basis === 'normalized_executable_sql_exact_match_with_comment_only_raw_definition_difference') {
+            w2fail(`only Migration 236 may use comment-only exception: found in Migration ${m.migration_version} ${o.object_name}`);
+            m236ExclusivityErrors++;
+          }
+        }
+      }
+    }
+    if (m236ExclusivityErrors === 0) w2pass('Only Migration 236 uses comment-only exception basis');
+  }
+
+  // 15f. Superseded function hash validation
+  const WAVE2_SUPERSEDED_FUNCTIONS = [
+    { batch: 'B8', batchData: w2b8Data, migration: '231', name: 'create_catalog_order_atomic', lineageField: 'superseded_by', lineageValue: 'migration_235',
+      expectedHash: 'a0e76b33988da4247097eb411e6a37ed8e83ca8c0091487af96bfdc918f9fe00',
+      verifiedHash: 'e6824d66dac39b6580b3f599aa6bc9228383b5d2ef13b4038ad3374d6203d74c' },
+    { batch: 'B8', batchData: w2b8Data, migration: '233', name: 'process_recurring_charge', lineageField: 'superseded_by', lineageValue: 'migration_244',
+      expectedHash: '0266ec2f7117f38c9e22d3bb64f14ccd1745578dc5ba4470101dddf0c6e7c26a',
+      verifiedHash: 'e9ba948272e9b45af73550fb6307131f2be04aaeb6fed166400b2c9791d130be' },
+    { batch: 'B9', batchData: w2b9Data, migration: '242', name: 'reserve_credits_atomic(uuid, uuid, integer)', lineageField: 'superseding_migration', lineageValue: '243',
+      expectedHash: '254f64f8089836d8b14da00996b98cc3bb646146e21d0d643abe105f069521cc',
+      verifiedHash: '2c3a0bd9cdc9be9054de5523e4f5b8127999bc701f78c57701aa3c5d23962932' },
+    { batch: 'B9', batchData: w2b9Data, migration: '242', name: 'consume_credits_atomic(uuid, uuid, integer)', lineageField: 'superseding_migration', lineageValue: '243',
+      expectedHash: '41fca1c289a1a5500055f60f9769a69d1c6a245fd2cfa33be9617990cd92db76',
+      verifiedHash: '28e737b0a5395614e97015fe5044e7f83c1a62837393ba91094f1191cc2a71aa' },
+  ];
+  let w2SupFuncHashErrors = 0;
+  for (const sf of WAVE2_SUPERSEDED_FUNCTIONS) {
+    const mig = sf.batchData.migrations.find(m => m.migration_version === sf.migration);
+    if (!mig) { w2fail(`Superseded function hash: Migration ${sf.migration} not found`); w2SupFuncHashErrors++; continue; }
+    const func = mig.objects.find(o => o.object_name === sf.name && o.object_type === 'function' && o.property_comparison_result === 'superseded');
+    if (!func) { w2fail(`Superseded function hash: ${sf.batch} M${sf.migration} ${sf.name} not found`); w2SupFuncHashErrors++; continue; }
+
+    const epHash = func.expected_properties && func.expected_properties.definition_sha256;
+    const vpHash = func.verified_properties && func.verified_properties.definition_sha256;
+
+    // expected_properties contains definition_sha256
+    if (!epHash) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: expected_properties.definition_sha256 missing`);
+      w2SupFuncHashErrors++;
+    } else if (!/^[0-9a-f]{64}$/.test(epHash)) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: expected_properties.definition_sha256 not valid 64-char hex`);
+      w2SupFuncHashErrors++;
+    } else if (epHash !== sf.expectedHash) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: expected_properties.definition_sha256 = ${epHash}, expected ${sf.expectedHash}`);
+      w2SupFuncHashErrors++;
+    }
+
+    // verified_properties contains definition_sha256
+    if (!vpHash) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: verified_properties.definition_sha256 missing`);
+      w2SupFuncHashErrors++;
+    } else if (!/^[0-9a-f]{64}$/.test(vpHash)) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: verified_properties.definition_sha256 not valid 64-char hex`);
+      w2SupFuncHashErrors++;
+    } else if (vpHash !== sf.verifiedHash) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: verified_properties.definition_sha256 = ${vpHash}, expected ${sf.verifiedHash}`);
+      w2SupFuncHashErrors++;
+    }
+
+    // Hashes must be UNEQUAL (superseded means function body changed)
+    if (epHash && vpHash && epHash === vpHash) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: expected and verified hashes must differ for superseded function`);
+      w2SupFuncHashErrors++;
+    }
+
+    // Exact superseding lineage
+    if (func[sf.lineageField] !== sf.lineageValue) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: ${sf.lineageField} = "${func[sf.lineageField]}", expected "${sf.lineageValue}"`);
+      w2SupFuncHashErrors++;
+    }
+  }
+  if (w2SupFuncHashErrors === 0) w2pass('All 4 superseded functions have valid unequal definition hashes and exact lineage');
+
+  // 15g. Non-superseded function hash equality (8 normal + 1 M236 exception = 9 total)
+  {
+    let nonSupFuncHashErrors = 0;
+    let nonSupFuncCount = 0;
+    for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+      for (const m of batchInfo.data.migrations) {
+        for (const o of m.objects || []) {
+          if (o.object_type !== 'function') continue;
+          if (o.property_comparison_result === 'superseded') continue;
+          nonSupFuncCount++;
+          // Skip M236 exception (already validated above with its own logic)
+          if (o.comparison_basis === 'normalized_executable_sql_exact_match_with_comment_only_raw_definition_difference') continue;
+          const repoHash = o.expected_properties.repository_definition_sha256 || o.expected_properties.definition_sha256;
+          const prodHash = o.verified_properties.production_definition_sha256 || o.verified_properties.definition_sha256;
+          if (repoHash && prodHash && repoHash !== prodHash) {
+            w2fail(`${batchInfo.label} M${m.migration_version} ${o.object_name}: non-superseded function hashes differ`);
+            nonSupFuncHashErrors++;
+          }
+        }
+      }
+    }
+    if (nonSupFuncCount !== 9) {
+      w2fail(`Non-superseded function count: ${nonSupFuncCount}, expected 9 (8 normal + 1 M236 exception)`);
+      nonSupFuncHashErrors++;
+    }
+    if (nonSupFuncHashErrors === 0) w2pass('All 9 non-superseded functions have equal expected/verified hashes');
+  }
+
+  // 16. Equivalent-stricter lineage validation (exact equality)
+  // Migration 233: process_recurring_charge.revoke_public -> migration_295
+  const w2Mig233 = w2b8Data.migrations.find(m => m.migration_version === '233');
+  if (!w2Mig233) { w2fail('Migration 233 not found in Batch 8'); }
+  else {
+    const eqStricter233 = w2Mig233.objects.filter(o => o.property_comparison_result === 'equivalent_stricter');
+    if (eqStricter233.length !== 1) { w2fail(`Migration 233: expected 1 equivalent_stricter, got ${eqStricter233.length}`); }
+    else {
+      const es = eqStricter233[0];
+      let es233Errors = 0;
+      if (es.object_name !== 'process_recurring_charge.revoke_public') {
+        w2fail(`Migration 233 eq-stricter object_name: "${es.object_name}", expected "process_recurring_charge.revoke_public"`);
+        es233Errors++;
+      }
+      if (es.object_type !== 'grant') {
+        w2fail(`Migration 233 eq-stricter object_type: "${es.object_type}", expected "grant"`);
+        es233Errors++;
+      }
+      if (es.equivalent_stricter_by !== 'migration_295') {
+        w2fail(`Migration 233 eq-stricter equivalent_stricter_by: "${es.equivalent_stricter_by}", expected "migration_295"`);
+        es233Errors++;
+      }
+      if (es233Errors === 0) w2pass('Migration 233 equivalent-stricter: process_recurring_charge.revoke_public -> migration_295');
+    }
+  }
+
+  // Migration 245: book_slot_atomic_26_args_service_role -> 296
+  const w2Mig245 = w2b9Data.migrations.find(m => m.migration_version === '245');
+  if (!w2Mig245) { w2fail('Migration 245 not found in Batch 9'); }
+  else {
+    const eqStricter245 = w2Mig245.objects.filter(o => o.property_comparison_result === 'equivalent_stricter');
+    if (eqStricter245.length !== 1) { w2fail(`Migration 245: expected 1 equivalent_stricter, got ${eqStricter245.length}`); }
+    else {
+      const es = eqStricter245[0];
+      let es245Errors = 0;
+      if (es.object_name !== 'book_slot_atomic_26_args_service_role') {
+        w2fail(`Migration 245 eq-stricter object_name: "${es.object_name}", expected "book_slot_atomic_26_args_service_role"`);
+        es245Errors++;
+      }
+      if (es.object_type !== 'grant') {
+        w2fail(`Migration 245 eq-stricter object_type: "${es.object_type}", expected "grant"`);
+        es245Errors++;
+      }
+      if (es.tightening_migration !== '296') {
+        w2fail(`Migration 245 eq-stricter tightening_migration: "${es.tightening_migration}", expected "296"`);
+        es245Errors++;
+      }
+      if (es245Errors === 0) w2pass('Migration 245 equivalent-stricter: book_slot_atomic_26_args_service_role -> 296');
+    }
+  }
+
+  // Count verification: no extra equivalent-stricter objects across B8+B9
+  {
+    let totalEqStricter = 0;
+    for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+      for (const m of batchInfo.data.migrations) {
+        for (const o of m.objects || []) {
+          if (o.property_comparison_result === 'equivalent_stricter') totalEqStricter++;
+        }
+      }
+    }
+    if (totalEqStricter !== 2) { w2fail(`Total equivalent_stricter objects: ${totalEqStricter}, expected exactly 2`); }
+    else { w2pass('Exactly 2 equivalent_stricter objects across B8+B9'); }
+  }
+
+  // Superseded lineage: Batch 8 (4 objects, exact identity)
+  const WAVE2_EXPECTED_SUPERSEDED_B8 = [
+    { migration: '229', object_name: 'attendance_log.service_insert', object_type: 'policy', superseded_by: 'migration_230' },
+    { migration: '231', object_name: 'create_catalog_order_atomic', object_type: 'function', superseded_by: 'migration_235' },
+    { migration: '233', object_name: 'process_recurring_charge', object_type: 'function', superseded_by: 'migration_244' },
+    { migration: '241', object_name: 'customer_consents.customer_consents_service_insert', object_type: 'policy', superseded_by: 'migration_242' },
+  ];
+  let w2SupB8Errors = 0;
+  for (const expected of WAVE2_EXPECTED_SUPERSEDED_B8) {
+    const mig = w2b8Data.migrations.find(m => m.migration_version === expected.migration);
+    if (!mig) { w2fail(`Superseded check: Migration ${expected.migration} not found`); w2SupB8Errors++; continue; }
+    const sup = mig.objects.filter(o => o.property_comparison_result === 'superseded' && o.object_name === expected.object_name);
+    if (sup.length !== 1) { w2fail(`Migration ${expected.migration}: expected 1 superseded "${expected.object_name}", got ${sup.length}`); w2SupB8Errors++; continue; }
+    if (sup[0].object_type !== expected.object_type) {
+      w2fail(`Migration ${expected.migration} superseded "${expected.object_name}" object_type: "${sup[0].object_type}", expected "${expected.object_type}"`);
+      w2SupB8Errors++;
+    }
+    if (sup[0].superseded_by !== expected.superseded_by) {
+      w2fail(`Migration ${expected.migration} superseded "${expected.object_name}" superseded_by: "${sup[0].superseded_by}", expected "${expected.superseded_by}"`);
+      w2SupB8Errors++;
+    }
+  }
+  // Verify no extra superseded in B8
+  {
+    let totalSupB8 = 0;
+    for (const m of w2b8Data.migrations) {
+      for (const o of m.objects || []) {
+        if (o.property_comparison_result === 'superseded') totalSupB8++;
+      }
+    }
+    if (totalSupB8 !== 4) { w2fail(`Batch 8 total superseded objects: ${totalSupB8}, expected exactly 4`); w2SupB8Errors++; }
+  }
+  if (w2SupB8Errors === 0) w2pass('Batch 8 superseded lineage: 4 objects with exact identity and lineage');
+
+  // Superseded lineage: Batch 9 (7 objects, all Migration 242 -> 243, exact identity)
+  const WAVE2_EXPECTED_SUPERSEDED_B9 = [
+    { object_name: 'reserve_credits_atomic(uuid, uuid, integer)', object_type: 'function', superseding_migration: '243' },
+    { object_name: 'consume_credits_atomic(uuid, uuid, integer)', object_type: 'function', superseding_migration: '243' },
+    { object_name: 'revoke_reserve_credits_atomic_from_public', object_type: 'grant', superseding_migration: '243' },
+    { object_name: 'grant_reserve_credits_atomic_to_service_role', object_type: 'grant', superseding_migration: '243' },
+    { object_name: 'revoke_consume_credits_atomic_from_public', object_type: 'grant', superseding_migration: '243' },
+    { object_name: 'grant_consume_credits_atomic_to_service_role', object_type: 'grant', superseding_migration: '243' },
+    { object_name: 'uq_growth_campaign_dedup', object_type: 'constraint', superseding_migration: '243' },
+  ];
+  const w2Mig242 = w2b9Data.migrations.find(m => m.migration_version === '242');
+  if (!w2Mig242) { w2fail('Migration 242 not found in Batch 9'); }
+  else {
+    const sup242 = w2Mig242.objects.filter(o => o.property_comparison_result === 'superseded');
+    if (sup242.length !== 7) { w2fail(`Migration 242: expected 7 superseded, got ${sup242.length}`); }
+    else {
+      let lineageErrors = 0;
+      for (const expected of WAVE2_EXPECTED_SUPERSEDED_B9) {
+        const found = sup242.find(o => o.object_name === expected.object_name);
+        if (!found) {
+          w2fail(`Migration 242 missing superseded object: "${expected.object_name}"`);
+          lineageErrors++;
+          continue;
+        }
+        if (found.object_type !== expected.object_type) {
+          w2fail(`Migration 242 "${expected.object_name}" object_type: "${found.object_type}", expected "${expected.object_type}"`);
+          lineageErrors++;
+        }
+        if (found.superseding_migration !== expected.superseding_migration) {
+          w2fail(`Migration 242 "${expected.object_name}" superseding_migration: "${found.superseding_migration}", expected "${expected.superseding_migration}"`);
+          lineageErrors++;
+        }
+      }
+      if (lineageErrors === 0) w2pass('Batch 9 superseded lineage: 7 objects from Migration 242 -> 243 with exact identity');
+    }
+  }
+
+  // Count verification: no extra superseded objects across B8+B9
+  {
+    let totalSup = 0;
+    for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+      for (const m of batchInfo.data.migrations) {
+        for (const o of m.objects || []) {
+          if (o.property_comparison_result === 'superseded') totalSup++;
+        }
+      }
+    }
+    if (totalSup !== 11) { w2fail(`Total superseded objects: ${totalSup}, expected exactly 11`); }
+    else { w2pass('Exactly 11 superseded objects across B8+B9'); }
+  }
+
+  // 17. Pre/post history snapshots exist and are exactly equal
+  for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+    if (JSON.stringify(batchInfo.data.pre_verification_ordered_snapshot) !== JSON.stringify(batchInfo.data.post_verification_ordered_snapshot)) {
+      w2fail(`${batchInfo.label} pre/post snapshots differ`);
+    } else {
+      w2pass(`${batchInfo.label} pre/post snapshots equal`);
+    }
+  }
+  if (w2waveData.snapshots_exactly_equal !== true) { w2fail('Wave snapshots_exactly_equal not true'); }
+  else { w2pass('Wave snapshots_exactly_equal = true'); }
+
+  // 18. History counts remain 209/113/1
+  for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+    const pre = batchInfo.data.pre_verification_history_summary;
+    if (pre.total_remote_count !== 209) w2fail(`${batchInfo.label} total_remote: ${pre.total_remote_count}`);
+    if (pre.range_101_246_count !== 113) w2fail(`${batchInfo.label} range_count: ${pre.range_101_246_count}`);
+    if (pre.migration_298_count !== 1) w2fail(`${batchInfo.label} m298_count: ${pre.migration_298_count}`);
+  }
+  const w2WavePre = w2waveData.pre_verification_history_summary;
+  if (w2WavePre.total_remote_count !== 209) w2fail(`Wave total_remote: ${w2WavePre.total_remote_count}`);
+  if (w2WavePre.range_101_246_count !== 113) w2fail(`Wave range_count: ${w2WavePre.range_101_246_count}`);
+  if (w2WavePre.migration_298_count !== 1) w2fail(`Wave m298_count: ${w2WavePre.migration_298_count}`);
+  w2pass('History counts = 209/113/1 in all evidence');
+
+  // 19. Occurrence-map validation with strict key checks
+  let w2OccErrors = 0;
+  for (const batchInfo of [{data: w2b8Data, versions: WAVE2_BATCH8_VERSIONS, label: 'B8'}, {data: w2b9Data, versions: WAVE2_BATCH9_VERSIONS, label: 'B9'}]) {
+    const occ = batchInfo.data.pre_verification_occurrence_map || {};
+    const occKeys = Object.keys(occ);
+    const expectedKeySet = new Set(batchInfo.versions);
+    // Key-count check
+    if (occKeys.length !== batchInfo.versions.length) {
+      w2fail(`${batchInfo.label} pre occurrence map: ${occKeys.length} keys, expected ${batchInfo.versions.length}`); w2OccErrors++;
+    }
+    // Exact key-set check
+    const occKeySet = new Set(occKeys);
+    const missingOccKeys = batchInfo.versions.filter(v => !occKeySet.has(v));
+    const extraOccKeys = occKeys.filter(k => !expectedKeySet.has(k));
+    if (missingOccKeys.length > 0) { w2fail(`${batchInfo.label} pre occurrence map missing keys: ${missingOccKeys.join(',')}`); w2OccErrors++; }
+    if (extraOccKeys.length > 0) { w2fail(`${batchInfo.label} pre occurrence map extra keys: ${extraOccKeys.join(',')}`); w2OccErrors++; }
+    for (const v of batchInfo.versions) {
+      if (occ[v] !== 0) { w2fail(`Version ${v} occurrence != 0`); w2OccErrors++; }
+    }
+
+    const postOcc = batchInfo.data.post_verification_occurrence_map || {};
+    const postOccKeys = Object.keys(postOcc);
+    // Key-count check
+    if (postOccKeys.length !== batchInfo.versions.length) {
+      w2fail(`${batchInfo.label} post occurrence map: ${postOccKeys.length} keys, expected ${batchInfo.versions.length}`); w2OccErrors++;
+    }
+    // Exact key-set check
+    const postOccKeySet = new Set(postOccKeys);
+    const missingPostOccKeys = batchInfo.versions.filter(v => !postOccKeySet.has(v));
+    const extraPostOccKeys = postOccKeys.filter(k => !expectedKeySet.has(k));
+    if (missingPostOccKeys.length > 0) { w2fail(`${batchInfo.label} post occurrence map missing keys: ${missingPostOccKeys.join(',')}`); w2OccErrors++; }
+    if (extraPostOccKeys.length > 0) { w2fail(`${batchInfo.label} post occurrence map extra keys: ${extraPostOccKeys.join(',')}`); w2OccErrors++; }
+    for (const v of batchInfo.versions) {
+      if (postOcc[v] !== 0) { w2fail(`Version ${v} post occurrence != 0`); w2OccErrors++; }
+    }
+  }
+  if (w2OccErrors === 0) w2pass('All 19 version occurrences = 0 (pre and post) with exact key sets');
+
+  // 20. Exact 19-key safety set validation
+  let w2SafetyErrors = 0;
+  const w2RequiredSafetySet = new Set(WAVE2_REQUIRED_SAFETY_KEYS);
+  for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}, {data: w2waveData, label: 'Wave'}]) {
+    const safetyConf = batchInfo.data.safety_confirmations || {};
+    const actualKeys = Object.keys(safetyConf);
+    const actualKeySet = new Set(actualKeys);
+    // Check for missing keys
+    const missingSafety = WAVE2_REQUIRED_SAFETY_KEYS.filter(k => !actualKeySet.has(k));
+    if (missingSafety.length > 0) {
+      w2fail(`${batchInfo.label} safety key missing: ${missingSafety.join(', ')}`);
+      w2SafetyErrors++;
+    }
+    // Check for extra keys
+    const extraSafety = actualKeys.filter(k => !w2RequiredSafetySet.has(k));
+    if (extraSafety.length > 0) {
+      w2fail(`${batchInfo.label} safety key extra: ${extraSafety.join(', ')}`);
+      w2SafetyErrors++;
+    }
+    // Check key count
+    if (actualKeys.length !== 19) {
+      w2fail(`${batchInfo.label} safety key count: ${actualKeys.length}, expected 19`);
+      w2SafetyErrors++;
+    }
+    // All values must be boolean true
+    for (const [k, v] of Object.entries(safetyConf)) {
+      if (v !== true) { w2fail(`${batchInfo.label} safety key not true: ${k} = ${v}`); w2SafetyErrors++; }
+    }
+  }
+  if (w2SafetyErrors === 0) w2pass('All safety confirmations: exact 19-key set, all true');
+
+  // 21. Worker/canonical path provenance (exact validation)
+  {
+    const EXPECTED_WORKER_PATHS = {
+      batch_08: '/tmp/waaiio-batch-08-worker-output.json',
+      batch_09: '/tmp/waaiio-batch-09-worker-output.json',
+    };
+    const EXPECTED_CANONICAL_PATHS = {
+      batch_08: '/tmp/waaiio-batch-08-production-verification-v2.json',
+      batch_09: '/tmp/waaiio-batch-09-production-verification-v2.json',
+      wave_02: '/tmp/waaiio-wave-02-production-verification-v2.json',
+    };
+
+    const workerPaths = w2waveData.worker_output_paths;
+    const canonicalPaths = w2waveData.canonical_output_paths;
+    let w2PathErrors = 0;
+
+    // worker_output_paths exists as object with exact keys and values
+    if (!workerPaths || typeof workerPaths !== 'object') {
+      w2fail('Wave worker_output_paths missing or not an object'); w2PathErrors++;
+    } else {
+      const wpKeys = Object.keys(workerPaths);
+      const expectedWpKeys = Object.keys(EXPECTED_WORKER_PATHS);
+      if (JSON.stringify(wpKeys.sort()) !== JSON.stringify(expectedWpKeys.sort())) {
+        w2fail(`worker path keys: ${wpKeys.join(',')}, expected ${expectedWpKeys.join(',')}`); w2PathErrors++;
+      }
+      for (const [k, v] of Object.entries(EXPECTED_WORKER_PATHS)) {
+        if (workerPaths[k] !== v) {
+          w2fail(`worker path "${k}": "${workerPaths[k]}", expected "${v}"`); w2PathErrors++;
+        }
+      }
+    }
+
+    // canonical_output_paths exists as object with exact keys and values
+    if (!canonicalPaths || typeof canonicalPaths !== 'object') {
+      w2fail('Wave canonical_output_paths missing or not an object'); w2PathErrors++;
+    } else {
+      const cpKeys = Object.keys(canonicalPaths);
+      const expectedCpKeys = Object.keys(EXPECTED_CANONICAL_PATHS);
+      if (JSON.stringify(cpKeys.sort()) !== JSON.stringify(expectedCpKeys.sort())) {
+        w2fail(`canonical path keys: ${cpKeys.join(',')}, expected ${expectedCpKeys.join(',')}`); w2PathErrors++;
+      }
+      for (const [k, v] of Object.entries(EXPECTED_CANONICAL_PATHS)) {
+        if (canonicalPaths[k] !== v) {
+          w2fail(`canonical path "${k}": "${canonicalPaths[k]}", expected "${v}"`); w2PathErrors++;
+        }
+      }
+    }
+
+    // No worker path equals any canonical path
+    if (workerPaths && canonicalPaths) {
+      const workerValues = Object.values(workerPaths);
+      const canonicalValues = Object.values(canonicalPaths);
+      const canonicalValueSet = new Set(canonicalValues);
+      for (const wp of workerValues) {
+        if (canonicalValueSet.has(wp)) {
+          w2fail(`worker path equals canonical path: ${wp}`);
+          w2PathErrors++;
+        }
+      }
+      // No duplicate worker paths
+      if (new Set(workerValues).size !== workerValues.length) {
+        w2fail('duplicate worker paths detected'); w2PathErrors++;
+      }
+      // No duplicate canonical paths
+      if (new Set(canonicalValues).size !== canonicalValues.length) {
+        w2fail('duplicate canonical paths detected'); w2PathErrors++;
+      }
+    }
+
+    // Boolean flags
+    if (w2waveData.worker_paths_distinct_from_canonical_paths !== true) {
+      w2fail(`worker_paths_distinct_from_canonical_paths = ${w2waveData.worker_paths_distinct_from_canonical_paths}, expected true`);
+      w2PathErrors++;
+    }
+    if (w2waveData.coordinator_only_wrote_canonical_paths !== true) {
+      w2fail(`coordinator_only_wrote_canonical_paths = ${w2waveData.coordinator_only_wrote_canonical_paths}, expected true`);
+      w2PathErrors++;
+    }
+    if (w2waveData.no_worker_overwrote_canonical_evidence !== true) {
+      w2fail(`no_worker_overwrote_canonical_evidence = ${w2waveData.no_worker_overwrote_canonical_evidence}, expected true`);
+      w2PathErrors++;
+    }
+
+    // worker_output_provenance exact validation
+    const EXPECTED_PROVENANCE = {
+      'waaiio-batch-08-worker-output.json': '0bd114afb9461052f01b541ab7eb67c60040a75bcb915372debb994200968f7a',
+      'waaiio-batch-09-worker-output.json': 'c703f405912e2ca099062691fd6d41249943db35fe2b9f4ed18d4f807e283d9e',
+    };
+    const provenance = w2waveData.worker_output_provenance;
+    if (!provenance || typeof provenance !== 'object') {
+      w2fail('worker_output_provenance missing or not an object'); w2PathErrors++;
+    } else {
+      const provKeys = Object.keys(provenance);
+      const expectedProvKeys = Object.keys(EXPECTED_PROVENANCE);
+      if (JSON.stringify(provKeys.sort()) !== JSON.stringify(expectedProvKeys.sort())) {
+        w2fail(`path provenance keys: ${provKeys.join(',')}, expected ${expectedProvKeys.join(',')}`); w2PathErrors++;
+      }
+      for (const [k, v] of Object.entries(EXPECTED_PROVENANCE)) {
+        if (provenance[k] !== v) {
+          w2fail(`path provenance "${k}": "${provenance[k]}", expected "${v}"`); w2PathErrors++;
+        }
+      }
+    }
+
+    if (w2PathErrors === 0) w2pass('Worker/canonical path provenance fully validated');
+  }
+
+  // 22. Manifest classifications = 113/19/0/12/2
+  if (alignedCount !== 113) w2fail(`ALIGNED: ${alignedCount}`);
+  if (verifiedCount !== 19) w2fail(`VERIFIED: ${verifiedCount}`);
+  if (pendingCount !== 0) w2fail(`PENDING: ${pendingCount}`);
+  if (nvCount !== 12) w2fail(`NV: ${nvCount}`);
+  if (supersededCount !== 2) w2fail(`SUPERSEDED: ${supersededCount}`);
+  if (alignedCount === 113 && verifiedCount === 19 && pendingCount === 0 && nvCount === 12 && supersededCount === 2) {
+    w2pass('Manifest classifications = 113/19/0/12/2');
+  }
+
+  // 23. Batch 8 manifest entries are verified and active
+  let w2B8ManifestErrors = 0;
+  for (const v of WAVE2_BATCH8_VERSIONS) {
+    const me = manifestByVersion[v];
+    if (!me) { w2fail(`Batch 8 version ${v} not in manifest`); w2B8ManifestErrors++; continue; }
+    if (me.current_classification !== 'VERIFIED_APPLIED_UNTRACKED') { w2fail(`B8 ${v} classification: ${me.current_classification}`); w2B8ManifestErrors++; }
+    if (me.repair_eligible !== true) { w2fail(`B8 ${v} repair_eligible: ${me.repair_eligible}`); w2B8ManifestErrors++; }
+    if (me.repair_status !== 'approved_for_repair') { w2fail(`B8 ${v} repair_status: ${me.repair_status}`); w2B8ManifestErrors++; }
+    if (me.verification_batch !== 8) { w2fail(`B8 ${v} verification_batch: ${me.verification_batch}`); w2B8ManifestErrors++; }
+    if (me.repair_batch !== 8) { w2fail(`B8 ${v} repair_batch: ${me.repair_batch}`); w2B8ManifestErrors++; }
+  }
+  if (w2B8ManifestErrors === 0) w2pass('Batch 8 manifest entries VERIFIED and repair active');
+
+  // 24. Allowlist is exactly Batch 8
+  const w2AllowlistVersions = allowlist.map(e => e.version);
+  if (JSON.stringify(w2AllowlistVersions) !== JSON.stringify(WAVE2_BATCH8_VERSIONS)) {
+    w2fail(`Allowlist versions: ${w2AllowlistVersions.join(',')}, expected Batch 8`);
+  } else { w2pass('Allowlist is exactly Batch 8 (15 versions)'); }
+
+  // 25. Batch 9 manifest entries are verified but inactive
+  let w2B9ManifestErrors = 0;
+  for (const v of WAVE2_BATCH9_VERSIONS) {
+    const me = manifestByVersion[v];
+    if (!me) { w2fail(`Batch 9 version ${v} not in manifest`); w2B9ManifestErrors++; continue; }
+    if (me.current_classification !== 'VERIFIED_APPLIED_UNTRACKED') { w2fail(`B9 ${v} classification: ${me.current_classification}`); w2B9ManifestErrors++; }
+    if (me.repair_eligible !== false) { w2fail(`B9 ${v} repair_eligible: ${me.repair_eligible}`); w2B9ManifestErrors++; }
+    if (me.repair_status !== 'verified_waiting_for_activation') { w2fail(`B9 ${v} repair_status: ${me.repair_status}`); w2B9ManifestErrors++; }
+    if (me.verification_batch !== 9) { w2fail(`B9 ${v} verification_batch: ${me.verification_batch}`); w2B9ManifestErrors++; }
+  }
+  if (w2B9ManifestErrors === 0) w2pass('Batch 9 manifest entries VERIFIED but inactive');
+
+  // 26. No Batch 9 version in allowlist
+  const w2AllowlistSet = new Set(w2AllowlistVersions);
+  const b9InAllowlist = WAVE2_BATCH9_VERSIONS.filter(v => w2AllowlistSet.has(v));
+  if (b9InAllowlist.length > 0) { w2fail(`Batch 9 versions in allowlist: ${b9InAllowlist.join(',')}`); }
+  else { w2pass('No Batch 9 version in allowlist'); }
+
+  // 27. Candidate registry is exactly empty
+  if (candidates.length !== 0) { w2fail(`Candidates: ${candidates.length}, expected 0`); }
+  else { w2pass('Candidate registry is empty'); }
+
+  // 28. Completed repair count remains 105
+  if (repairedCandidateCount !== 105) { w2fail(`Completed repairs: ${repairedCandidateCount}, expected 105`); }
+  else { w2pass('Completed repair count = 105'); }
+
+  // 29. The 12 NOT_VERIFIABLE_SAFELY entries remain unchanged
+  const NV_VERSIONS = ['101','105','107','126','160','163','164','187','216','217','222','226'];
+  let w2NvErrors = 0;
+  for (const v of NV_VERSIONS) {
+    const me = manifestByVersion[v];
+    if (!me) { w2fail(`NV version ${v} not in manifest`); w2NvErrors++; continue; }
+    if (me.current_classification !== 'NOT_VERIFIABLE_SAFELY') { w2fail(`NV ${v} classification changed: ${me.current_classification}`); w2NvErrors++; }
+  }
+  if (w2NvErrors === 0) w2pass('12 NOT_VERIFIABLE_SAFELY entries unchanged');
+
+  // 30. The two existing SUPERSEDED_WITH_EQUIVALENT_STATE entries remain unchanged
+  const SUP_VERSIONS = ['122','130'];
+  let w2SupErrors = 0;
+  for (const v of SUP_VERSIONS) {
+    const me = manifestByVersion[v];
+    if (!me) { w2fail(`Superseded version ${v} not in manifest`); w2SupErrors++; continue; }
+    if (me.current_classification !== 'SUPERSEDED_WITH_EQUIVALENT_STATE') { w2fail(`Superseded ${v} classification changed: ${me.current_classification}`); w2SupErrors++; }
+  }
+  if (w2SupErrors === 0) w2pass('2 SUPERSEDED_WITH_EQUIVALENT_STATE entries unchanged');
+
+  // Reject: Batch 9 must not become repair active before Batch 8 repair closeout
+  const b8Repaired = WAVE2_BATCH8_VERSIONS.every(v => {
+    const me = manifestByVersion[v];
+    return me && me.current_classification === 'ALIGNED_TRACKED' && me.repair_status === 'completed';
+  });
+  if (!b8Repaired) {
+    // Batch 8 not yet repaired — ensure Batch 9 is NOT repair active
+    for (const v of WAVE2_BATCH9_VERSIONS) {
+      const me = manifestByVersion[v];
+      if (me && me.repair_eligible === true) {
+        w2fail(`Batch 9 version ${v} is repair_eligible while Batch 8 is not complete`);
+      }
+    }
+    w2pass('Batch 9 correctly blocked from repair until Batch 8 closeout');
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2973,9 +4085,9 @@ const BATCH7_CLOSEOUT_CONFIG = {
   laterBatchOccurrenceMaps: { pre: 'batches_8_9_pre_occurrence_map', post: 'batches_8_9_post_occurrence_map' },
   laterBatchLenient: false,
   hasOrderedSnapshots: true,
-  expectedClassifications: { aligned: 113, verified: 0, pending: 19, nv: 12, superseded: 2 },
+  expectedClassifications: { aligned: 113, verified: 19, pending: 0, nv: 12, superseded: 2 },
   expectedCompletedRepairs: 105,
-  expectedAllowlistLength: 0,
+  expectedAllowlistLength: 15,
   requiredSafetyKeys: [
     'every_approved_version_appears_exactly_once',
     'exactly_15_versions_added',
@@ -2998,8 +4110,8 @@ const BATCH7_CLOSEOUT_CONFIG = {
     'no_token_recorded',
     'no_batch_8_or_9_verification_started',
   ],
-  expectedCandidates: ['227','228','229','230','231','232','233','234','235','236','237','238','239','240','241','242','243','245','246'],
-  laterBatchPendingVersions: ['227','228','229','230','231','232','233','234','235','236','237','238','239','240','241','242','243','245','246'],
+  expectedCandidates: [],
+  laterBatchPendingVersions: null,
 };
 
 function validateRepairCloseout(cfg) {
