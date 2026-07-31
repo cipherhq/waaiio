@@ -1,0 +1,66 @@
+{
+  "source_commit": "4ca1e65391a5bbcc8477ff4a2b0370e308530520",
+  "spine_stage_coverage": {
+    "onboarding": {
+      "tested": false,
+      "test_files": [],
+      "note": "Zero tests cover onboarding registration or capability initialization"
+    },
+    "persistence": {
+      "tested": false,
+      "test_files": [],
+      "note": "business_capabilities persistence has no direct tests"
+    },
+    "plan_enforcement": {
+      "tested": false,
+      "test_files": [],
+      "note": "canEnableCapability has no tests. No tier enforcement test exists."
+    },
+    "dashboard_visibility": {
+      "tested": false,
+      "test_files": [],
+      "note": "No test verifies Sidebar capability gating or useRequireCapability behavior"
+    },
+    "bot_capability_loading": {
+      "tested": true,
+      "test_files": [
+        "lib/bot/__tests__/bot-conversations.test.ts",
+        "lib/bot/flows/__tests__/capability-selection.flow.test.ts"
+      ],
+      "note": "Capability menu generation and selection tested"
+    },
+    "bot_intent_classification": {
+      "tested": true,
+      "test_files": [
+        "lib/bot/__tests__/smart-intent.test.ts",
+        "lib/bot/__tests__/conversation-orchestrator.test.ts",
+        "lib/bot/__tests__/confidence-policy.test.ts"
+      ],
+      "note": "Regex and LLM intent classification tested"
+    },
+    "bot_session_management": {
+      "tested": true,
+      "test_files": [
+        "lib/bot/__tests__/session-concurrency.test.ts"
+      ],
+      "note": "CAS concurrency tested. Session creation/expiry not tested."
+    },
+    "bot_escape_hatches": {
+      "tested": true,
+      "test_files": [
+        "lib/bot/flows/__tests__/scheduling.flow.test.ts"
+      ],
+      "note": "cancel_booking tested. CANCEL_WORDS/RESTART_WORDS in executor not tested."
+    },
+    "human_handoff": {
+      "tested": false,
+      "test_files": [],
+      "note": "No test for escalation detection, chat handoff, or silent failure when chat disabled"
+    },
+    "reconfiguration": {
+      "tested": false,
+      "test_files": [],
+      "note": "No test for capability toggle propagation to bot/dashboard"
+    }
+  }
+}
