@@ -96,7 +96,7 @@ Maps the complete shared activation path that determines whether a Waaiio capabi
 **Implementation cannot begin until:**
 1. Trial-expiry policy is explicitly approved (CAS-007)
 2. Capability-write architecture is approved (API route vs RLS function)
-3. Auto-merge behavior for new category defaults is decided (CAS-010 product question)
+3. Auto-enable behavior for newly added category defaults is decided (CAS-010 product question)
 
 ## Product Decisions Required
 
@@ -107,4 +107,4 @@ Maps the complete shared activation path that determines whether a Waaiio capabi
 
 ## Pre-existing CI Issue
 
-The OTP delivery observability test (`lib/__tests__/otp-delivery-observability.test.ts`) fails reproducibly on main and on this branch. It is not caused by audit changes. The test "contract match: contract update executes, OTP tracking also runs" expects `contractUpdateCalls.length === 1` but receives 0. This is documented as a pre-existing CI blocker, not an audit finding.
+The OTP delivery observability test (`lib/__tests__/otp-delivery-observability.test.ts`) is a pre-existing flaky or environment-sensitive test. It failed in the earlier PR CI run (run 30637317620) and in three repeated local runs with varying failure counts (3, 2, 2 failures respectively), but passed the latest PR CI run (run 30639518821). The failing test ("contract match: contract update executes, OTP tracking also runs") expects `contractUpdateCalls.length === 1` but receives 0 when it fails. This test was not introduced or modified by the audit documentation. The root cause has not been determined.
