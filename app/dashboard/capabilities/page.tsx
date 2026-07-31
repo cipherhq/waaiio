@@ -71,6 +71,7 @@ export default function CapabilitiesPage() {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [savingOrder, setSavingOrder] = useState(false);
+  const [error, setError] = useState('');
 
   // Sync orderedCaps when enabled changes
   useEffect(() => {
@@ -114,18 +115,18 @@ export default function CapabilitiesPage() {
 
     // Auto-save sort_order via server API
     setSavingOrder(true);
-    try {
-      await Promise.all(
-        newOrder.map((cap, i) =>
-          fetch('/api/capabilities/toggle', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ businessId: business.id, capability: cap, sort_order: i }),
-          }),
-        ),
-      );
-    } catch (err) {
-      console.warn('Failed to save sort order:', err);
+    const results = await Promise.all(
+      newOrder.map((cap, i) =>
+        fetch('/api/capabilities/toggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ businessId: business.id, capability: cap, sort_order: i }),
+        }),
+      ),
+    );
+    const failed = results.filter(r => !r.ok);
+    if (failed.length > 0) {
+      setError('Failed to save order. Please try again.');
     }
     setSavingOrder(false);
   }, [dragIndex, orderedCaps, business.id]);
@@ -189,35 +190,34 @@ export default function CapabilitiesPage() {
 
   async function saveCapabilities(caps: CapabilityId[]) {
     setSaving(true);
+    setError('');
 
     // Detect newly enabled capabilities (for provisioning)
     const newlyEnabled = caps.filter(cap => !business.capabilities.includes(cap));
 
-    // Determine which capabilities to disable and which to enable
-    const allKnown = new Set([...enabled, ...caps]);
-    const toDisable = [...allKnown].filter(cap => !caps.includes(cap));
+    // Use atomic bulk configuration endpoint
+    const res = await fetch('/api/capabilities/configure', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        businessId: business.id,
+        capabilities: caps,
+        order: orderedCaps.length > 0 ? orderedCaps : caps,
+      }),
+    });
 
-    // Disable removed capabilities via server API
-    for (const cap of toDisable) {
-      await fetch('/api/capabilities/toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ businessId: business.id, capability: cap, enabled: false }),
-      });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({ reason: 'unknown' }));
+      setError(data.reason === 'capabilities_denied'
+        ? 'Some capabilities require a higher plan. Please upgrade.'
+        : data.reason === 'dependency_missing'
+          ? `${data.capability} requires ${data.missing_dependencies?.join(', ')} to be enabled.`
+          : 'Failed to save capabilities. Please try again.');
+      setSaving(false);
+      return;
     }
 
-    // Enable selected capabilities with sort_order via server API
-    for (const cap of caps) {
-      const existingIndex = orderedCaps.indexOf(cap);
-      const sortOrder = existingIndex >= 0 ? existingIndex : 999;
-      await fetch('/api/capabilities/toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ businessId: business.id, capability: cap, enabled: true, sort_order: sortOrder }),
-      });
-    }
-
-    // Auto-provision templates for newly enabled capabilities
+    // Auto-provision templates only after successful save
     for (const cap of newlyEnabled) {
       try {
         await fetch('/api/whatsapp/templates/provision', {
@@ -226,7 +226,7 @@ export default function CapabilitiesPage() {
           body: JSON.stringify({ business_id: business.id, capability: cap }),
         });
       } catch {
-        console.warn(`Template provisioning failed for capability: ${cap}`);
+        // Template provisioning is best-effort — capability is still enabled
       }
     }
 

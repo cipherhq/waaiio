@@ -507,3 +507,86 @@ describe('legacy zero-row through policy', () => {
     expect(result.effective).toEqual(['scheduling', 'reservation']);
   });
 });
+
+// ══════════════════════════════════════════════════════════
+// Dependency enforcement
+// ══════════════════════════════════════════════════════════
+
+import { getMissingDependencies, getDependents } from '@/lib/capabilities/dependencies';
+
+describe('capability dependencies', () => {
+  it('membership requires loyalty', () => {
+    const missing = getMissingDependencies('membership', ['scheduling']);
+    expect(missing).toEqual(['loyalty']);
+  });
+
+  it('membership with loyalty present has no missing deps', () => {
+    const missing = getMissingDependencies('membership', ['scheduling', 'loyalty']);
+    expect(missing).toEqual([]);
+  });
+
+  it('scheduling has no dependencies', () => {
+    const missing = getMissingDependencies('scheduling', []);
+    expect(missing).toEqual([]);
+  });
+
+  it('disabling loyalty warns about membership', () => {
+    const deps = getDependents('loyalty', ['scheduling', 'loyalty', 'membership']);
+    expect(deps).toEqual(['membership']);
+  });
+
+  it('disabling loyalty when membership is not enabled returns empty', () => {
+    const deps = getDependents('loyalty', ['scheduling', 'loyalty']);
+    expect(deps).toEqual([]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// Downgrade preservation and upgrade restoration
+// ══════════════════════════════════════════════════════════
+
+describe('downgrade preservation', () => {
+  const pastDate = new Date(Date.now() - 86400000).toISOString();
+
+  it('paid capability remains configured after downgrade to free', () => {
+    // Step 1: business has reservation configured and enabled on growth tier
+    const beforeDowngrade = getEffectiveCapabilities({
+      configuredCapabilities: [
+        { capability: 'scheduling', is_enabled: true, sort_order: 0 },
+        { capability: 'reservation', is_enabled: true, sort_order: 1 },
+      ],
+      overrides: [],
+      tier: 'growth',
+      trialEndsAt: null,
+    });
+    expect(beforeDowngrade.effective).toContain('reservation');
+
+    // Step 2: tier changes to free — row stays is_enabled=true (no mutation)
+    const afterDowngrade = getEffectiveCapabilities({
+      configuredCapabilities: [
+        { capability: 'scheduling', is_enabled: true, sort_order: 0 },
+        { capability: 'reservation', is_enabled: true, sort_order: 1 }, // row unchanged!
+      ],
+      overrides: [],
+      tier: 'free',
+      trialEndsAt: pastDate,
+    });
+    expect(afterDowngrade.effective).toEqual(['scheduling']);
+    expect(afterDowngrade.configured).toContain('reservation');
+    expect(afterDowngrade.blocked.map(b => b.capability)).toContain('reservation');
+    expect(afterDowngrade.blocked.find(b => b.capability === 'reservation')?.reason).toBe('trial_expired');
+
+    // Step 3: later upgrade back to growth — access restored automatically
+    const afterUpgrade = getEffectiveCapabilities({
+      configuredCapabilities: [
+        { capability: 'scheduling', is_enabled: true, sort_order: 0 },
+        { capability: 'reservation', is_enabled: true, sort_order: 1 }, // row still unchanged!
+      ],
+      overrides: [],
+      tier: 'growth',
+      trialEndsAt: null,
+    });
+    expect(afterUpgrade.effective).toEqual(['scheduling', 'reservation']);
+    expect(afterUpgrade.blocked).toEqual([]);
+  });
+});

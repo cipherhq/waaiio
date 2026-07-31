@@ -161,11 +161,15 @@ export default function WhatsAppPage() {
     const newCustomLabel = (!trimmed || trimmed === defaultLabel) ? null : trimmed;
 
     setSavingLabel(capId);
-    await fetch('/api/capabilities/toggle', {
+    const res = await fetch('/api/capabilities/toggle', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ businessId: business.id, capability: capId, custom_label: newCustomLabel }),
     });
+    if (!res.ok) {
+      setSavingLabel(null);
+      return; // Label save failed — don't update local state
+    }
 
     setCustomLabels(prev => {
       const next = { ...prev };
@@ -204,17 +208,19 @@ export default function WhatsAppPage() {
     setOrderedCaps(newOrder);
 
     setSavingOrder(true);
-    try {
-      await Promise.all(
-        newOrder.map((cap, i) =>
-          fetch('/api/capabilities/toggle', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ businessId: business.id, capability: cap, sort_order: i }),
-          }),
-        ),
-      );
-    } catch { /* silent */ }
+    const results = await Promise.all(
+      newOrder.map((cap, i) =>
+        fetch('/api/capabilities/toggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ businessId: business.id, capability: cap, sort_order: i }),
+        }),
+      ),
+    );
+    if (results.some(r => !r.ok)) {
+      // Revert optimistic order on failure
+      setOrderedCaps([...orderedCaps]);
+    }
     setSavingOrder(false);
   }, [dragIndex, orderedCaps, business.id]);
   const [saving, setSaving] = useState(false);

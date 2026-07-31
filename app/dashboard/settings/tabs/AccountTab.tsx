@@ -1249,18 +1249,21 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
               <button
                 onClick={async () => {
                   setCapSaving(true);
-                  // Merge: keep existing enabled + add newly selected
+                  // Use atomic bulk configure endpoint
                   const allEnabled = [...new Set([...capabilities, ...newCapSelections])];
-                  // Enable all selected via server API
-                  for (const cap of allEnabled) {
-                    await fetch('/api/capabilities/toggle', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ businessId: business.id, capability: cap, enabled: true }),
-                    });
-                  }
+                  const res = await fetch('/api/capabilities/configure', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ businessId: business.id, capabilities: allEnabled }),
+                  });
                   setCapSaving(false);
+                  if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    alert(data.reason === 'capabilities_denied' ? 'Some capabilities require a plan upgrade.' : 'Failed to save. Try again.');
+                    return;
+                  }
                   setShowCapModal(false);
+                  window.location.reload();
                 }}
                 disabled={capSaving}
                 className="flex-1 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
@@ -1363,21 +1366,10 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                 action: 'downgrade',
                 status: 'success',
               });
-            const freeCaps: CapabilityId[] = (Object.entries(CAPABILITY_TIER_REQUIREMENTS) as [CapabilityId, string][])
-              .filter(([, tier]) => tier === 'free')
-              .map(([cap]) => cap);
-            const currentCaps = capabilities || [];
-            const capsToRemove = currentCaps.filter((c: string) => !freeCaps.includes(c as CapabilityId));
-            if (capsToRemove.length > 0) {
-              // Disable (not delete) non-free capabilities via server API
-              for (const cap of capsToRemove) {
-                await fetch('/api/capabilities/toggle', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ businessId: business.id, capability: cap, enabled: false }),
-                });
-              }
-            }
+            // Do NOT disable paid capabilities on downgrade.
+            // The capability policy resolver automatically pauses ineligible capabilities
+            // based on the new tier. The business's configuration is preserved so upgrading
+            // back restores access without reconfiguration.
             setDowngrading(false);
             setDowngraded(true);
           } else if (reAuthAction === 'delete') {

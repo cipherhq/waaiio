@@ -31,24 +31,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    // Limit businesses per user (prevent abuse)
-    const svcCheck = createServiceClient();
-    const { count: bizCount } = await svcCheck
-      .from('businesses')
-      .select('id', { count: 'exact', head: true })
-      .eq('owner_id', user.id)
-      .in('status', ['active', 'pending']);
-    const settings = await loadPlatformSettings({ useServiceClient: true });
-    if ((bizCount || 0) >= settings.max_businesses_per_user) {
-      return NextResponse.json({ message: `Maximum number of businesses reached (${settings.max_businesses_per_user}). Contact support to increase.` }, { status: 400 });
-    }
-
     await loadCountries();
     await loadCategories();
     const body = await request.json();
     const { first_name, last_name, name, city, state, zip_code, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode, retryBusinessId } = body;
 
     // ── Retry path: resume a pending business that failed capability init ──
+    // Must come before business-count check so a retried pending business is not counted as a new attempt
     if (retryBusinessId) {
       const service = createServiceClient();
       const { data: pendingBiz, error: retryError } = await service
@@ -81,6 +70,18 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({ business_id: pendingBiz.id, bot_code: pendingBiz.bot_code });
     }
+    // Limit businesses per user (prevent abuse) — only for fresh registration, not retry
+    const svcCheck = createServiceClient();
+    const { count: bizCount } = await svcCheck
+      .from('businesses')
+      .select('id', { count: 'exact', head: true })
+      .eq('owner_id', user.id)
+      .in('status', ['active', 'pending']);
+    const settings = await loadPlatformSettings({ useServiceClient: true });
+    if ((bizCount || 0) >= settings.max_businesses_per_user) {
+      return NextResponse.json({ message: `Maximum number of businesses reached (${settings.max_businesses_per_user}). Contact support to increase.` }, { status: 400 });
+    }
+
     const countryCode: CountryCode = isValidCountryCode(country) ? country : 'NG';
 
     // Validate country matches phone number to prevent fee arbitrage

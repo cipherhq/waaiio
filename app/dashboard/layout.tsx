@@ -184,6 +184,8 @@ export default async function DashboardLayout({
   );
 
   let capabilities: CapabilityId[];
+  let configuredCapabilities: CapabilityId[] = [];
+  let pausedCapabilities: Array<{ capability: CapabilityId; reason: string }> = [];
 
   if (capError) {
     // DB read error — fail closed with empty capabilities rather than exposing defaults
@@ -193,11 +195,13 @@ export default async function DashboardLayout({
     // Use the authoritative policy resolver
     const policyResult = getEffectiveCapabilities({
       configuredCapabilities: capRows as ConfiguredCapability[],
-      overrides: overrideError ? [] : capabilityOverrides, // fail closed on override error
+      overrides: overrideError ? [] : capabilityOverrides,
       tier: business.subscription_tier,
       trialEndsAt: business.trial_ends_at,
     });
     capabilities = policyResult.effective;
+    configuredCapabilities = policyResult.configured;
+    pausedCapabilities = policyResult.paused;
   } else {
     // Zero-row fallback for legacy businesses — route through policy for tier/trial filtering
     const legacyDefaults = CATEGORY_DEFAULT_CAPABILITIES[business.category] ||
@@ -213,9 +217,20 @@ export default async function DashboardLayout({
       trialEndsAt: business.trial_ends_at,
     });
     capabilities = policyResult.effective;
+    configuredCapabilities = policyResult.configured;
+    pausedCapabilities = policyResult.paused;
   }
 
-  const businessWithCaps = { ...business, capabilities, capabilityOverrides };
+  // capabilities = effective (backward-compatible: existing consumers continue to work)
+  // configuredCapabilities = all configured (enabled + disabled + paused)
+  // pausedCapabilities = configured-and-enabled but tier-blocked
+  const businessWithCaps = {
+    ...business,
+    capabilities,              // effective — used by Sidebar gating, bot dispatch
+    configuredCapabilities,    // full configured set — used by capability management pages
+    pausedCapabilities,        // tier-blocked — used for upgrade prompts
+    capabilityOverrides,
+  };
 
   // Build lightweight list for business switcher
   const allBusinessesList = (allUserBusinesses || []).map(b => ({

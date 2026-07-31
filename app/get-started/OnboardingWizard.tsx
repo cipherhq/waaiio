@@ -859,11 +859,17 @@ function OnboardingWizard() {
           wa_method: waMethod,
           wa_own_phone: selectedPhone?.display_phone_number || ownPhone || undefined,
           capabilities: selectedCapabilities.length > 0 ? selectedCapabilities : undefined,
+          ...(businessId ? { retryBusinessId: businessId } : {}),
         }),
       });
       const registerData = await registerRes.json();
       if (!registerRes.ok) {
-        setError(registerData.message || 'Registration failed');
+        if (registerData.recoverable && registerData.businessId) {
+          setBusinessId(registerData.businessId);
+          setError(registerData.error || 'Setup incomplete. Click "Complete Setup" to try again.');
+        } else {
+          setError(registerData.message || registerData.error || 'Registration failed');
+        }
         return;
       }
 
