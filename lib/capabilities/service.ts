@@ -2,16 +2,15 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { type CapabilityId, CATEGORY_DEFAULT_CAPABILITIES } from './types';
 import { getCategoryDefaultCapabilities } from '@/lib/categoryConfig';
 
-/** Get all enabled capabilities for a business, with fallback to category defaults.
- *  Also merges in any NEW category defaults that the business doesn't have rows for yet
- *  (i.e. defaults added after the business was created). */
-export async function getEnabledCapabilities(
+/**
+ * Get all configured capability rows for a business.
+ * Returns raw rows including disabled ones — callers use the policy resolver
+ * to determine effective capabilities.
+ */
+export async function getConfiguredCapabilities(
   supabase: SupabaseClient,
   businessId: string,
-  category?: string,
-): Promise<CapabilityId[]> {
-  // Fetch ALL rows (enabled + disabled) so we know what the business explicitly configured
-  // Order by sort_order ASC, capability ASC for consistent bot menu ordering
+): Promise<Array<{ capability: string; is_enabled: boolean; sort_order: number }>> {
   const { data } = await supabase
     .from('business_capabilities')
     .select('capability, is_enabled, sort_order')
@@ -19,30 +18,36 @@ export async function getEnabledCapabilities(
     .order('sort_order', { ascending: true })
     .order('capability', { ascending: true });
 
-  if (data && data.length > 0) {
-    // Preserve sort_order: enabled caps come back in DB order (sort_order ASC, capability ASC)
-    const enabledOrdered = data
+  return data || [];
+}
+
+/**
+ * Get all enabled capabilities for a business, with fallback to category defaults.
+ *
+ * NOTE: This function preserves zero-row fallback behavior for legacy businesses
+ * that were never explicitly configured. New businesses should always have
+ * explicit capability rows from onboarding.
+ *
+ * For the authoritative policy-aware resolver, use getEffectiveCapabilities()
+ * from lib/capabilities/policy.ts instead.
+ */
+export async function getEnabledCapabilities(
+  supabase: SupabaseClient,
+  businessId: string,
+  category?: string,
+): Promise<CapabilityId[]> {
+  const data = await getConfiguredCapabilities(supabase, businessId);
+
+  if (data.length > 0) {
+    // Return only explicitly enabled capabilities — do NOT auto-merge new defaults.
+    // New defaults require explicit owner activation (approved product decision).
+    return data
       .filter(row => row.is_enabled)
       .map(row => row.capability as CapabilityId);
-    // Capabilities the business has ANY row for (including disabled = explicitly turned off)
-    const known = new Set(data.map(row => row.capability as CapabilityId));
-
-    // Merge newly-added category defaults that the business has never seen
-    if (category) {
-      const defaults = (getCategoryDefaultCapabilities(category) as CapabilityId[] | null)
-        ?? CATEGORY_DEFAULT_CAPABILITIES[category]
-        ?? [];
-      for (const cap of defaults) {
-        if (!known.has(cap)) {
-          enabledOrdered.push(cap); // new default → append at end
-        }
-      }
-    }
-
-    return enabledOrdered;
   }
 
-  // Fallback: derive from category (DB-backed → hardcoded fallback)
+  // Zero-row fallback for legacy businesses without explicit configuration.
+  // Preserved for backward compatibility until all businesses have explicit rows.
   if (category) {
     const dbCaps = getCategoryDefaultCapabilities(category);
     return (dbCaps as CapabilityId[]) || CATEGORY_DEFAULT_CAPABILITIES[category] || ['scheduling'];
@@ -126,7 +131,11 @@ export async function getCapabilityConfig(
   return (data?.config as Record<string, unknown>) || {};
 }
 
-/** Initialize capabilities for a new business based on its category */
+/**
+ * Initialize capabilities for a new business based on its category.
+ * Uses upsert for idempotency (safe to retry on the same business).
+ * Throws on Supabase write failure — callers must handle.
+ */
 export async function initCapabilities(
   supabase: SupabaseClient,
   businessId: string,
@@ -143,6 +152,12 @@ export async function initCapabilities(
   }));
 
   if (rows.length > 0) {
-    await supabase.from('business_capabilities').insert(rows);
+    const { error } = await supabase
+      .from('business_capabilities')
+      .upsert(rows, { onConflict: 'business_id,capability' });
+
+    if (error) {
+      throw new Error(`Capability initialization failed: ${error.message}`);
+    }
   }
 }

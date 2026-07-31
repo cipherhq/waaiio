@@ -10,6 +10,7 @@ import { Copilot } from '@/components/dashboard/Copilot';
 import { NotificationBell } from '@/components/dashboard/NotificationBell';
 import { IdleTimeout } from '@/components/dashboard/IdleTimeout';
 import { CATEGORY_DEFAULT_CAPABILITIES } from '@/lib/capabilities/types';
+import { getEffectiveCapabilities, type ConfiguredCapability } from '@/lib/capabilities/policy';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
@@ -164,24 +165,13 @@ export default async function DashboardLayout({
     redirect('/get-started');
   }
 
-  // Load capabilities from DB (ordered by sort_order for bot menu)
+  // Load all capability rows (enabled AND disabled) for policy resolution
   const { data: capRows } = await supabase
     .from('business_capabilities')
-    .select('capability')
+    .select('capability, is_enabled, sort_order')
     .eq('business_id', business.id)
-    .eq('is_enabled', true)
     .order('sort_order', { ascending: true })
     .order('capability', { ascending: true });
-
-  let capabilities: CapabilityId[];
-  if (capRows && capRows.length > 0) {
-    capabilities = capRows.map(r => r.capability as CapabilityId);
-  } else {
-    // Fallback: derive from category or flow_type
-    capabilities = CATEGORY_DEFAULT_CAPABILITIES[business.category] ||
-      [business.flow_type as CapabilityId] ||
-      ['scheduling'];
-  }
 
   // Load capability overrides
   const { data: overrideRows } = await supabase
@@ -192,6 +182,23 @@ export default async function DashboardLayout({
   const capabilityOverrides: CapabilityId[] = (overrideRows || []).map(
     r => r.capability as CapabilityId,
   );
+
+  let capabilities: CapabilityId[];
+  if (capRows && capRows.length > 0) {
+    // Use the authoritative policy resolver
+    const policyResult = getEffectiveCapabilities({
+      configuredCapabilities: capRows as ConfiguredCapability[],
+      overrides: capabilityOverrides,
+      tier: business.subscription_tier,
+      trialEndsAt: business.trial_ends_at,
+    });
+    capabilities = policyResult.effective;
+  } else {
+    // Zero-row fallback for legacy businesses without explicit configuration
+    capabilities = CATEGORY_DEFAULT_CAPABILITIES[business.category] ||
+      [business.flow_type as CapabilityId] ||
+      ['scheduling'];
+  }
 
   const businessWithCaps = { ...business, capabilities, capabilityOverrides };
 

@@ -231,6 +231,7 @@ export async function POST(request: NextRequest) {
 
     // Auto-create capabilities
     // Priority: user-selected > template metadata > hardcoded defaults
+    // Uses upsert for idempotency — safe to retry on the same business
     const templateCaps = (template?.metadata as Record<string, unknown>)?.default_capabilities as CapabilityId[] | undefined;
     const capsToInit = (capabilities as CapabilityId[] | undefined) || (templateCaps?.length ? templateCaps : undefined);
     try {
@@ -242,6 +243,12 @@ export async function POST(request: NextRequest) {
       );
     } catch (err) {
       logger.error('[ONBOARDING] initCapabilities failed:', err);
+      // Capability initialization is required for a complete business setup.
+      // Return a recoverable error — the business exists but is not fully configured.
+      return NextResponse.json(
+        { error: 'Capability setup failed. Please try again.', recoverable: true, businessId: business.id },
+        { status: 500 },
+      );
     }
 
     // Create default canned responses if chat capability is enabled

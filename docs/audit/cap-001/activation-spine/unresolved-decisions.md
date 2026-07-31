@@ -1,41 +1,49 @@
-# Unresolved Product Decisions
+# Product Decisions
 
-These questions cannot be answered from repository evidence alone. They require explicit product decisions before implementation.
+## Approved Decisions (2026-07-31)
 
-## 1. Trial expiry behavior (affects CAS-007)
+### 1. Trial expiry — runtime filtering, no grace period
 
-**Question:** When a 30-day trial expires without the business upgrading to a paid plan, what should happen to capabilities that require growth or business tier?
+**Decision:** Option C — runtime filtering. No destructive row deletion.
 
-**Options:**
-- **A. Immediate downgrade:** Disable all capabilities above the free tier when trial_ends_at passes. Simple but abrupt.
-- **B. Grace period:** Give 7 days after trial expiry before disabling. Sends warning notifications.
-- **C. Runtime filtering:** Don't modify business_capabilities rows. Instead, filter at query time — both bot and dashboard check tier+trial before including a capability.
-- **D. Do nothing (current behavior):** Capabilities remain enabled indefinitely. Rely on honor system and dashboard upgrade prompts.
+**Implementation:** `getEffectiveCapabilities()` in `lib/capabilities/policy.ts` filters at query time using `isTrialActive()`. Growth/business capabilities pause immediately when trial expires. Business regains access on upgrade or admin override. No cron job or destructive migration required.
 
-**Recommendation:** Option C is safest — no data loss, no cron job needed, consistent enforcement. But it requires changes to getEnabledCapabilities(), layout.tsx, and the capabilities page.
+**Status:** Implemented in Batch 1 (CAS-007 addressed through runtime eligibility).
 
-## 2. API capability enforcement (affects CAS-003)
+### 2. API capability enforcement — selective (writes only)
 
-**Question:** Should API routes independently verify that the business has the relevant capability enabled before allowing resource creation?
+**Decision:** Option B — enforce on write operations, not reads.
 
-**Current state:** Zero API routes check capabilities. A client that bypasses the dashboard UI can create bookings, orders, tickets, etc. for disabled capabilities.
+**Implementation:** `canPerformAction()` in `lib/capabilities/policy.ts` provides the reusable guard. `create_new` is denied for non-effective capabilities. `manage_existing` and `read_history` remain permitted.
 
-**Options:**
-- **A. Full enforcement:** Add capability middleware to all capability-specific API routes.
-- **B. Selective enforcement:** Only enforce on write operations (POST/PUT/DELETE), not reads.
-- **C. Accept current design:** UI and bot gating are sufficient. API callers are trusted.
+**Status:** Guard created. Broad rollout to existing routes deferred to CAS-003 next batch.
 
-**Recommendation:** Option B — enforce on writes only. This prevents data creation for disabled capabilities while allowing read access for dashboard display.
+### 3. Capability writes — server API route
 
-## 3. Capability write mechanism (affects CAS-006)
+**Decision:** Option A — `POST /api/capabilities/toggle` with server-side tier validation.
 
-**Question:** Should the capability toggle on the dashboard use a Next.js API route instead of direct browser-to-Supabase writes?
+**Implementation:** `app/api/capabilities/toggle/route.ts` authenticates, verifies ownership, loads overrides, calls `canModifyCapability()`, writes atomically via service client.
 
-**Current state:** The capabilities page writes directly to business_capabilities via the browser Supabase client. RLS checks only owner_id, not tier.
+**Status:** Implemented in Batch 1 (CAS-006 addressed).
 
-**Options:**
-- **A. API route:** Create POST /api/capabilities/toggle that validates tier server-side.
-- **B. RLS function:** Add a PostgreSQL function called from RLS that checks tier.
-- **C. Keep direct writes:** Rely on client-side canEnableCapability() and accept the bypass risk.
+### 4. New category defaults — explicit opt-in for existing businesses
 
-**Recommendation:** Option A — a thin API route is the simplest way to add server-side tier validation without complex RLS functions.
+**Decision:** Never silently activate. Show as New/Recommended. Require explicit owner activation.
+
+**Implementation:** `getEnabledCapabilities()` in `lib/capabilities/service.ts` no longer auto-merges new defaults for existing configured businesses. Category defaults are only applied during initial onboarding.
+
+**Status:** Implemented in Batch 1 (CAS-010 addressed).
+
+### 5. Recoverable onboarding
+
+**Decision:** Capability initialization failure returns a recoverable error. Business remains in pending status. Retry reuses the same business (idempotent upsert).
+
+**Implementation:** `initCapabilities()` now throws on Supabase error. Register route catches and returns `{ recoverable: true, businessId }` with HTTP 500. Business is not activated until capabilities succeed. Uses upsert for idempotency.
+
+**Status:** Implemented in Batch 1 (CAS-009 addressed).
+
+## Deferred Decisions
+
+### CAS-003 — Broad API route capability enforcement
+
+Deferred to next controlled batch. The reusable `canPerformAction()` guard exists but is not yet applied to individual capability-specific write routes (bookings, orders, tickets, etc.).
