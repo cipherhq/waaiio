@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
     );
 
   if (writeError) {
-    console.error('[CAP_TOGGLE] Write error:', writeError.message);
+    console.warn('[CAP_TOGGLE] Write error:', writeError.message);
     return NextResponse.json(
       { success: false, reason: 'write_failed' },
       { status: 500 },
