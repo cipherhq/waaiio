@@ -2146,8 +2146,5 @@
   },
   "superseded_v1_path": "/tmp/waaiio-batch-09-production-verification.json",
   "superseded_v1_sha256": "531f94b3c11e2c0c02d078e37a6e71f950d59fd9741818d1b81f93e34f51eff7",
-  "v2_correction_reason": "per-object provenance added; canonical function-definition comparison completed; occurrence/safety/output-ownership metadata made explicit",
-  "superseded_v2_path": "/tmp/waaiio-batch-09-production-verification-v2.json",
-  "superseded_v2_sha256": "24d34f0b95484139cb1da95fc788a0976555a5763aab8ba295504654b5767e5d",
-  "v3_correction_reason": "Canonical-set reissue only; no Batch 9 substantive evidence, object classification or result changed."
+  "v2_correction_reason": "per-object provenance added; canonical function-definition comparison completed; occurrence/safety/output-ownership metadata made explicit"
 }

@@ -6610,4 +6610,357 @@ describe('Wave 2 rejection tests', () => {
       expect(output).toMatch(/SUPERSEDED.*1.*expected 2|Superseded.*classification changed|VERIFIED.*20.*expected 19/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
+
+  // 25. Missing object provenance
+  it('rejects missing object provenance field', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      delete d.migrations[0].objects[0].migration_version;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/object provenance/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 26. Object provenance differs from parent
+  it('rejects object provenance mismatch with parent migration', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.migrations[0].objects[0].migration_checksum = 'wrong';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/object provenance mismatch/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 27. Missing function definition hash
+  it('rejects missing function definition hash in expected_properties', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig235 = d.migrations.find((m: any) => m.migration_version === '235');
+      const funcObj = mig235.objects.find((o: any) => o.object_type === 'function' && o.property_comparison_result === 'exact_match');
+      delete funcObj.expected_properties.definition_sha256;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/function definition hash/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 28. Ordinary exact-match function raw hashes differ
+  it('rejects function raw hashes that differ for non-exception exact-match', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig235 = d.migrations.find((m: any) => m.migration_version === '235');
+      const funcObj = mig235.objects.find((o: any) => o.object_type === 'function' && o.property_comparison_result === 'exact_match');
+      funcObj.verified_properties.definition_sha256 = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/function raw hashes differ/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 29. Migration 236 comparison basis changed
+  it('rejects Migration 236 comparison_basis change', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig236 = d.migrations.find((m: any) => m.migration_version === '236');
+      const funcObj = mig236.objects.find((o: any) => o.object_type === 'function');
+      funcObj.comparison_basis = 'exact_match_all_properties';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Migration 236.*comparison_basis/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 30. Migration 236 exception applied to another function
+  it('rejects comment-only exception on non-Migration-236 function', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig235 = d.migrations.find((m: any) => m.migration_version === '235');
+      const funcObj = mig235.objects.find((o: any) => o.object_type === 'function' && o.property_comparison_result === 'exact_match');
+      funcObj.comparison_basis = 'normalized_executable_sql_exact_match_with_comment_only_raw_definition_difference';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/only Migration 236 may use comment-only exception/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 31. Migration 236 current repository raw hash changed
+  it('rejects Migration 236 repository_definition_sha256 change in raw_definition_comparison', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig236 = d.migrations.find((m: any) => m.migration_version === '236');
+      const funcObj = mig236.objects.find((o: any) => o.object_type === 'function');
+      funcObj.raw_definition_comparison.repository_definition_sha256 = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Migration 236.*repository_definition/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 32. Migration 236 production raw hash changed
+  it('rejects Migration 236 production_definition_sha256 change in raw_definition_comparison', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig236 = d.migrations.find((m: any) => m.migration_version === '236');
+      const funcObj = mig236.objects.find((o: any) => o.object_type === 'function');
+      funcObj.raw_definition_comparison.production_definition_sha256 = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Migration 236.*production_definition/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 33. Candidate hash no longer equals production
+  it('rejects Migration 236 candidate hash differing from production', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig236 = d.migrations.find((m: any) => m.migration_version === '236');
+      const funcObj = mig236.objects.find((o: any) => o.object_type === 'function');
+      funcObj.executable_equivalence_derivation.repository_derived_candidate_definition_sha256 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Migration 236.*candidate.*production/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 34. Normalized executable hashes differ
+  it('rejects Migration 236 normalized executable hash mismatch', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig236 = d.migrations.find((m: any) => m.migration_version === '236');
+      const funcObj = mig236.objects.find((o: any) => o.object_type === 'function');
+      funcObj.executable_equivalence_derivation.normalized_executable_sha256_deployed_candidate = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Migration 236.*normalized.*executable/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 35. Removed comment text changed
+  it('rejects Migration 236 exact_removed_comment change', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig236 = d.migrations.find((m: any) => m.migration_version === '236');
+      const funcObj = mig236.objects.find((o: any) => o.object_type === 'function');
+      funcObj.executable_equivalence_derivation.exact_removed_comment = 'something else';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Migration 236.*exact_removed_comment/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 36. Additional source difference introduced
+  it('rejects Migration 236 non-empty other_source_differences', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig236 = d.migrations.find((m: any) => m.migration_version === '236');
+      const funcObj = mig236.objects.find((o: any) => o.object_type === 'function');
+      funcObj.executable_equivalence_derivation.other_source_differences.push('unexpected diff');
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Migration 236.*other_source_differences/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 37. Source commit changed
+  it('rejects Migration 236 source_commit_sha change', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig236 = d.migrations.find((m: any) => m.migration_version === '236');
+      const funcObj = mig236.objects.find((o: any) => o.object_type === 'function');
+      funcObj.executable_equivalence_derivation.source_commit_sha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Migration 236.*source_commit/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 38. Source blob changed
+  it('rejects Migration 236 source_blob_sha change', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig236 = d.migrations.find((m: any) => m.migration_version === '236');
+      const funcObj = mig236.objects.find((o: any) => o.object_type === 'function');
+      funcObj.executable_equivalence_derivation.source_blob_sha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Migration 236.*source_blob/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 39. no_committed_matching_blob_exists false
+  it('rejects Migration 236 no_committed_matching_blob_exists set to false', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig236 = d.migrations.find((m: any) => m.migration_version === '236');
+      const funcObj = mig236.objects.find((o: any) => o.object_type === 'function');
+      funcObj.executable_equivalence_derivation.no_committed_matching_blob_exists = false;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Migration 236.*no_committed_matching_blob/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 40. Later-migration check changed
+  it('rejects Migration 236 no_later_migration_modification_through change', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig236 = d.migrations.find((m: any) => m.migration_version === '236');
+      const funcObj = mig236.objects.find((o: any) => o.object_type === 'function');
+      funcObj.executable_equivalence_derivation.no_later_migration_modification_through = 297;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Migration 236.*no_later_migration/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 41. Wrong function-object count
+  it('rejects wrong function object count', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig235 = d.migrations.find((m: any) => m.migration_version === '235');
+      const funcObj = mig235.objects.find((o: any) => o.object_type === 'function');
+      funcObj.object_type = 'procedure';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/function object count/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 42. Wrong compared-path totals
+  it('rejects wrong Batch 8 compared property paths', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.total_compared_property_paths = 999;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Batch 8 compared paths.*999.*expected 222/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 43. Missing occurrence-map key
+  it('rejects missing occurrence map key', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      delete d.pre_verification_occurrence_map['241'];
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/occurrence map.*missing.*241|occurrence.*14.*expected 15/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 44. Extra occurrence-map key
+  it('rejects extra occurrence map key', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.pre_verification_occurrence_map['999'] = 0;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/occurrence map.*extra.*999|occurrence.*16.*expected 15/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 46. Missing required safety field
+  it('rejects missing required safety field', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      delete d.safety_confirmations.no_write_query_executed;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/safety key missing.*no_write_query_executed/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 47. Required safety field replaced by unrelated
+  it('rejects safety field replaced by unrelated key', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      delete d.safety_confirmations.no_write_query_executed;
+      d.safety_confirmations.some_unrelated = true;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/safety key missing.*no_write_query_executed/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 48. Worker path equals canonical path
+  it('rejects worker path equal to canonical path', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'wave-02-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.worker_output_paths.batch_08 = d.canonical_output_paths.batch_08;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/worker path equals canonical/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
 });

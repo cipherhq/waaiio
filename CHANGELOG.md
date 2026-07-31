@@ -7,6 +7,19 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-30
 
+### Operations: Wave 2 V3 canonical evidence with per-object provenance
+- Wave 2 verification complete: 19 versions, 153 objects with V3 canonical per-object provenance (migration_version, migration_filename, migration_checksum, expected_object_digest).
+- 13 function objects validated with definition-level evidence across both batches (9 Batch 8, 4 Batch 9).
+- Migration 236 has one comment-only raw-definition difference (normalized executable SQL identical; no committed matching blob exists).
+- V3 compared paths: Batch 8 = 222, Batch 9 = 148, Wave 2 = 370.
+- V3 canonical SHAs: Batch 8 `f2d54c69`, Batch 9 `ca531e1e`, Wave 2 `3d8550b4`. V1 and V2 superseded but preserved.
+- Batch 8 activated for repair (15 versions in allowlist). Batch 9 verified but deferred (4 versions).
+- Candidate registry cleared. All actionable verification candidates complete.
+- No new production query, no repair, no SQL, no deployment. Issue #53 remains open.
+  - **Files:** `docs/migrations/evidence/batch-08-production-verification.json`, `docs/migrations/evidence/batch-08-production-verification.md`, `docs/migrations/evidence/batch-09-production-verification.json`, `docs/migrations/evidence/batch-09-production-verification.md`, `docs/migrations/evidence/wave-02-production-verification.json`, `docs/migrations/evidence/wave-02-production-verification.md`, `docs/migrations/101-246-repair-runbook.md`, `docs/MIGRATION_REGISTRY.md`, `docs/engineering-status.json`, `docs/ENGINEERING_STATUS.md`
+  - **Affects:** Evidence integrity, V3 canonical provenance chain, repair process, Issue #53 tracking
+  - **Could break:** Nothing — evidence metadata update only; no migration SQL executed, no application-code change, no deployment.
+
 ### Operations: Final Verification Wave 2 complete (Batches 8 and 9)
 - Wave 2 read-only production verification complete: 19 migrations (Batches 8 and 9), 153 objects, 140 exact matches, 2 equivalent-stricter, 11 superseded, 0 failed, 0 ambiguous, 351 compared property paths.
 - Production history unchanged: 209 remote, 113 in range 101-246, Migration 298 once, all Wave 2 version occurrences = 0.

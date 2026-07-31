@@ -29,34 +29,25 @@
             "language": "plpgsql",
             "security_definer": true,
             "search_path": "public",
-            "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
-            "definition_sha256": "254f64f8089836d8b14da00996b98cc3bb646146e21d0d643abe105f069521cc"
+            "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer"
           },
           "verified_properties": {
             "schema": "public",
             "security_definer": true,
             "search_path": "public",
             "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
+            "def_hash": "2c3a0bd9cdc9be9054de5523e4f5b8127999bc701f78c57701aa3c5d23962932",
             "volatile": "v",
-            "exists": true,
-            "definition_sha256": "2c3a0bd9cdc9be9054de5523e4f5b8127999bc701f78c57701aa3c5d23962932"
+            "exists": true
           },
           "compared_property_paths": [
             "schema",
             "security_definer",
             "search_path",
             "args",
-            "exists",
-            "definition_sha256"
+            "exists"
           ],
-          "property_mismatches": [
-            {
-              "path": "definition_sha256",
-              "expected": "254f64f8089836d8b14da00996b98cc3bb646146e21d0d643abe105f069521cc",
-              "verified": "2c3a0bd9cdc9be9054de5523e4f5b8127999bc701f78c57701aa3c5d23962932",
-              "result": "superseded_by_later_migration"
-            }
-          ],
+          "property_mismatches": [],
           "property_comparison_result": "superseded",
           "superseding_migration": "243",
           "superseding_reason": "Migration 243 replaced function body with full reservation lifecycle (campaign locking, double-reservation prevention, reservation_id tracking)",
@@ -64,11 +55,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_proc",
           "query_category": "function_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "242",
-          "migration_filename": "242_growth_credit_atomic.sql",
-          "migration_checksum": "578661c4ec55021f1856706194e3df010e8d22f04f06f0eb491148719f218e0f",
-          "expected_object_digest": "7a96aaf5f982c4a50adf861c05104924310718e5e75ee518cbd993d00a03613a"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "function",
@@ -78,34 +65,25 @@
             "language": "plpgsql",
             "security_definer": true,
             "search_path": "public",
-            "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
-            "definition_sha256": "41fca1c289a1a5500055f60f9769a69d1c6a245fd2cfa33be9617990cd92db76"
+            "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer"
           },
           "verified_properties": {
             "schema": "public",
             "security_definer": true,
             "search_path": "public",
             "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
+            "def_hash": "28e737b0a5395614e97015fe5044e7f83c1a62837393ba91094f1191cc2a71aa",
             "volatile": "v",
-            "exists": true,
-            "definition_sha256": "28e737b0a5395614e97015fe5044e7f83c1a62837393ba91094f1191cc2a71aa"
+            "exists": true
           },
           "compared_property_paths": [
             "schema",
             "security_definer",
             "search_path",
             "args",
-            "exists",
-            "definition_sha256"
+            "exists"
           ],
-          "property_mismatches": [
-            {
-              "path": "definition_sha256",
-              "expected": "41fca1c289a1a5500055f60f9769a69d1c6a245fd2cfa33be9617990cd92db76",
-              "verified": "28e737b0a5395614e97015fe5044e7f83c1a62837393ba91094f1191cc2a71aa",
-              "result": "superseded_by_later_migration"
-            }
-          ],
+          "property_mismatches": [],
           "property_comparison_result": "superseded",
           "superseding_migration": "243",
           "superseding_reason": "Migration 243 replaced function body with reservation verification (campaign locking, reservation status checks, consumable limit enforcement)",
@@ -113,11 +91,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_proc",
           "query_category": "function_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "242",
-          "migration_filename": "242_growth_credit_atomic.sql",
-          "migration_checksum": "578661c4ec55021f1856706194e3df010e8d22f04f06f0eb491148719f218e0f",
-          "expected_object_digest": "7a96aaf5f982c4a50adf861c05104924310718e5e75ee518cbd993d00a03613a"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "grant",
@@ -149,11 +123,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.routine_privileges",
           "query_category": "grant_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "242",
-          "migration_filename": "242_growth_credit_atomic.sql",
-          "migration_checksum": "578661c4ec55021f1856706194e3df010e8d22f04f06f0eb491148719f218e0f",
-          "expected_object_digest": "7a96aaf5f982c4a50adf861c05104924310718e5e75ee518cbd993d00a03613a"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "grant",
@@ -180,11 +150,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.routine_privileges",
           "query_category": "grant_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "242",
-          "migration_filename": "242_growth_credit_atomic.sql",
-          "migration_checksum": "578661c4ec55021f1856706194e3df010e8d22f04f06f0eb491148719f218e0f",
-          "expected_object_digest": "7a96aaf5f982c4a50adf861c05104924310718e5e75ee518cbd993d00a03613a"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "grant",
@@ -216,11 +182,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.routine_privileges",
           "query_category": "grant_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "242",
-          "migration_filename": "242_growth_credit_atomic.sql",
-          "migration_checksum": "578661c4ec55021f1856706194e3df010e8d22f04f06f0eb491148719f218e0f",
-          "expected_object_digest": "7a96aaf5f982c4a50adf861c05104924310718e5e75ee518cbd993d00a03613a"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "grant",
@@ -247,11 +209,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.routine_privileges",
           "query_category": "grant_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "242",
-          "migration_filename": "242_growth_credit_atomic.sql",
-          "migration_checksum": "578661c4ec55021f1856706194e3df010e8d22f04f06f0eb491148719f218e0f",
-          "expected_object_digest": "7a96aaf5f982c4a50adf861c05104924310718e5e75ee518cbd993d00a03613a"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "policy_drop",
@@ -278,11 +236,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_policy",
           "query_category": "policy_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "242",
-          "migration_filename": "242_growth_credit_atomic.sql",
-          "migration_checksum": "578661c4ec55021f1856706194e3df010e8d22f04f06f0eb491148719f218e0f",
-          "expected_object_digest": "7a96aaf5f982c4a50adf861c05104924310718e5e75ee518cbd993d00a03613a"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "constraint",
@@ -313,11 +267,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.table_constraints",
           "query_category": "constraint_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "242",
-          "migration_filename": "242_growth_credit_atomic.sql",
-          "migration_checksum": "578661c4ec55021f1856706194e3df010e8d22f04f06f0eb491148719f218e0f",
-          "expected_object_digest": "7a96aaf5f982c4a50adf861c05104924310718e5e75ee518cbd993d00a03613a"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         }
       ],
       "classification": "VERIFIED_APPLIED_UNTRACKED",
@@ -328,7 +278,7 @@
         "failed": 0,
         "ambiguous": 0
       },
-      "migration_evidence_digest": "82a247f4ec0611db21e5d587ca8553102693a51690cdae839240fdf353d15a35"
+      "migration_evidence_digest": "1f27a0b5970f8ef989dca992c81766354cf04afee34f373bb9bf795fce1723f7"
     },
     {
       "migration_version": "243",
@@ -362,11 +312,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.check_constraints",
           "query_category": "constraint_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "constraint",
@@ -393,11 +339,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.check_constraints",
           "query_category": "constraint_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "constraint",
@@ -424,11 +366,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.check_constraints",
           "query_category": "constraint_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "column",
@@ -457,11 +395,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.columns",
           "query_category": "column_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "column",
@@ -501,11 +435,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.columns",
           "query_category": "column_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "column",
@@ -532,11 +462,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.columns",
           "query_category": "column_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "column",
@@ -563,11 +489,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.columns",
           "query_category": "column_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "index",
@@ -596,11 +518,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_indexes",
           "query_category": "index_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "constraint_drop",
@@ -622,11 +540,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.table_constraints",
           "query_category": "constraint_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "function",
@@ -637,36 +551,30 @@
             "security_definer": true,
             "search_path": "public",
             "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
-            "version": "243_reservation_lifecycle",
-            "definition_sha256": "2c3a0bd9cdc9be9054de5523e4f5b8127999bc701f78c57701aa3c5d23962932"
+            "version": "243_reservation_lifecycle"
           },
           "verified_properties": {
             "schema": "public",
             "security_definer": true,
             "search_path": "public",
             "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
+            "def_hash": "2c3a0bd9cdc9be9054de5523e4f5b8127999bc701f78c57701aa3c5d23962932",
             "volatile": "v",
-            "exists": true,
-            "definition_sha256": "2c3a0bd9cdc9be9054de5523e4f5b8127999bc701f78c57701aa3c5d23962932"
+            "exists": true
           },
           "compared_property_paths": [
             "schema",
             "security_definer",
             "search_path",
             "args",
-            "exists",
-            "definition_sha256"
+            "exists"
           ],
           "property_mismatches": [],
           "property_comparison_result": "exact_match",
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_proc",
           "query_category": "function_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "function",
@@ -677,36 +585,30 @@
             "security_definer": true,
             "search_path": "public",
             "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
-            "version": "243_reservation_verification",
-            "definition_sha256": "28e737b0a5395614e97015fe5044e7f83c1a62837393ba91094f1191cc2a71aa"
+            "version": "243_reservation_verification"
           },
           "verified_properties": {
             "schema": "public",
             "security_definer": true,
             "search_path": "public",
             "args": "p_business_id uuid, p_campaign_id uuid, p_amount integer",
+            "def_hash": "28e737b0a5395614e97015fe5044e7f83c1a62837393ba91094f1191cc2a71aa",
             "volatile": "v",
-            "exists": true,
-            "definition_sha256": "28e737b0a5395614e97015fe5044e7f83c1a62837393ba91094f1191cc2a71aa"
+            "exists": true
           },
           "compared_property_paths": [
             "schema",
             "security_definer",
             "search_path",
             "args",
-            "exists",
-            "definition_sha256"
+            "exists"
           ],
           "property_mismatches": [],
           "property_comparison_result": "exact_match",
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_proc",
           "query_category": "function_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "function",
@@ -716,36 +618,30 @@
             "language": "plpgsql",
             "security_definer": true,
             "search_path": "public",
-            "args": "p_business_id uuid, p_campaign_id uuid",
-            "definition_sha256": "f7d6681c22b11da1c603ed9dad102af18887e256570306f618ba92f58768b8ee"
+            "args": "p_business_id uuid, p_campaign_id uuid"
           },
           "verified_properties": {
             "schema": "public",
             "security_definer": true,
             "search_path": "public",
             "args": "p_business_id uuid, p_campaign_id uuid",
+            "def_hash": "f7d6681c22b11da1c603ed9dad102af18887e256570306f618ba92f58768b8ee",
             "volatile": "v",
-            "exists": true,
-            "definition_sha256": "f7d6681c22b11da1c603ed9dad102af18887e256570306f618ba92f58768b8ee"
+            "exists": true
           },
           "compared_property_paths": [
             "schema",
             "security_definer",
             "search_path",
             "args",
-            "exists",
-            "definition_sha256"
+            "exists"
           ],
           "property_mismatches": [],
           "property_comparison_result": "exact_match",
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_proc",
           "query_category": "function_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "function",
@@ -755,36 +651,30 @@
             "language": "plpgsql",
             "security_definer": true,
             "search_path": "public",
-            "args": "",
-            "definition_sha256": "76786055261d9e3252effae2ef6084a170b3c2eb9e338197dca61c1c83ff2458"
+            "args": ""
           },
           "verified_properties": {
             "schema": "public",
             "security_definer": true,
             "search_path": "public",
             "args": "",
+            "def_hash": "76786055261d9e3252effae2ef6084a170b3c2eb9e338197dca61c1c83ff2458",
             "volatile": "v",
-            "exists": true,
-            "definition_sha256": "76786055261d9e3252effae2ef6084a170b3c2eb9e338197dca61c1c83ff2458"
+            "exists": true
           },
           "compared_property_paths": [
             "schema",
             "security_definer",
             "search_path",
             "args",
-            "exists",
-            "definition_sha256"
+            "exists"
           ],
           "property_mismatches": [],
           "property_comparison_result": "exact_match",
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_proc",
           "query_category": "function_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "grant",
@@ -817,11 +707,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.routine_privileges",
           "query_category": "grant_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "grant",
@@ -855,11 +741,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.routine_privileges",
           "query_category": "grant_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "grant",
@@ -893,11 +775,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.routine_privileges",
           "query_category": "grant_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "grant",
@@ -930,11 +808,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.routine_privileges",
           "query_category": "grant_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "243",
-          "migration_filename": "243_growth_credit_hardening.sql",
-          "migration_checksum": "cdb4b3241fa2398cbaf2d016cb769fa5229eeb977fd900194a412c52c4dcbbb3",
-          "expected_object_digest": "9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         }
       ],
       "classification": "VERIFIED_APPLIED_UNTRACKED",
@@ -945,7 +819,7 @@
         "failed": 0,
         "ambiguous": 0
       },
-      "migration_evidence_digest": "f47df3f78fb3f5ab6fd7952f33b5cd48511b9d6eb375d35de27a697ddf97bf4a"
+      "migration_evidence_digest": "5fac56dfe66b087cee1a6d6cf6c83c56216b68c23cc6f251bf7965a2239d2ce9"
     },
     {
       "migration_version": "245",
@@ -978,11 +852,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_proc",
           "query_category": "function_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "245",
-          "migration_filename": "245_fix_book_slot_atomic_overloads.sql",
-          "migration_checksum": "20172654b4897937f1d297850f148ac8760902cf32fe2f56164c82f66f782ac9",
-          "expected_object_digest": "d3126ba97bd423bb78ffab32cf3b5f4ed4a35bc0185b56da6c11b33b65bbde67"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "function_drop",
@@ -1008,11 +878,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_proc",
           "query_category": "function_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "245",
-          "migration_filename": "245_fix_book_slot_atomic_overloads.sql",
-          "migration_checksum": "20172654b4897937f1d297850f148ac8760902cf32fe2f56164c82f66f782ac9",
-          "expected_object_digest": "d3126ba97bd423bb78ffab32cf3b5f4ed4a35bc0185b56da6c11b33b65bbde67"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "function_drop",
@@ -1038,11 +904,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_proc",
           "query_category": "function_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "245",
-          "migration_filename": "245_fix_book_slot_atomic_overloads.sql",
-          "migration_checksum": "20172654b4897937f1d297850f148ac8760902cf32fe2f56164c82f66f782ac9",
-          "expected_object_digest": "d3126ba97bd423bb78ffab32cf3b5f4ed4a35bc0185b56da6c11b33b65bbde67"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "grant",
@@ -1076,11 +938,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.routine_privileges",
           "query_category": "grant_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "245",
-          "migration_filename": "245_fix_book_slot_atomic_overloads.sql",
-          "migration_checksum": "20172654b4897937f1d297850f148ac8760902cf32fe2f56164c82f66f782ac9",
-          "expected_object_digest": "d3126ba97bd423bb78ffab32cf3b5f4ed4a35bc0185b56da6c11b33b65bbde67"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         }
       ],
       "classification": "VERIFIED_APPLIED_UNTRACKED",
@@ -1091,7 +949,7 @@
         "failed": 0,
         "ambiguous": 0
       },
-      "migration_evidence_digest": "0fc3baa0cb223fe51ca5e0b31049987753162db79da2b9d1f8c8568832ebe123"
+      "migration_evidence_digest": "dc6d97561a65fd7cbcf3ec7edd11b85f44d97916f7f3e27623bed7136a0bc4a2"
     },
     {
       "migration_version": "246",
@@ -1232,11 +1090,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.columns",
           "query_category": "table_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "246",
-          "migration_filename": "246_phone_otp_challenges.sql",
-          "migration_checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-          "expected_object_digest": "0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "constraint",
@@ -1261,11 +1115,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.table_constraints",
           "query_category": "constraint_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "246",
-          "migration_filename": "246_phone_otp_challenges.sql",
-          "migration_checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-          "expected_object_digest": "0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "constraint",
@@ -1290,11 +1140,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.table_constraints",
           "query_category": "constraint_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "246",
-          "migration_filename": "246_phone_otp_challenges.sql",
-          "migration_checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-          "expected_object_digest": "0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "index",
@@ -1319,11 +1165,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_indexes",
           "query_category": "index_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "246",
-          "migration_filename": "246_phone_otp_challenges.sql",
-          "migration_checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-          "expected_object_digest": "0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "rls",
@@ -1344,11 +1186,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_class",
           "query_category": "rls_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "246",
-          "migration_filename": "246_phone_otp_challenges.sql",
-          "migration_checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-          "expected_object_digest": "0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "policy",
@@ -1377,11 +1215,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_policy",
           "query_category": "policy_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "246",
-          "migration_filename": "246_phone_otp_challenges.sql",
-          "migration_checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-          "expected_object_digest": "0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "grant",
@@ -1417,11 +1251,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.table_privileges",
           "query_category": "grant_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "246",
-          "migration_filename": "246_phone_otp_challenges.sql",
-          "migration_checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-          "expected_object_digest": "0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "function",
@@ -1432,36 +1262,30 @@
             "security_definer": true,
             "search_path": "public",
             "args": "p_challenge_id uuid",
-            "returns": "integer",
-            "definition_sha256": "2991f345a676e7ad898bcb23aaa1f2031f2c1cc2154d29992733a93d362bab9e"
+            "returns": "integer"
           },
           "verified_properties": {
             "schema": "public",
             "security_definer": true,
             "search_path": "public",
             "args": "p_challenge_id uuid",
+            "def_hash": "2991f345a676e7ad898bcb23aaa1f2031f2c1cc2154d29992733a93d362bab9e",
             "volatile": "v",
-            "exists": true,
-            "definition_sha256": "2991f345a676e7ad898bcb23aaa1f2031f2c1cc2154d29992733a93d362bab9e"
+            "exists": true
           },
           "compared_property_paths": [
             "schema",
             "security_definer",
             "search_path",
             "args",
-            "exists",
-            "definition_sha256"
+            "exists"
           ],
           "property_mismatches": [],
           "property_comparison_result": "exact_match",
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_proc",
           "query_category": "function_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "246",
-          "migration_filename": "246_phone_otp_challenges.sql",
-          "migration_checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-          "expected_object_digest": "0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "grant",
@@ -1494,11 +1318,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.routine_privileges",
           "query_category": "grant_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "246",
-          "migration_filename": "246_phone_otp_challenges.sql",
-          "migration_checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-          "expected_object_digest": "0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "function",
@@ -1509,36 +1329,30 @@
             "security_definer": true,
             "search_path": "public",
             "args": "p_challenge_id uuid",
-            "returns": "uuid",
-            "definition_sha256": "79f6e8f591e0fbee3305120b1d0609e57076d9f16783df2b1eddcf059e536963"
+            "returns": "uuid"
           },
           "verified_properties": {
             "schema": "public",
             "security_definer": true,
             "search_path": "public",
             "args": "p_challenge_id uuid",
+            "def_hash": "79f6e8f591e0fbee3305120b1d0609e57076d9f16783df2b1eddcf059e536963",
             "volatile": "v",
-            "exists": true,
-            "definition_sha256": "79f6e8f591e0fbee3305120b1d0609e57076d9f16783df2b1eddcf059e536963"
+            "exists": true
           },
           "compared_property_paths": [
             "schema",
             "security_definer",
             "search_path",
             "args",
-            "exists",
-            "definition_sha256"
+            "exists"
           ],
           "property_mismatches": [],
           "property_comparison_result": "exact_match",
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_proc",
           "query_category": "function_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "246",
-          "migration_filename": "246_phone_otp_challenges.sql",
-          "migration_checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-          "expected_object_digest": "0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "grant",
@@ -1571,11 +1385,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.routine_privileges",
           "query_category": "grant_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "246",
-          "migration_filename": "246_phone_otp_challenges.sql",
-          "migration_checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-          "expected_object_digest": "0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "function",
@@ -1586,36 +1396,30 @@
             "security_definer": true,
             "search_path": "public",
             "args": "",
-            "returns": "void",
-            "definition_sha256": "25193eb64b5391579f454e94a20e145554bd6697da253cde66678f6e841d7f86"
+            "returns": "void"
           },
           "verified_properties": {
             "schema": "public",
             "security_definer": true,
             "search_path": "public",
             "args": "",
+            "def_hash": "25193eb64b5391579f454e94a20e145554bd6697da253cde66678f6e841d7f86",
             "volatile": "v",
-            "exists": true,
-            "definition_sha256": "25193eb64b5391579f454e94a20e145554bd6697da253cde66678f6e841d7f86"
+            "exists": true
           },
           "compared_property_paths": [
             "schema",
             "security_definer",
             "search_path",
             "args",
-            "exists",
-            "definition_sha256"
+            "exists"
           ],
           "property_mismatches": [],
           "property_comparison_result": "exact_match",
           "comparison_basis": "production_metadata_query",
           "verification_source": "pg_proc",
           "query_category": "function_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "246",
-          "migration_filename": "246_phone_otp_challenges.sql",
-          "migration_checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-          "expected_object_digest": "0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         },
         {
           "object_type": "grant",
@@ -1648,11 +1452,7 @@
           "comparison_basis": "production_metadata_query",
           "verification_source": "information_schema.routine_privileges",
           "query_category": "grant_metadata",
-          "verified_at": "2026-07-30T19:45:51.100Z",
-          "migration_version": "246",
-          "migration_filename": "246_phone_otp_challenges.sql",
-          "migration_checksum": "0f2fdf9191806c9d30225c90ba988d47f15b5fda7bb25545bdced0fe8c68e1b0",
-          "expected_object_digest": "0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d"
+          "verified_at": "2026-07-30T19:45:51.100Z"
         }
       ],
       "classification": "VERIFIED_APPLIED_UNTRACKED",
@@ -1663,7 +1463,7 @@
         "failed": 0,
         "ambiguous": 0
       },
-      "migration_evidence_digest": "2cba951a0f4a7c193e7758ba9f6e35d588d56bfd2768ceaca45731bcd8840b95"
+      "migration_evidence_digest": "6ae3aff1909e2e068331eca2826aa7dbb9732075d6f17e19602ef3c7cce7a897"
     }
   ],
   "classification_counts": {
@@ -1676,7 +1476,7 @@
     "failed": 0,
     "ambiguous": 0
   },
-  "total_compared_property_paths": 148,
+  "total_compared_property_paths": 139,
   "pre_verification_history_summary": {
     "total_remote_count": 209,
     "range_101_246_count": 113,
@@ -2143,11 +1943,5 @@
     "no_token_recorded": true,
     "no_repair_allowlist_created": true,
     "no_repair_started": true
-  },
-  "superseded_v1_path": "/tmp/waaiio-batch-09-production-verification.json",
-  "superseded_v1_sha256": "531f94b3c11e2c0c02d078e37a6e71f950d59fd9741818d1b81f93e34f51eff7",
-  "v2_correction_reason": "per-object provenance added; canonical function-definition comparison completed; occurrence/safety/output-ownership metadata made explicit",
-  "superseded_v2_path": "/tmp/waaiio-batch-09-production-verification-v2.json",
-  "superseded_v2_sha256": "24d34f0b95484139cb1da95fc788a0976555a5763aab8ba295504654b5767e5d",
-  "v3_correction_reason": "Canonical-set reissue only; no Batch 9 substantive evidence, object classification or result changed."
+  }
 }

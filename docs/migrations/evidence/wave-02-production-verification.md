@@ -6,7 +6,20 @@
 - **Batches:** 8 and 9
 - **Versions (19):** 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 245, 246
 - **Total objects:** 153
-- **Total compared property paths:** 351
+- **Total function objects validated with definition-level evidence:** 13
+- **Total compared property paths:** 370
+
+## Evidence Lineage (V1 → V2 → V3)
+
+| Version | SHA-256 | Status |
+|---------|---------|--------|
+| V1 | `8008cd5817061972b5e6973fa7da59464d3483798e62fb803604cdefbe1413ae` | Superseded |
+| V2 | `d3adc5de8895e38519ce33206b8a211dd9b88caa1b0cdbd322a7fe645cf239e1` | Superseded |
+| V3 (canonical) | `3d8550b4967ed4fd95769575e2a70b60e091b904867c3804ca276d243be2d70d` | Canonical |
+
+V3 is the canonical evidence version. V1 and V2 are superseded but preserved for audit trail.
+V3 adds per-object provenance fields: `migration_version`, `migration_filename`, `migration_checksum`, `expected_object_digest`.
+No new production query occurred for V3. No repair occurred.
 
 ## Combined Results
 
@@ -22,13 +35,15 @@
 
 | Batch | Objects | Exact | Equiv-Stricter | Superseded | Paths | SHA-256 |
 |-------|---------|-------|----------------|------------|-------|---------|
-| 8 | 111 | 106 | 1 | 4 | 212 | `bc5ac3169b34c663e45707b25c4fb48c70e7f22b561f90155f7457a57ddd44f5` |
-| 9 | 42 | 34 | 1 | 7 | 139 | `531f94b3c11e2c0c02d078e37a6e71f950d59fd9741818d1b81f93e34f51eff7` |
+| 8 | 111 | 106 | 1 | 4 | 222 | `f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95` |
+| 9 | 42 | 34 | 1 | 7 | 148 | `ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5` |
 
 ## Wave Evidence
 
 - **JSON evidence:** `docs/migrations/evidence/wave-02-production-verification.json`
-- **Wave SHA-256:** `8008cd5817061972b5e6973fa7da59464d3483798e62fb803604cdefbe1413ae`
+- **V3 canonical SHA-256:** `3d8550b4967ed4fd95769575e2a70b60e091b904867c3804ca276d243be2d70d`
+- **Superseded V2 SHA-256:** `d3adc5de8895e38519ce33206b8a211dd9b88caa1b0cdbd322a7fe645cf239e1`
+- **Superseded V1 SHA-256:** `8008cd5817061972b5e6973fa7da59464d3483798e62fb803604cdefbe1413ae`
 - **Repository SHA:** `21cbf57ff76d30538fe493069148e673451431c6`
 - **Project ref:** `cxcmiqotkowhxinjbytg`
 - **Issue:** #53
@@ -36,8 +51,7 @@
 ## Production History
 
 - Pre/post ordered snapshots: **exactly equal**
-- Total remote count: 209
-- Range 101-246 tracked count: 113
+- Total remote count: 209 total / 113 in 101-246
 - Migration 298 occurrence count: 1
 - Every Wave 2 version occurrence count: 0
 - No history version added, removed, or changed

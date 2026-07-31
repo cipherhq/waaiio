@@ -6,7 +6,20 @@
 - **Versions:** 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241
 - **Migration count:** 15
 - **Object count:** 111
-- **Compared property paths:** 212
+- **Compared property paths:** 222
+- **Function objects validated with definition-level evidence:** 9
+
+## Evidence Lineage (V1 → V2 → V3)
+
+| Version | SHA-256 | Status |
+|---------|---------|--------|
+| V1 | `bc5ac3169b34c663e45707b25c4fb48c70e7f22b561f90155f7457a57ddd44f5` | Superseded |
+| V2 | `8e136a202cbf49234ad14484ce6a7721f66de96ff18e416719bf8410b92936de` | Superseded |
+| V3 (canonical) | `f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95` | Canonical |
+
+V3 is the canonical evidence version. V1 and V2 are superseded but preserved for audit trail.
+V3 adds per-object provenance fields: `migration_version`, `migration_filename`, `migration_checksum`, `expected_object_digest`.
+Migration 236 has one comment-only raw-definition difference (normalized executable SQL identical; no committed matching blob exists).
 
 ## Results
 
@@ -55,7 +68,9 @@ All 15 migrations classified: **VERIFIED_APPLIED_UNTRACKED**
 ## Evidence
 
 - **JSON evidence:** `docs/migrations/evidence/batch-08-production-verification.json`
-- **Evidence SHA-256:** `bc5ac3169b34c663e45707b25c4fb48c70e7f22b561f90155f7457a57ddd44f5`
+- **V3 canonical SHA-256:** `f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95`
+- **Superseded V2 SHA-256:** `8e136a202cbf49234ad14484ce6a7721f66de96ff18e416719bf8410b92936de`
+- **Superseded V1 SHA-256:** `bc5ac3169b34c663e45707b25c4fb48c70e7f22b561f90155f7457a57ddd44f5`
 - **Repository SHA:** `21cbf57ff76d30538fe493069148e673451431c6`
 - **Project ref:** `cxcmiqotkowhxinjbytg`
 - **Issue:** #53

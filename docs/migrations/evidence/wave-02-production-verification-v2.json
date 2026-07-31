@@ -4,10 +4,10 @@
   "linked_project_ref": "cxcmiqotkowhxinjbytg",
   "issue_number": 53,
   "verification_timestamp": "2026-07-30T19:49:57.399Z",
-  "batch_08_evidence_path": "/tmp/waaiio-batch-08-production-verification-v3.json",
-  "batch_08_evidence_sha256": "f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95",
-  "batch_09_evidence_path": "/tmp/waaiio-batch-09-production-verification-v3.json",
-  "batch_09_evidence_sha256": "ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5",
+  "batch_08_evidence_path": "/tmp/waaiio-batch-08-production-verification-v2.json",
+  "batch_08_evidence_sha256": "8e136a202cbf49234ad14484ce6a7721f66de96ff18e416719bf8410b92936de",
+  "batch_09_evidence_path": "/tmp/waaiio-batch-09-production-verification-v2.json",
+  "batch_09_evidence_sha256": "24d34f0b95484139cb1da95fc788a0976555a5763aab8ba295504654b5767e5d",
   "combined_ordered_versions": [
     "227",
     "228",
@@ -43,7 +43,7 @@
     "failed": 0,
     "ambiguous": 0
   },
-  "combined_compared_property_paths": 370,
+  "combined_compared_property_paths": 364,
   "pre_verification_history_summary": {
     "total_remote_count": 209,
     "range_101_246_count": 113,
@@ -517,8 +517,5 @@
   "worker_output_provenance": {
     "waaiio-batch-08-worker-output.json": "0bd114afb9461052f01b541ab7eb67c60040a75bcb915372debb994200968f7a",
     "waaiio-batch-09-worker-output.json": "c703f405912e2ca099062691fd6d41249943db35fe2b9f4ed18d4f807e283d9e"
-  },
-  "superseded_v2_path": "/tmp/waaiio-wave-02-production-verification-v2.json",
-  "superseded_v2_sha256": "d3adc5de8895e38519ce33206b8a211dd9b88caa1b0cdbd322a7fe645cf239e1",
-  "v3_correction_reason": "Migration 236 executable SQL was independently proven equivalent to production. The raw pg_get_functiondef difference is caused solely by one non-executable SQL comment present in the repository migration but absent from the deployed source. No committed matching blob exists; circular expected-hash assignment was removed."
+  }
 }

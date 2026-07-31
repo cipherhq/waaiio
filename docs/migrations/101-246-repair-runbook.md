@@ -143,14 +143,18 @@ This runbook governs the controlled verification and repair of 124 migration-his
 ### Wave 2 (Batches 8 and 9) — Verification: COMPLETE
 
 **Wave 2 combined:**
-- **19 migrations, 153 objects, 140 exact matches, 2 equivalent-stricter, 11 superseded, 351 compared paths**
+- **19 migrations, 153 objects (13 function objects), 140 exact matches, 2 equivalent-stricter, 11 superseded, 370 compared paths**
 - Production history unchanged (209/113/298 once)
-- Wave evidence: `docs/migrations/evidence/wave-02-production-verification.json` (SHA: `8008cd5817061972b5e6973fa7da59464d3483798e62fb803604cdefbe1413ae`)
+- V3 canonical evidence with per-object provenance (migration_version, migration_filename, migration_checksum, expected_object_digest)
+- Wave evidence: `docs/migrations/evidence/wave-02-production-verification.json` (V3 SHA: `3d8550b4967ed4fd95769575e2a70b60e091b904867c3804ca276d243be2d70d`)
+- Both batches verified. Batch 8 activated for repair (15 versions in allowlist). Batch 9 verified but deferred.
+- No new production query occurred for V3. No repair occurred.
 
 ### Batch 8 — Verification: COMPLETE | Repair: ACTIVE and PENDING
 - **Versions:** 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241
 - **Object checks:** 111 (106 exact match, 1 equivalent-stricter, 4 superseded, 0 failed, 0 ambiguous)
-- **Compared property paths:** 212
+- **Compared property paths:** 222
+- **Function objects validated with definition-level evidence:** 9
 - **Equivalent-stricter:** Migration 233 `process_recurring_charge.revoke_public` — Migration 295 (`295_restrict_recurring_charge_rpc_execute.sql`) explicitly revokes EXECUTE from anon and authenticated, closing the Supabase ALTER DEFAULT PRIVILEGES gap. Current state is stricter.
 - **Superseded objects:**
   - Migration 229: `attendance_log.service_insert` policy — superseded by Migration 230 (`230_attendance_rls_hardening.sql`). Unsafe policy WITH CHECK (true) dropped and replaced by hardened access.
@@ -158,14 +162,17 @@ This runbook governs the controlled verification and repair of 124 migration-his
   - Migration 233: `process_recurring_charge` function body — superseded by Migration 244 (`244_payment_source_classification.sql`). Function replaced with version adding payment_source = 'subscription'.
   - Migration 241: `customer_consents.customer_consents_service_insert` policy — superseded by Migration 242 (`242_growth_credit_atomic.sql`). Unsafe policy WITH CHECK (true) dropped.
 - **Verification evidence:** `docs/migrations/evidence/batch-08-production-verification.json`
-- **Evidence SHA-256:** `bc5ac3169b34c663e45707b25c4fb48c70e7f22b561f90155f7457a57ddd44f5`
+- **V3 canonical SHA-256:** `f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95`
+- **Superseded V1 SHA-256:** `bc5ac3169b34c663e45707b25c4fb48c70e7f22b561f90155f7457a57ddd44f5`
+- Migration 236 has one comment-only raw-definition difference (normalized executable SQL identical; no committed matching blob exists)
 - Active repair allowlist: 15 Batch 8 versions
 - Next production write: controlled one-by-one Batch 8 repair
 
 ### Batch 9 — Verification: COMPLETE | Repair: WAITING FOR BATCH 8 CLOSEOUT
 - **Versions:** 242, 243, 245, 246
 - **Object checks:** 42 (34 exact match, 1 equivalent-stricter, 7 superseded, 0 failed, 0 ambiguous)
-- **Compared property paths:** 139
+- **Compared property paths:** 148
+- **Function objects validated with definition-level evidence:** 4
 - **Equivalent-stricter:** Migration 245 `book_slot_atomic` execute grants — Migration 296 (`296_restrict_sensitive_rpc_execution.sql`) explicitly revokes EXECUTE from anon and authenticated with role-existence guards. Current state is stricter while preserving authorised execution.
 - **Superseded objects (Migration 242, all superseded by Migration 243 `243_growth_credit_hardening.sql`):**
   - `reserve_credits_atomic` function body replaced by Migration 243
@@ -176,7 +183,8 @@ This runbook governs the controlled verification and repair of 124 migration-his
   - `release_expired_credits` function body replaced by Migration 243
   - `release_expired_credits` grants replaced by Migration 243
 - **Verification evidence:** `docs/migrations/evidence/batch-09-production-verification.json`
-- **Evidence SHA-256:** `531f94b3c11e2c0c02d078e37a6e71f950d59fd9741818d1b81f93e34f51eff7`
+- **V3 canonical SHA-256:** `ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5`
+- **Superseded V1 SHA-256:** `531f94b3c11e2c0c02d078e37a6e71f950d59fd9741818d1b81f93e34f51eff7`
 - Not in active repair allowlist
 - Activation blocked by Batch 8
 

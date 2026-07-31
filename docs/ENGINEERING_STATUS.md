@@ -4,6 +4,7 @@ Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineerin
 
 **Last reconciled:** 2026-07-30
 **Last reconciled main SHA:** `21cbf57ff76d30538fe493069148e673451431c6`
+**Last reconciled at:** 2026-07-30T23:00:00Z
 
 ## Milestone Status
 
@@ -56,8 +57,10 @@ PR #21 (`fix/combined-18-19-20`, head `22168545`) contains tested but unmerged f
 ## OPS-001 Current State
 
 - Batches 1-7 verification and migration-history repair are complete. PR #79 merged.
-- Final Verification Wave 2 complete: 19 migrations (Batches 8-9) production-verified.
-- Wave 2: 153 objects, 140 exact match, 2 equivalent-stricter, 11 superseded, 0 failed, 351 compared paths.
+- Final Verification Wave 2 V3 canonical complete: 19 migrations (Batches 8-9) production-verified.
+- Wave 2: 153 objects (13 function objects), 140 exact match, 2 equivalent-stricter, 11 superseded, 0 failed, 370 compared paths.
+- V3 canonical evidence with per-object provenance (migration_version, migration_filename, migration_checksum, expected_object_digest).
+- Migration 236 has one comment-only raw-definition difference (normalized executable SQL identical; no committed matching blob exists).
 - Batch 8 verification complete and repair activated (15 versions in allowlist).
 - Batch 9 verification complete but deferred — repair blocked until Batch 8 closeout.
 - 105 migration-history repairs complete across Batches 1-7.

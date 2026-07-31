@@ -6,7 +6,19 @@
 - **Versions:** 242, 243, 245, 246
 - **Migration count:** 4
 - **Object count:** 42
-- **Compared property paths:** 139
+- **Compared property paths:** 148
+- **Function objects validated with definition-level evidence:** 4
+
+## Evidence Lineage (V1 → V2 → V3)
+
+| Version | SHA-256 | Status |
+|---------|---------|--------|
+| V1 | `531f94b3c11e2c0c02d078e37a6e71f950d59fd9741818d1b81f93e34f51eff7` | Superseded |
+| V2 | `24d34f0b95484139cb1da95fc788a0976555a5763aab8ba295504654b5767e5d` | Superseded |
+| V3 (canonical) | `ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5` | Canonical |
+
+V3 is the canonical evidence version. V1 and V2 are superseded but preserved for audit trail.
+V3 adds per-object provenance fields: `migration_version`, `migration_filename`, `migration_checksum`, `expected_object_digest`.
 
 ## Results
 
@@ -45,7 +57,9 @@ All 7 superseded objects originate from **Migration 242** (`242_growth_credit_at
 ## Evidence
 
 - **JSON evidence:** `docs/migrations/evidence/batch-09-production-verification.json`
-- **Evidence SHA-256:** `531f94b3c11e2c0c02d078e37a6e71f950d59fd9741818d1b81f93e34f51eff7`
+- **V3 canonical SHA-256:** `ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5`
+- **Superseded V2 SHA-256:** `24d34f0b95484139cb1da95fc788a0976555a5763aab8ba295504654b5767e5d`
+- **Superseded V1 SHA-256:** `531f94b3c11e2c0c02d078e37a6e71f950d59fd9741818d1b81f93e34f51eff7`
 - **Repository SHA:** `21cbf57ff76d30538fe493069148e673451431c6`
 - **Project ref:** `cxcmiqotkowhxinjbytg`
 - **Issue:** #53
