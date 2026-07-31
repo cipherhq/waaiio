@@ -1,0 +1,191 @@
+[
+  {
+    "id": "provider:flutterwave",
+    "name": "Flutterwave",
+    "type": "payment_provider",
+    "domain": "payments",
+    "paths": [
+      "lib/payments/flutterwave.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "yes",
+    "gate_types": [],
+    "related_capabilities": [
+      "payment"
+    ],
+    "related_roles": [],
+    "related_database_objects": [
+      "payments",
+      "platform_fees"
+    ],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "lib/payments/factory.ts registration + adapter file inspection",
+    "unresolved_questions": [],
+    "factory_registered": true,
+    "country_mapping": [
+      "dynamic via DB countries table"
+    ],
+    "connection_route": null,
+    "webhook_route": "app/api/webhooks/flutterwave/route.ts",
+    "refund_implementation": true,
+    "recurring_adapter": "lib/payments/flutterwave-recurring.ts",
+    "kill_switch": null
+  },
+  {
+    "id": "provider:paypal",
+    "name": "PayPal",
+    "type": "payment_provider",
+    "domain": "payments",
+    "paths": [
+      "lib/payments/paypal.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "yes",
+    "gate_types": [],
+    "related_capabilities": [
+      "payment"
+    ],
+    "related_roles": [],
+    "related_database_objects": [
+      "payments",
+      "platform_fees"
+    ],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "medium",
+    "evidence_method": "lib/payments/factory.ts registration + adapter file inspection",
+    "unresolved_questions": [
+      "Not listed in CLAUDE.md",
+      "No connection/OAuth route found",
+      "Production readiness unknown"
+    ],
+    "factory_registered": true,
+    "country_mapping": [
+      "dynamic via DB countries table"
+    ],
+    "connection_route": null,
+    "webhook_route": "app/api/payments/paypal-webhook/route.ts",
+    "refund_implementation": true,
+    "recurring_adapter": null,
+    "kill_switch": null
+  },
+  {
+    "id": "provider:paystack",
+    "name": "Paystack",
+    "type": "payment_provider",
+    "domain": "payments",
+    "paths": [
+      "lib/payments/paystack.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "yes",
+    "gate_types": [],
+    "related_capabilities": [
+      "payment"
+    ],
+    "related_roles": [],
+    "related_database_objects": [
+      "payments",
+      "platform_fees"
+    ],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "lib/payments/factory.ts registration + adapter file inspection",
+    "unresolved_questions": [],
+    "factory_registered": true,
+    "country_mapping": [
+      "NG",
+      "GH",
+      "default_fallback"
+    ],
+    "connection_route": null,
+    "webhook_route": "app/api/payments/webhook/route.ts",
+    "refund_implementation": true,
+    "recurring_adapter": "lib/payments/paystack-recurring.ts",
+    "kill_switch": null
+  },
+  {
+    "id": "provider:square",
+    "name": "Square",
+    "type": "payment_provider",
+    "domain": "payments",
+    "paths": [
+      "lib/payments/square.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "yes",
+    "gate_types": [
+      "ENABLE_SQUARE_CONNECT"
+    ],
+    "related_capabilities": [
+      "payment"
+    ],
+    "related_roles": [],
+    "related_database_objects": [
+      "payments",
+      "platform_fees"
+    ],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "medium",
+    "evidence_method": "lib/payments/factory.ts registration + adapter file inspection",
+    "unresolved_questions": [
+      "Connect routes are kill-switched; production readiness unknown"
+    ],
+    "factory_registered": true,
+    "country_mapping": [
+      "dynamic via DB countries table"
+    ],
+    "connection_route": "app/api/payouts/square-connect/route.ts (gated by ENABLE_SQUARE_CONNECT)",
+    "webhook_route": "app/api/payments/square-webhook/route.ts",
+    "refund_implementation": true,
+    "recurring_adapter": null,
+    "kill_switch": "ENABLE_SQUARE_CONNECT"
+  },
+  {
+    "id": "provider:stripe",
+    "name": "Stripe",
+    "type": "payment_provider",
+    "domain": "payments",
+    "paths": [
+      "lib/payments/stripe.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "registered_or_reachable": "yes",
+    "gate_types": [
+      "ENABLE_STRIPE_CONNECT (connect/payout routes only)"
+    ],
+    "related_capabilities": [
+      "payment"
+    ],
+    "related_roles": [],
+    "related_database_objects": [
+      "payments",
+      "platform_fees"
+    ],
+    "related_providers": [],
+    "test_references": [],
+    "confidence": "high",
+    "evidence_method": "lib/payments/factory.ts registration + adapter file inspection",
+    "unresolved_questions": [],
+    "factory_registered": true,
+    "country_mapping": [
+      "US",
+      "GB",
+      "CA"
+    ],
+    "connection_route": "app/api/payouts/stripe-connect/route.ts (gated by ENABLE_STRIPE_CONNECT)",
+    "webhook_route": "app/api/payments/stripe-webhook/route.ts",
+    "refund_implementation": true,
+    "recurring_adapter": "lib/payments/stripe-recurring.ts",
+    "kill_switch": "ENABLE_STRIPE_CONNECT (connect/payout routes only)"
+  }
+]

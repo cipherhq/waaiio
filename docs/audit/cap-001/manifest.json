@@ -1,0 +1,74 @@
+{
+  "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+  "generated_at": "2026-07-31T13:06:48Z",
+  "inventory_files": {
+    "analytics-and-monitoring.json": {
+      "record_count": 2,
+      "type": "structured_summary"
+    },
+    "api-routes.json": {
+      "record_count": 245,
+      "type": "record_list"
+    },
+    "applications.json": {
+      "record_count": 4,
+      "type": "record_list"
+    },
+    "capabilities.json": {
+      "record_count": 31,
+      "type": "record_list"
+    },
+    "database-declarations.json": {
+      "record_count": 139,
+      "type": "structured_summary"
+    },
+    "documentation-discrepancies.json": {
+      "record_count": 8,
+      "type": "record_list"
+    },
+    "edge-functions.json": {
+      "record_count": 14,
+      "type": "record_list"
+    },
+    "feature-controls.json": {
+      "record_count": 5,
+      "type": "structured_summary"
+    },
+    "notifications.json": {
+      "record_count": 28,
+      "type": "structured_summary"
+    },
+    "pages.json": {
+      "record_count": 168,
+      "type": "record_list"
+    },
+    "payment-providers.json": {
+      "record_count": 5,
+      "type": "record_list"
+    },
+    "plans-and-pricing.json": {
+      "record_count": 3,
+      "type": "structured_summary"
+    },
+    "roles-and-permissions.json": {
+      "record_count": 10,
+      "type": "structured_summary"
+    },
+    "scheduled-jobs.json": {
+      "record_count": 27,
+      "type": "record_list"
+    },
+    "services.json": {
+      "record_count": 18,
+      "type": "record_list"
+    },
+    "tests.json": {
+      "record_count": 165,
+      "type": "record_list"
+    },
+    "webhooks.json": {
+      "record_count": 10,
+      "type": "record_list"
+    }
+  }
+}

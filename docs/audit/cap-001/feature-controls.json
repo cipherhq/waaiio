@@ -1,0 +1,81 @@
+{
+  "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+  "schema_type": "structured_summary",
+  "control_types": [
+    {
+      "type": "capability_gate",
+      "count": 31,
+      "definition_path": "lib/capabilities/types.ts",
+      "storage": "business_capabilities table + capability_overrides table",
+      "enforcement": "DashboardProvider checks + API route checks + bot capability loading"
+    },
+    {
+      "type": "subscription_plan_gate",
+      "tiers": [
+        "free",
+        "growth",
+        "business"
+      ],
+      "definition_path": "lib/capabilities/types.ts (CAPABILITY_TIER_REQUIREMENTS)",
+      "enforcement": "capabilities gated by tier; tier stored in businesses.subscription_tier"
+    },
+    {
+      "type": "admin_capability_override",
+      "table": "capability_overrides",
+      "api": "app/api/admin/businesses/[id]/capabilities/route.ts",
+      "mechanism": "per-capability grant/revoke bypassing tier requirement with audit logging"
+    },
+    {
+      "type": "environment_kill_switch",
+      "switches": [
+        {
+          "name": "ENABLE_PAYOUTS",
+          "paths": [
+            "app/api/admin/payouts/[id]/approve/route.ts:32",
+            "app/api/cron/auto-payout/route.ts:43"
+          ],
+          "behavior": "503 when process.env.ENABLE_PAYOUTS !== 'true'"
+        },
+        {
+          "name": "ENABLE_SQUARE_CONNECT",
+          "paths": [
+            "app/api/payouts/square-connect/route.ts:18",
+            "app/api/payouts/square-callback/route.ts:19"
+          ],
+          "behavior": "503 when not 'true'"
+        },
+        {
+          "name": "ENABLE_STRIPE_CONNECT",
+          "paths": [
+            "app/api/payouts/stripe-connect/route.ts:22",
+            "app/api/payouts/stripe-callback/route.ts:10"
+          ],
+          "behavior": "503 when not 'true'"
+        }
+      ]
+    },
+    {
+      "type": "posthog_feature_flag",
+      "definition_path": "lib/posthog/flags.ts",
+      "named_flags": [
+        {
+          "key": "llm-intent-enabled",
+          "constant": "FLAGS.LLM_INTENT_ENABLED",
+          "controls": "LLM-based intent detection in bot"
+        },
+        {
+          "key": "bot-translation-enabled",
+          "constant": "FLAGS.BOT_TRANSLATION_ENABLED",
+          "controls": "Bot message translation"
+        }
+      ],
+      "note": "Additional flags may be checked via raw string keys using isFeatureEnabled(). Those are not enumerated in this inventory."
+    }
+  ],
+  "confidence": "medium",
+  "evidence_method": "Static analysis of types.ts, env checks, posthog/flags.ts",
+  "unresolved_questions": [
+    "PostHog raw-string flag checks throughout the codebase are not enumerated",
+    "Business-level flags in metadata or settings columns not yet traced"
+  ]
+}
