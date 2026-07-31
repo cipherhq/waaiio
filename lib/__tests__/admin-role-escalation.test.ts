@@ -23,6 +23,7 @@ describe('Repository-wide platform-authority audit', () => {
     'lib/admin-auth.ts': 'Documentation: profiles.role explicitly untrusted',
     'admin/src/lib/adminAuth.ts': 'Documentation: profiles.role explicitly untrusted',
     'app/api/onboarding/register/route.ts': 'Display: first-business check, not authorization',
+    'lib/onboarding/finalize.ts': 'Display: first-business role initialization, not authorization',
     'admin/src/pages/Businesses.tsx': 'session.role from app_metadata session',
     'admin/src/pages/PlatformSettings.tsx': 'session.role from app_metadata session',
     'admin/src/pages/Campaigns.tsx': 'session.role from app_metadata session',
