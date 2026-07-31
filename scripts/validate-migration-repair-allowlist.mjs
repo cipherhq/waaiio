@@ -4260,7 +4260,7 @@ function validateRepairCloseout(cfg) {
     if (laterErrors === 0) pass('All later_batch_occurrences_remain_zero = true');
   }
 
-  // 9. Count progression advances exactly once per version; iteration continuity
+  // 9. Count progression: absolute anchoring + delta + continuity
   let progressionErrors = 0;
   for (let i = 0; i < repairs.length; i++) {
     const r = repairs[i];
@@ -4271,9 +4271,19 @@ function validateRepairCloseout(cfg) {
     const preRange = r[f.preRangeCount];
     const postRange = r[f.postRangeCount];
     const m298 = r[f.migration298Count];
+    // Delta: each step adds exactly 1
     if (postTotal !== preTotal + 1) { fail(`Repair ${r.version} total delta: ${postTotal - preTotal}`); progressionErrors++; }
     if (postRange !== preRange + 1) { fail(`Repair ${r.version} range delta: ${postRange - preRange}`); progressionErrors++; }
     if (m298 !== 1) { fail(`Repair ${r.version} m298: ${m298}`); progressionErrors++; }
+    // Absolute anchoring: pre_total = topLevelPre.total + i, post_total = topLevelPre.total + i + 1
+    const expectedPreTotal = expPre.total_remote_count + i;
+    const expectedPostTotal = expPre.total_remote_count + i + 1;
+    const expectedPreRange = expPre.range_101_246_count + i;
+    const expectedPostRange = expPre.range_101_246_count + i + 1;
+    if (preTotal !== expectedPreTotal) { fail(`Repair ${r.version} pre_total ${preTotal} !== expected ${expectedPreTotal}`); progressionErrors++; }
+    if (postTotal !== expectedPostTotal) { fail(`Repair ${r.version} post_total ${postTotal} !== expected ${expectedPostTotal}`); progressionErrors++; }
+    if (preRange !== expectedPreRange) { fail(`Repair ${r.version} pre_range ${preRange} !== expected ${expectedPreRange}`); progressionErrors++; }
+    if (postRange !== expectedPostRange) { fail(`Repair ${r.version} post_range ${postRange} !== expected ${expectedPostRange}`); progressionErrors++; }
     // Iteration continuity: repair[i].pre == repair[i-1].post
     if (i > 0) {
       const prevPostTotal = repairs[i - 1][f.postTotalCount];
@@ -4282,7 +4292,17 @@ function validateRepairCloseout(cfg) {
       if (preRange !== prevPostRange) { fail(`Repair ${r.version} preRange ${preRange} !== prev postRange ${prevPostRange}`); progressionErrors++; }
     }
   }
-  if (progressionErrors === 0) pass('Count progression advances exactly once per version');
+  // First record pre-counts must equal top-level pre counts
+  if (repairs.length > 0) {
+    const first = repairs[0];
+    if (first[f.preTotalCount] !== expPre.total_remote_count) { fail(`First repair pre_total ${first[f.preTotalCount]} !== top-level ${expPre.total_remote_count}`); progressionErrors++; }
+    if (first[f.preRangeCount] !== expPre.range_101_246_count) { fail(`First repair pre_range ${first[f.preRangeCount]} !== top-level ${expPre.range_101_246_count}`); progressionErrors++; }
+    // Last record post-counts must equal top-level post counts
+    const last = repairs[repairs.length - 1];
+    if (last[f.postTotalCount] !== expPost.total_remote_count) { fail(`Last repair post_total ${last[f.postTotalCount]} !== top-level ${expPost.total_remote_count}`); progressionErrors++; }
+    if (last[f.postRangeCount] !== expPost.range_101_246_count) { fail(`Last repair post_range ${last[f.postRangeCount]} !== top-level ${expPost.range_101_246_count}`); progressionErrors++; }
+  }
+  if (progressionErrors === 0) pass('Count progression anchored, delta, and continuous');
 
   // 10. Timestamps: canonical UTC ISO-8601, startedAt <= completedAt, sequential non-overlap, after PR merge
   let tsErrors = 0;
@@ -4545,6 +4565,10 @@ function validateRepairCloseout(cfg) {
       if (entry.filename !== me.filename) { fail(`Allowlist ${entry.version} filename mismatch`); alErrors++; }
       if (entry.checksum !== me.checksum) { fail(`Allowlist ${entry.version} checksum mismatch`); alErrors++; }
       if (!entry.expected_object_digest) { fail(`Allowlist ${entry.version} expected_object_digest empty`); alErrors++; }
+      if (cfg.expectedObjectDigests && cfg.expectedObjectDigests[entry.version] && entry.expected_object_digest !== cfg.expectedObjectDigests[entry.version]) {
+        fail(`Allowlist ${entry.version} expected_object_digest mismatch: ${entry.expected_object_digest.slice(0,12)}..., expected ${cfg.expectedObjectDigests[entry.version].slice(0,12)}...`);
+        alErrors++;
+      }
       if (entry.production_evidence_path !== me.production_evidence_path) { fail(`Allowlist ${entry.version} evidence path mismatch`); alErrors++; }
       if (entry.production_evidence_digest !== me.production_evidence_digest) { fail(`Allowlist ${entry.version} evidence digest mismatch`); alErrors++; }
       if (entry.classification !== 'VERIFIED_APPLIED_UNTRACKED') { fail(`Allowlist ${entry.version} classification: ${entry.classification}`); alErrors++; }
@@ -4607,6 +4631,12 @@ const BATCH8_CLOSEOUT_CONFIG = {
   versions: ['227','228','229','230','231','232','233','234','235','236','237','238','239','240','241'],
   laterVersions: ['242','243','245','246'],
   laterBatchNumber: 9,
+  expectedObjectDigests: {
+    '242': '7a96aaf5f982c4a50adf861c05104924310718e5e75ee518cbd993d00a03613a',
+    '243': '9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52',
+    '245': 'd3126ba97bd423bb78ffab32cf3b5f4ed4a35bc0185b56da6c11b33b65bbde67',
+    '246': '0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d',
+  },
   expectedPreCounts: { total_remote_count: 209, range_101_246_count: 113 },
   expectedPostCounts: { total_remote_count: 224, range_101_246_count: 128 },
   expectedIdentity: {

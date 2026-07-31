@@ -7775,4 +7775,68 @@ describe('Batch 8 closeout rejection tests', () => {
       expect(output).toMatch(/SUPERSEDED.*1.*expected 2|ALIGNED.*129.*expected 128/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
+
+  // 41. Wrong but valid-looking 64-char expected_object_digest
+  it('rejects wrong 64-char expected_object_digest for 242', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-repair-allowlist.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d[0].expected_object_digest = 'aa' + d[0].expected_object_digest.slice(2);
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/expected_object_digest mismatch/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 42. Migration 242 using Migration 243's valid digest
+  it('rejects 242 using 243 valid digest (swapped)', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-repair-allowlist.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      // Swap 242 and 243 digests
+      const tmp = d[0].expected_object_digest;
+      d[0].expected_object_digest = d[1].expected_object_digest;
+      d[1].expected_object_digest = tmp;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/expected_object_digest mismatch/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 43. Shifted-but-continuous repair totals rejected
+  it('rejects shifted-but-continuous repair totals', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => {
+        // Shift all totals by +1 (continuous but wrong absolute anchor)
+        for (const r of d.repairs) {
+          r.pre_total_remote_count += 1;
+          r.post_total_remote_count += 1;
+        }
+      });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/pre_total.*210.*expected 209|First repair pre_total/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 44. Shifted-but-continuous repair ranges rejected
+  it('rejects shifted-but-continuous repair ranges', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => {
+        for (const r of d.repairs) {
+          r.pre_range_101_246_count += 1;
+          r.post_range_101_246_count += 1;
+        }
+      });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/pre_range.*114.*expected 113|First repair pre_range/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
 });
