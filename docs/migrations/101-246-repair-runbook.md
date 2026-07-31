@@ -19,18 +19,17 @@ This runbook governs the controlled verification and repair of 124 migration-his
 
 ## Current State
 
-- **113 ALIGNED_TRACKED:** 102, 103, 104, 106, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 123, 124, 125, 127, 128, 129, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 161, 162, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 218, 219, 220, 221, 223, 224, 225, 244
-- **19 VERIFIED_APPLIED_UNTRACKED:** Batches 8-9 (verified, Batch 8 active for repair, Batch 9 deferred)
+- **128 ALIGNED_TRACKED:** 102–225 (excluding not-verifiable and superseded) + 227–241 + 244
+- **4 VERIFIED_APPLIED_UNTRACKED:** Batch 9 (242, 243, 245, 246) — active for repair
 - **0 PENDING_PRODUCTION_REVERIFICATION**
 - **12 NOT_VERIFIABLE_SAFELY:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 SUPERSEDED:** 122, 130
-- **Active repair allowlist: 15** (Batch 8 versions)
-- **Completed migration-history repairs: 105** (45 Batch 1-3 + 15 Batch 4 + 15 Batch 5 + 15 Batch 6 + 15 Batch 7)
-- **Batch 7: verification and repair complete**
-- **Batch 8: verification COMPLETE, repair ACTIVE and PENDING**
-- **Batch 9: verification COMPLETE, repair WAITING FOR BATCH 8 CLOSEOUT**
+- **Active repair allowlist: 4** (Batch 9 versions)
+- **Completed migration-history repairs: 120** (45 Batch 1-3 + 15 Batch 4 + 15 Batch 5 + 15 Batch 6 + 15 Batch 7 + 15 Batch 8)
+- **Batch 8: verification and repair COMPLETE**
+- **Batch 9: verification COMPLETE, repair ACTIVE and PENDING**
 - **No unverified actionable candidates remain**
-- **Next action: controlled Batch 8 migration-history repair**
+- **Next action: controlled Batch 9 migration-history repair**
 
 ## Batch Status
 
@@ -150,25 +149,21 @@ This runbook governs the controlled verification and repair of 124 migration-his
 - Both batches verified. Batch 8 activated for repair (15 versions in allowlist). Batch 9 verified but deferred.
 - No new production query occurred for V3. No repair occurred.
 
-### Batch 8 — Verification: COMPLETE | Repair: ACTIVE and PENDING
+### Batch 8 — Verification: COMPLETE | Repair: COMPLETE
 - **Versions:** 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241
 - **Object checks:** 111 (106 exact match, 1 equivalent-stricter, 4 superseded, 0 failed, 0 ambiguous)
 - **Compared property paths:** 222
-- **Function objects validated with definition-level evidence:** 9
-- **Equivalent-stricter:** Migration 233 `process_recurring_charge.revoke_public` — Migration 295 (`295_restrict_recurring_charge_rpc_execute.sql`) explicitly revokes EXECUTE from anon and authenticated, closing the Supabase ALTER DEFAULT PRIVILEGES gap. Current state is stricter.
-- **Superseded objects:**
-  - Migration 229: `attendance_log.service_insert` policy — superseded by Migration 230 (`230_attendance_rls_hardening.sql`). Unsafe policy WITH CHECK (true) dropped and replaced by hardened access.
-  - Migration 231: `create_catalog_order_atomic` function body — superseded by Migration 235 (`235_catalog_order_quantity_validation.sql`). Function replaced with version adding quantity validation.
-  - Migration 233: `process_recurring_charge` function body — superseded by Migration 244 (`244_payment_source_classification.sql`). Function replaced with version adding payment_source = 'subscription'.
-  - Migration 241: `customer_consents.customer_consents_service_insert` policy — superseded by Migration 242 (`242_growth_credit_atomic.sql`). Unsafe policy WITH CHECK (true) dropped.
 - **Verification evidence:** `docs/migrations/evidence/batch-08-production-verification.json`
 - **V3 canonical SHA-256:** `f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95`
-- **Superseded V1 SHA-256:** `bc5ac3169b34c663e45707b25c4fb48c70e7f22b561f90155f7457a57ddd44f5`
-- Migration 236 has one comment-only raw-definition difference (normalized executable SQL identical; no committed matching blob exists)
-- Active repair allowlist: 15 Batch 8 versions
-- Next production write: controlled one-by-one Batch 8 repair
+- **Repair evidence:** `docs/migrations/evidence/batch-08-repair.json`
+- **Repair evidence SHA-256:** `fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7`
+- **Remote count:** 209 → 224 (+15)
+- **101-246 tracked count:** 113 → 128 (+15)
+- All 15 versions appear exactly once in remote schema_migrations
+- Migration 298 remained exactly once. Batch 9 remained zero during Batch 8 repair.
+- No migration SQL executed. No schema or data change. No deployment.
 
-### Batch 9 — Verification: COMPLETE | Repair: WAITING FOR BATCH 8 CLOSEOUT
+### Batch 9 — Verification: COMPLETE | Repair: ACTIVE and PENDING
 - **Versions:** 242, 243, 245, 246
 - **Object checks:** 42 (34 exact match, 1 equivalent-stricter, 7 superseded, 0 failed, 0 ambiguous)
 - **Compared property paths:** 148
@@ -185,8 +180,8 @@ This runbook governs the controlled verification and repair of 124 migration-his
 - **Verification evidence:** `docs/migrations/evidence/batch-09-production-verification.json`
 - **V3 canonical SHA-256:** `ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5`
 - **Superseded V1 SHA-256:** `531f94b3c11e2c0c02d078e37a6e71f950d59fd9741818d1b81f93e34f51eff7`
-- Not in active repair allowlist
-- Activation blocked by Batch 8
+- Active repair allowlist: 4 Batch 9 versions
+- Next production write: controlled one-by-one Batch 9 repair
 
 ## Mandatory Execution Control Rule
 
