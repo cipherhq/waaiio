@@ -6326,7 +6326,7 @@ describe('Wave 2 rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/Wave embeds wrong Batch 8 SHA|Wave 2 summary SHA mismatch/i);
+      expect(output).toMatch(/Wave embeds wrong Batch 8 SHA/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6340,7 +6340,7 @@ describe('Wave 2 rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/Batch 8 version set mismatch|Batch 8 SHA mismatch/i);
+      expect(output).toMatch(/Batch 8 version set mismatch/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6354,7 +6354,7 @@ describe('Wave 2 rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/Batch 9 version set mismatch|Batch 9 SHA mismatch/i);
+      expect(output).toMatch(/Batch 9 version set mismatch/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6368,7 +6368,7 @@ describe('Wave 2 rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/Batch 8 migrations.*99.*expected 15|Batch 8 SHA mismatch/i);
+      expect(output).toMatch(/Batch 8 migrations.*99.*expected 15/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6382,7 +6382,7 @@ describe('Wave 2 rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/digest mismatch|Batch 8 SHA mismatch/i);
+      expect(output).toMatch(/digest mismatch/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6396,7 +6396,7 @@ describe('Wave 2 rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/failed result|Batch 8 SHA mismatch/i);
+      expect(output).toMatch(/failed result/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6412,7 +6412,7 @@ describe('Wave 2 rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/eq-stricter|Migration 233|Batch 8 SHA mismatch/i);
+      expect(output).toMatch(/eq-stricter|Migration 233/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6428,7 +6428,7 @@ describe('Wave 2 rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/superseded|Migration 229|Batch 8 SHA mismatch/i);
+      expect(output).toMatch(/superseded|Migration 229/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6442,7 +6442,7 @@ describe('Wave 2 rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/snapshots differ|Batch 8 SHA mismatch/i);
+      expect(output).toMatch(/snapshots differ/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6456,7 +6456,7 @@ describe('Wave 2 rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/occurrence.*0|Batch 8 SHA mismatch/i);
+      expect(output).toMatch(/occurrence.*0/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6470,7 +6470,7 @@ describe('Wave 2 rejection tests', () => {
       writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
-      expect(output).toMatch(/safety.*all_queries_read_only|Batch 8 SHA mismatch/i);
+      expect(output).toMatch(/safety.*all_queries_read_only/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 
@@ -6961,6 +6961,215 @@ describe('Wave 2 rejection tests', () => {
       const { exitCode, output } = runValidatorInFixture(tmpDir);
       expect(exitCode).not.toBe(0);
       expect(output).toMatch(/worker path equals canonical/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 49. migrations.length differs while declared total unchanged
+  it('rejects when migration array length differs from declared total_migrations', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.migrations.pop(); // remove last migration, but keep total_migrations at 15
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/recomputed migration count.*14.*declared.*15|recomputed.*migration.*14/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 50. migration version order differs while top-level versions unchanged
+  it('rejects when migration version order differs from declared versions', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const tmp = d.migrations[0];
+      d.migrations[0] = d.migrations[1];
+      d.migrations[1] = tmp;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/recomputed.*version.*order|migration.*version.*order|recomputed versions differ/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 51. actual object count differs while declared total unchanged
+  it('rejects when recomputed object count differs from declared total_objects_checked', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.migrations[0].objects.pop(); // remove one object, keep total_objects_checked at 111
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/recomputed object count.*110.*declared.*111|recomputed.*object.*110/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 52. one object classification changes while declared result totals unchanged
+  it('rejects when recomputed result totals differ from declared', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.migrations[0].objects[0].property_comparison_result = 'superseded';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/recomputed exact_match.*105.*declared.*106|recomputed.*exact_match.*105/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 53. one compared path removed while declared total unchanged
+  it('rejects when recomputed compared paths differ from declared total', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.migrations[0].objects[0].compared_property_paths.pop();
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/recomputed compared paths.*221.*declared.*222|recomputed.*compared.*221/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 54. eq-stricter lineage contains right number as misleading substring
+  it('rejects eq-stricter lineage with misleading substring match', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig233 = d.migrations.find((m: any) => m.migration_version === '233');
+      const eqObj = mig233.objects.find((o: any) => o.property_comparison_result === 'equivalent_stricter');
+      eqObj.equivalent_stricter_by = 'migration_1295_fake';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/eq-stricter.*by|Migration 233.*equivalent/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 55. superseded lineage contains right number as misleading substring
+  it('rejects superseded lineage with misleading substring match', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig229 = d.migrations.find((m: any) => m.migration_version === '229');
+      const supObj = mig229.objects.find((o: any) => o.property_comparison_result === 'superseded');
+      supObj.superseded_by = 'migration_2300_fake';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/superseded.*by|Migration 229/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 56. one required superseded object removed
+  it('rejects when a required superseded object is changed to exact_match', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig229 = d.migrations.find((m: any) => m.migration_version === '229');
+      const supObj = mig229.objects.find((o: any) => o.property_comparison_result === 'superseded');
+      supObj.property_comparison_result = 'exact_match';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/superseded.*missing|expected.*superseded|superseded.*count|superseded.*0.*expected/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 57. one extra superseded object added
+  it('rejects when a non-superseded object is changed to superseded', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.migrations[0].objects[1].property_comparison_result = 'superseded';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/superseded.*extra|superseded.*count|recomputed.*superseded|total superseded.*5.*expected/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 58. superseded function expected and verified hashes equal
+  it('rejects superseded function with equal expected and verified hashes', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig231 = d.migrations.find((m: any) => m.migration_version === '231');
+      const supFunc = mig231.objects.find((o: any) => o.property_comparison_result === 'superseded' && o.object_type === 'function');
+      supFunc.verified_properties.definition_sha256 = supFunc.expected_properties.definition_sha256;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/superseded function.*hash.*equal|superseded.*definition.*equal|expected and verified hashes must differ/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 59. superseded function missing one raw hash
+  it('rejects superseded function with missing expected definition hash', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      const mig231 = d.migrations.find((m: any) => m.migration_version === '231');
+      const supFunc = mig231.objects.find((o: any) => o.property_comparison_result === 'superseded' && o.object_type === 'function');
+      delete supFunc.expected_properties.definition_sha256;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/superseded function.*missing.*hash|superseded.*definition.*missing|definition_sha256 missing/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 60. worker/canonical path provenance boolean missing
+  it('rejects when worker_paths_distinct_from_canonical_paths is missing', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'wave-02-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      delete d.worker_paths_distinct_from_canonical_paths;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/path provenance.*missing|worker_paths_distinct/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 61. coordinator-only canonical-write boolean false
+  it('rejects coordinator_only_wrote_canonical_paths set to false', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'wave-02-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.coordinator_only_wrote_canonical_paths = false;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/coordinator_only.*false|coordinator.*canonical/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 62. semantic error still reported alongside SHA change
+  it('reports both semantic error and SHA mismatch when evidence is mutated', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-production-verification.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.total_compared_property_paths = 999;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/compared paths.*999/i);
+      expect(output).toMatch(/SHA mismatch/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
 });

@@ -11,6 +11,13 @@
  * - The line is a JSON property with key "checksum", "local_checksum", "evidence_digest", "production_evidence_digest", "migration_checksum", "expected_object_digest", or "previous_evidence_sha256"
  * - The value is exactly a 64-character lowercase hexadecimal string
  *
+ * For prose/evidence files (matched by shaProseFileRegex), a context-aware approach
+ * is used instead of a blanket exemption: recognized SHA values are redacted from the
+ * line (JS constant assignments, JSON digest/checksum key values, Markdown-labelled
+ * SHA values), and the remainder is re-tested against the secret pattern. Only if no
+ * secret pattern remains after redaction is the line exempted. This prevents a real
+ * secret embedded alongside a SHA from being silently ignored.
+ *
  * Outputs only genuine (non-exempt) matches, one per line, prefixed with filename.
  */
 import { createInterface } from 'readline';
@@ -57,9 +64,30 @@ rl.on('line', (line) => {
     return;
   }
 
-  // Exempt SHA-256 values in prose/evidence files (embedded hashes in text strings, markdown, constants)
+  // Context-aware SHA exemption for prose/evidence files: redact only recognized SHA
+  // values, then re-test the remainder. A line is exempt only if no secret pattern
+  // remains after all recognized SHAs are removed.
   if (shaProseFileRegex.test(currentFile) && sha256InlineRegex.test(line)) {
-    return;
+    let remainder = line;
+
+    // Redact JS constant SHA assignments (e.g. const FOO_SHA256 = '...')
+    remainder = remainder.replace(/(?:const|let|var)\s+\w+(?:_SHA|_SHA256)\s*=\s*'[0-9a-f]{64}'/g, '');
+
+    // Redact JS object property hash assignments (e.g. expectedHash: '...', verifiedHash: '...')
+    remainder = remainder.replace(/\w*(?:Hash|Sha256|SHA|sha256|_sha256|_hash|digest|checksum)\s*:\s*'[0-9a-f]{64}'/g, '');
+
+    // Redact recognized JSON digest/checksum key values
+    remainder = remainder.replace(/"(?:checksum|local_checksum|evidence_digest|production_evidence_digest|repair_evidence_digest|migration_checksum|expected_object_digest|previous_evidence_sha256|original_evidence_sha256|migration_file_sha256|migration_evidence_digest|superseded_temporary_evidence_sha256|def_hash|def_sha256|using_hash|using_sha256|body_hash|batch_\d+_evidence_sha256|repository_definition_sha256|production_definition_sha256|normalized_executable_sha256|normalized_repository_hash|normalized_production_hash|repository_derived_candidate_definition_sha256|production_observed_definition_sha256|normalized_executable_sha256_current|normalized_executable_sha256_deployed_candidate|superseded_v1_sha256|superseded_v2_sha256|source_commit_sha|source_blob_sha|current_repository_commit_sha|\d{3})"\s*:\s*"[0-9a-f]{64}"/g, '');
+
+    // Redact Markdown/prose labelled SHA values (SHA-256: `<hex>` or SHA: <hex>)
+    remainder = remainder.replace(/(?:SHA|SHA-256|SHA256|checksum|digest|hash)[:\s]*`[0-9a-f]{64}`/gi, '');
+    remainder = remainder.replace(/(?:SHA|SHA-256|SHA256|checksum|digest|hash)[:\s]*\b[0-9a-f]{64}\b/gi, '');
+
+    // If no secret pattern remains after redaction, exempt the line
+    if (!secretRegex.test(remainder)) {
+      return;
+    }
+    // Otherwise fall through to report as genuine finding
   }
 
   // Genuine match — output it

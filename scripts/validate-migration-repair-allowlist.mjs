@@ -3071,6 +3071,120 @@ if (existsSync(WAVE2_B8_PATH) && existsSync(WAVE2_B9_PATH) && existsSync(WAVE2_W
   const w2b9Data = JSON.parse(w2b9Content);
   const w2waveData = JSON.parse(w2waveContent);
 
+  // 2d. Independent recomputation of all totals
+  const W2_EXPECTED_RECOMP = {
+    B8: { migCount: 15, objCount: 111, results: { exact_match: 106, equivalent_stricter: 1, superseded: 4, failed: 0, ambiguous: 0 }, comparedPaths: 222 },
+    B9: { migCount: 4, objCount: 42, results: { exact_match: 34, equivalent_stricter: 1, superseded: 7, failed: 0, ambiguous: 0 }, comparedPaths: 148 },
+  };
+  let w2RecompErrors = 0;
+  let w2CombinedRecompMigCount = 0;
+  let w2CombinedRecompObjCount = 0;
+  const w2CombinedRecompResults = { exact_match: 0, equivalent_stricter: 0, superseded: 0, failed: 0, ambiguous: 0 };
+  let w2CombinedRecompPaths = 0;
+  let w2RecompFuncCount = 0;
+
+  for (const batchInfo of [{ data: w2b8Data, label: 'B8', key: 'B8' }, { data: w2b9Data, label: 'B9', key: 'B9' }]) {
+    const exp = W2_EXPECTED_RECOMP[batchInfo.key];
+    const batchData = batchInfo.data;
+
+    const actualMigCount = batchData.migrations.length;
+    const actualVersions = batchData.migrations.map(m => m.migration_version);
+    let actualObjCount = 0;
+    const actualResults = { exact_match: 0, equivalent_stricter: 0, superseded: 0, failed: 0, ambiguous: 0 };
+    let actualComparedPaths = 0;
+    let actualFuncCount = 0;
+
+    for (const m of batchData.migrations) {
+      actualObjCount += m.objects.length;
+      for (const o of m.objects) {
+        const r = o.property_comparison_result;
+        if (r in actualResults) actualResults[r]++;
+        actualComparedPaths += (o.compared_property_paths || []).length;
+        if (o.object_type === 'function') actualFuncCount++;
+      }
+    }
+
+    // Migration count: recomputed vs declared vs expected
+    if (actualMigCount !== batchData.total_migrations) {
+      w2fail(`Batch ${batchInfo.key} recomputed migration count ${actualMigCount} differs from declared ${batchData.total_migrations}`);
+      w2RecompErrors++;
+    }
+    if (actualMigCount !== exp.migCount) {
+      w2fail(`Batch ${batchInfo.key} recomputed migration count ${actualMigCount} differs from expected ${exp.migCount}`);
+      w2RecompErrors++;
+    }
+
+    // Versions: recomputed vs declared
+    if (JSON.stringify(actualVersions) !== JSON.stringify(batchData.versions)) {
+      w2fail(`Batch ${batchInfo.key} recomputed versions differ from declared versions`);
+      w2RecompErrors++;
+    }
+
+    // Object count: recomputed vs declared vs expected
+    if (actualObjCount !== batchData.total_objects_checked) {
+      w2fail(`Batch ${batchInfo.key} recomputed object count ${actualObjCount} differs from declared ${batchData.total_objects_checked}`);
+      w2RecompErrors++;
+    }
+    if (actualObjCount !== exp.objCount) {
+      w2fail(`Batch ${batchInfo.key} recomputed object count ${actualObjCount} differs from expected ${exp.objCount}`);
+      w2RecompErrors++;
+    }
+
+    // Result totals: recomputed vs declared vs expected
+    for (const rKey of Object.keys(actualResults)) {
+      if (actualResults[rKey] !== batchData.result_totals[rKey]) {
+        w2fail(`Batch ${batchInfo.key} recomputed ${rKey} ${actualResults[rKey]} differs from declared ${batchData.result_totals[rKey]}`);
+        w2RecompErrors++;
+      }
+      if (actualResults[rKey] !== exp.results[rKey]) {
+        w2fail(`Batch ${batchInfo.key} recomputed ${rKey} ${actualResults[rKey]} differs from expected ${exp.results[rKey]}`);
+        w2RecompErrors++;
+      }
+    }
+
+    // Compared paths: recomputed vs declared vs expected
+    if (actualComparedPaths !== batchData.total_compared_property_paths) {
+      w2fail(`Batch ${batchInfo.key} recomputed compared paths ${actualComparedPaths} differs from declared ${batchData.total_compared_property_paths}`);
+      w2RecompErrors++;
+    }
+    if (actualComparedPaths !== exp.comparedPaths) {
+      w2fail(`Batch ${batchInfo.key} recomputed compared paths ${actualComparedPaths} differs from expected ${exp.comparedPaths}`);
+      w2RecompErrors++;
+    }
+
+    w2CombinedRecompMigCount += actualMigCount;
+    w2CombinedRecompObjCount += actualObjCount;
+    for (const rKey of Object.keys(actualResults)) w2CombinedRecompResults[rKey] += actualResults[rKey];
+    w2CombinedRecompPaths += actualComparedPaths;
+    w2RecompFuncCount += actualFuncCount;
+  }
+
+  // Combined recomputation checks
+  if (w2CombinedRecompMigCount !== 19) {
+    w2fail(`Combined recomputed migration count ${w2CombinedRecompMigCount} differs from expected 19`);
+    w2RecompErrors++;
+  }
+  if (w2CombinedRecompObjCount !== 153) {
+    w2fail(`Combined recomputed object count ${w2CombinedRecompObjCount} differs from expected 153`);
+    w2RecompErrors++;
+  }
+  const expCombinedResults = { exact_match: 140, equivalent_stricter: 2, superseded: 11, failed: 0, ambiguous: 0 };
+  for (const rKey of Object.keys(expCombinedResults)) {
+    if (w2CombinedRecompResults[rKey] !== expCombinedResults[rKey]) {
+      w2fail(`Combined recomputed ${rKey} ${w2CombinedRecompResults[rKey]} differs from expected ${expCombinedResults[rKey]}`);
+      w2RecompErrors++;
+    }
+  }
+  if (w2CombinedRecompPaths !== 370) {
+    w2fail(`Combined recomputed compared paths ${w2CombinedRecompPaths} differs from expected 370`);
+    w2RecompErrors++;
+  }
+  if (w2RecompFuncCount !== 13) {
+    w2fail(`Recomputed function object count ${w2RecompFuncCount} expected 13`);
+    w2RecompErrors++;
+  }
+  if (w2RecompErrors === 0) w2pass('Independent recomputation of all totals matches declared and expected values');
+
   // 3. Wave summary embeds exact Batch 8 and Batch 9 SHAs
   if (w2waveData.batch_08_evidence_sha256 !== WAVE2_BATCH8_SHA) { w2fail(`Wave embeds wrong Batch 8 SHA: ${w2waveData.batch_08_evidence_sha256}`); }
   else { w2pass('Wave embeds correct Batch 8 SHA'); }
@@ -3374,8 +3488,99 @@ if (existsSync(WAVE2_B8_PATH) && existsSync(WAVE2_B9_PATH) && existsSync(WAVE2_W
     if (m236ExclusivityErrors === 0) w2pass('Only Migration 236 uses comment-only exception basis');
   }
 
-  // 16. Equivalent-stricter lineage validation
-  // Migration 233: process_recurring_charge.revoke_public -> Migration 295
+  // 15f. Superseded function hash validation
+  const WAVE2_SUPERSEDED_FUNCTIONS = [
+    { batch: 'B8', batchData: w2b8Data, migration: '231', name: 'create_catalog_order_atomic', lineageField: 'superseded_by', lineageValue: 'migration_235',
+      expectedHash: 'a0e76b33988da4247097eb411e6a37ed8e83ca8c0091487af96bfdc918f9fe00',
+      verifiedHash: 'e6824d66dac39b6580b3f599aa6bc9228383b5d2ef13b4038ad3374d6203d74c' },
+    { batch: 'B8', batchData: w2b8Data, migration: '233', name: 'process_recurring_charge', lineageField: 'superseded_by', lineageValue: 'migration_244',
+      expectedHash: '0266ec2f7117f38c9e22d3bb64f14ccd1745578dc5ba4470101dddf0c6e7c26a',
+      verifiedHash: 'e9ba948272e9b45af73550fb6307131f2be04aaeb6fed166400b2c9791d130be' },
+    { batch: 'B9', batchData: w2b9Data, migration: '242', name: 'reserve_credits_atomic(uuid, uuid, integer)', lineageField: 'superseding_migration', lineageValue: '243',
+      expectedHash: '254f64f8089836d8b14da00996b98cc3bb646146e21d0d643abe105f069521cc',
+      verifiedHash: '2c3a0bd9cdc9be9054de5523e4f5b8127999bc701f78c57701aa3c5d23962932' },
+    { batch: 'B9', batchData: w2b9Data, migration: '242', name: 'consume_credits_atomic(uuid, uuid, integer)', lineageField: 'superseding_migration', lineageValue: '243',
+      expectedHash: '41fca1c289a1a5500055f60f9769a69d1c6a245fd2cfa33be9617990cd92db76',
+      verifiedHash: '28e737b0a5395614e97015fe5044e7f83c1a62837393ba91094f1191cc2a71aa' },
+  ];
+  let w2SupFuncHashErrors = 0;
+  for (const sf of WAVE2_SUPERSEDED_FUNCTIONS) {
+    const mig = sf.batchData.migrations.find(m => m.migration_version === sf.migration);
+    if (!mig) { w2fail(`Superseded function hash: Migration ${sf.migration} not found`); w2SupFuncHashErrors++; continue; }
+    const func = mig.objects.find(o => o.object_name === sf.name && o.object_type === 'function' && o.property_comparison_result === 'superseded');
+    if (!func) { w2fail(`Superseded function hash: ${sf.batch} M${sf.migration} ${sf.name} not found`); w2SupFuncHashErrors++; continue; }
+
+    const epHash = func.expected_properties && func.expected_properties.definition_sha256;
+    const vpHash = func.verified_properties && func.verified_properties.definition_sha256;
+
+    // expected_properties contains definition_sha256
+    if (!epHash) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: expected_properties.definition_sha256 missing`);
+      w2SupFuncHashErrors++;
+    } else if (!/^[0-9a-f]{64}$/.test(epHash)) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: expected_properties.definition_sha256 not valid 64-char hex`);
+      w2SupFuncHashErrors++;
+    } else if (epHash !== sf.expectedHash) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: expected_properties.definition_sha256 = ${epHash}, expected ${sf.expectedHash}`);
+      w2SupFuncHashErrors++;
+    }
+
+    // verified_properties contains definition_sha256
+    if (!vpHash) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: verified_properties.definition_sha256 missing`);
+      w2SupFuncHashErrors++;
+    } else if (!/^[0-9a-f]{64}$/.test(vpHash)) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: verified_properties.definition_sha256 not valid 64-char hex`);
+      w2SupFuncHashErrors++;
+    } else if (vpHash !== sf.verifiedHash) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: verified_properties.definition_sha256 = ${vpHash}, expected ${sf.verifiedHash}`);
+      w2SupFuncHashErrors++;
+    }
+
+    // Hashes must be UNEQUAL (superseded means function body changed)
+    if (epHash && vpHash && epHash === vpHash) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: expected and verified hashes must differ for superseded function`);
+      w2SupFuncHashErrors++;
+    }
+
+    // Exact superseding lineage
+    if (func[sf.lineageField] !== sf.lineageValue) {
+      w2fail(`${sf.batch} M${sf.migration} ${sf.name}: ${sf.lineageField} = "${func[sf.lineageField]}", expected "${sf.lineageValue}"`);
+      w2SupFuncHashErrors++;
+    }
+  }
+  if (w2SupFuncHashErrors === 0) w2pass('All 4 superseded functions have valid unequal definition hashes and exact lineage');
+
+  // 15g. Non-superseded function hash equality (8 normal + 1 M236 exception = 9 total)
+  {
+    let nonSupFuncHashErrors = 0;
+    let nonSupFuncCount = 0;
+    for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+      for (const m of batchInfo.data.migrations) {
+        for (const o of m.objects || []) {
+          if (o.object_type !== 'function') continue;
+          if (o.property_comparison_result === 'superseded') continue;
+          nonSupFuncCount++;
+          // Skip M236 exception (already validated above with its own logic)
+          if (o.comparison_basis === 'normalized_executable_sql_exact_match_with_comment_only_raw_definition_difference') continue;
+          const repoHash = o.expected_properties.repository_definition_sha256 || o.expected_properties.definition_sha256;
+          const prodHash = o.verified_properties.production_definition_sha256 || o.verified_properties.definition_sha256;
+          if (repoHash && prodHash && repoHash !== prodHash) {
+            w2fail(`${batchInfo.label} M${m.migration_version} ${o.object_name}: non-superseded function hashes differ`);
+            nonSupFuncHashErrors++;
+          }
+        }
+      }
+    }
+    if (nonSupFuncCount !== 9) {
+      w2fail(`Non-superseded function count: ${nonSupFuncCount}, expected 9 (8 normal + 1 M236 exception)`);
+      nonSupFuncHashErrors++;
+    }
+    if (nonSupFuncHashErrors === 0) w2pass('All 9 non-superseded functions have equal expected/verified hashes');
+  }
+
+  // 16. Equivalent-stricter lineage validation (exact equality)
+  // Migration 233: process_recurring_charge.revoke_public -> migration_295
   const w2Mig233 = w2b8Data.migrations.find(m => m.migration_version === '233');
   if (!w2Mig233) { w2fail('Migration 233 not found in Batch 8'); }
   else {
@@ -3383,13 +3588,24 @@ if (existsSync(WAVE2_B8_PATH) && existsSync(WAVE2_B9_PATH) && existsSync(WAVE2_W
     if (eqStricter233.length !== 1) { w2fail(`Migration 233: expected 1 equivalent_stricter, got ${eqStricter233.length}`); }
     else {
       const es = eqStricter233[0];
-      if (!es.object_name || !es.object_name.includes('revoke_public')) { w2fail(`Migration 233 eq-stricter object: ${es.object_name}`); }
-      else if (!es.equivalent_stricter_by || !es.equivalent_stricter_by.includes('295')) { w2fail(`Migration 233 eq-stricter by: ${es.equivalent_stricter_by}`); }
-      else { w2pass('Migration 233 equivalent-stricter: revoke_public -> Migration 295'); }
+      let es233Errors = 0;
+      if (es.object_name !== 'process_recurring_charge.revoke_public') {
+        w2fail(`Migration 233 eq-stricter object_name: "${es.object_name}", expected "process_recurring_charge.revoke_public"`);
+        es233Errors++;
+      }
+      if (es.object_type !== 'grant') {
+        w2fail(`Migration 233 eq-stricter object_type: "${es.object_type}", expected "grant"`);
+        es233Errors++;
+      }
+      if (es.equivalent_stricter_by !== 'migration_295') {
+        w2fail(`Migration 233 eq-stricter equivalent_stricter_by: "${es.equivalent_stricter_by}", expected "migration_295"`);
+        es233Errors++;
+      }
+      if (es233Errors === 0) w2pass('Migration 233 equivalent-stricter: process_recurring_charge.revoke_public -> migration_295');
     }
   }
 
-  // Migration 245: book_slot_atomic execute grants -> Migration 296
+  // Migration 245: book_slot_atomic_26_args_service_role -> 296
   const w2Mig245 = w2b9Data.migrations.find(m => m.migration_version === '245');
   if (!w2Mig245) { w2fail('Migration 245 not found in Batch 9'); }
   else {
@@ -3397,33 +3613,81 @@ if (existsSync(WAVE2_B8_PATH) && existsSync(WAVE2_B9_PATH) && existsSync(WAVE2_W
     if (eqStricter245.length !== 1) { w2fail(`Migration 245: expected 1 equivalent_stricter, got ${eqStricter245.length}`); }
     else {
       const es = eqStricter245[0];
-      if (!es.object_name || !es.object_name.includes('book_slot_atomic')) { w2fail(`Migration 245 eq-stricter object: ${es.object_name}`); }
-      else if (!es.tightening_migration || !es.tightening_migration.includes('296')) { w2fail(`Migration 245 eq-stricter by: ${es.tightening_migration}`); }
-      else { w2pass('Migration 245 equivalent-stricter: book_slot_atomic -> Migration 296'); }
+      let es245Errors = 0;
+      if (es.object_name !== 'book_slot_atomic_26_args_service_role') {
+        w2fail(`Migration 245 eq-stricter object_name: "${es.object_name}", expected "book_slot_atomic_26_args_service_role"`);
+        es245Errors++;
+      }
+      if (es.object_type !== 'grant') {
+        w2fail(`Migration 245 eq-stricter object_type: "${es.object_type}", expected "grant"`);
+        es245Errors++;
+      }
+      if (es.tightening_migration !== '296') {
+        w2fail(`Migration 245 eq-stricter tightening_migration: "${es.tightening_migration}", expected "296"`);
+        es245Errors++;
+      }
+      if (es245Errors === 0) w2pass('Migration 245 equivalent-stricter: book_slot_atomic_26_args_service_role -> 296');
     }
   }
 
-  // Superseded lineage: Batch 8 (4 objects)
+  // Count verification: no extra equivalent-stricter objects across B8+B9
+  {
+    let totalEqStricter = 0;
+    for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+      for (const m of batchInfo.data.migrations) {
+        for (const o of m.objects || []) {
+          if (o.property_comparison_result === 'equivalent_stricter') totalEqStricter++;
+        }
+      }
+    }
+    if (totalEqStricter !== 2) { w2fail(`Total equivalent_stricter objects: ${totalEqStricter}, expected exactly 2`); }
+    else { w2pass('Exactly 2 equivalent_stricter objects across B8+B9'); }
+  }
+
+  // Superseded lineage: Batch 8 (4 objects, exact identity)
   const WAVE2_EXPECTED_SUPERSEDED_B8 = [
-    { migration: '229', object: 'attendance_log.service_insert', by_contains: '230' },
-    { migration: '231', object: 'create_catalog_order_atomic', by_contains: '235' },
-    { migration: '233', object: 'process_recurring_charge', by_contains: '244' },
-    { migration: '241', object: 'customer_consents', by_contains: '242' },
+    { migration: '229', object_name: 'attendance_log.service_insert', object_type: 'policy', superseded_by: 'migration_230' },
+    { migration: '231', object_name: 'create_catalog_order_atomic', object_type: 'function', superseded_by: 'migration_235' },
+    { migration: '233', object_name: 'process_recurring_charge', object_type: 'function', superseded_by: 'migration_244' },
+    { migration: '241', object_name: 'customer_consents.customer_consents_service_insert', object_type: 'policy', superseded_by: 'migration_242' },
   ];
   let w2SupB8Errors = 0;
   for (const expected of WAVE2_EXPECTED_SUPERSEDED_B8) {
     const mig = w2b8Data.migrations.find(m => m.migration_version === expected.migration);
     if (!mig) { w2fail(`Superseded check: Migration ${expected.migration} not found`); w2SupB8Errors++; continue; }
-    const sup = mig.objects.filter(o => o.property_comparison_result === 'superseded' && o.object_name.includes(expected.object));
-    if (sup.length !== 1) { w2fail(`Migration ${expected.migration}: expected 1 superseded ${expected.object}, got ${sup.length}`); w2SupB8Errors++; }
-    else if (!sup[0].superseded_by || !sup[0].superseded_by.includes(expected.by_contains)) {
-      w2fail(`Migration ${expected.migration} superseded by: ${sup[0].superseded_by}, expected to contain ${expected.by_contains}`);
+    const sup = mig.objects.filter(o => o.property_comparison_result === 'superseded' && o.object_name === expected.object_name);
+    if (sup.length !== 1) { w2fail(`Migration ${expected.migration}: expected 1 superseded "${expected.object_name}", got ${sup.length}`); w2SupB8Errors++; continue; }
+    if (sup[0].object_type !== expected.object_type) {
+      w2fail(`Migration ${expected.migration} superseded "${expected.object_name}" object_type: "${sup[0].object_type}", expected "${expected.object_type}"`);
+      w2SupB8Errors++;
+    }
+    if (sup[0].superseded_by !== expected.superseded_by) {
+      w2fail(`Migration ${expected.migration} superseded "${expected.object_name}" superseded_by: "${sup[0].superseded_by}", expected "${expected.superseded_by}"`);
       w2SupB8Errors++;
     }
   }
-  if (w2SupB8Errors === 0) w2pass('Batch 8 superseded lineage: 4 objects with correct later migrations');
+  // Verify no extra superseded in B8
+  {
+    let totalSupB8 = 0;
+    for (const m of w2b8Data.migrations) {
+      for (const o of m.objects || []) {
+        if (o.property_comparison_result === 'superseded') totalSupB8++;
+      }
+    }
+    if (totalSupB8 !== 4) { w2fail(`Batch 8 total superseded objects: ${totalSupB8}, expected exactly 4`); w2SupB8Errors++; }
+  }
+  if (w2SupB8Errors === 0) w2pass('Batch 8 superseded lineage: 4 objects with exact identity and lineage');
 
-  // Superseded lineage: Batch 9 (7 objects, all Migration 242 -> Migration 243)
+  // Superseded lineage: Batch 9 (7 objects, all Migration 242 -> 243, exact identity)
+  const WAVE2_EXPECTED_SUPERSEDED_B9 = [
+    { object_name: 'reserve_credits_atomic(uuid, uuid, integer)', object_type: 'function', superseding_migration: '243' },
+    { object_name: 'consume_credits_atomic(uuid, uuid, integer)', object_type: 'function', superseding_migration: '243' },
+    { object_name: 'revoke_reserve_credits_atomic_from_public', object_type: 'grant', superseding_migration: '243' },
+    { object_name: 'grant_reserve_credits_atomic_to_service_role', object_type: 'grant', superseding_migration: '243' },
+    { object_name: 'revoke_consume_credits_atomic_from_public', object_type: 'grant', superseding_migration: '243' },
+    { object_name: 'grant_consume_credits_atomic_to_service_role', object_type: 'grant', superseding_migration: '243' },
+    { object_name: 'uq_growth_campaign_dedup', object_type: 'constraint', superseding_migration: '243' },
+  ];
   const w2Mig242 = w2b9Data.migrations.find(m => m.migration_version === '242');
   if (!w2Mig242) { w2fail('Migration 242 not found in Batch 9'); }
   else {
@@ -3431,14 +3695,38 @@ if (existsSync(WAVE2_B8_PATH) && existsSync(WAVE2_B9_PATH) && existsSync(WAVE2_W
     if (sup242.length !== 7) { w2fail(`Migration 242: expected 7 superseded, got ${sup242.length}`); }
     else {
       let lineageErrors = 0;
-      for (const s of sup242) {
-        if (!s.superseding_migration || !s.superseding_migration.includes('243')) {
-          w2fail(`Migration 242 ${s.object_name} superseding_migration: ${s.superseding_migration}`);
+      for (const expected of WAVE2_EXPECTED_SUPERSEDED_B9) {
+        const found = sup242.find(o => o.object_name === expected.object_name);
+        if (!found) {
+          w2fail(`Migration 242 missing superseded object: "${expected.object_name}"`);
+          lineageErrors++;
+          continue;
+        }
+        if (found.object_type !== expected.object_type) {
+          w2fail(`Migration 242 "${expected.object_name}" object_type: "${found.object_type}", expected "${expected.object_type}"`);
+          lineageErrors++;
+        }
+        if (found.superseding_migration !== expected.superseding_migration) {
+          w2fail(`Migration 242 "${expected.object_name}" superseding_migration: "${found.superseding_migration}", expected "${expected.superseding_migration}"`);
           lineageErrors++;
         }
       }
-      if (lineageErrors === 0) w2pass('Batch 9 superseded lineage: 7 objects from Migration 242 -> Migration 243');
+      if (lineageErrors === 0) w2pass('Batch 9 superseded lineage: 7 objects from Migration 242 -> 243 with exact identity');
     }
+  }
+
+  // Count verification: no extra superseded objects across B8+B9
+  {
+    let totalSup = 0;
+    for (const batchInfo of [{data: w2b8Data, label: 'B8'}, {data: w2b9Data, label: 'B9'}]) {
+      for (const m of batchInfo.data.migrations) {
+        for (const o of m.objects || []) {
+          if (o.property_comparison_result === 'superseded') totalSup++;
+        }
+      }
+    }
+    if (totalSup !== 11) { w2fail(`Total superseded objects: ${totalSup}, expected exactly 11`); }
+    else { w2pass('Exactly 11 superseded objects across B8+B9'); }
   }
 
   // 17. Pre/post history snapshots exist and are exactly equal
@@ -3534,17 +3822,55 @@ if (existsSync(WAVE2_B8_PATH) && existsSync(WAVE2_B9_PATH) && existsSync(WAVE2_W
   }
   if (w2SafetyErrors === 0) w2pass('All safety confirmations: exact 19-key set, all true');
 
-  // 21. Worker/canonical path disjointness
+  // 21. Worker/canonical path provenance (exact validation)
   {
+    const EXPECTED_WORKER_PATHS = {
+      batch_08: '/tmp/waaiio-batch-08-worker-output.json',
+      batch_09: '/tmp/waaiio-batch-09-worker-output.json',
+    };
+    const EXPECTED_CANONICAL_PATHS = {
+      batch_08: '/tmp/waaiio-batch-08-production-verification-v2.json',
+      batch_09: '/tmp/waaiio-batch-09-production-verification-v2.json',
+      wave_02: '/tmp/waaiio-wave-02-production-verification-v2.json',
+    };
+
     const workerPaths = w2waveData.worker_output_paths;
     const canonicalPaths = w2waveData.canonical_output_paths;
     let w2PathErrors = 0;
+
+    // worker_output_paths exists as object with exact keys and values
     if (!workerPaths || typeof workerPaths !== 'object') {
       w2fail('Wave worker_output_paths missing or not an object'); w2PathErrors++;
+    } else {
+      const wpKeys = Object.keys(workerPaths);
+      const expectedWpKeys = Object.keys(EXPECTED_WORKER_PATHS);
+      if (JSON.stringify(wpKeys.sort()) !== JSON.stringify(expectedWpKeys.sort())) {
+        w2fail(`worker path keys: ${wpKeys.join(',')}, expected ${expectedWpKeys.join(',')}`); w2PathErrors++;
+      }
+      for (const [k, v] of Object.entries(EXPECTED_WORKER_PATHS)) {
+        if (workerPaths[k] !== v) {
+          w2fail(`worker path "${k}": "${workerPaths[k]}", expected "${v}"`); w2PathErrors++;
+        }
+      }
     }
+
+    // canonical_output_paths exists as object with exact keys and values
     if (!canonicalPaths || typeof canonicalPaths !== 'object') {
       w2fail('Wave canonical_output_paths missing or not an object'); w2PathErrors++;
+    } else {
+      const cpKeys = Object.keys(canonicalPaths);
+      const expectedCpKeys = Object.keys(EXPECTED_CANONICAL_PATHS);
+      if (JSON.stringify(cpKeys.sort()) !== JSON.stringify(expectedCpKeys.sort())) {
+        w2fail(`canonical path keys: ${cpKeys.join(',')}, expected ${expectedCpKeys.join(',')}`); w2PathErrors++;
+      }
+      for (const [k, v] of Object.entries(EXPECTED_CANONICAL_PATHS)) {
+        if (canonicalPaths[k] !== v) {
+          w2fail(`canonical path "${k}": "${canonicalPaths[k]}", expected "${v}"`); w2PathErrors++;
+        }
+      }
     }
+
+    // No worker path equals any canonical path
     if (workerPaths && canonicalPaths) {
       const workerValues = Object.values(workerPaths);
       const canonicalValues = Object.values(canonicalPaths);
@@ -3555,12 +3881,52 @@ if (existsSync(WAVE2_B8_PATH) && existsSync(WAVE2_B9_PATH) && existsSync(WAVE2_W
           w2PathErrors++;
         }
       }
+      // No duplicate worker paths
+      if (new Set(workerValues).size !== workerValues.length) {
+        w2fail('duplicate worker paths detected'); w2PathErrors++;
+      }
+      // No duplicate canonical paths
+      if (new Set(canonicalValues).size !== canonicalValues.length) {
+        w2fail('duplicate canonical paths detected'); w2PathErrors++;
+      }
     }
+
+    // Boolean flags
     if (w2waveData.worker_paths_distinct_from_canonical_paths !== true) {
       w2fail(`worker_paths_distinct_from_canonical_paths = ${w2waveData.worker_paths_distinct_from_canonical_paths}, expected true`);
       w2PathErrors++;
     }
-    if (w2PathErrors === 0) w2pass('Worker/canonical path disjointness validated');
+    if (w2waveData.coordinator_only_wrote_canonical_paths !== true) {
+      w2fail(`coordinator_only_wrote_canonical_paths = ${w2waveData.coordinator_only_wrote_canonical_paths}, expected true`);
+      w2PathErrors++;
+    }
+    if (w2waveData.no_worker_overwrote_canonical_evidence !== true) {
+      w2fail(`no_worker_overwrote_canonical_evidence = ${w2waveData.no_worker_overwrote_canonical_evidence}, expected true`);
+      w2PathErrors++;
+    }
+
+    // worker_output_provenance exact validation
+    const EXPECTED_PROVENANCE = {
+      'waaiio-batch-08-worker-output.json': '0bd114afb9461052f01b541ab7eb67c60040a75bcb915372debb994200968f7a',
+      'waaiio-batch-09-worker-output.json': 'c703f405912e2ca099062691fd6d41249943db35fe2b9f4ed18d4f807e283d9e',
+    };
+    const provenance = w2waveData.worker_output_provenance;
+    if (!provenance || typeof provenance !== 'object') {
+      w2fail('worker_output_provenance missing or not an object'); w2PathErrors++;
+    } else {
+      const provKeys = Object.keys(provenance);
+      const expectedProvKeys = Object.keys(EXPECTED_PROVENANCE);
+      if (JSON.stringify(provKeys.sort()) !== JSON.stringify(expectedProvKeys.sort())) {
+        w2fail(`path provenance keys: ${provKeys.join(',')}, expected ${expectedProvKeys.join(',')}`); w2PathErrors++;
+      }
+      for (const [k, v] of Object.entries(EXPECTED_PROVENANCE)) {
+        if (provenance[k] !== v) {
+          w2fail(`path provenance "${k}": "${provenance[k]}", expected "${v}"`); w2PathErrors++;
+        }
+      }
+    }
+
+    if (w2PathErrors === 0) w2pass('Worker/canonical path provenance fully validated');
   }
 
   // 22. Manifest classifications = 113/19/0/12/2
