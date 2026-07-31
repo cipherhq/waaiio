@@ -5,11 +5,11 @@
  *
  * Progressive invariants (multi-batch aware):
  * - Manifest has exactly 146 entries (one per version 101-246)
- * - ALIGNED_TRACKED = 113 (8 original + 15 Batch 1 + 15 Batch 2 + 15 Batch 3 + 15 Batch 4 + 15 Batch 5 + 15 Batch 6 + 15 Batch 7 repaired)
- * - VERIFIED_APPLIED_UNTRACKED = 19
+ * - ALIGNED_TRACKED = 128 (8 original + 15×8 batches repaired)
+ * - VERIFIED_APPLIED_UNTRACKED = 4
  * - PENDING_PRODUCTION_REVERIFICATION = 0
  * - NOT_VERIFIABLE_SAFELY = 12, SUPERSEDED = 2
- * - Active repair allowlist = 15 (Batch 8)
+ * - Active repair allowlist = 4 (Batch 9)
  * - Verification candidates = 0 (all verified)
  * - The 124-candidate cohort: PENDING + VERIFIED + repaired candidates = 124
  * - Completed repair entries cross-validate against batch evidence
@@ -47,8 +47,8 @@ const VALID_SUPERSEDED_STATES = new Set([
 ]);
 
 const EXPECTED_MANIFEST_COUNT = 146;
-const EXPECTED_ALIGNED = 113;
-const EXPECTED_VERIFIED = 19;
+const EXPECTED_ALIGNED = 128;
+const EXPECTED_VERIFIED = 4;
 const EXPECTED_PENDING = 0;
 const EXPECTED_NV = 12;
 const EXPECTED_SUPERSEDED = 2;
@@ -1679,6 +1679,10 @@ for (const file of repairFiles) {
       pass(`${file} is valid JSON (validated in Batch 7 Repair Closeout section)`);
       continue;
     }
+    if (file === 'batch-08-repair.json') {
+      pass(`${file} is valid JSON (validated in Batch 8 Repair Closeout section)`);
+      continue;
+    }
     // Normalize Batch 5+ repair evidence (repairs array with sequence/exit_status/postcondition_passed)
     if (data.repairs && Array.isArray(data.repairs) && !data.repair_results) {
       // Validate Batch 5 specific structure: each repair must have sequence, exit_status, postcondition_passed
@@ -2671,17 +2675,17 @@ if (!existsSync(BATCH5_REPAIR_PATH)) {
     pass('Batch 5 repair evidence file SHA matches');
   }
 }
-// Validate batch-repaired candidate count (cohort of 105 across Batches 1-7)
-if (repairedCandidateCount !== 105) {
-  fail(`Batch-repaired candidate count is ${repairedCandidateCount}, expected 105`);
+// Validate batch-repaired candidate count (cohort of 120 across Batches 1-8)
+if (repairedCandidateCount !== 120) {
+  fail(`Batch-repaired candidate count is ${repairedCandidateCount}, expected 120`);
 } else {
-  pass('Batch-repaired candidate count = 105');
+  pass('Batch-repaired candidate count = 120');
 }
-// Validate total completed (105 batch + 8 individual = 113)
-if (completedEntries.length !== 113) {
-  fail(`Total completed entries is ${completedEntries.length}, expected 113`);
+// Validate total completed (120 batch + 8 individual = 128)
+if (completedEntries.length !== 128) {
+  fail(`Total completed entries is ${completedEntries.length}, expected 128`);
 } else {
-  pass('Total completed entries = 113');
+  pass('Total completed entries = 128');
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2897,9 +2901,9 @@ if (existsSync(WAVE1_B6_PATH) && existsSync(WAVE1_B7_PATH) && existsSync(WAVE1_W
   }
   if (b6ManifestErrors === 0) w1pass('Batch 6 manifest entries ALIGNED_TRACKED and completed');
 
-  // 21. Allowlist contains Batch 8 (15 versions) after Wave 2 verification
-  if (allowlist.length !== 15) { w1fail(`Allowlist length: ${allowlist.length}, expected 15`); }
-  else { w1pass('Allowlist has 15 Batch 8 entries'); }
+  // 21. Allowlist contains Batch 9 (4 versions) after Batch 8 closeout
+  if (allowlist.length !== 4) { w1fail(`Allowlist length: ${allowlist.length}, expected 4`); }
+  else { w1pass('Allowlist has 4 Batch 9 entries'); }
 
   // 22. Batch 7 manifest entries are ALIGNED_TRACKED and completed (repair done)
   let b7ManifestErrors = 0;
@@ -3929,60 +3933,61 @@ if (existsSync(WAVE2_B8_PATH) && existsSync(WAVE2_B9_PATH) && existsSync(WAVE2_W
     if (w2PathErrors === 0) w2pass('Worker/canonical path provenance fully validated');
   }
 
-  // 22. Manifest classifications = 113/19/0/12/2
-  if (alignedCount !== 113) w2fail(`ALIGNED: ${alignedCount}`);
-  if (verifiedCount !== 19) w2fail(`VERIFIED: ${verifiedCount}`);
+  // 22. Manifest classifications = 128/4/0/12/2
+  if (alignedCount !== 128) w2fail(`ALIGNED: ${alignedCount}`);
+  if (verifiedCount !== 4) w2fail(`VERIFIED: ${verifiedCount}`);
   if (pendingCount !== 0) w2fail(`PENDING: ${pendingCount}`);
   if (nvCount !== 12) w2fail(`NV: ${nvCount}`);
   if (supersededCount !== 2) w2fail(`SUPERSEDED: ${supersededCount}`);
-  if (alignedCount === 113 && verifiedCount === 19 && pendingCount === 0 && nvCount === 12 && supersededCount === 2) {
-    w2pass('Manifest classifications = 113/19/0/12/2');
+  if (alignedCount === 128 && verifiedCount === 4 && pendingCount === 0 && nvCount === 12 && supersededCount === 2) {
+    w2pass('Manifest classifications = 128/4/0/12/2');
   }
 
-  // 23. Batch 8 manifest entries are verified and active
+  // 23. Batch 8 manifest entries are ALIGNED_TRACKED (repair completed)
   let w2B8ManifestErrors = 0;
   for (const v of WAVE2_BATCH8_VERSIONS) {
     const me = manifestByVersion[v];
     if (!me) { w2fail(`Batch 8 version ${v} not in manifest`); w2B8ManifestErrors++; continue; }
-    if (me.current_classification !== 'VERIFIED_APPLIED_UNTRACKED') { w2fail(`B8 ${v} classification: ${me.current_classification}`); w2B8ManifestErrors++; }
-    if (me.repair_eligible !== true) { w2fail(`B8 ${v} repair_eligible: ${me.repair_eligible}`); w2B8ManifestErrors++; }
-    if (me.repair_status !== 'approved_for_repair') { w2fail(`B8 ${v} repair_status: ${me.repair_status}`); w2B8ManifestErrors++; }
+    if (me.current_classification !== 'ALIGNED_TRACKED') { w2fail(`B8 ${v} classification: ${me.current_classification}`); w2B8ManifestErrors++; }
+    if (me.repair_status !== 'completed') { w2fail(`B8 ${v} repair_status: ${me.repair_status}`); w2B8ManifestErrors++; }
+    if (me.remote_tracked !== true) { w2fail(`B8 ${v} remote_tracked: ${me.remote_tracked}`); w2B8ManifestErrors++; }
+    if (me.repair_eligible !== false) { w2fail(`B8 ${v} repair_eligible: ${me.repair_eligible}`); w2B8ManifestErrors++; }
     if (me.verification_batch !== 8) { w2fail(`B8 ${v} verification_batch: ${me.verification_batch}`); w2B8ManifestErrors++; }
     if (me.repair_batch !== 8) { w2fail(`B8 ${v} repair_batch: ${me.repair_batch}`); w2B8ManifestErrors++; }
   }
-  if (w2B8ManifestErrors === 0) w2pass('Batch 8 manifest entries VERIFIED and repair active');
+  if (w2B8ManifestErrors === 0) w2pass('Batch 8 manifest entries ALIGNED_TRACKED and repair completed');
 
-  // 24. Allowlist is exactly Batch 8
+  // 24. Allowlist is exactly Batch 9
   const w2AllowlistVersions = allowlist.map(e => e.version);
-  if (JSON.stringify(w2AllowlistVersions) !== JSON.stringify(WAVE2_BATCH8_VERSIONS)) {
-    w2fail(`Allowlist versions: ${w2AllowlistVersions.join(',')}, expected Batch 8`);
-  } else { w2pass('Allowlist is exactly Batch 8 (15 versions)'); }
+  if (JSON.stringify(w2AllowlistVersions) !== JSON.stringify(WAVE2_BATCH9_VERSIONS)) {
+    w2fail(`Allowlist versions: ${w2AllowlistVersions.join(',')}, expected Batch 9`);
+  } else { w2pass('Allowlist is exactly Batch 9 (4 versions)'); }
 
-  // 25. Batch 9 manifest entries are verified but inactive
+  // 25. Batch 9 manifest entries are VERIFIED and active for repair
   let w2B9ManifestErrors = 0;
   for (const v of WAVE2_BATCH9_VERSIONS) {
     const me = manifestByVersion[v];
     if (!me) { w2fail(`Batch 9 version ${v} not in manifest`); w2B9ManifestErrors++; continue; }
     if (me.current_classification !== 'VERIFIED_APPLIED_UNTRACKED') { w2fail(`B9 ${v} classification: ${me.current_classification}`); w2B9ManifestErrors++; }
-    if (me.repair_eligible !== false) { w2fail(`B9 ${v} repair_eligible: ${me.repair_eligible}`); w2B9ManifestErrors++; }
-    if (me.repair_status !== 'verified_waiting_for_activation') { w2fail(`B9 ${v} repair_status: ${me.repair_status}`); w2B9ManifestErrors++; }
+    if (me.repair_eligible !== true) { w2fail(`B9 ${v} repair_eligible: ${me.repair_eligible}`); w2B9ManifestErrors++; }
+    if (me.repair_status !== 'approved_for_repair') { w2fail(`B9 ${v} repair_status: ${me.repair_status}`); w2B9ManifestErrors++; }
     if (me.verification_batch !== 9) { w2fail(`B9 ${v} verification_batch: ${me.verification_batch}`); w2B9ManifestErrors++; }
   }
-  if (w2B9ManifestErrors === 0) w2pass('Batch 9 manifest entries VERIFIED but inactive');
+  if (w2B9ManifestErrors === 0) w2pass('Batch 9 manifest entries VERIFIED and active for repair');
 
-  // 26. No Batch 9 version in allowlist
+  // 26. Batch 9 versions are in allowlist
   const w2AllowlistSet = new Set(w2AllowlistVersions);
-  const b9InAllowlist = WAVE2_BATCH9_VERSIONS.filter(v => w2AllowlistSet.has(v));
-  if (b9InAllowlist.length > 0) { w2fail(`Batch 9 versions in allowlist: ${b9InAllowlist.join(',')}`); }
-  else { w2pass('No Batch 9 version in allowlist'); }
+  const b9NotInAllowlist = WAVE2_BATCH9_VERSIONS.filter(v => !w2AllowlistSet.has(v));
+  if (b9NotInAllowlist.length > 0) { w2fail(`Batch 9 versions missing from allowlist: ${b9NotInAllowlist.join(',')}`); }
+  else { w2pass('All Batch 9 versions in allowlist'); }
 
   // 27. Candidate registry is exactly empty
   if (candidates.length !== 0) { w2fail(`Candidates: ${candidates.length}, expected 0`); }
   else { w2pass('Candidate registry is empty'); }
 
-  // 28. Completed repair count remains 105
-  if (repairedCandidateCount !== 105) { w2fail(`Completed repairs: ${repairedCandidateCount}, expected 105`); }
-  else { w2pass('Completed repair count = 105'); }
+  // 28. Completed repair count = 120
+  if (repairedCandidateCount !== 120) { w2fail(`Completed repairs: ${repairedCandidateCount}, expected 120`); }
+  else { w2pass('Completed repair count = 120'); }
 
   // 29. The 12 NOT_VERIFIABLE_SAFELY entries remain unchanged
   const NV_VERSIONS = ['101','105','107','126','160','163','164','187','216','217','222','226'];
@@ -4085,9 +4090,9 @@ const BATCH7_CLOSEOUT_CONFIG = {
   laterBatchOccurrenceMaps: { pre: 'batches_8_9_pre_occurrence_map', post: 'batches_8_9_post_occurrence_map' },
   laterBatchLenient: false,
   hasOrderedSnapshots: true,
-  expectedClassifications: { aligned: 113, verified: 19, pending: 0, nv: 12, superseded: 2 },
-  expectedCompletedRepairs: 105,
-  expectedAllowlistLength: 15,
+  expectedClassifications: null, // Superseded by Batch 8 closeout
+  expectedCompletedRepairs: null, // Superseded by Batch 8 closeout
+  expectedAllowlistLength: null, // Superseded by Batch 8 closeout
   requiredSafetyKeys: [
     'every_approved_version_appears_exactly_once',
     'exactly_15_versions_added',
@@ -4138,6 +4143,47 @@ function validateRepairCloseout(cfg) {
   }
 
   const evidence = JSON.parse(content);
+
+  // 2b. Evidence identity fields (optional, Batch 8+ only)
+  if (cfg.expectedIdentity) {
+    const id = cfg.expectedIdentity;
+    let idErrors = 0;
+    for (const [key, expected] of Object.entries(id)) {
+      if (evidence[key] !== expected) {
+        fail(`Batch ${b} evidence ${key}: ${JSON.stringify(evidence[key])}, expected ${JSON.stringify(expected)}`);
+        idErrors++;
+      }
+    }
+    if (idErrors === 0) pass(`Batch ${b} evidence identity fields verified`);
+  }
+
+  // 2c. Exact repair record count, filenames, checksums, command_category (Batch 8+ enhanced)
+  if (cfg.expectedRepairFields) {
+    const erf = cfg.expectedRepairFields;
+    const repairs = evidence.repairs || [];
+    let erfErrors = 0;
+    for (let i = 0; i < repairs.length; i++) {
+      const r = repairs[i];
+      const ver = cfg.versions[i];
+      if (r.command_category !== erf.command_category) {
+        fail(`Batch ${b} repair ${ver} command_category: ${r.command_category}`);
+        erfErrors++;
+      }
+      // Filename must equal repository migration filename
+      const repoFile = migrationFiles.find(f => f.startsWith(ver + '_'));
+      if (repoFile && r.filename !== repoFile) {
+        fail(`Batch ${b} repair ${ver} filename ${r.filename} !== repo ${repoFile}`);
+        erfErrors++;
+      }
+      // Checksum must equal manifest checksum
+      const me = manifestByVersion[ver];
+      if (me && r.checksum !== me.checksum) {
+        fail(`Batch ${b} repair ${ver} checksum !== manifest checksum`);
+        erfErrors++;
+      }
+    }
+    if (erfErrors === 0) pass(`Batch ${b} all repair filenames, checksums, command categories correct`);
+  }
 
   // 3. Exact version set and order
   const approvedVersions = evidence.approved_versions || [];
@@ -4214,7 +4260,7 @@ function validateRepairCloseout(cfg) {
     if (laterErrors === 0) pass('All later_batch_occurrences_remain_zero = true');
   }
 
-  // 9. Count progression advances exactly once per version; iteration continuity
+  // 9. Count progression: absolute anchoring + delta + continuity
   let progressionErrors = 0;
   for (let i = 0; i < repairs.length; i++) {
     const r = repairs[i];
@@ -4225,9 +4271,19 @@ function validateRepairCloseout(cfg) {
     const preRange = r[f.preRangeCount];
     const postRange = r[f.postRangeCount];
     const m298 = r[f.migration298Count];
+    // Delta: each step adds exactly 1
     if (postTotal !== preTotal + 1) { fail(`Repair ${r.version} total delta: ${postTotal - preTotal}`); progressionErrors++; }
     if (postRange !== preRange + 1) { fail(`Repair ${r.version} range delta: ${postRange - preRange}`); progressionErrors++; }
     if (m298 !== 1) { fail(`Repair ${r.version} m298: ${m298}`); progressionErrors++; }
+    // Absolute anchoring: pre_total = topLevelPre.total + i, post_total = topLevelPre.total + i + 1
+    const expectedPreTotal = expPre.total_remote_count + i;
+    const expectedPostTotal = expPre.total_remote_count + i + 1;
+    const expectedPreRange = expPre.range_101_246_count + i;
+    const expectedPostRange = expPre.range_101_246_count + i + 1;
+    if (preTotal !== expectedPreTotal) { fail(`Repair ${r.version} pre_total ${preTotal} !== expected ${expectedPreTotal}`); progressionErrors++; }
+    if (postTotal !== expectedPostTotal) { fail(`Repair ${r.version} post_total ${postTotal} !== expected ${expectedPostTotal}`); progressionErrors++; }
+    if (preRange !== expectedPreRange) { fail(`Repair ${r.version} pre_range ${preRange} !== expected ${expectedPreRange}`); progressionErrors++; }
+    if (postRange !== expectedPostRange) { fail(`Repair ${r.version} post_range ${postRange} !== expected ${expectedPostRange}`); progressionErrors++; }
     // Iteration continuity: repair[i].pre == repair[i-1].post
     if (i > 0) {
       const prevPostTotal = repairs[i - 1][f.postTotalCount];
@@ -4236,7 +4292,17 @@ function validateRepairCloseout(cfg) {
       if (preRange !== prevPostRange) { fail(`Repair ${r.version} preRange ${preRange} !== prev postRange ${prevPostRange}`); progressionErrors++; }
     }
   }
-  if (progressionErrors === 0) pass('Count progression advances exactly once per version');
+  // First record pre-counts must equal top-level pre counts
+  if (repairs.length > 0) {
+    const first = repairs[0];
+    if (first[f.preTotalCount] !== expPre.total_remote_count) { fail(`First repair pre_total ${first[f.preTotalCount]} !== top-level ${expPre.total_remote_count}`); progressionErrors++; }
+    if (first[f.preRangeCount] !== expPre.range_101_246_count) { fail(`First repair pre_range ${first[f.preRangeCount]} !== top-level ${expPre.range_101_246_count}`); progressionErrors++; }
+    // Last record post-counts must equal top-level post counts
+    const last = repairs[repairs.length - 1];
+    if (last[f.postTotalCount] !== expPost.total_remote_count) { fail(`Last repair post_total ${last[f.postTotalCount]} !== top-level ${expPost.total_remote_count}`); progressionErrors++; }
+    if (last[f.postRangeCount] !== expPost.range_101_246_count) { fail(`Last repair post_range ${last[f.postRangeCount]} !== top-level ${expPost.range_101_246_count}`); progressionErrors++; }
+  }
+  if (progressionErrors === 0) pass('Count progression anchored, delta, and continuous');
 
   // 10. Timestamps: canonical UTC ISO-8601, startedAt <= completedAt, sequential non-overlap, after PR merge
   let tsErrors = 0;
@@ -4400,8 +4466,33 @@ function validateRepairCloseout(cfg) {
     if (me.repair_status !== 'completed') { fail(`Version ${v} repair_status: ${me.repair_status}`); manifestErrors++; }
     if (me.repair_evidence_path !== expectedEvidencePath) { fail(`Version ${v} repair_evidence_path: ${me.repair_evidence_path}`); manifestErrors++; }
     if (me.repair_evidence_digest !== cfg.expectedSHA) { fail(`Version ${v} repair_evidence_digest mismatch`); manifestErrors++; }
+    if (me.recommended_action !== 'none') { fail(`Version ${v} recommended_action: ${me.recommended_action}`); manifestErrors++; }
+    if (me.verification_batch !== b) { fail(`Version ${v} verification_batch: ${me.verification_batch}`); manifestErrors++; }
+    if (me.repair_batch !== b) { fail(`B${b} ${v} repair_batch: ${me.repair_batch}`); manifestErrors++; }
+    if (me.confidence !== 'HIGH') { fail(`Version ${v} confidence: ${me.confidence}`); manifestErrors++; }
   }
   if (manifestErrors === 0) pass(`Batch ${b} manifest entries ALIGNED_TRACKED and complete`);
+
+  // 20b. Later-batch activation checks (only for latest closeout — checks the actively activated batch)
+  if (cfg.checkLaterActivation && cfg.laterVersions && cfg.laterVersions.length > 0) {
+    let laterErrors = 0;
+    for (const v of cfg.laterVersions) {
+      const me = manifestByVersion[v];
+      if (!me) { fail(`Later version ${v} not in manifest`); laterErrors++; continue; }
+      if (me.current_classification !== 'VERIFIED_APPLIED_UNTRACKED') { fail(`B9 ${v} classification: ${me.current_classification}`); laterErrors++; }
+      if (me.remote_tracked !== false) { fail(`B9 ${v} remote_tracked: ${me.remote_tracked}`); laterErrors++; }
+      if (me.repair_eligible !== true) { fail(`B9 ${v} repair_eligible: ${me.repair_eligible}`); laterErrors++; }
+      if (me.repair_status !== 'approved_for_repair') { fail(`B9 ${v} repair_status: ${me.repair_status}`); laterErrors++; }
+      if (me.recommended_action !== 'migration_history_repair_only') { fail(`B9 ${v} recommended_action: ${me.recommended_action}`); laterErrors++; }
+      if ('activation_blocked_by_batch' in me) { fail(`B9 ${v} activation_blocked_by_batch still present`); laterErrors++; }
+      if (me.confidence !== 'HIGH') { fail(`B9 ${v} confidence: ${me.confidence}`); laterErrors++; }
+      if (cfg.laterBatchNumber && me.verification_batch !== cfg.laterBatchNumber) { fail(`B9 ${v} verification_batch: ${me.verification_batch}`); laterErrors++; }
+      if (cfg.laterBatchNumber && me.repair_batch !== cfg.laterBatchNumber) { fail(`B9 ${v} repair_batch: ${me.repair_batch}`); laterErrors++; }
+      if (!Array.isArray(me.evidence) || me.evidence.length === 0) { fail(`B9 ${v} evidence array empty`); laterErrors++; }
+      if (me.repaired_at) { fail(`B9 ${v} has repaired_at — should not exist`); laterErrors++; }
+    }
+    if (laterErrors === 0) pass('Later-batch entries verified and activated');
+  }
 
   // 21. Ordered version snapshots (Batch 7 format only)
   if (cfg.hasOrderedSnapshots) {
@@ -4435,14 +4526,60 @@ function validateRepairCloseout(cfg) {
         fail(`Post snapshot length ${postSnap.length} !== pre ${preSnap.length} + ${cfg.versions.length}`);
         snapErrors++;
       }
+      // Removing added versions from post must produce pre in exact order
+      const postMinusAdded = postSnap.filter(v => !approvedSet.has(v));
+      if (JSON.stringify(postMinusAdded) !== JSON.stringify(preSnap)) {
+        fail('Post snapshot minus added versions does not equal pre snapshot in order');
+        snapErrors++;
+      }
+      // Migration 298 exactly once in post
+      const m298Count = postSnap.filter(v => String(v) === '298').length;
+      if (m298Count !== 1) { fail(`Migration 298 in post snapshot: ${m298Count} times`); snapErrors++; }
+      // Later-batch versions remain absent
+      if (cfg.laterVersions) {
+        const laterSet = new Set(cfg.laterVersions);
+        const laterInPost = postSnap.filter(v => laterSet.has(String(v)));
+        if (laterInPost.length > 0) { fail(`Later-batch versions in post snapshot: ${laterInPost.join(',')}`); snapErrors++; }
+      }
     }
     if (snapErrors === 0) pass('Ordered version snapshots valid');
   }
 
-  // 22. Allowlist length (conditional)
+  // 22. Allowlist length and entry validation (conditional)
   if (cfg.expectedAllowlistLength !== null) {
     if (allowlist.length !== cfg.expectedAllowlistLength) { fail(`Allowlist length: ${allowlist.length}, expected ${cfg.expectedAllowlistLength}`); }
     else { pass(`Allowlist is exactly ${cfg.expectedAllowlistLength === 0 ? 'empty' : cfg.expectedAllowlistLength}`); }
+  }
+  // 22b. Exact allowlist entry validation (for later-batch allowlists)
+  if (cfg.laterVersions && cfg.expectedAllowlistLength > 0) {
+    let alErrors = 0;
+    const expectedVersions = cfg.laterVersions;
+    const actualVersions = allowlist.map(e => e.version);
+    if (JSON.stringify(actualVersions) !== JSON.stringify(expectedVersions)) {
+      fail(`Allowlist version order: ${actualVersions.join(',')}, expected ${expectedVersions.join(',')}`);
+      alErrors++;
+    }
+    for (const entry of allowlist) {
+      const me = manifestByVersion[entry.version];
+      if (!me) { fail(`Allowlist ${entry.version} not in manifest`); alErrors++; continue; }
+      if (entry.filename !== me.filename) { fail(`Allowlist ${entry.version} filename mismatch`); alErrors++; }
+      if (entry.checksum !== me.checksum) { fail(`Allowlist ${entry.version} checksum mismatch`); alErrors++; }
+      if (!entry.expected_object_digest) { fail(`Allowlist ${entry.version} expected_object_digest empty`); alErrors++; }
+      if (cfg.expectedObjectDigests && cfg.expectedObjectDigests[entry.version] && entry.expected_object_digest !== cfg.expectedObjectDigests[entry.version]) {
+        fail(`Allowlist ${entry.version} expected_object_digest mismatch: ${entry.expected_object_digest.slice(0,12)}..., expected ${cfg.expectedObjectDigests[entry.version].slice(0,12)}...`);
+        alErrors++;
+      }
+      if (entry.production_evidence_path !== me.production_evidence_path) { fail(`Allowlist ${entry.version} evidence path mismatch`); alErrors++; }
+      if (entry.production_evidence_digest !== me.production_evidence_digest) { fail(`Allowlist ${entry.version} evidence digest mismatch`); alErrors++; }
+      if (entry.classification !== 'VERIFIED_APPLIED_UNTRACKED') { fail(`Allowlist ${entry.version} classification: ${entry.classification}`); alErrors++; }
+      if (entry.repair_action !== 'migration_history_repair_only') { fail(`Allowlist ${entry.version} repair_action: ${entry.repair_action}`); alErrors++; }
+      if (entry.confidence !== 'HIGH') { fail(`Allowlist ${entry.version} confidence: ${entry.confidence}`); alErrors++; }
+      if (cfg.laterBatchNumber) {
+        if (entry.verification_batch !== cfg.laterBatchNumber) { fail(`Allowlist ${entry.version} verification_batch: ${entry.verification_batch}`); alErrors++; }
+        if (entry.repair_batch !== cfg.laterBatchNumber) { fail(`Allowlist ${entry.version} repair_batch: ${entry.repair_batch}`); alErrors++; }
+      }
+    }
+    if (alErrors === 0) pass('Allowlist entries fully validated against manifest and evidence');
   }
 
   // 23. Candidate list (conditional)
@@ -4487,11 +4624,90 @@ function validateRepairCloseout(cfg) {
   }
 }
 
+const BATCH8_CLOSEOUT_CONFIG = {
+  batchNumber: 8,
+  evidencePath: resolve('docs/migrations/evidence/batch-08-repair.json'),
+  expectedSHA: 'fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7',
+  versions: ['227','228','229','230','231','232','233','234','235','236','237','238','239','240','241'],
+  laterVersions: ['242','243','245','246'],
+  laterBatchNumber: 9,
+  expectedObjectDigests: {
+    '242': '7a96aaf5f982c4a50adf861c05104924310718e5e75ee518cbd993d00a03613a',
+    '243': '9a502b18eaea18056e63fbd9f81548b279a861d6fbc1ce1557781e089a2ece52',
+    '245': 'd3126ba97bd423bb78ffab32cf3b5f4ed4a35bc0185b56da6c11b33b65bbde67',
+    '246': '0c2e44ceffc2c5c612bb2f44876e0da2a5d3a4ed6dda550cc5d5665c2ab7ef2d',
+  },
+  expectedPreCounts: { total_remote_count: 209, range_101_246_count: 113 },
+  expectedPostCounts: { total_remote_count: 224, range_101_246_count: 128 },
+  expectedIdentity: {
+    task_identifier: 'batch-08-migration-history-repair',
+    repository_sha: 'a63d219d473e36fa3c3bb638ba6c32406280fcd9',
+    linked_project_ref: 'cxcmiqotkowhxinjbytg',
+    issue_number: 53,
+    batch_number: 8,
+    allowlist_count: 15,
+    batch_08_verification_evidence_path: 'docs/migrations/evidence/batch-08-production-verification.json',
+    batch_08_verification_evidence_sha256: 'f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95',
+    wave_02_evidence_path: 'docs/migrations/evidence/wave-02-production-verification.json',
+    wave_02_evidence_sha256: '3d8550b4967ed4fd95769575e2a70b60e091b904867c3804ca276d243be2d70d',
+  },
+  expectedRepairFields: {
+    command_category: 'supabase_migration_repair_status_applied_linked',
+  },
+  prMergeTimestamp: '2026-07-31T01:55:32Z',
+  repairedAtSource: 'batch-08-repair evidence repairs[].completed_at',
+  repairFields: {
+    startedAt: 'started_at',
+    completedAt: 'completed_at',
+    preTotalCount: 'pre_total_remote_count',
+    postTotalCount: 'post_total_remote_count',
+    preRangeCount: 'pre_range_101_246_count',
+    postRangeCount: 'post_range_101_246_count',
+    migration298Count: 'migration_298_post_occurrences',
+    hasPreOccurrences: true,
+    hasPostconditionPassed: true,
+    hasLaterBatchRemainZero: true,
+  },
+  ownBatchOccurrenceMaps: { pre: 'batch_8_pre_occurrence_map', post: 'batch_8_post_occurrence_map' },
+  laterBatchOccurrenceMaps: { pre: 'batch_9_pre_occurrence_map', post: 'batch_9_post_occurrence_map' },
+  laterBatchLenient: false,
+  hasOrderedSnapshots: true,
+  expectedClassifications: { aligned: 128, verified: 4, pending: 0, nv: 12, superseded: 2 },
+  expectedCompletedRepairs: 120,
+  expectedAllowlistLength: 4,
+  requiredSafetyKeys: [
+    'only_allowlisted_versions_repaired',
+    'repairs_executed_one_at_a_time',
+    'no_migration_sql_executed',
+    'no_migration_up',
+    'no_supabase_db_push',
+    'no_management_api_write',
+    'no_schema_changed',
+    'no_application_data_changed',
+    'no_customer_records_accessed',
+    'no_credentials_recorded',
+    'no_repository_change',
+    'no_commit_push_or_pr',
+    'no_issue_53_mutation',
+    'no_deployment',
+    'no_batch_9_repair',
+    'no_unrelated_history_changed',
+    'migration_298_unchanged',
+    'stop_on_failure_enforced',
+  ],
+  checkLaterActivation: true,
+  expectedCandidates: [],
+  laterBatchPendingVersions: null,
+};
+
 console.log('\n--- Batch 6 Repair Closeout Validation ---\n');
 validateRepairCloseout(BATCH6_CLOSEOUT_CONFIG);
 
 console.log('\n--- Batch 7 Repair Closeout Validation ---\n');
 validateRepairCloseout(BATCH7_CLOSEOUT_CONFIG);
+
+console.log('\n--- Batch 8 Repair Closeout Validation ---\n');
+validateRepairCloseout(BATCH8_CLOSEOUT_CONFIG);
 
 // ── Summary ──
 console.log('\n=== Summary ===');

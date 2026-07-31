@@ -5,6 +5,19 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-31
+
+### Operations: Batch 8 migration-history repair complete (15 versions)
+- Batch 8 repair complete: 15 versions (227-241). Remote count 209→224 (+15). 101-246 tracked count 113→128 (+15). 120 total completed migration-history repairs.
+- All 15 versions appear exactly once in remote schema_migrations. Migration 298 remained exactly once. Batch 9 remained zero.
+- No migration SQL executed. No schema or application data changed. No deployment.
+- Batch 9 activated for repair (4 versions: 242, 243, 245, 246). Next action: controlled Batch 9 repair.
+- Repair evidence SHA: `fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7`.
+- Issue #53 remains open.
+  - **Files:** `docs/migrations/evidence/batch-08-repair.json`, `docs/migrations/101-246-production-reconciliation.json`, `docs/migrations/101-246-repair-allowlist.json`, `docs/migrations/101-246-repair-runbook.md`, `docs/MIGRATION_REGISTRY.md`, `docs/engineering-status.json`, `docs/ENGINEERING_STATUS.md`
+  - **Affects:** Migration repair process, Issue #53 tracking, validator accuracy
+  - **Could break:** Nothing — evidence and metadata only; no migration SQL executed, no application-code change, no deployment.
+
 ## 2026-07-30
 
 ### Operations: Wave 2 V3 canonical evidence with per-object provenance
