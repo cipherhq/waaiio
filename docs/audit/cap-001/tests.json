@@ -1,0 +1,2147 @@
+[
+  {
+    "id": "test:__shortest__:auth:get-started-onboarding.test.ts",
+    "name": "get-started-onboarding",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/auth/get-started-onboarding.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:auth:login-1.test.ts",
+    "name": "login-1",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/auth/login-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:auth:login-2.test.ts",
+    "name": "login-2",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/auth/login-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:auth:login-3.test.ts",
+    "name": "login-3",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/auth/login-3.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:auth:login-4.test.ts",
+    "name": "login-4",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/auth/login-4.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:auth:signup-redirect.test.ts",
+    "name": "signup-redirect",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/auth/signup-redirect.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:analytics-insights.test.ts",
+    "name": "analytics-insights",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/analytics-insights.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:chat.test.ts",
+    "name": "chat",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/chat.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:customers.test.ts",
+    "name": "customers",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/customers.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:invoices-1.test.ts",
+    "name": "invoices-1",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/invoices-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:invoices-2.test.ts",
+    "name": "invoices-2",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/invoices-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:login-and-session.test.ts",
+    "name": "login-and-session",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/login-and-session.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:logout.test.ts",
+    "name": "logout",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/logout.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:marketing-features-1.test.ts",
+    "name": "marketing-features-1",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/marketing-features-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:marketing-features-2.test.ts",
+    "name": "marketing-features-2",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/marketing-features-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:navigation-1.test.ts",
+    "name": "navigation-1",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/navigation-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:navigation-2.test.ts",
+    "name": "navigation-2",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/navigation-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:navigation-3.test.ts",
+    "name": "navigation-3",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/navigation-3.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:navigation-4.test.ts",
+    "name": "navigation-4",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/navigation-4.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:orders-products.test.ts",
+    "name": "orders-products",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/orders-products.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:overview-1.test.ts",
+    "name": "overview-1",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/overview-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:overview-2.test.ts",
+    "name": "overview-2",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/overview-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:payouts-financials.test.ts",
+    "name": "payouts-financials",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/payouts-financials.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:reservations.test.ts",
+    "name": "reservations",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/reservations.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:services.test.ts",
+    "name": "services",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/services.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:settings-1.test.ts",
+    "name": "settings-1",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/settings-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:dashboard:settings-2.test.ts",
+    "name": "settings-2",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/dashboard/settings-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:error-pages-1.test.ts",
+    "name": "error-pages-1",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/error-pages-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:error-pages-2.test.ts",
+    "name": "error-pages-2",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/error-pages-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:homepage-1.test.ts",
+    "name": "homepage-1",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/homepage-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:homepage-2.test.ts",
+    "name": "homepage-2",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/homepage-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:homepage-3.test.ts",
+    "name": "homepage-3",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/homepage-3.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:legal-pages-1.test.ts",
+    "name": "legal-pages-1",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/legal-pages-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:legal-pages-2.test.ts",
+    "name": "legal-pages-2",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/legal-pages-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:marketing-pages-1.test.ts",
+    "name": "marketing-pages-1",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/marketing-pages-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:marketing-pages-2.test.ts",
+    "name": "marketing-pages-2",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/marketing-pages-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:navigation-1.test.ts",
+    "name": "navigation-1",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/navigation-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:navigation-2.test.ts",
+    "name": "navigation-2",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/navigation-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:navigation-3.test.ts",
+    "name": "navigation-3",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/navigation-3.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:pricing-1.test.ts",
+    "name": "pricing-1",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/pricing-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:pricing-2.test.ts",
+    "name": "pricing-2",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/pricing-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:pricing-3.test.ts",
+    "name": "pricing-3",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/pricing-3.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:seo-and-meta-1.test.ts",
+    "name": "seo-and-meta-1",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/seo-and-meta-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:__shortest__:website:seo-and-meta-2.test.ts",
+    "name": "seo-and-meta-2",
+    "type": "test",
+    "domain": "e2e_shortest",
+    "paths": [
+      "__shortest__/website/seo-and-meta-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:auth:login-1.test.ts",
+    "name": "login-1",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/auth/login-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:auth:login-2.test.ts",
+    "name": "login-2",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/auth/login-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:auth:login-3.test.ts",
+    "name": "login-3",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/auth/login-3.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:auth:security.test.ts",
+    "name": "security",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/auth/security.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:businesses:businesses-page-1.test.ts",
+    "name": "businesses-page-1",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/businesses/businesses-page-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:businesses:businesses-page-2.test.ts",
+    "name": "businesses-page-2",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/businesses/businesses-page-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:businesses:category-templates.test.ts",
+    "name": "category-templates",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/businesses/category-templates.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:businesses:impersonation.test.ts",
+    "name": "impersonation",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/businesses/impersonation.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:businesses:verification.test.ts",
+    "name": "verification",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/businesses/verification.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:communication:bot-keywords.test.ts",
+    "name": "bot-keywords",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/communication/bot-keywords.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:communication:bot-management.test.ts",
+    "name": "bot-management",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/communication/bot-management.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:communication:broadcasts.test.ts",
+    "name": "broadcasts",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/communication/broadcasts.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:communication:notifications.test.ts",
+    "name": "notifications",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/communication/notifications.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:communication:support.test.ts",
+    "name": "support",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/communication/support.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:communication:whatsapp-channels.test.ts",
+    "name": "whatsapp-channels",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/communication/whatsapp-channels.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:content-system:audit-log.test.ts",
+    "name": "audit-log",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/content-system/audit-log.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:content-system:campaigns.test.ts",
+    "name": "campaigns",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/content-system/campaigns.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:content-system:content-management.test.ts",
+    "name": "content-management",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/content-system/content-management.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:content-system:countries.test.ts",
+    "name": "countries",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/content-system/countries.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:content-system:events.test.ts",
+    "name": "events",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/content-system/events.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:content-system:platform-settings.test.ts",
+    "name": "platform-settings",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/content-system/platform-settings.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:dashboard:overview.test.ts",
+    "name": "overview",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/dashboard/overview.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:finance:finance-page.test.ts",
+    "name": "finance-page",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/finance/finance-page.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:finance:payouts.test.ts",
+    "name": "payouts",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/finance/payouts.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:giving:giving.test.ts",
+    "name": "giving",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/giving/giving.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:healthcare:queue-management.test.ts",
+    "name": "queue-management",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/healthcare/queue-management.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:healthcare:reports.test.ts",
+    "name": "reports",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/healthcare/reports.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:navigation:sidebar-navigation-1.test.ts",
+    "name": "sidebar-navigation-1",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/navigation/sidebar-navigation-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:navigation:sidebar-navigation-2.test.ts",
+    "name": "sidebar-navigation-2",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/navigation/sidebar-navigation-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:navigation:spa-routing-1.test.ts",
+    "name": "spa-routing-1",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/navigation/spa-routing-1.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:navigation:spa-routing-2.test.ts",
+    "name": "spa-routing-2",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/navigation/spa-routing-2.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:operations:bookings.test.ts",
+    "name": "bookings",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/operations/bookings.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:operations:orders.test.ts",
+    "name": "orders",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/operations/orders.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:operations:payments.test.ts",
+    "name": "payments",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/operations/payments.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:operations:recurring.test.ts",
+    "name": "recurring",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/operations/recurring.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:operations:subscriptions.test.ts",
+    "name": "subscriptions",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/operations/subscriptions.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:operations:tickets.test.ts",
+    "name": "tickets",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/operations/tickets.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:users:admin-team.test.ts",
+    "name": "admin-team",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/users/admin-team.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:users:customers-page.test.ts",
+    "name": "customers-page",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/users/customers-page.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:admin:__shortest__:users:users-page.test.ts",
+    "name": "users-page",
+    "type": "test",
+    "domain": "admin",
+    "paths": [
+      "admin/__shortest__/users/users-page.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:admin-provision.test.ts",
+    "name": "admin-provision",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/admin-provision.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:admin-role-escalation.test.ts",
+    "name": "admin-role-escalation",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/admin-role-escalation.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:attendance-rls.test.ts",
+    "name": "attendance-rls",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/attendance-rls.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:console-error-cleanup.test.ts",
+    "name": "console-error-cleanup",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/console-error-cleanup.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:cron-observability.test.ts",
+    "name": "cron-observability",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/cron-observability.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:encryption.test.ts",
+    "name": "encryption",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/encryption.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:error-normalization.test.ts",
+    "name": "error-normalization",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/error-normalization.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:fin-001-containment.test.ts",
+    "name": "fin-001-containment",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/fin-001-containment.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:fin-002-atomic-payout.test.ts",
+    "name": "fin-002-atomic-payout",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/fin-002-atomic-payout.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:flutterwave-split-recurring.test.ts",
+    "name": "flutterwave-split-recurring",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/flutterwave-split-recurring.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:getPlatformFees.test.ts",
+    "name": "getPlatformFees",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/getPlatformFees.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:log-redaction.test.ts",
+    "name": "log-redaction",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/log-redaction.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:migration-295-rpc-permissions-db.test.ts",
+    "name": "migration-295-rpc-permissions-db",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/migration-295-rpc-permissions-db.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:migration-295-rpc-permissions.test.ts",
+    "name": "migration-295-rpc-permissions",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/migration-295-rpc-permissions.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:migration-296-rpc-permissions-db.test.ts",
+    "name": "migration-296-rpc-permissions-db",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/migration-296-rpc-permissions-db.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:migration-296-rpc-permissions.test.ts",
+    "name": "migration-296-rpc-permissions",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/migration-296-rpc-permissions.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:migration-297-trigger-db.test.ts",
+    "name": "migration-297-trigger-db",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/migration-297-trigger-db.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:migration-297-trigger.test.ts",
+    "name": "migration-297-trigger",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/migration-297-trigger.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:migration-298-backfill-db.test.ts",
+    "name": "migration-298-backfill-db",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/migration-298-backfill-db.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:migration-298-backfill.test.ts",
+    "name": "migration-298-backfill",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/migration-298-backfill.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:migration-repair-validator.test.ts",
+    "name": "migration-repair-validator",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/migration-repair-validator.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:observability.test.ts",
+    "name": "observability",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/observability.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:otp-authentication-template.test.ts",
+    "name": "otp-authentication-template",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/otp-authentication-template.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:otp-delivery-observability.test.ts",
+    "name": "otp-delivery-observability",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/otp-delivery-observability.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:p0-table-exposure-db.test.ts",
+    "name": "p0-table-exposure-db",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/p0-table-exposure-db.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:p0-table-exposure.test.ts",
+    "name": "p0-table-exposure",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/p0-table-exposure.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:payment-observability.test.ts",
+    "name": "payment-observability",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/payment-observability.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:payment-source-classification.test.ts",
+    "name": "payment-source-classification",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/payment-source-classification.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:paystack-split-recurring.test.ts",
+    "name": "paystack-split-recurring",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/paystack-split-recurring.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:phone-otp-challenge.test.ts",
+    "name": "phone-otp-challenge",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/phone-otp-challenge.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:route-handler-redaction.test.ts",
+    "name": "route-handler-redaction",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/route-handler-redaction.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:secret-scanner-migration-json.test.ts",
+    "name": "secret-scanner-migration-json",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/secret-scanner-migration-json.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:__tests__:webhook-observability.test.ts",
+    "name": "webhook-observability",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/__tests__/webhook-observability.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:alerts:__tests__:create-alert.test.ts",
+    "name": "create-alert",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/alerts/__tests__/create-alert.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:bot-conversations-verbose.test.ts",
+    "name": "bot-conversations-verbose",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/bot-conversations-verbose.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:bot-conversations.test.ts",
+    "name": "bot-conversations",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/bot-conversations.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:business-knowledge.test.ts",
+    "name": "business-knowledge",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/business-knowledge.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:catalog-order.test.ts",
+    "name": "catalog-order",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/catalog-order.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:confidence-policy.test.ts",
+    "name": "confidence-policy",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/confidence-policy.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:conversation-orchestrator.test.ts",
+    "name": "conversation-orchestrator",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/conversation-orchestrator.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:conversation-safety.test.ts",
+    "name": "conversation-safety",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/conversation-safety.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:correction-parser.test.ts",
+    "name": "correction-parser",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/correction-parser.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:customer-ltv.test.ts",
+    "name": "customer-ltv",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/customer-ltv.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:flow-analytics.test.ts",
+    "name": "flow-analytics",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/flow-analytics.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:opt-out-compliance.test.ts",
+    "name": "opt-out-compliance",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/opt-out-compliance.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:privacy-logging.test.ts",
+    "name": "privacy-logging",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/privacy-logging.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:session-concurrency.test.ts",
+    "name": "session-concurrency",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/session-concurrency.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:smart-intent.test.ts",
+    "name": "smart-intent",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/smart-intent.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:__tests__:webhook-state-machine.test.ts",
+    "name": "webhook-state-machine",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/__tests__/webhook-state-machine.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:capability-selection.flow.test.ts",
+    "name": "capability-selection.flow",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/capability-selection.flow.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:crowdfunding-donation-toggles.test.ts",
+    "name": "crowdfunding-donation-toggles",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/crowdfunding-donation-toggles.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:invoice.flow.test.ts",
+    "name": "invoice.flow",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/invoice.flow.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:keyword-detection.test.ts",
+    "name": "keyword-detection",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/keyword-detection.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:logistics-steps.test.ts",
+    "name": "logistics-steps",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/logistics-steps.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:loyalty.flow.test.ts",
+    "name": "loyalty.flow",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/loyalty.flow.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:my-account.flow.test.ts",
+    "name": "my-account.flow",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/my-account.flow.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:ordering.flow.test.ts",
+    "name": "ordering.flow",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/ordering.flow.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:payment-webhook.test.ts",
+    "name": "payment-webhook",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/payment-webhook.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:payment.flow.test.ts",
+    "name": "payment.flow",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/payment.flow.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:rate-limit.test.ts",
+    "name": "rate-limit",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/rate-limit.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:referral-steps.test.ts",
+    "name": "referral-steps",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/referral-steps.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:reservation.flow.test.ts",
+    "name": "reservation.flow",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/reservation.flow.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:sanitize.test.ts",
+    "name": "sanitize",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/sanitize.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:scheduling.flow.test.ts",
+    "name": "scheduling.flow",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/scheduling.flow.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:__tests__:ticketing.flow.test.ts",
+    "name": "ticketing.flow",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/__tests__/ticketing.flow.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:shared:__tests__:bank-transfer.test.ts",
+    "name": "bank-transfer",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/shared/__tests__/bank-transfer.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:shared:__tests__:notifications.test.ts",
+    "name": "notifications",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/shared/__tests__/notifications.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:shared:__tests__:notify-owner.test.ts",
+    "name": "notify-owner",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/shared/__tests__/notify-owner.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:bot:flows:shared:__tests__:payment.test.ts",
+    "name": "payment",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/bot/flows/shared/__tests__/payment.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:growth:__tests__:consent-service.test.ts",
+    "name": "consent-service",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/growth/__tests__/consent-service.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:growth:__tests__:credit-concurrency.test.ts",
+    "name": "credit-concurrency",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/growth/__tests__/credit-concurrency.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:growth:__tests__:credit-service.test.ts",
+    "name": "credit-service",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/growth/__tests__/credit-service.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:growth:__tests__:eligibility-service.test.ts",
+    "name": "eligibility-service",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/growth/__tests__/eligibility-service.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:marketplace:__tests__:search.test.ts",
+    "name": "search",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/marketplace/__tests__/search.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:payments:__tests__:payment-linkage.test.ts",
+    "name": "payment-linkage",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/payments/__tests__/payment-linkage.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:payments:__tests__:process-success.test.ts",
+    "name": "process-success",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/payments/__tests__/process-success.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:payments:__tests__:refund-handler.test.ts",
+    "name": "refund-handler",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/payments/__tests__/refund-handler.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:payments:__tests__:webhook-amount.test.ts",
+    "name": "webhook-amount",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/payments/__tests__/webhook-amount.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:payments:__tests__:webhook-handler.test.ts",
+    "name": "webhook-handler",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/payments/__tests__/webhook-handler.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:payments:__tests__:webhook-idempotency.test.ts",
+    "name": "webhook-idempotency",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/payments/__tests__/webhook-idempotency.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  },
+  {
+    "id": "test:lib:utils:__tests__:phone.test.ts",
+    "name": "phone",
+    "type": "test",
+    "domain": "lib",
+    "paths": [
+      "lib/utils/__tests__/phone.test.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.test.ts enumeration"
+  }
+]

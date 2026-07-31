@@ -1,0 +1,118 @@
+[
+  {
+    "id": "provider:paystack",
+    "name": "Paystack",
+    "adapter_path": "lib/payments/paystack.ts",
+    "factory_registered": true,
+    "country_mapping": [
+      "NG",
+      "GH",
+      "default_fallback"
+    ],
+    "connection_route": null,
+    "checkout_mechanism": "inline via payment routes",
+    "webhook_route": "app/api/payments/webhook/route.ts",
+    "refund_implementation": true,
+    "recurring_adapter": "lib/payments/paystack-recurring.ts",
+    "kill_switch": null,
+    "tests": [],
+    "confidence": "high",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "type": "payment_provider",
+    "domain": "payments"
+  },
+  {
+    "id": "provider:stripe",
+    "name": "Stripe",
+    "adapter_path": "lib/payments/stripe.ts",
+    "factory_registered": true,
+    "country_mapping": [
+      "US",
+      "GB",
+      "CA"
+    ],
+    "connection_route": "app/api/payouts/stripe-connect/route.ts (ENABLE_STRIPE_CONNECT)",
+    "checkout_mechanism": "Stripe Checkout Sessions",
+    "webhook_route": "app/api/payments/stripe-webhook/route.ts",
+    "refund_implementation": true,
+    "recurring_adapter": "lib/payments/stripe-recurring.ts",
+    "kill_switch": "ENABLE_STRIPE_CONNECT (connect only)",
+    "tests": [],
+    "confidence": "high",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "type": "payment_provider",
+    "domain": "payments"
+  },
+  {
+    "id": "provider:flutterwave",
+    "name": "Flutterwave",
+    "adapter_path": "lib/payments/flutterwave.ts",
+    "factory_registered": true,
+    "country_mapping": [
+      "dynamic via DB countries table"
+    ],
+    "connection_route": null,
+    "checkout_mechanism": "inline via payment routes",
+    "webhook_route": "app/api/webhooks/flutterwave/route.ts",
+    "refund_implementation": true,
+    "recurring_adapter": "lib/payments/flutterwave-recurring.ts",
+    "kill_switch": null,
+    "tests": [],
+    "confidence": "high",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "type": "payment_provider",
+    "domain": "payments"
+  },
+  {
+    "id": "provider:square",
+    "name": "Square",
+    "adapter_path": "lib/payments/square.ts",
+    "factory_registered": true,
+    "country_mapping": [
+      "dynamic via DB countries table"
+    ],
+    "connection_route": "app/api/payouts/square-connect/route.ts (ENABLE_SQUARE_CONNECT)",
+    "checkout_mechanism": "Square Checkout API",
+    "webhook_route": "app/api/payments/square-webhook/route.ts",
+    "refund_implementation": true,
+    "recurring_adapter": null,
+    "kill_switch": "ENABLE_SQUARE_CONNECT",
+    "tests": [],
+    "confidence": "medium",
+    "unresolved_questions": [
+      "Square Connect is kill-switched; production readiness unknown"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "type": "payment_provider",
+    "domain": "payments"
+  },
+  {
+    "id": "provider:paypal",
+    "name": "PayPal",
+    "adapter_path": "lib/payments/paypal.ts",
+    "factory_registered": true,
+    "country_mapping": [
+      "dynamic via DB countries table"
+    ],
+    "connection_route": null,
+    "checkout_mechanism": "PayPal Orders API",
+    "webhook_route": "app/api/payments/paypal-webhook/route.ts",
+    "refund_implementation": true,
+    "recurring_adapter": null,
+    "kill_switch": null,
+    "tests": [],
+    "confidence": "medium",
+    "unresolved_questions": [
+      "Not listed in CLAUDE.md; production readiness unknown",
+      "No dedicated connection/OAuth route found"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "type": "payment_provider",
+    "domain": "payments"
+  }
+]

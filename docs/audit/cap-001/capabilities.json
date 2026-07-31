@@ -1,0 +1,498 @@
+[
+  {
+    "id": "cap:appointment",
+    "name": "appointment",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "free",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:auto_reply",
+    "name": "auto_reply",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:broadcast",
+    "name": "broadcast",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:chat",
+    "name": "chat",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "free",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:class_booking",
+    "name": "class_booking",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": false,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:crowdfunding",
+    "name": "crowdfunding",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "business",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:estimates",
+    "name": "estimates",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "free",
+    "in_claude_md_named_list": false,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:feedback",
+    "name": "feedback",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "free",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:giving",
+    "name": "giving",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "free",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:invoice",
+    "name": "invoice",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:loyalty",
+    "name": "loyalty",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:membership",
+    "name": "membership",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:multi_location",
+    "name": "multi_location",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": false,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:ordering",
+    "name": "ordering",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "free",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:packages",
+    "name": "packages",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": false,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:payment",
+    "name": "payment",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "free",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:poll",
+    "name": "poll",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "free",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:queue",
+    "name": "queue",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "business",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:recurring",
+    "name": "recurring",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:referral",
+    "name": "referral",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:reminders",
+    "name": "reminders",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:reports",
+    "name": "reports",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "business",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:reservation",
+    "name": "reservation",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:scheduling",
+    "name": "scheduling",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "free",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:staff",
+    "name": "staff",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "business",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:survey",
+    "name": "survey",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:table_reservation",
+    "name": "table_reservation",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "free",
+    "in_claude_md_named_list": false,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:ticketing",
+    "name": "ticketing",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "free",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:waitlist",
+    "name": "waitlist",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "business",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:waiver",
+    "name": "waiver",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "growth",
+    "in_claude_md_named_list": false,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  },
+  {
+    "id": "cap:whatsapp_sign",
+    "name": "whatsapp_sign",
+    "type": "capability",
+    "domain": "capabilities",
+    "paths": [
+      "lib/capabilities/types.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "tier_requirement": "business",
+    "in_claude_md_named_list": true,
+    "confidence": "high",
+    "evidence_method": "CapabilityId union type extraction",
+    "unresolved_questions": []
+  }
+]

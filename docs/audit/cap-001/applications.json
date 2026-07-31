@@ -1,0 +1,52 @@
+[
+  {
+    "id": "app:main",
+    "name": "Main App (Next.js)",
+    "type": "application",
+    "paths": [
+      "app/",
+      "lib/",
+      "components/"
+    ],
+    "technology": "Next.js 14 + React 18 + TypeScript + Tailwind CSS",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high"
+  },
+  {
+    "id": "app:admin",
+    "name": "Admin Panel (Vite)",
+    "type": "application",
+    "paths": [
+      "admin/"
+    ],
+    "technology": "Vite + React 18 + TypeScript",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high"
+  },
+  {
+    "id": "app:bot",
+    "name": "WhatsApp Bot Service",
+    "type": "service",
+    "paths": [
+      "lib/bot/"
+    ],
+    "technology": "Node.js + Meta Cloud API",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high"
+  },
+  {
+    "id": "app:edge-functions",
+    "name": "Supabase Edge Functions",
+    "type": "service",
+    "paths": [
+      "supabase/functions/"
+    ],
+    "technology": "Deno / Supabase Edge Runtime",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high"
+  }
+]

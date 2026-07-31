@@ -1,0 +1,236 @@
+[
+  {
+    "id": "flow:appointment",
+    "name": "appointment",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/appointment.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:capability-selection",
+    "name": "capability-selection",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/capability-selection.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:chat",
+    "name": "chat",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/chat.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:crowdfunding",
+    "name": "crowdfunding",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/crowdfunding.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:feedback",
+    "name": "feedback",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/feedback.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:invoice",
+    "name": "invoice",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/invoice.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:loyalty",
+    "name": "loyalty",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/loyalty.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:ordering",
+    "name": "ordering",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/ordering.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:payment",
+    "name": "payment",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/payment.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:poll",
+    "name": "poll",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/poll.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:queue-checkin",
+    "name": "queue-checkin",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/queue-checkin.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:recurring-manage",
+    "name": "recurring-manage",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/recurring-manage.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:reservation",
+    "name": "reservation",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/reservation.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:rsvp",
+    "name": "rsvp",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/rsvp.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:scheduling",
+    "name": "scheduling",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/scheduling.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:survey",
+    "name": "survey",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/survey.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:ticketing",
+    "name": "ticketing",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/ticketing.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  },
+  {
+    "id": "flow:waitlist",
+    "name": "waitlist",
+    "type": "bot_flow",
+    "domain": "bot",
+    "paths": [
+      "lib/bot/flows/waitlist.flow.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree *.flow.ts enumeration"
+  }
+]

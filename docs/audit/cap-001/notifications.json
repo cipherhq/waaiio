@@ -1,0 +1,48 @@
+{
+  "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+  "email": {
+    "provider": "Resend",
+    "client_path": "lib/email/client.ts",
+    "template_path": "lib/email/templates.ts",
+    "partner_template_path": "lib/email/partner-templates.ts",
+    "template_count": 28,
+    "templates": [
+      "welcomeEmail",
+      "businessRegisteredEmail",
+      "payoutApprovedEmail",
+      "payoutPaidEmail",
+      "payoutRejectedEmail",
+      "kycRequestedEmail",
+      "kycApprovedEmail",
+      "kycRejectedEmail",
+      "bookingConfirmationEmail",
+      "bookingReminderEmail",
+      "paymentReceivedEmail",
+      "subscriptionActivatedEmail",
+      "newOrderEmail",
+      "newBookingOwnerEmail",
+      "trialExpiringEmail",
+      "trialEndedEmail",
+      "subscriptionRenewalReceiptEmail",
+      "subscriptionExpiringEmail",
+      "subscriptionExpiredEmail",
+      "payoutFailedEmail",
+      "paymentFailedEmail",
+      "weeklyDigestEmail",
+      "invoiceEmail",
+      "ticketConfirmationEmail",
+      "donationReceiptEmail",
+      "accountDeletionConfirmationEmail",
+      "dataBreachNotificationEmail",
+      "businessNotificationEmail"
+    ]
+  },
+  "whatsapp": {
+    "provider": "Meta Cloud API",
+    "channel_resolver": "lib/channels/channel-resolver.ts",
+    "message_sender": "lib/channels/message-sender.ts",
+    "template_sender": "lib/channels/send-with-template.ts",
+    "fallback": "lib/channels/send-or-email.ts"
+  },
+  "confidence": "high"
+}

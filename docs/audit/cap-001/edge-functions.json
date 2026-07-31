@@ -1,0 +1,184 @@
+[
+  {
+    "id": "edge:abandoned-cart-reminder",
+    "name": "abandoned-cart-reminder",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/abandoned-cart-reminder/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  },
+  {
+    "id": "edge:birthday-campaign",
+    "name": "birthday-campaign",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/birthday-campaign/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  },
+  {
+    "id": "edge:booking-reminders",
+    "name": "booking-reminders",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/booking-reminders/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  },
+  {
+    "id": "edge:chat-timeout",
+    "name": "chat-timeout",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/chat-timeout/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  },
+  {
+    "id": "edge:contract-reminders",
+    "name": "contract-reminders",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/contract-reminders/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  },
+  {
+    "id": "edge:customer-reengagement",
+    "name": "customer-reengagement",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/customer-reengagement/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  },
+  {
+    "id": "edge:daily-summary",
+    "name": "daily-summary",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/daily-summary/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  },
+  {
+    "id": "edge:generate-sign-link",
+    "name": "generate-sign-link",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/generate-sign-link/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  },
+  {
+    "id": "edge:low-stock-alerts",
+    "name": "low-stock-alerts",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/low-stock-alerts/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  },
+  {
+    "id": "edge:noshow-reschedule",
+    "name": "noshow-reschedule",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/noshow-reschedule/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  },
+  {
+    "id": "edge:process-sequences",
+    "name": "process-sequences",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/process-sequences/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  },
+  {
+    "id": "edge:recurring-reminder",
+    "name": "recurring-reminder",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/recurring-reminder/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  },
+  {
+    "id": "edge:session-cleanup",
+    "name": "session-cleanup",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/session-cleanup/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  },
+  {
+    "id": "edge:waitlist-expiration",
+    "name": "waitlist-expiration",
+    "type": "edge_function",
+    "domain": "edge_functions",
+    "paths": [
+      "supabase/functions/waitlist-expiration/"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree supabase/functions/ directory enumeration"
+  }
+]

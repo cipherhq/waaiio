@@ -1,0 +1,132 @@
+[
+  {
+    "id": "webhook:payments:byo-webhook:[businessId]",
+    "name": "payments/byo-webhook/[businessId]",
+    "type": "webhook",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/payments/byo-webhook/[businessId]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree webhook route.ts enumeration"
+  },
+  {
+    "id": "webhook:payments:paypal-webhook",
+    "name": "payments/paypal-webhook",
+    "type": "webhook",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/payments/paypal-webhook/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree webhook route.ts enumeration"
+  },
+  {
+    "id": "webhook:payments:square-webhook",
+    "name": "payments/square-webhook",
+    "type": "webhook",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/payments/square-webhook/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree webhook route.ts enumeration"
+  },
+  {
+    "id": "webhook:payments:stripe-webhook",
+    "name": "payments/stripe-webhook",
+    "type": "webhook",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/payments/stripe-webhook/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree webhook route.ts enumeration"
+  },
+  {
+    "id": "webhook:payments:webhook",
+    "name": "payments/webhook",
+    "type": "webhook",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/payments/webhook/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree webhook route.ts enumeration"
+  },
+  {
+    "id": "webhook:webhook:meta-cloud",
+    "name": "webhook/meta-cloud",
+    "type": "webhook",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/webhook/meta-cloud/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree webhook route.ts enumeration"
+  },
+  {
+    "id": "webhook:webhooks:flutterwave",
+    "name": "webhooks/flutterwave",
+    "type": "webhook",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/webhooks/flutterwave/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree webhook route.ts enumeration"
+  },
+  {
+    "id": "webhook:webhooks:paystack-transfer",
+    "name": "webhooks/paystack-transfer",
+    "type": "webhook",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/webhooks/paystack-transfer/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree webhook route.ts enumeration"
+  },
+  {
+    "id": "webhook:webhooks",
+    "name": "webhooks",
+    "type": "webhook",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/webhooks/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree webhook route.ts enumeration"
+  },
+  {
+    "id": "webhook:webhooks:stripe-transfer",
+    "name": "webhooks/stripe-transfer",
+    "type": "webhook",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/webhooks/stripe-transfer/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree webhook route.ts enumeration"
+  }
+]

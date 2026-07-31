@@ -1,0 +1,72 @@
+[
+  {
+    "id": "disc:cap-count",
+    "description": "CLAUDE.md says '24 capability types' but CapabilityId has 31 members. The named list in CLAUDE.md contains 25 names. Six names absent from the list: table_reservation, estimates, packages, class_booking, multi_location, waiver.",
+    "claude_md_value": "24 (heading) / 25 (named list)",
+    "repository_value": 31,
+    "evidence": "lib/capabilities/types.ts CapabilityId union",
+    "risk": "low — documentation lag",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "confidence": "high"
+  },
+  {
+    "id": "disc:dashboard-count",
+    "description": "CLAUDE.md says '59 protected business dashboard pages'",
+    "claude_md_value": 59,
+    "repository_value": 92,
+    "evidence": "git ls-tree page.tsx under app/dashboard/",
+    "risk": "low",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "confidence": "high"
+  },
+  {
+    "id": "disc:api-count",
+    "description": "CLAUDE.md says '149 API routes'",
+    "claude_md_value": 149,
+    "repository_value": 245,
+    "evidence": "git ls-tree route.ts under app/api/",
+    "risk": "low",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "confidence": "high"
+  },
+  {
+    "id": "disc:admin-count",
+    "description": "CLAUDE.md says '43 admin pages'",
+    "claude_md_value": 43,
+    "repository_value": 51,
+    "evidence": "git ls-tree under admin/src/pages/",
+    "risk": "low",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "confidence": "high"
+  },
+  {
+    "id": "disc:flow-count",
+    "description": "CLAUDE.md says '17 flow files' but 18 exist",
+    "claude_md_value": 17,
+    "repository_value": 18,
+    "evidence": "rsvp.flow.ts present but unlisted",
+    "risk": "low",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "confidence": "high"
+  },
+  {
+    "id": "disc:migration-count",
+    "description": "CLAUDE.md says '126+ migrations'",
+    "claude_md_value": "126+",
+    "repository_value": 242,
+    "evidence": "git ls-tree supabase/migrations/",
+    "risk": "low",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "confidence": "high"
+  },
+  {
+    "id": "disc:provider-count",
+    "description": "CLAUDE.md lists 4 payment providers (Paystack, Stripe, Flutterwave, Square) but PayPal adapter exists",
+    "claude_md_value": 4,
+    "repository_value": 5,
+    "evidence": "lib/payments/paypal.ts + factory.ts registration",
+    "risk": "medium — PayPal may be undocumented but structurally present",
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "confidence": "high"
+  }
+]

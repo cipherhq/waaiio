@@ -1,0 +1,3922 @@
+[
+  {
+    "id": "route:account:audit",
+    "name": "account/audit",
+    "type": "route",
+    "domain": "account",
+    "paths": [
+      "app/api/account/audit/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:account:consent",
+    "name": "account/consent",
+    "type": "route",
+    "domain": "account",
+    "paths": [
+      "app/api/account/consent/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:account:export",
+    "name": "account/export",
+    "type": "route",
+    "domain": "account",
+    "paths": [
+      "app/api/account/export/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:account",
+    "name": "account",
+    "type": "route",
+    "domain": "account",
+    "paths": [
+      "app/api/account/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:businesses:[id]:capabilities",
+    "name": "admin/businesses/[id]/capabilities",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/businesses/[id]/capabilities/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:customers",
+    "name": "admin/customers",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/customers/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:impersonate:end",
+    "name": "admin/impersonate/end",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/impersonate/end/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:impersonate",
+    "name": "admin/impersonate",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/impersonate/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:impersonate:validate",
+    "name": "admin/impersonate/validate",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/impersonate/validate/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:otp",
+    "name": "admin/otp",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/otp/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:payments:refund",
+    "name": "admin/payments/refund",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/payments/refund/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:payouts:[id]:approve",
+    "name": "admin/payouts/[id]/approve",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/payouts/[id]/approve/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:payouts:[id]:reject",
+    "name": "admin/payouts/[id]/reject",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/payouts/[id]/reject/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:payouts:generate",
+    "name": "admin/payouts/generate",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/payouts/generate/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:payouts",
+    "name": "admin/payouts",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/payouts/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:provision-templates",
+    "name": "admin/provision-templates",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/provision-templates/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:query",
+    "name": "admin/query",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/query/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:reseller-payouts:[id]",
+    "name": "admin/reseller-payouts/[id]",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/reseller-payouts/[id]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:reseller-payouts",
+    "name": "admin/reseller-payouts",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/reseller-payouts/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:admin:template-status",
+    "name": "admin/template-status",
+    "type": "route",
+    "domain": "admin",
+    "paths": [
+      "app/api/admin/template-status/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:ai-setup:apply",
+    "name": "ai-setup/apply",
+    "type": "route",
+    "domain": "ai-setup",
+    "paths": [
+      "app/api/ai-setup/apply/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:ai-setup:chat",
+    "name": "ai-setup/chat",
+    "type": "route",
+    "domain": "ai-setup",
+    "paths": [
+      "app/api/ai-setup/chat/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:ai-setup:parse-image",
+    "name": "ai-setup/parse-image",
+    "type": "route",
+    "domain": "ai-setup",
+    "paths": [
+      "app/api/ai-setup/parse-image/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:auth:email-otp",
+    "name": "auth/email-otp",
+    "type": "route",
+    "domain": "auth",
+    "paths": [
+      "app/api/auth/email-otp/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:auth:facebook:callback",
+    "name": "auth/facebook/callback",
+    "type": "route",
+    "domain": "auth",
+    "paths": [
+      "app/api/auth/facebook/callback/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:auth:facebook:discover",
+    "name": "auth/facebook/discover",
+    "type": "route",
+    "domain": "auth",
+    "paths": [
+      "app/api/auth/facebook/discover/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:auth:otp:send",
+    "name": "auth/otp/send",
+    "type": "route",
+    "domain": "auth",
+    "paths": [
+      "app/api/auth/otp/send/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:auth:otp:verify",
+    "name": "auth/otp/verify",
+    "type": "route",
+    "domain": "auth",
+    "paths": [
+      "app/api/auth/otp/verify/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:auth:profile",
+    "name": "auth/profile",
+    "type": "route",
+    "domain": "auth",
+    "paths": [
+      "app/api/auth/profile/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:auth:session-bind",
+    "name": "auth/session-bind",
+    "type": "route",
+    "domain": "auth",
+    "paths": [
+      "app/api/auth/session-bind/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:bookings:[id]:reschedule",
+    "name": "bookings/[id]/reschedule",
+    "type": "route",
+    "domain": "bookings",
+    "paths": [
+      "app/api/bookings/[id]/reschedule/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:bookings:[id]:status",
+    "name": "bookings/[id]/status",
+    "type": "route",
+    "domain": "bookings",
+    "paths": [
+      "app/api/bookings/[id]/status/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:bookings:create-manual",
+    "name": "bookings/create-manual",
+    "type": "route",
+    "domain": "bookings",
+    "paths": [
+      "app/api/bookings/create-manual/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:bookings:notify-staff-cancel",
+    "name": "bookings/notify-staff-cancel",
+    "type": "route",
+    "domain": "bookings",
+    "paths": [
+      "app/api/bookings/notify-staff-cancel/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:bookings:public:[slug]",
+    "name": "bookings/public/[slug]",
+    "type": "route",
+    "domain": "bookings",
+    "paths": [
+      "app/api/bookings/public/[slug]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:bookings:public:create",
+    "name": "bookings/public/create",
+    "type": "route",
+    "domain": "bookings",
+    "paths": [
+      "app/api/bookings/public/create/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:bookings:public:slots",
+    "name": "bookings/public/slots",
+    "type": "route",
+    "domain": "bookings",
+    "paths": [
+      "app/api/bookings/public/slots/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:bookings:request-balance",
+    "name": "bookings/request-balance",
+    "type": "route",
+    "domain": "bookings",
+    "paths": [
+      "app/api/bookings/request-balance/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:broadcasts:schedule",
+    "name": "broadcasts/schedule",
+    "type": "route",
+    "domain": "broadcasts",
+    "paths": [
+      "app/api/broadcasts/schedule/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:broadcasts:send",
+    "name": "broadcasts/send",
+    "type": "route",
+    "domain": "broadcasts",
+    "paths": [
+      "app/api/broadcasts/send/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:broadcasts:usage",
+    "name": "broadcasts/usage",
+    "type": "route",
+    "domain": "broadcasts",
+    "paths": [
+      "app/api/broadcasts/usage/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:business:upload-logo",
+    "name": "business/upload-logo",
+    "type": "route",
+    "domain": "business",
+    "paths": [
+      "app/api/business/upload-logo/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:calendar:[code]",
+    "name": "calendar/[code]",
+    "type": "route",
+    "domain": "calendar",
+    "paths": [
+      "app/api/calendar/[code]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:catalog:sync",
+    "name": "catalog/sync",
+    "type": "route",
+    "domain": "catalog",
+    "paths": [
+      "app/api/catalog/sync/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:channels:request",
+    "name": "channels/request",
+    "type": "route",
+    "domain": "channels",
+    "paths": [
+      "app/api/channels/request/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:chat:assign",
+    "name": "chat/assign",
+    "type": "route",
+    "domain": "chat",
+    "paths": [
+      "app/api/chat/assign/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:chat:canned-responses",
+    "name": "chat/canned-responses",
+    "type": "route",
+    "domain": "chat",
+    "paths": [
+      "app/api/chat/canned-responses/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:chat:list",
+    "name": "chat/list",
+    "type": "route",
+    "domain": "chat",
+    "paths": [
+      "app/api/chat/list/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:chat:reopen",
+    "name": "chat/reopen",
+    "type": "route",
+    "domain": "chat",
+    "paths": [
+      "app/api/chat/reopen/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:chat:resolve",
+    "name": "chat/resolve",
+    "type": "route",
+    "domain": "chat",
+    "paths": [
+      "app/api/chat/resolve/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:chat:send",
+    "name": "chat/send",
+    "type": "route",
+    "domain": "chat",
+    "paths": [
+      "app/api/chat/send/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:chat:upload-audio",
+    "name": "chat/upload-audio",
+    "type": "route",
+    "domain": "chat",
+    "paths": [
+      "app/api/chat/upload-audio/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:checkin",
+    "name": "checkin",
+    "type": "route",
+    "domain": "checkin",
+    "paths": [
+      "app/api/checkin/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contact",
+    "name": "contact",
+    "type": "route",
+    "domain": "contact",
+    "paths": [
+      "app/api/contact/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:[token]",
+    "name": "contracts/[token]",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/[token]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:bulk-send",
+    "name": "contracts/bulk-send",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/bulk-send/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:decline",
+    "name": "contracts/decline",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/decline/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:document:[id]",
+    "name": "contracts/document/[id]",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/document/[id]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:otp:send",
+    "name": "contracts/otp/send",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/otp/send/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:otp:verify",
+    "name": "contracts/otp/verify",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/otp/verify/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:pdf:[id]",
+    "name": "contracts/pdf/[id]",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/pdf/[id]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:resend",
+    "name": "contracts/resend",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/resend/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:revoke",
+    "name": "contracts/revoke",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/revoke/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:send",
+    "name": "contracts/send",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/send/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:submit",
+    "name": "contracts/submit",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/submit/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:templates",
+    "name": "contracts/templates",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/templates/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:update",
+    "name": "contracts/update",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/update/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:contracts:upload",
+    "name": "contracts/upload",
+    "type": "route",
+    "domain": "contracts",
+    "paths": [
+      "app/api/contracts/upload/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:copilot:query",
+    "name": "copilot/query",
+    "type": "route",
+    "domain": "copilot",
+    "paths": [
+      "app/api/copilot/query/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:auto-payout",
+    "name": "cron/auto-payout",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/auto-payout/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:backup",
+    "name": "cron/backup",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/backup/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:balance-reminder",
+    "name": "cron/balance-reminder",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/balance-reminder/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:business-health",
+    "name": "cron/business-health",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/business-health/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:catalog-sync",
+    "name": "cron/catalog-sync",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/catalog-sync/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:cleanup-sessions",
+    "name": "cron/cleanup-sessions",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/cleanup-sessions/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:cleanup",
+    "name": "cron/cleanup",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/cleanup/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:customer-intelligence",
+    "name": "cron/customer-intelligence",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/customer-intelligence/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:data-retention",
+    "name": "cron/data-retention",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/data-retention/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:expire-transfers",
+    "name": "cron/expire-transfers",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/expire-transfers/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:low-stock-alerts",
+    "name": "cron/low-stock-alerts",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/low-stock-alerts/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:payment-reconciliation",
+    "name": "cron/payment-reconciliation",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/payment-reconciliation/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:payout-nudge",
+    "name": "cron/payout-nudge",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/payout-nudge/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:platform-fee-invoices",
+    "name": "cron/platform-fee-invoices",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/platform-fee-invoices/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:platform-fee-overdue",
+    "name": "cron/platform-fee-overdue",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/platform-fee-overdue/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:quote-expiry",
+    "name": "cron/quote-expiry",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/quote-expiry/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:recover-reservations",
+    "name": "cron/recover-reservations",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/recover-reservations/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:recurring-invoices",
+    "name": "cron/recurring-invoices",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/recurring-invoices/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:refresh-meta-tokens",
+    "name": "cron/refresh-meta-tokens",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/refresh-meta-tokens/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:reminders",
+    "name": "cron/reminders",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/reminders/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:reseller-invoice-generation",
+    "name": "cron/reseller-invoice-generation",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/reseller-invoice-generation/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:reseller-reconciliation",
+    "name": "cron/reseller-reconciliation",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/reseller-reconciliation/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:retry-failed-charges",
+    "name": "cron/retry-failed-charges",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/retry-failed-charges/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:scheduled-broadcasts",
+    "name": "cron/scheduled-broadcasts",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/scheduled-broadcasts/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:subscription-expiry",
+    "name": "cron/subscription-expiry",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/subscription-expiry/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:subscription-reminders",
+    "name": "cron/subscription-reminders",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/subscription-reminders/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:cron:trial-check",
+    "name": "cron/trial-check",
+    "type": "route",
+    "domain": "cron",
+    "paths": [
+      "app/api/cron/trial-check/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:customers:delete",
+    "name": "customers/delete",
+    "type": "route",
+    "domain": "customers",
+    "paths": [
+      "app/api/customers/delete/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:customers:import",
+    "name": "customers/import",
+    "type": "route",
+    "domain": "customers",
+    "paths": [
+      "app/api/customers/import/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:dashboard:alerts",
+    "name": "dashboard/alerts",
+    "type": "route",
+    "domain": "dashboard",
+    "paths": [
+      "app/api/dashboard/alerts/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:dashboard:bank-account",
+    "name": "dashboard/bank-account",
+    "type": "route",
+    "domain": "dashboard",
+    "paths": [
+      "app/api/dashboard/bank-account/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:dashboard:pending-transfers:[id]",
+    "name": "dashboard/pending-transfers/[id]",
+    "type": "route",
+    "domain": "dashboard",
+    "paths": [
+      "app/api/dashboard/pending-transfers/[id]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:dashboard:pending-transfers",
+    "name": "dashboard/pending-transfers",
+    "type": "route",
+    "domain": "dashboard",
+    "paths": [
+      "app/api/dashboard/pending-transfers/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:dashboard:recommendations",
+    "name": "dashboard/recommendations",
+    "type": "route",
+    "domain": "dashboard",
+    "paths": [
+      "app/api/dashboard/recommendations/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:dashboard:switch-business",
+    "name": "dashboard/switch-business",
+    "type": "route",
+    "domain": "dashboard",
+    "paths": [
+      "app/api/dashboard/switch-business/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:demo-request",
+    "name": "demo-request",
+    "type": "route",
+    "domain": "demo-request",
+    "paths": [
+      "app/api/demo-request/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:demo:chat",
+    "name": "demo/chat",
+    "type": "route",
+    "domain": "demo",
+    "paths": [
+      "app/api/demo/chat/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:directory",
+    "name": "directory",
+    "type": "route",
+    "domain": "directory",
+    "paths": [
+      "app/api/directory/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:email:send",
+    "name": "email/send",
+    "type": "route",
+    "domain": "email",
+    "paths": [
+      "app/api/email/send/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:events:cancel",
+    "name": "events/cancel",
+    "type": "route",
+    "domain": "events",
+    "paths": [
+      "app/api/events/cancel/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:events:invite",
+    "name": "events/invite",
+    "type": "route",
+    "domain": "events",
+    "paths": [
+      "app/api/events/invite/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:events:public:[slug]",
+    "name": "events/public/[slug]",
+    "type": "route",
+    "domain": "events",
+    "paths": [
+      "app/api/events/public/[slug]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:events:purchase",
+    "name": "events/purchase",
+    "type": "route",
+    "domain": "events",
+    "paths": [
+      "app/api/events/purchase/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:faq",
+    "name": "faq",
+    "type": "route",
+    "domain": "faq",
+    "paths": [
+      "app/api/faq/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:forms:public:[token]",
+    "name": "forms/public/[token]",
+    "type": "route",
+    "domain": "forms",
+    "paths": [
+      "app/api/forms/public/[token]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:forms:send",
+    "name": "forms/send",
+    "type": "route",
+    "domain": "forms",
+    "paths": [
+      "app/api/forms/send/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:forms:submit",
+    "name": "forms/submit",
+    "type": "route",
+    "domain": "forms",
+    "paths": [
+      "app/api/forms/submit/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:health",
+    "name": "health",
+    "type": "route",
+    "domain": "health",
+    "paths": [
+      "app/api/health/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:images:convert",
+    "name": "images/convert",
+    "type": "route",
+    "domain": "images",
+    "paths": [
+      "app/api/images/convert/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:integrations:api-keys:[id]",
+    "name": "integrations/api-keys/[id]",
+    "type": "route",
+    "domain": "integrations",
+    "paths": [
+      "app/api/integrations/api-keys/[id]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:integrations:api-keys",
+    "name": "integrations/api-keys",
+    "type": "route",
+    "domain": "integrations",
+    "paths": [
+      "app/api/integrations/api-keys/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:integrations:external-booking",
+    "name": "integrations/external-booking",
+    "type": "route",
+    "domain": "integrations",
+    "paths": [
+      "app/api/integrations/external-booking/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:integrations:google-calendar:callback",
+    "name": "integrations/google-calendar/callback",
+    "type": "route",
+    "domain": "integrations",
+    "paths": [
+      "app/api/integrations/google-calendar/callback/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:integrations:google-calendar",
+    "name": "integrations/google-calendar",
+    "type": "route",
+    "domain": "integrations",
+    "paths": [
+      "app/api/integrations/google-calendar/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:invite-details:[id]",
+    "name": "invite-details/[id]",
+    "type": "route",
+    "domain": "invite-details",
+    "paths": [
+      "app/api/invite-details/[id]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:invite-optin",
+    "name": "invite-optin",
+    "type": "route",
+    "domain": "invite-optin",
+    "paths": [
+      "app/api/invite-optin/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:invoices:[id]:mark-paid",
+    "name": "invoices/[id]/mark-paid",
+    "type": "route",
+    "domain": "invoices",
+    "paths": [
+      "app/api/invoices/[id]/mark-paid/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:invoices:[id]",
+    "name": "invoices/[id]",
+    "type": "route",
+    "domain": "invoices",
+    "paths": [
+      "app/api/invoices/[id]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:invoices:pay",
+    "name": "invoices/pay",
+    "type": "route",
+    "domain": "invoices",
+    "paths": [
+      "app/api/invoices/pay/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:invoices:pdf:[id]",
+    "name": "invoices/pdf/[id]",
+    "type": "route",
+    "domain": "invoices",
+    "paths": [
+      "app/api/invoices/pdf/[id]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:invoices:public:[token]",
+    "name": "invoices/public/[token]",
+    "type": "route",
+    "domain": "invoices",
+    "paths": [
+      "app/api/invoices/public/[token]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:invoices",
+    "name": "invoices",
+    "type": "route",
+    "domain": "invoices",
+    "paths": [
+      "app/api/invoices/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:invoices:send",
+    "name": "invoices/send",
+    "type": "route",
+    "domain": "invoices",
+    "paths": [
+      "app/api/invoices/send/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:keyword-campaigns:[id]:responses",
+    "name": "keyword-campaigns/[id]/responses",
+    "type": "route",
+    "domain": "keyword-campaigns",
+    "paths": [
+      "app/api/keyword-campaigns/[id]/responses/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:keyword-campaigns:[id]",
+    "name": "keyword-campaigns/[id]",
+    "type": "route",
+    "domain": "keyword-campaigns",
+    "paths": [
+      "app/api/keyword-campaigns/[id]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:keyword-campaigns",
+    "name": "keyword-campaigns",
+    "type": "route",
+    "domain": "keyword-campaigns",
+    "paths": [
+      "app/api/keyword-campaigns/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:locations",
+    "name": "locations",
+    "type": "route",
+    "domain": "locations",
+    "paths": [
+      "app/api/locations/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:loyalty:redeem",
+    "name": "loyalty/redeem",
+    "type": "route",
+    "domain": "loyalty",
+    "paths": [
+      "app/api/loyalty/redeem/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:onboarding:check-name",
+    "name": "onboarding/check-name",
+    "type": "route",
+    "domain": "onboarding",
+    "paths": [
+      "app/api/onboarding/check-name/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:onboarding:register",
+    "name": "onboarding/register",
+    "type": "route",
+    "domain": "onboarding",
+    "paths": [
+      "app/api/onboarding/register/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:onboarding:subscribe",
+    "name": "onboarding/subscribe",
+    "type": "route",
+    "domain": "onboarding",
+    "paths": [
+      "app/api/onboarding/subscribe/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:onboarding:verify",
+    "name": "onboarding/verify",
+    "type": "route",
+    "domain": "onboarding",
+    "paths": [
+      "app/api/onboarding/verify/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:orders:bulk-update-status",
+    "name": "orders/bulk-update-status",
+    "type": "route",
+    "domain": "orders",
+    "paths": [
+      "app/api/orders/bulk-update-status/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:orders:quote-accept",
+    "name": "orders/quote-accept",
+    "type": "route",
+    "domain": "orders",
+    "paths": [
+      "app/api/orders/quote-accept/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:orders:quote-reject",
+    "name": "orders/quote-reject",
+    "type": "route",
+    "domain": "orders",
+    "paths": [
+      "app/api/orders/quote-reject/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:orders:quote-respond",
+    "name": "orders/quote-respond",
+    "type": "route",
+    "domain": "orders",
+    "paths": [
+      "app/api/orders/quote-respond/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:orders:request-balance",
+    "name": "orders/request-balance",
+    "type": "route",
+    "domain": "orders",
+    "paths": [
+      "app/api/orders/request-balance/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:orders:tracking",
+    "name": "orders/tracking",
+    "type": "route",
+    "domain": "orders",
+    "paths": [
+      "app/api/orders/tracking/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:orders:update-status",
+    "name": "orders/update-status",
+    "type": "route",
+    "domain": "orders",
+    "paths": [
+      "app/api/orders/update-status/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:packages:enroll",
+    "name": "packages/enroll",
+    "type": "route",
+    "domain": "packages",
+    "paths": [
+      "app/api/packages/enroll/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:packages",
+    "name": "packages",
+    "type": "route",
+    "domain": "packages",
+    "paths": [
+      "app/api/packages/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:partner:events:[eventId]:attendees",
+    "name": "partner/events/[eventId]/attendees",
+    "type": "route",
+    "domain": "partner",
+    "paths": [
+      "app/api/partner/events/[eventId]/attendees/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:partner:events:[eventId]:checkin",
+    "name": "partner/events/[eventId]/checkin",
+    "type": "route",
+    "domain": "partner",
+    "paths": [
+      "app/api/partner/events/[eventId]/checkin/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:partner:events:[eventId]",
+    "name": "partner/events/[eventId]",
+    "type": "route",
+    "domain": "partner",
+    "paths": [
+      "app/api/partner/events/[eventId]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:partner:events",
+    "name": "partner/events",
+    "type": "route",
+    "domain": "partner",
+    "paths": [
+      "app/api/partner/events/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:pay-link:[token]",
+    "name": "pay-link/[token]",
+    "type": "route",
+    "domain": "pay-link",
+    "paths": [
+      "app/api/pay-link/[token]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:pay-link:manage",
+    "name": "pay-link/manage",
+    "type": "route",
+    "domain": "pay-link",
+    "paths": [
+      "app/api/pay-link/manage/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:pay-link:pay",
+    "name": "pay-link/pay",
+    "type": "route",
+    "domain": "pay-link",
+    "paths": [
+      "app/api/pay-link/pay/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:pay",
+    "name": "pay",
+    "type": "route",
+    "domain": "pay",
+    "paths": [
+      "app/api/pay/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payment-request:send",
+    "name": "payment-request/send",
+    "type": "route",
+    "domain": "payment-request",
+    "paths": [
+      "app/api/payment-request/send/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payments:byo-webhook:[businessId]",
+    "name": "payments/byo-webhook/[businessId]",
+    "type": "route",
+    "domain": "payments",
+    "paths": [
+      "app/api/payments/byo-webhook/[businessId]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payments:paypal-webhook",
+    "name": "payments/paypal-webhook",
+    "type": "route",
+    "domain": "payments",
+    "paths": [
+      "app/api/payments/paypal-webhook/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payments:refund",
+    "name": "payments/refund",
+    "type": "route",
+    "domain": "payments",
+    "paths": [
+      "app/api/payments/refund/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payments:square-callback",
+    "name": "payments/square-callback",
+    "type": "route",
+    "domain": "payments",
+    "paths": [
+      "app/api/payments/square-callback/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payments:square-webhook",
+    "name": "payments/square-webhook",
+    "type": "route",
+    "domain": "payments",
+    "paths": [
+      "app/api/payments/square-webhook/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payments:stripe-webhook",
+    "name": "payments/stripe-webhook",
+    "type": "route",
+    "domain": "payments",
+    "paths": [
+      "app/api/payments/stripe-webhook/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payments:webhook",
+    "name": "payments/webhook",
+    "type": "route",
+    "domain": "payments",
+    "paths": [
+      "app/api/payments/webhook/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payouts:accept-terms",
+    "name": "payouts/accept-terms",
+    "type": "route",
+    "domain": "payouts",
+    "paths": [
+      "app/api/payouts/accept-terms/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payouts:balance",
+    "name": "payouts/balance",
+    "type": "route",
+    "domain": "payouts",
+    "paths": [
+      "app/api/payouts/balance/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payouts:banks",
+    "name": "payouts/banks",
+    "type": "route",
+    "domain": "payouts",
+    "paths": [
+      "app/api/payouts/banks/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payouts:history",
+    "name": "payouts/history",
+    "type": "route",
+    "domain": "payouts",
+    "paths": [
+      "app/api/payouts/history/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payouts:resolve",
+    "name": "payouts/resolve",
+    "type": "route",
+    "domain": "payouts",
+    "paths": [
+      "app/api/payouts/resolve/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payouts:setup",
+    "name": "payouts/setup",
+    "type": "route",
+    "domain": "payouts",
+    "paths": [
+      "app/api/payouts/setup/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payouts:square-callback",
+    "name": "payouts/square-callback",
+    "type": "route",
+    "domain": "payouts",
+    "paths": [
+      "app/api/payouts/square-callback/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payouts:square-connect",
+    "name": "payouts/square-connect",
+    "type": "route",
+    "domain": "payouts",
+    "paths": [
+      "app/api/payouts/square-connect/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payouts:stripe-callback",
+    "name": "payouts/stripe-callback",
+    "type": "route",
+    "domain": "payouts",
+    "paths": [
+      "app/api/payouts/stripe-callback/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:payouts:stripe-connect",
+    "name": "payouts/stripe-connect",
+    "type": "route",
+    "domain": "payouts",
+    "paths": [
+      "app/api/payouts/stripe-connect/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:polls:[id]:results",
+    "name": "polls/[id]/results",
+    "type": "route",
+    "domain": "polls",
+    "paths": [
+      "app/api/polls/[id]/results/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:polls:[id]",
+    "name": "polls/[id]",
+    "type": "route",
+    "domain": "polls",
+    "paths": [
+      "app/api/polls/[id]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:polls:[id]:send",
+    "name": "polls/[id]/send",
+    "type": "route",
+    "domain": "polls",
+    "paths": [
+      "app/api/polls/[id]/send/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:polls",
+    "name": "polls",
+    "type": "route",
+    "domain": "polls",
+    "paths": [
+      "app/api/polls/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:products:bulk",
+    "name": "products/bulk",
+    "type": "route",
+    "domain": "products",
+    "paths": [
+      "app/api/products/bulk/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:products:upload-image",
+    "name": "products/upload-image",
+    "type": "route",
+    "domain": "products",
+    "paths": [
+      "app/api/products/upload-image/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:promo-codes",
+    "name": "promo-codes",
+    "type": "route",
+    "domain": "promo-codes",
+    "paths": [
+      "app/api/promo-codes/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:queue:call-next",
+    "name": "queue/call-next",
+    "type": "route",
+    "domain": "queue",
+    "paths": [
+      "app/api/queue/call-next/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:queue:update",
+    "name": "queue/update",
+    "type": "route",
+    "domain": "queue",
+    "paths": [
+      "app/api/queue/update/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:receipts:generate",
+    "name": "receipts/generate",
+    "type": "route",
+    "domain": "receipts",
+    "paths": [
+      "app/api/receipts/generate/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:recurring:cancel",
+    "name": "recurring/cancel",
+    "type": "route",
+    "domain": "recurring",
+    "paths": [
+      "app/api/recurring/cancel/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:recurring:manage",
+    "name": "recurring/manage",
+    "type": "route",
+    "domain": "recurring",
+    "paths": [
+      "app/api/recurring/manage/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:recurring:setup",
+    "name": "recurring/setup",
+    "type": "route",
+    "domain": "recurring",
+    "paths": [
+      "app/api/recurring/setup/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:recurring:verify",
+    "name": "recurring/verify",
+    "type": "route",
+    "domain": "recurring",
+    "paths": [
+      "app/api/recurring/verify/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:referrals:validate",
+    "name": "referrals/validate",
+    "type": "route",
+    "domain": "referrals",
+    "paths": [
+      "app/api/referrals/validate/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reports:delete",
+    "name": "reports/delete",
+    "type": "route",
+    "domain": "reports",
+    "paths": [
+      "app/api/reports/delete/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reports:send",
+    "name": "reports/send",
+    "type": "route",
+    "domain": "reports",
+    "paths": [
+      "app/api/reports/send/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reports:upload",
+    "name": "reports/upload",
+    "type": "route",
+    "domain": "reports",
+    "paths": [
+      "app/api/reports/upload/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reports:verify-access",
+    "name": "reports/verify-access",
+    "type": "route",
+    "domain": "reports",
+    "paths": [
+      "app/api/reports/verify-access/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reseller:accounts:[id]",
+    "name": "reseller/accounts/[id]",
+    "type": "route",
+    "domain": "reseller",
+    "paths": [
+      "app/api/reseller/accounts/[id]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reseller:accounts",
+    "name": "reseller/accounts",
+    "type": "route",
+    "domain": "reseller",
+    "paths": [
+      "app/api/reseller/accounts/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reseller:analytics",
+    "name": "reseller/analytics",
+    "type": "route",
+    "domain": "reseller",
+    "paths": [
+      "app/api/reseller/analytics/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reseller:branding",
+    "name": "reseller/branding",
+    "type": "route",
+    "domain": "reseller",
+    "paths": [
+      "app/api/reseller/branding/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reseller:commissions",
+    "name": "reseller/commissions",
+    "type": "route",
+    "domain": "reseller",
+    "paths": [
+      "app/api/reseller/commissions/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reseller:invite",
+    "name": "reseller/invite",
+    "type": "route",
+    "domain": "reseller",
+    "paths": [
+      "app/api/reseller/invite/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reseller:invoices",
+    "name": "reseller/invoices",
+    "type": "route",
+    "domain": "reseller",
+    "paths": [
+      "app/api/reseller/invoices/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reseller:payouts",
+    "name": "reseller/payouts",
+    "type": "route",
+    "domain": "reseller",
+    "paths": [
+      "app/api/reseller/payouts/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reseller",
+    "name": "reseller",
+    "type": "route",
+    "domain": "reseller",
+    "paths": [
+      "app/api/reseller/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reseller:setup",
+    "name": "reseller/setup",
+    "type": "route",
+    "domain": "reseller",
+    "paths": [
+      "app/api/reseller/setup/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reseller:stats",
+    "name": "reseller/stats",
+    "type": "route",
+    "domain": "reseller",
+    "paths": [
+      "app/api/reseller/stats/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reseller:subscription",
+    "name": "reseller/subscription",
+    "type": "route",
+    "domain": "reseller",
+    "paths": [
+      "app/api/reseller/subscription/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reservations:notify-checkin",
+    "name": "reservations/notify-checkin",
+    "type": "route",
+    "domain": "reservations",
+    "paths": [
+      "app/api/reservations/notify-checkin/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:reservations:verify:[code]",
+    "name": "reservations/verify/[code]",
+    "type": "route",
+    "domain": "reservations",
+    "paths": [
+      "app/api/reservations/verify/[code]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:rsvp:[token]",
+    "name": "rsvp/[token]",
+    "type": "route",
+    "domain": "rsvp",
+    "paths": [
+      "app/api/rsvp/[token]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:services:upload-image",
+    "name": "services/upload-image",
+    "type": "route",
+    "domain": "services",
+    "paths": [
+      "app/api/services/upload-image/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:settings:payment-credentials",
+    "name": "settings/payment-credentials",
+    "type": "route",
+    "domain": "settings",
+    "paths": [
+      "app/api/settings/payment-credentials/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:settings:paystack-connect",
+    "name": "settings/paystack-connect",
+    "type": "route",
+    "domain": "settings",
+    "paths": [
+      "app/api/settings/paystack-connect/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:settings:whatsapp-channel",
+    "name": "settings/whatsapp-channel",
+    "type": "route",
+    "domain": "settings",
+    "paths": [
+      "app/api/settings/whatsapp-channel/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:staff",
+    "name": "staff",
+    "type": "route",
+    "domain": "staff",
+    "paths": [
+      "app/api/staff/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:staff:upload-photo",
+    "name": "staff/upload-photo",
+    "type": "route",
+    "domain": "staff",
+    "paths": [
+      "app/api/staff/upload-photo/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:subscriptions:cancel",
+    "name": "subscriptions/cancel",
+    "type": "route",
+    "domain": "subscriptions",
+    "paths": [
+      "app/api/subscriptions/cancel/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:surveys:[id]:responses",
+    "name": "surveys/[id]/responses",
+    "type": "route",
+    "domain": "surveys",
+    "paths": [
+      "app/api/surveys/[id]/responses/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:surveys:[id]",
+    "name": "surveys/[id]",
+    "type": "route",
+    "domain": "surveys",
+    "paths": [
+      "app/api/surveys/[id]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:surveys:[id]:send",
+    "name": "surveys/[id]/send",
+    "type": "route",
+    "domain": "surveys",
+    "paths": [
+      "app/api/surveys/[id]/send/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:surveys",
+    "name": "surveys",
+    "type": "route",
+    "domain": "surveys",
+    "paths": [
+      "app/api/surveys/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:team:accept",
+    "name": "team/accept",
+    "type": "route",
+    "domain": "team",
+    "paths": [
+      "app/api/team/accept/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:team",
+    "name": "team",
+    "type": "route",
+    "domain": "team",
+    "paths": [
+      "app/api/team/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:tickets:verify:[code]",
+    "name": "tickets/verify/[code]",
+    "type": "route",
+    "domain": "tickets",
+    "paths": [
+      "app/api/tickets/verify/[code]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:verification:request",
+    "name": "verification/request",
+    "type": "route",
+    "domain": "verification",
+    "paths": [
+      "app/api/verification/request/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:verification:review",
+    "name": "verification/review",
+    "type": "route",
+    "domain": "verification",
+    "paths": [
+      "app/api/verification/review/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:verification:upload",
+    "name": "verification/upload",
+    "type": "route",
+    "domain": "verification",
+    "paths": [
+      "app/api/verification/upload/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:waitlist:notify",
+    "name": "waitlist/notify",
+    "type": "route",
+    "domain": "waitlist",
+    "paths": [
+      "app/api/waitlist/notify/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:waivers:[token]",
+    "name": "waivers/[token]",
+    "type": "route",
+    "domain": "waivers",
+    "paths": [
+      "app/api/waivers/[token]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:waivers:sign",
+    "name": "waivers/sign",
+    "type": "route",
+    "domain": "waivers",
+    "paths": [
+      "app/api/waivers/sign/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:waivers:signed",
+    "name": "waivers/signed",
+    "type": "route",
+    "domain": "waivers",
+    "paths": [
+      "app/api/waivers/signed/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:waivers:templates:[id]",
+    "name": "waivers/templates/[id]",
+    "type": "route",
+    "domain": "waivers",
+    "paths": [
+      "app/api/waivers/templates/[id]/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:waivers:templates",
+    "name": "waivers/templates",
+    "type": "route",
+    "domain": "waivers",
+    "paths": [
+      "app/api/waivers/templates/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:webhook:meta-cloud",
+    "name": "webhook/meta-cloud",
+    "type": "route",
+    "domain": "webhook",
+    "paths": [
+      "app/api/webhook/meta-cloud/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:webhooks:flutterwave",
+    "name": "webhooks/flutterwave",
+    "type": "route",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/webhooks/flutterwave/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:webhooks:paystack-transfer",
+    "name": "webhooks/paystack-transfer",
+    "type": "route",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/webhooks/paystack-transfer/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:webhooks",
+    "name": "webhooks",
+    "type": "route",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/webhooks/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:webhooks:stripe-transfer",
+    "name": "webhooks/stripe-transfer",
+    "type": "route",
+    "domain": "webhooks",
+    "paths": [
+      "app/api/webhooks/stripe-transfer/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:whatsapp:add-number",
+    "name": "whatsapp/add-number",
+    "type": "route",
+    "domain": "whatsapp",
+    "paths": [
+      "app/api/whatsapp/add-number/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:whatsapp:embedded-signup",
+    "name": "whatsapp/embedded-signup",
+    "type": "route",
+    "domain": "whatsapp",
+    "paths": [
+      "app/api/whatsapp/embedded-signup/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:whatsapp:flow-callback",
+    "name": "whatsapp/flow-callback",
+    "type": "route",
+    "domain": "whatsapp",
+    "paths": [
+      "app/api/whatsapp/flow-callback/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:whatsapp:flow-data",
+    "name": "whatsapp/flow-data",
+    "type": "route",
+    "domain": "whatsapp",
+    "paths": [
+      "app/api/whatsapp/flow-data/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:whatsapp:templates:check",
+    "name": "whatsapp/templates/check",
+    "type": "route",
+    "domain": "whatsapp",
+    "paths": [
+      "app/api/whatsapp/templates/check/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:whatsapp:templates:provision",
+    "name": "whatsapp/templates/provision",
+    "type": "route",
+    "domain": "whatsapp",
+    "paths": [
+      "app/api/whatsapp/templates/provision/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  },
+  {
+    "id": "route:whatsapp:templates",
+    "name": "whatsapp/templates",
+    "type": "route",
+    "domain": "whatsapp",
+    "paths": [
+      "app/api/whatsapp/templates/route.ts"
+    ],
+    "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+    "structurally_present": true,
+    "confidence": "high",
+    "evidence_method": "git ls-tree route.ts enumeration",
+    "gate_types": [],
+    "related_capabilities": [],
+    "unresolved_questions": []
+  }
+]

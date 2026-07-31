@@ -1,0 +1,72 @@
+{
+  "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+  "platform_admin_roles": {
+    "type": "PlatformAdminRole",
+    "values": [
+      "admin",
+      "support",
+      "finance",
+      "operations"
+    ],
+    "paths": [
+      "lib/admin-auth.ts",
+      "admin/src/lib/adminAuth.ts"
+    ],
+    "auth_source": "app_metadata.role",
+    "full_admin": "admin only"
+  },
+  "business_roles": {
+    "type": "business_role (PostgreSQL enum)",
+    "values": [
+      "owner",
+      "admin",
+      "manager",
+      "staff",
+      "finance",
+      "support"
+    ],
+    "origin_migration": "supabase/migrations/099_business_members.sql",
+    "table": "business_members",
+    "helper_function": "check_business_role (SECURITY DEFINER RPC)",
+    "owner_bypass": true,
+    "unresolved_questions": [
+      "Check if later migrations altered the business_role enum"
+    ]
+  },
+  "authorization_helpers": [
+    {
+      "name": "authenticateRequest",
+      "path": "lib/api-auth.ts",
+      "scope": "Next.js API routes",
+      "checks": "cookie session + optional business ownership"
+    },
+    {
+      "name": "requirePlatformAdmin",
+      "path": "lib/admin-auth.ts",
+      "scope": "platform admin API routes",
+      "checks": "Bearer token or cookie session + app_metadata.role"
+    },
+    {
+      "name": "requireAdminSession",
+      "path": "admin/src/lib/adminAuth.ts",
+      "scope": "admin panel browser",
+      "checks": "app_metadata.role"
+    },
+    {
+      "name": "createClient",
+      "path": "lib/supabase/client.ts",
+      "scope": "browser (respects RLS)"
+    },
+    {
+      "name": "createClient (server)",
+      "path": "lib/supabase/server.ts",
+      "scope": "SSR (reads cookies, respects RLS)"
+    },
+    {
+      "name": "createServiceClient",
+      "path": "lib/supabase/service.ts",
+      "scope": "admin/cron (bypasses RLS)"
+    }
+  ],
+  "confidence": "high"
+}

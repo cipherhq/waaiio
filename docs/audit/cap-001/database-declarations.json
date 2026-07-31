@@ -1,0 +1,36 @@
+{
+  "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+  "migration_file_count": 242,
+  "counting_rules": {
+    "method": "regex scanning of CREATE/DROP statements across all migration SQL files",
+    "limitation": "raw declaration counts; does not account for cumulative drops, replacements, or renames without a local schema build",
+    "confidence": "medium — creation counts are accurate, final live-object counts require local Supabase build"
+  },
+  "tables": {
+    "raw_create_table_names": 139,
+    "raw_drop_table_names": 0,
+    "expected_final_tables": 139,
+    "dropped_table_names": [],
+    "confidence": "medium"
+  },
+  "rls_policies": {
+    "raw_create_policy_count": 471,
+    "note": "includes policies later dropped and replaced; final count requires cumulative analysis",
+    "confidence": "low"
+  },
+  "functions_rpcs": {
+    "raw_create_function_count": 83,
+    "note": "includes CREATE OR REPLACE which may be redefinitions; unique function count requires signature analysis",
+    "confidence": "low"
+  },
+  "triggers": {
+    "raw_create_trigger_count": 69,
+    "note": "includes triggers later dropped and recreated",
+    "confidence": "low"
+  },
+  "indexes": {
+    "raw_create_index_count": 385,
+    "note": "includes indexes later dropped; also IF NOT EXISTS may indicate idempotent reruns",
+    "confidence": "low"
+  }
+}

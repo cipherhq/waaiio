@@ -1,0 +1,135 @@
+{
+  "source_commit": "2e659dcd131ad06eb0b8f39adc8735bf337056ea",
+  "tier_type": "SubscriptionTier",
+  "tier_type_path": "lib/capabilities/types.ts",
+  "tiers": [
+    {
+      "id": "free",
+      "marketing_name": "Starter",
+      "code_name": "free"
+    },
+    {
+      "id": "growth",
+      "marketing_name": "Pro",
+      "code_name": "growth"
+    },
+    {
+      "id": "business",
+      "marketing_name": "Premium",
+      "code_name": "business"
+    }
+  ],
+  "pricing_sources": [
+    {
+      "name": "PRICING_TIERS",
+      "path": "lib/constants.ts",
+      "scope": "default (NG)",
+      "confidence": "high"
+    },
+    {
+      "name": "COUNTRY_PRICING",
+      "path": "lib/constants.ts",
+      "scope": "legacy multi-country",
+      "confidence": "high"
+    },
+    {
+      "name": "getPricingTiers(countryCode)",
+      "path": "lib/constants.ts",
+      "scope": "dynamic DB-backed per-country",
+      "confidence": "medium"
+    },
+    {
+      "name": "pricing page",
+      "path": "app/(marketing)/pricing/page.tsx",
+      "scope": "public display",
+      "confidence": "high"
+    }
+  ],
+  "platform_fee_rules": {
+    "path": "lib/constants.ts",
+    "tiers": {
+      "free": {
+        "fee_percentage": 2.5,
+        "fee_flat": 0
+      },
+      "growth": {
+        "fee_percentage": 1.5,
+        "fee_flat": 50
+      },
+      "business": {
+        "fee_percentage": 1.5,
+        "fee_flat": 75
+      }
+    },
+    "trial_override": "all fees = 0 during trial"
+  },
+  "trial_behavior": {
+    "TRIAL_DAYS": 30,
+    "path": "lib/constants.ts",
+    "implementation": "isInTrial checks business.trial_ends_at > now()",
+    "migration_default": "7 days (legacy migration default; overridden programmatically at signup)"
+  },
+  "usage_limits": {
+    "TIER_TRANSACTION_LIMITS": {
+      "path": "lib/constants.ts",
+      "free": {
+        "bookings": 50,
+        "orders": 50
+      },
+      "growth": {
+        "bookings": 300,
+        "orders": 500
+      },
+      "business": "unlimited"
+    },
+    "BROADCAST_LIMITS": {
+      "path": "lib/constants.ts",
+      "free": {
+        "max": 0
+      },
+      "growth": {
+        "max": 10,
+        "recipients": 500
+      },
+      "business": "unlimited"
+    },
+    "CONVERSATION_LIMITS": {
+      "path": "lib/constants.ts",
+      "free": 200,
+      "growth": 1000,
+      "business": 5000
+    }
+  },
+  "subscription_storage": {
+    "table": "subscriptions",
+    "key_columns": [
+      "plan",
+      "status",
+      "amount",
+      "currency",
+      "gateway",
+      "billing_interval",
+      "stripe_subscription_id",
+      "paystack_subscription_code"
+    ],
+    "business_column": "businesses.subscription_tier"
+  },
+  "admin_overrides": {
+    "table": "capability_overrides",
+    "api_route": "app/api/admin/businesses/[id]/capabilities/route.ts",
+    "mechanism": "per-capability grant/revoke with audit logging"
+  },
+  "upgrade_enforcement": {
+    "api_route": "app/api/subscriptions/cancel/route.ts",
+    "unresolved_questions": [
+      "No explicit upgrade API route found — upgrade may be handled by payment provider callbacks",
+      "Downgrade behavior unclear — does cancellation immediately drop to free or wait until period end?"
+    ]
+  },
+  "confidence": "medium",
+  "unresolved_questions": [
+    "Annual billing discount rules need deeper tracing (getAnnualDiscountSync)",
+    "Country-specific pricing from DB (countries table) not fully mapped",
+    "Subscription status enum values not fully enumerated from migrations"
+  ]
+}
