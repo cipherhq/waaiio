@@ -17,7 +17,7 @@ Machine-readable canonical ledger: [`docs/engineering-status.json`](./engineerin
 | FIN-001 | Financial and credential containment | `PRODUCTION_VERIFIED` | #44 | `d886c8d9` |
 | FIN-002 | Atomic payout execution and provider idempotency | `DEPLOYED` | #50 | `7556dec5` |
 | SEC-001 | Remove public access to sensitive platform tables | `PRODUCTION_VERIFIED` | #54 | `90b0f766` |
-| OPS-001 | Migration history alignment (Issue #53) | `IN_PROGRESS` | #56, #58, #59, #62, #63, #64, #65, #66, #67, #68, #69, #70, #71, #72, #73, #74, #75, #76, #77, #78, #79, #80 | `a63d219d` |
+| OPS-001 | Migration history alignment (Issue #53) | `IN_PROGRESS` | #56, #58, #59, #62, #63, #64, #65, #66, #67, #68, #69, #70, #71, #72, #73, #74, #75, #76, #77, #78, #79, #80, #81 | `4a448078` |
 
 ## Stage Definitions
 
@@ -50,24 +50,20 @@ PR #21 (`fix/combined-18-19-20`, head `22168545`) contains tested but unmerged f
 
 ## Active Next Actions
 
-1. **OPS-001: Controlled Batch 9 migration-history repair** — Batch 8 repair complete (120 total repairs); Batch 9 activated (4 versions in allowlist); all actionable verification candidates complete
+1. **OPS-001: Merge final closeout PR then close Issue #53** — All 124 actionable migration-history repairs complete (Batches 1-9); 12 not-verifiable and 2 superseded remain intentionally unrepaired
 2. **Resolve Meta WABA billing** — required before AUTH-000 production verification
 3. **Continue controlled FIN-LEGACY extraction** — payout idempotency, atomic claims, OAuth reconstruction in future milestones
 
 ## OPS-001 Current State
 
-- Batches 1-8 verification and migration-history repair are complete. PR #80 merged.
-- Batch 8 repair complete: 15 versions (227-241), remote count 209 → 224 (+15), 101-246 tracked count 113 → 128 (+15).
-- Repair evidence: `batch-08-repair.json` (SHA `fc5b5a9f`).
-- 120 migration-history repairs complete across Batches 1-8.
-- Active repair allowlist: 4 Batch 9 versions (242, 243, 245, 246).
-- Batch 9 activated for controlled repair.
-- ALIGNED_TRACKED = 128, VERIFIED_APPLIED_UNTRACKED = 4, PENDING = 0, NOT_VERIFIABLE = 12, SUPERSEDED = 2.
-- All actionable verification candidates complete (candidate registry empty).
-- 12 NOT_VERIFIABLE_SAFELY and 2 SUPERSEDED migrations remain intentionally outside repair.
+- All batches (1-9) verification and migration-history repair complete. PR #81 merged.
+- Batch 9 repair complete: 4 versions (242, 243, 245, 246), remote count 224 → 228 (+4), 101-246 tracked count 128 → 132 (+4).
+- 124 migration-history repairs complete across Batches 1-9.
+- Active repair allowlist: 0 (all actionable repairs complete).
+- ALIGNED_TRACKED = 132, VERIFIED_APPLIED_UNTRACKED = 0, PENDING = 0, NOT_VERIFIABLE = 12, SUPERSEDED = 2.
+- 12 NOT_VERIFIABLE_SAFELY and 2 SUPERSEDED migrations intentionally remain unrepaired.
 - Migration 298 is applied and forensically verified.
-- Issue #53 remains open.
-- Next action: controlled Batch 9 migration-history repair.
+- Issue #53 remains open pending merge and final closure.
 
 ## Updating This Ledger
 
