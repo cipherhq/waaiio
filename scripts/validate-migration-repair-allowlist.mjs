@@ -4372,6 +4372,46 @@ function validateRepairCloseout(cfg) {
   if (laterOccErrors === 0) pass(`All later-batch occurrences remain zero`);
   } // end if laterBatchOccurrenceMaps
 
+  // 12b. Prior-batch occurrence map validation (e.g. Batch 8 maps for Batch 9 closeout)
+  if (cfg.priorBatchValidation) {
+    const pbv = cfg.priorBatchValidation;
+    const preMap = evidence[pbv.mapPreKey];
+    const postMap = evidence[pbv.mapPostKey];
+    let pbErrors = 0;
+
+    if (!preMap || typeof preMap !== 'object') { fail(`Prior-batch pre map ${pbv.mapPreKey} missing`); pbErrors++; }
+    if (!postMap || typeof postMap !== 'object') { fail(`Prior-batch post map ${pbv.mapPostKey} missing`); pbErrors++; }
+
+    if (preMap && postMap) {
+      const preKeys = Object.keys(preMap).sort();
+      const postKeys = Object.keys(postMap).sort();
+      const expectedKeys = [...pbv.versions].sort();
+      if (JSON.stringify(preKeys) !== JSON.stringify(expectedKeys)) { fail(`Prior-batch pre map keys: ${preKeys.join(',')}, expected ${expectedKeys.join(',')}`); pbErrors++; }
+      if (JSON.stringify(postKeys) !== JSON.stringify(expectedKeys)) { fail(`Prior-batch post map keys: ${postKeys.join(',')}, expected ${expectedKeys.join(',')}`); pbErrors++; }
+      for (const v of pbv.versions) {
+        if (preMap[v] !== pbv.expectedValue) { fail(`Prior-batch pre ${v}: ${preMap[v]}, expected ${pbv.expectedValue}`); pbErrors++; }
+        if (postMap[v] !== pbv.expectedValue) { fail(`Prior-batch post ${v}: ${postMap[v]}, expected ${pbv.expectedValue}`); pbErrors++; }
+      }
+    }
+
+    // Per-repair prior_batch check
+    for (const r of repairs) {
+      if (r[pbv.perRepairField] !== true) {
+        fail(`Repair ${r.version} ${pbv.perRepairField}: ${r[pbv.perRepairField]}`);
+        pbErrors++;
+      }
+    }
+
+    // Global safety key
+    const safetyConfirmations = evidence.safety_confirmations || evidence;
+    if (safetyConfirmations[pbv.safetyKey] !== true) {
+      fail(`Safety confirmation ${pbv.safetyKey}: ${safetyConfirmations[pbv.safetyKey]}`);
+      pbErrors++;
+    }
+
+    if (pbErrors === 0) pass('Prior-batch occurrence maps, per-repair checks, and safety confirmation validated');
+  }
+
   // 13. exact_new_versions matches cfg.versions
   const exactNew = evidence.exact_new_versions || [];
   if (JSON.stringify(exactNew) !== JSON.stringify(cfg.versions)) {
@@ -4730,7 +4770,7 @@ const BATCH9_CLOSEOUT_CONFIG = {
   expectedRepairFields: {
     command_category: 'supabase_migration_repair_status_applied_linked',
   },
-  prMergeTimestamp: '2026-07-31T04:00:00Z',
+  prMergeTimestamp: '2026-07-31T04:48:34Z',
   repairedAtSource: 'Batch 9 repair evidence repairs[].completed_at',
   repairFields: {
     startedAt: 'started_at',
@@ -4774,6 +4814,14 @@ const BATCH9_CLOSEOUT_CONFIG = {
   checkLaterActivation: false,
   expectedCandidates: [],
   laterBatchPendingVersions: null,
+  priorBatchValidation: {
+    mapPreKey: 'batch_8_pre_occurrence_map',
+    mapPostKey: 'batch_8_post_occurrence_map',
+    versions: ['227','228','229','230','231','232','233','234','235','236','237','238','239','240','241'],
+    expectedValue: 1,
+    perRepairField: 'prior_batch_occurrences_remain_one',
+    safetyKey: 'batch_8_occurrences_remained_one',
+  },
 };
 
 console.log('\n--- Batch 6 Repair Closeout Validation ---\n');

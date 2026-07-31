@@ -7829,4 +7829,92 @@ describe('Batch 9 final closeout tests', () => {
       expect(output).toMatch(/ALIGNED.*133.*expected 132|NOT_VERIFIABLE.*11.*expected 12/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
+
+  // Helper to mutate B9 evidence
+  function mutateB9Evidence(tmpDir: string, mutator: (d: any) => void) {
+    const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-09-repair.json');
+    const d = JSON.parse(readFileSync(p, 'utf-8'));
+    mutator(d);
+    writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+  }
+
+  // Chronology: repair before PR #81 merge
+  it('rejects repair timestamp before PR #81 merge', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateB9Evidence(tmpDir, d => {
+        d.repairs[0].started_at = '2026-07-31T04:48:32.000Z';
+        d.repairs[0].completed_at = '2026-07-31T04:48:33.000Z';
+      });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/not after PR merge/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Prior-batch pre map missing
+  it('rejects missing batch_8_pre_occurrence_map', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateB9Evidence(tmpDir, d => { delete d.batch_8_pre_occurrence_map; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Prior-batch pre map.*missing/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Prior-batch post map missing
+  it('rejects missing batch_8_post_occurrence_map', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateB9Evidence(tmpDir, d => { delete d.batch_8_post_occurrence_map; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Prior-batch post map.*missing/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Prior-batch map extra key
+  it('rejects extra key in batch_8_pre_occurrence_map', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateB9Evidence(tmpDir, d => { d.batch_8_pre_occurrence_map['999'] = 0; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Prior-batch pre map keys/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Prior-batch map value not 1
+  it('rejects batch_8 occurrence value not 1', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateB9Evidence(tmpDir, d => { d.batch_8_post_occurrence_map['227'] = 0; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Prior-batch post 227.*0.*expected 1/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Per-repair prior_batch_occurrences_remain_one false
+  it('rejects false prior_batch_occurrences_remain_one', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateB9Evidence(tmpDir, d => { d.repairs[0].prior_batch_occurrences_remain_one = false; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/prior_batch_occurrences_remain_one/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // Global safety batch_8_occurrences_remained_one false
+  it('rejects false batch_8_occurrences_remained_one safety', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateB9Evidence(tmpDir, d => { d.safety_confirmations.batch_8_occurrences_remained_one = false; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/batch_8_occurrences_remained_one/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
 });
