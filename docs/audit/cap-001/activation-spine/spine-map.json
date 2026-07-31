@@ -121,14 +121,17 @@
       "symbol": "INSERT into business_capabilities"
     },
     "data_or_decision": "User-selected capabilities persisted as business_capabilities rows with is_enabled=true. Priority: user selection → template metadata → CATEGORY_DEFAULT_CAPABILITIES → ['scheduling']",
-    "status": "verified_connected",
+    "status": "partially_connected",
     "evidence": [
       "register/route.ts:232-245 calls initCapabilities",
       "service.ts:130-148 plain INSERT (not upsert), service client bypasses RLS"
     ],
     "tests": [],
     "confidence": "high",
-    "unresolved_questions": []
+    "unresolved_questions": [
+      "initCapabilities() discards Supabase insert error — failure is silent (CAS-009)",
+      "Dashboard and bot use different fallback logic when no rows exist (CAS-010)"
+    ]
   },
   {
     "id": "spine:tier-enforcement-dashboard",
@@ -227,11 +230,13 @@
       "path": "7 dashboard pages",
       "symbol": "client-side redirect to /dashboard/capabilities"
     },
-    "data_or_decision": "Only 7 of 92 pages use useRequireCapability(). 85 pages have no capability gate — accessible by direct URL.",
+    "data_or_decision": "7 pages use useRequireCapability(). Additional pages use hasCapability()/capabilities.includes() for conditional rendering (not access blocking). ~50 pages have no capability gate. Sidebar hiding is UI-only, not access control.",
     "status": "partially_connected",
     "evidence": [
       "useRequireCapability used in: recurring, broadcasts, membership, queue, loyalty, referrals, waitlist",
-      "NOT used in: appointments-management, orders, tickets, events, payments, invoices, chat, surveys, polls, etc."
+      "hasCapability/useCapabilities used for conditional rendering in: calendar, dashboard home, flow-editor, products, whatsapp, settings",
+      "~50 pages accessible by direct URL with no capability check",
+      "No parent layout provides capability-based routing"
     ],
     "tests": [],
     "confidence": "verified",
@@ -253,11 +258,13 @@
     "data_or_decision": "Zero API routes enforce capability access. All check only auth and business ownership. A client can create bookings, orders, tickets etc. even if the capability is disabled.",
     "status": "disconnected",
     "evidence": [
-      "grep -r hasCapability|checkCapability|getEnabledCapabilities app/api/ returns zero matches for access gating",
-      "Only lib/bot/ code calls getEnabledCapabilities for gating"
+      "Reviewed: bookings/create-manual, invoices, surveys, polls, queue/call-next, recurring/setup, events/purchase",
+      "Only POST /api/invoices has tier check (checkTierLimit) — no capability check",
+      "All others: auth + ownership only",
+      "Not exhaustive: 245 total routes, ~8 representative write routes reviewed"
     ],
     "tests": [],
-    "confidence": "verified",
+    "confidence": "high",
     "unresolved_questions": [
       "Should API routes enforce capabilities? Or is UI/bot gating considered sufficient?"
     ]
@@ -281,7 +288,9 @@
     ],
     "tests": [],
     "confidence": "high",
-    "unresolved_questions": []
+    "unresolved_questions": [
+      "Bot uses getEnabledCapabilities which auto-merges new category defaults — dashboard layout does not (CAS-010)"
+    ]
   },
   {
     "id": "spine:bot-menu-generation",

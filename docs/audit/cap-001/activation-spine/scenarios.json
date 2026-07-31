@@ -19,9 +19,11 @@
     "findings": [
       "CAS-001",
       "CAS-002",
-      "CAS-003"
+      "CAS-003",
+      "CAS-009",
+      "CAS-010"
     ],
-    "confidence": "high"
+    "confidence": "high_static"
   },
   {
     "id": "scenario:B",
@@ -35,7 +37,7 @@
       "spine:cancellation"
     ],
     "findings": [],
-    "confidence": "high"
+    "confidence": "high_static"
   },
   {
     "id": "scenario:C",
@@ -49,7 +51,7 @@
     "findings": [
       "CAS-004"
     ],
-    "confidence": "medium"
+    "confidence": "medium_static"
   },
   {
     "id": "scenario:D",
@@ -64,7 +66,7 @@
     "findings": [
       "CAS-004"
     ],
-    "confidence": "medium"
+    "confidence": "medium_static"
   },
   {
     "id": "scenario:E",
@@ -75,9 +77,10 @@
       "spine:disabled-capability-response"
     ],
     "findings": [
-      "CAS-005"
+      "CAS-005",
+      "CAS-010"
     ],
-    "confidence": "verified"
+    "confidence": "high_static"
   },
   {
     "id": "scenario:F",
@@ -93,7 +96,7 @@
       "CAS-006",
       "CAS-007"
     ],
-    "confidence": "verified"
+    "confidence": "high_static"
   },
   {
     "id": "scenario:G",
@@ -105,9 +108,10 @@
       "spine:admin-override"
     ],
     "findings": [
-      "CAS-006"
+      "CAS-006",
+      "CAS-010"
     ],
-    "confidence": "high"
+    "confidence": "high_static"
   },
   {
     "id": "scenario:H",
@@ -121,6 +125,6 @@
     "findings": [
       "CAS-008"
     ],
-    "confidence": "high"
+    "confidence": "high_static"
   }
 ]

@@ -9,7 +9,7 @@
     "persistence": {
       "tested": false,
       "test_files": [],
-      "note": "business_capabilities persistence has no direct tests"
+      "note": "initCapabilities() does not check insert result (CAS-009). No integration test covers the onboarding→capability persistence path."
     },
     "plan_enforcement": {
       "tested": false,
