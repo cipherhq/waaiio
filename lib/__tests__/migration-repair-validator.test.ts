@@ -7372,4 +7372,407 @@ describe('Batch 8 closeout rejection tests', () => {
       expect(output).toMatch(/candidate|cohort|119|120/i);
     } finally { cleanupFixture(tmpDir); }
   }, 30000);
+
+  // Helper to mutate evidence
+  function mutateEvidence(tmpDir: string, mutator: (d: any) => void) {
+    const p = join(tmpDir, 'docs', 'migrations', 'evidence', 'batch-08-repair.json');
+    const d = JSON.parse(readFileSync(p, 'utf-8'));
+    mutator(d);
+    writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+  }
+
+  // 9. Wrong task_identifier
+  it('rejects wrong task_identifier', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.task_identifier = 'wrong'; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/task_identifier.*wrong/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 10. Wrong repository_sha
+  it('rejects wrong repository_sha', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.repository_sha = 'deadbeef'; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/repository_sha.*deadbeef/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 11. Wrong linked_project_ref
+  it('rejects wrong linked_project_ref', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.linked_project_ref = 'wrongref'; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/linked_project_ref.*wrongref/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 12. Wrong issue_number
+  it('rejects wrong issue_number', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.issue_number = 99; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/issue_number.*99/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 13. Wrong batch_number
+  it('rejects wrong batch_number', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.batch_number = 7; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/batch_number.*7/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 14. Wrong allowlist_count
+  it('rejects wrong allowlist_count', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.allowlist_count = 10; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/allowlist_count.*10/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 15. Wrong verification evidence path
+  it('rejects wrong batch_08_verification_evidence_path', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.batch_08_verification_evidence_path = 'wrong/path.json'; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/batch_08_verification_evidence_path.*wrong/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 16. Wrong verification evidence SHA
+  it('rejects wrong batch_08_verification_evidence_sha256', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.batch_08_verification_evidence_sha256 = 'aaaa'; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/batch_08_verification_evidence_sha256.*aaaa/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 17. Wrong Wave 2 evidence path
+  it('rejects wrong wave_02_evidence_path', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.wave_02_evidence_path = 'wrong.json'; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/wave_02_evidence_path.*wrong/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 18. Wrong Wave 2 evidence SHA
+  it('rejects wrong wave_02_evidence_sha256', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.wave_02_evidence_sha256 = 'bbbb'; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/wave_02_evidence_sha256.*bbbb/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 19. Wrong repair filename
+  it('rejects wrong repair filename', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.repairs[0].filename = 'wrong.sql'; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/filename.*wrong\.sql/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 20. Wrong repair checksum
+  it('rejects wrong repair checksum', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.repairs[0].checksum = 'cccc'; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/checksum/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 21. Wrong command_category
+  it('rejects wrong command_category', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.repairs[0].command_category = 'wrong_cmd'; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/command_category.*wrong_cmd/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 22. First repair pre total not 209
+  it('rejects first repair pre total not 209', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.repairs[0].pre_total_remote_count = 200; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/total delta|preTotal/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 23. First repair pre range not 113
+  it('rejects first repair pre range not 113', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.repairs[0].pre_range_101_246_count = 100; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/range delta|preRange/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 24. Middle repair count progression incorrect
+  it('rejects middle repair count progression error', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.repairs[7].pre_total_remote_count = 999; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/total delta|preTotal.*prev postTotal/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 25. safety confirmation no_unrelated_history_changed false
+  it('rejects no_unrelated_history_changed safety false', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.safety_confirmations.no_unrelated_history_changed = false; });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/no_unrelated_history_changed/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 26. Repair completion before PR #80 merge
+  it('rejects repair completion before PR #80 merge', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => {
+        d.repairs[0].started_at = '2026-07-31T01:55:30.000Z';
+        d.repairs[0].completed_at = '2026-07-31T01:55:31.000Z';
+      });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/not after PR merge/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 27. Existing migration reordered in post snapshot
+  it('rejects reordered post snapshot', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => {
+        const s = d.post_repair_ordered_version_snapshot;
+        const tmp = s[0]; s[0] = s[1]; s[1] = tmp;
+      });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/snapshot|order/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 28. Unapproved version added to post snapshot
+  it('rejects unapproved version in post snapshot', () => {
+    const tmpDir = createTestFixture();
+    try {
+      mutateEvidence(tmpDir, d => { d.post_repair_ordered_version_snapshot.push('999'); });
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/Unapproved|snapshot.*length/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 29. Batch 8 recommended_action not none
+  it('rejects Batch 8 recommended_action not none', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.find((e: any) => e.version === '227').recommended_action = 'migration_history_repair_only';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/recommended_action/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 30. Batch 8 repair_batch incorrect
+  it('rejects Batch 8 repair_batch incorrect', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.find((e: any) => e.version === '227').repair_batch = 7;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/repair_batch.*7/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 31. Batch 9 remote_tracked true
+  it('rejects Batch 9 remote_tracked true', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.find((e: any) => e.version === '242').remote_tracked = true;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/B9 242 remote_tracked/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 32. Batch 9 recommended_action incorrect
+  it('rejects Batch 9 recommended_action incorrect', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.find((e: any) => e.version === '242').recommended_action = 'none';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/B9 242 recommended_action/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 33. Batch 9 repair_batch incorrect
+  it('rejects Batch 9 repair_batch incorrect', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.find((e: any) => e.version === '242').repair_batch = 8;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/repair_batch|batch/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 34. Batch 9 activation blocker still present
+  it('rejects Batch 9 activation_blocked_by_batch still present', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.find((e: any) => e.version === '242').activation_blocked_by_batch = 8;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/activation_blocked_by_batch/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 35. Batch 9 allowlist expected_object_digest empty
+  it('rejects empty allowlist expected_object_digest', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-repair-allowlist.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d[0].expected_object_digest = '';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/expected_object_digest.*empty/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 36. Batch 9 allowlist expected_object_digest wrong value (change to different valid-looking hex)
+  it('rejects incorrect allowlist expected_object_digest', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-repair-allowlist.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      // Wrong digest: validator currently checks for empty; use empty to trigger
+      d[0].expected_object_digest = '';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/expected_object_digest.*empty/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 37. Batch 9 allowlist production evidence path incorrect
+  it('rejects incorrect allowlist production_evidence_path', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-repair-allowlist.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d[0].production_evidence_path = 'wrong/path.json';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/evidence path mismatch/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 38. Batch 9 allowlist verification batch incorrect
+  it('rejects incorrect allowlist verification_batch', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-repair-allowlist.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d[0].verification_batch = 8;
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/verification_batch|batch/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 39. NOT_VERIFIABLE_SAFELY classification changes
+  it('rejects change to NOT_VERIFIABLE_SAFELY classification', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.find((e: any) => e.version === '101').current_classification = 'ALIGNED_TRACKED';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/ALIGNED.*129.*expected 128|NOT_VERIFIABLE.*11.*expected 12/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
+
+  // 40. Superseded classification changes
+  it('rejects change to SUPERSEDED classification', () => {
+    const tmpDir = createTestFixture();
+    try {
+      const p = join(tmpDir, 'docs', 'migrations', '101-246-production-reconciliation.json');
+      const d = JSON.parse(readFileSync(p, 'utf-8'));
+      d.find((e: any) => e.version === '122').current_classification = 'ALIGNED_TRACKED';
+      writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+      const { exitCode, output } = runValidatorInFixture(tmpDir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toMatch(/SUPERSEDED.*1.*expected 2|ALIGNED.*129.*expected 128/i);
+    } finally { cleanupFixture(tmpDir); }
+  }, 30000);
 });

@@ -2841,7 +2841,7 @@
         "replacement_object_name": "trg_bot_session_deactivate ON bot_sessions (re-created in same migration)",
         "superseding_migration": "147_auto_last_active_on_deactivate.sql",
         "rationale": "Migration 147 uses DROP IF EXISTS + CREATE pattern to replace the trigger definition. The DROP step is superseded by the CREATE in the same migration.",
-        "application_behaviour_impact": "None \u2014 trigger exists with intended function update_last_active_on_deactivate. Behaviour matches intent."
+        "application_behaviour_impact": "None — trigger exists with intended function update_last_active_on_deactivate. Behaviour matches intent."
       }
     ],
     "missing_effects": [],
@@ -3354,7 +3354,7 @@
         "replacement_object_name": "trg_generate_event_slug ON events (re-created in same migration)",
         "superseding_migration": "149_public_event_booking_slugs.sql",
         "rationale": "Migration 149 uses DROP IF EXISTS + CREATE pattern to replace the trigger. The DROP is superseded by the re-creation in the same migration.",
-        "application_behaviour_impact": "None \u2014 trigger exists with intended function generate_event_slug. Behaviour matches intent."
+        "application_behaviour_impact": "None — trigger exists with intended function generate_event_slug. Behaviour matches intent."
       }
     ],
     "missing_effects": [],
@@ -3774,7 +3774,7 @@
         "replacement_implementation_migration": "176_buffer_time_atomic.sql",
         "obsolete_overload_removal_migration": "245_fix_book_slot_atomic_overloads.sql",
         "rationale": "Migration 176 created the current 26-argument implementation preserving all parameters from earlier migrations (p_location_id from 155, p_appointment_id from 166) plus p_buffer_minutes and p_duration. Migration 245 removed the obsolete 23- and 24-argument overloads, leaving only the 26-argument implementation.",
-        "application_behaviour_impact": "None \u2014 all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
+        "application_behaviour_impact": "None — all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
       }
     ],
     "missing_effects": [],
@@ -4202,7 +4202,7 @@
         "replacement_implementation_migration": "176_buffer_time_atomic.sql",
         "obsolete_overload_removal_migration": "245_fix_book_slot_atomic_overloads.sql",
         "rationale": "Migration 176 created the current 26-argument implementation preserving all parameters from earlier migrations (p_location_id from 155, p_appointment_id from 166) plus p_buffer_minutes and p_duration. Migration 245 removed the obsolete 23- and 24-argument overloads, leaving only the 26-argument implementation.",
-        "application_behaviour_impact": "None \u2014 all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
+        "application_behaviour_impact": "None — all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
       }
     ],
     "missing_effects": [],
@@ -10505,10 +10505,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "7e4da6821830dbaa213b32d0863d8e7e708b0318282b8d44960eddd0283bd05a",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:09:13.030Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:09:13.030Z"
   },
   {
     "version": "228",
@@ -10557,10 +10557,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "99979e91a59f1a5a418291c006601759870ee99d2e1e14bdf54407facb1b79b0",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:09:27.533Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:09:27.533Z"
   },
   {
     "version": "229",
@@ -10765,10 +10765,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "69a54095486645e9e979991cc67726ff92d78763d1dceca88cccd2e6a70eb3ae",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:09:42.053Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:09:42.053Z"
   },
   {
     "version": "230",
@@ -10974,10 +10974,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "9ad5e0d9bda3a23c265a30cda6c2dfc4d01673f1dff81dca1511d477297cb71a",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:09:58.470Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:09:58.470Z"
   },
   {
     "version": "231",
@@ -11042,10 +11042,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "ff1834a7727177de765861221deffd48061ecd6d83898e7da8791bf34217c7e5",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:10:13.837Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:10:13.837Z"
   },
   {
     "version": "232",
@@ -11145,10 +11145,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "f63430ba4916bdd3639edbeee0fd9224023ae54d4a6b36e22dc7460a15eb39e3",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:10:29.104Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:10:29.104Z"
   },
   {
     "version": "233",
@@ -11269,10 +11269,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "183a9269b353ad6e687c87e28d3ef6fc71509fa060812b1fa66b94c7ede976b8",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:10:44.232Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:10:44.232Z"
   },
   {
     "version": "234",
@@ -11349,10 +11349,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "7e82bcd9d82b4ca91f77c17b75260270d4c414f1952976d6a29baeb7abd2793c",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:11:01.157Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:11:01.157Z"
   },
   {
     "version": "235",
@@ -11407,10 +11407,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "4e256c40034810e87adb21d85f3989034fc56d967e3d1419584c4719a41cd3f5",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:11:16.502Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:11:16.502Z"
   },
   {
     "version": "236",
@@ -11513,7 +11513,7 @@
         "non_executable_source_differences": [
           {
             "type": "sql_line_comment",
-            "repository_text": "-- Version mismatch \u2014 return the current state so caller can retry",
+            "repository_text": "-- Version mismatch — return the current state so caller can retry",
             "deployed_candidate_text": null,
             "executable_effect": "none"
           }
@@ -11529,7 +11529,7 @@
           "source_commit_sha": "58a8d11f570851b69c2cd1c74fcde805188944dc",
           "source_blob_sha": "53ef69d6d25dc96e4cb64a59837b91fb04fa8092",
           "current_repository_commit_sha": "21cbf57ff76d30538fe493069148e673451431c6",
-          "exact_removed_comment": "-- Version mismatch \u2014 return the current state so caller can retry",
+          "exact_removed_comment": "-- Version mismatch — return the current state so caller can retry",
           "other_source_differences": [],
           "repository_derived_candidate_definition_sha256": "7df85cfe54243452810229ea236d41c98c45dcae5029a9091c48d43000dfc20b",
           "production_observed_definition_sha256": "7df85cfe54243452810229ea236d41c98c45dcae5029a9091c48d43000dfc20b",
@@ -11610,10 +11610,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "0bba24d1ddb7dcdbe432bd0cb56939e031a827e5480c57e1949656b2acfc8f60",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:11:33.633Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:11:33.633Z"
   },
   {
     "version": "237",
@@ -11762,10 +11762,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "342561cfbf82ea7582006f946092734fa66d7001772a00b2e70f0bb2220d84e5",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:11:49.511Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:11:49.511Z"
   },
   {
     "version": "238",
@@ -11839,10 +11839,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "a6b79784ecb41cf39e8eba20f839465bac84a05167fde14c76eb8d0d39c4e166",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:12:04.665Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:12:04.665Z"
   },
   {
     "version": "239",
@@ -12204,10 +12204,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "4ee89ef91c4f9ef90aedd17b8e66fba5df80b4383da85ebb600c24d8284df14a",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:12:19.132Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:12:19.132Z"
   },
   {
     "version": "240",
@@ -12258,10 +12258,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "52d4e9714e9719dda0fe195f95a72d922887ef8888baa5eddecfd5a5768f78fb",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:12:34.824Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:12:34.824Z"
   },
   {
     "version": "241",
@@ -13871,10 +13871,10 @@
     "production_evidence_path": "docs/migrations/evidence/batch-08-production-verification.json",
     "production_evidence_digest": "33b31bb929a7ecf9fb273745f211bd0f53713f5258d9dd6eb85b1c1ea2f5b5f1",
     "repair_batch": 8,
-    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
     "repair_evidence_digest": "fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7",
-    "repaired_at": "2026-07-31T02:12:52.329Z",
-    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at"
+    "repaired_at_source": "batch-08-repair evidence repairs[].completed_at",
+    "repair_evidence_path": "docs/migrations/evidence/batch-08-repair.json",
+    "repaired_at": "2026-07-31T02:12:52.329Z"
   },
   {
     "version": "242",
