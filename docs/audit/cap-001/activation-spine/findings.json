@@ -62,20 +62,52 @@
     "expected_behavior": "API routes that create capability-specific resources (bookings, orders, tickets, etc.) verify the business has that capability enabled",
     "actual_behavior": "No shared capability-enforcement mechanism was found. Reviewed representative mutation routes (bookings/create-manual, invoices, surveys, polls, queue/call-next, recurring/setup, events/purchase) do not enforce capability eligibility. The only tier check found is in POST /api/invoices (checkTierLimit). All others check only auth and business ownership.",
     "evidence": [
-      "grep across app/api/ for hasCapability/checkCapability/getEnabledCapabilities — zero matches for access gating",
-      "POST /api/bookings/create-manual — authenticateRequest + owner_id only",
-      "POST /api/surveys — owner_id only, no capability check",
-      "POST /api/polls — owner_id only, no capability check",
-      "POST /api/invoices — owner_id + checkTierLimit (tier check but NOT capability check)",
-      "POST /api/queue/call-next — authenticateRequest + requireBusinessOwnership only",
-      "POST /api/recurring/setup — authenticateRequest + requireBusinessOwnership only",
-      "POST /api/events/purchase — public OTP-verified endpoint, no capability check"
+      "grep across app/api/ for hasCapability/checkCapability/getEnabledCapabilities \u2014 zero matches for access gating",
+      "POST /api/bookings/create-manual \u2014 authenticateRequest + owner_id only",
+      "POST /api/surveys \u2014 owner_id only, no capability check",
+      "POST /api/polls \u2014 owner_id only, no capability check",
+      "POST /api/invoices \u2014 owner_id + checkTierLimit (tier check but NOT capability check)",
+      "POST /api/queue/call-next \u2014 authenticateRequest + requireBusinessOwnership only",
+      "POST /api/recurring/setup \u2014 authenticateRequest + requireBusinessOwnership only",
+      "POST /api/events/purchase \u2014 public OTP-verified endpoint, no capability check"
     ],
     "blast_radius": "Direct API calls or custom integrations could create data for disabled capabilities. Dashboard pages without useRequireCapability could also reach these APIs.",
     "recommended_direction": "Add capability middleware or per-route checks for capability-specific API routes",
-    "implementation_status": "not_started",
-    "requires_product_decision": true,
-    "product_question": "Should API routes enforce capabilities, or is UI/bot gating considered sufficient for the current product?"
+    "implementation_status": "partially_implemented",
+    "requires_product_decision": false,
+    "product_question": null,
+    "batch_1_coverage": {
+      "routes": [
+        "POST /api/bookings/create-manual (scheduling/create_new)",
+        "POST /api/broadcasts/send (broadcast/create_new)",
+        "POST /api/payment-request/send (payment/create_new)",
+        "POST /api/invoices/send (invoice/create_new)",
+        "POST /api/contracts/send (whatsapp_sign/create_new)",
+        "POST /api/events/invite (ticketing/create_new)",
+        "PATCH /api/bookings/[id]/status (scheduling/manage_existing)",
+        "POST /api/orders/update-status (ordering/manage_existing)"
+      ],
+      "guard": "lib/capabilities/api-guard.ts (requireCapability)",
+      "tests": "lib/capabilities/__tests__/api-guard.test.ts (17 tests)",
+      "routes_still_outstanding": [
+        "broadcasts/schedule",
+        "recurring/setup",
+        "recurring/manage",
+        "surveys/[id]/send",
+        "polls/[id]/send",
+        "contracts/bulk-send",
+        "contracts/resend",
+        "bookings/[id]/reschedule",
+        "orders/bulk-update-status",
+        "orders/tracking",
+        "queue/call-next",
+        "payments/refund",
+        "bookings/request-balance",
+        "orders/request-balance"
+      ],
+      "enforcement_contract": "create_new requires effective; manage_existing/read_history always allowed",
+      "evidence": "Guard unit tests + build passes"
+    }
   },
   {
     "id": "CAS-004",
@@ -95,8 +127,8 @@
       "smart-intent.ts:521 parseSmartIntentHybrid has no business context parameter",
       "bot.service.ts:939 routing ignores intent for flow selection"
     ],
-    "blast_radius": "Low — the routing layer correctly prevents wrong-flow dispatch. But entity pre-fill from irrelevant intents could cause confusion.",
-    "recommended_direction": "Pass enabled capabilities to intent classification so it can filter results. Not urgent — routing layer is the safety net.",
+    "blast_radius": "Low \u2014 the routing layer correctly prevents wrong-flow dispatch. But entity pre-fill from irrelevant intents could cause confusion.",
+    "recommended_direction": "Pass enabled capabilities to intent classification so it can filter results. Not urgent \u2014 routing layer is the safety net.",
     "implementation_status": "not_started",
     "requires_product_decision": false,
     "product_question": null
@@ -113,11 +145,11 @@
       "scenario:E"
     ],
     "expected_behavior": "When a customer requests a capability the business doesn't offer, the bot says something like 'This business doesn't offer X'",
-    "actual_behavior": "capability-selection.flow.ts:266 returns 'I didn't understand that. Try typing book, order, tickets, or tap View Options to see the menu.' — identical to any parse failure",
+    "actual_behavior": "capability-selection.flow.ts:266 returns 'I didn't understand that. Try typing book, order, tickets, or tap View Options to see the menu.' \u2014 identical to any parse failure",
     "evidence": [
       "capability-selection.flow.ts:266 generic errorMessage"
     ],
-    "blast_radius": "Customer confusion — they know what they want but are told the bot doesn't understand them",
+    "blast_radius": "Customer confusion \u2014 they know what they want but are told the bot doesn't understand them",
     "recommended_direction": "Distinguish between 'capability not offered by this business' vs 'I didn't understand your input'",
     "implementation_status": "not_started",
     "requires_product_decision": false,
@@ -125,7 +157,7 @@
   },
   {
     "id": "CAS-006",
-    "title": "Tier enforcement is client-side only — no server or RLS enforcement",
+    "title": "Tier enforcement is client-side only \u2014 no server or RLS enforcement",
     "severity": "P1",
     "confidence": "source_path_verified",
     "affected_stages": [
@@ -141,7 +173,7 @@
     "evidence": [
       "capabilities/page.tsx:148 client-side canToggle()",
       "RLS policy checks owner_id only (migration 182 replaced over-permissive INSERT but didn't add tier check)",
-      "No API route exists for capability toggling — direct browser Supabase writes"
+      "No API route exists for capability toggling \u2014 direct browser Supabase writes"
     ],
     "blast_radius": "Business could bypass UI to enable paid capabilities without paying. After trial ends, no downgrade occurs.",
     "recommended_direction": "Add RLS check or API route with server-side tier validation for capability writes",
@@ -185,12 +217,12 @@
       "scenario:H"
     ],
     "expected_behavior": "When a customer says 'talk to someone' and the business doesn't have chat enabled, the bot explains that live chat isn't available",
-    "actual_behavior": "executor.ts:296-330 checks caps.includes('chat'). If chat is not enabled, the escalation block does nothing — the input falls through to the regular flow validator, which treats it as invalid input.",
+    "actual_behavior": "executor.ts:296-330 checks caps.includes('chat'). If chat is not enabled, the escalation block does nothing \u2014 the input falls through to the regular flow validator, which treats it as invalid input.",
     "evidence": [
       "executor.ts:296-330 escalation regex check",
       "No else branch or customer-facing message when chat is not enabled"
     ],
-    "blast_radius": "Customer asks for human help and gets no acknowledgment — appears as if the bot ignored them",
+    "blast_radius": "Customer asks for human help and gets no acknowledgment \u2014 appears as if the bot ignored them",
     "recommended_direction": "Add an else branch that tells the customer live chat is not available and offers alternatives",
     "implementation_status": "not_started",
     "requires_product_decision": false,
@@ -209,12 +241,12 @@
       "scenario:A"
     ],
     "expected_behavior": "initCapabilities() checks the Supabase insert result and propagates errors so onboarding fails atomically or retries",
-    "actual_behavior": "initCapabilities() (lib/capabilities/service.ts:145-147) awaits the insert but discards the {data, error} return. Supabase insert errors are returned, not thrown — the caller's try/catch (register/route.ts:236-245) cannot catch them. Registration succeeds with zero capability rows. Dashboard and bot enter fallback behavior, potentially replacing user-selected capabilities with category defaults.",
+    "actual_behavior": "initCapabilities() (lib/capabilities/service.ts:145-147) awaits the insert but discards the {data, error} return. Supabase insert errors are returned, not thrown \u2014 the caller's try/catch (register/route.ts:236-245) cannot catch them. Registration succeeds with zero capability rows. Dashboard and bot enter fallback behavior, potentially replacing user-selected capabilities with category defaults.",
     "evidence": [
-      "lib/capabilities/service.ts:145-147 — insert result not destructured",
-      "app/api/onboarding/register/route.ts:236-245 — try/catch cannot catch non-thrown Supabase errors",
-      "app/dashboard/layout.tsx:176-184 — falls back to CATEGORY_DEFAULT_CAPABILITIES when no rows",
-      "lib/capabilities/service.ts:45-51 — getEnabledCapabilities falls back to getCategoryDefaultCapabilities then CATEGORY_DEFAULT_CAPABILITIES"
+      "lib/capabilities/service.ts:145-147 \u2014 insert result not destructured",
+      "app/api/onboarding/register/route.ts:236-245 \u2014 try/catch cannot catch non-thrown Supabase errors",
+      "app/dashboard/layout.tsx:176-184 \u2014 falls back to CATEGORY_DEFAULT_CAPABILITIES when no rows",
+      "lib/capabilities/service.ts:45-51 \u2014 getEnabledCapabilities falls back to getCategoryDefaultCapabilities then CATEGORY_DEFAULT_CAPABILITIES"
     ],
     "blast_radius": "User-selected optional capabilities lost. Business operates on hardcoded category defaults without knowing. Dashboard and bot may show different fallback sets (see CAS-010).",
     "recommended_direction": "Destructure insert result, check error, fail onboarding registration or retry. Add integration test for this path.",
@@ -239,13 +271,13 @@
     "expected_behavior": "Dashboard and bot use the same resolver to determine a business's effective capabilities",
     "actual_behavior": "Dashboard (layout.tsx:168-184) queries only is_enabled=true rows and falls back to hardcoded CATEGORY_DEFAULT_CAPABILITIES. Bot (getEnabledCapabilities in service.ts:13-51) queries ALL rows (enabled and disabled), merges newly-added category defaults not in known set, and falls back to DB-backed getCategoryDefaultCapabilities() first. Concrete divergence: when a new capability default is added to a category after onboarding, the bot auto-enables it but the dashboard does not show it.",
     "evidence": [
-      "app/dashboard/layout.tsx:168-174 — queries is_enabled=true only, no merge logic",
-      "lib/capabilities/service.ts:13-51 — queries all rows, merges new defaults",
-      "app/dashboard/layout.tsx:176-184 — hardcoded CATEGORY_DEFAULT_CAPABILITIES fallback",
-      "lib/capabilities/service.ts:45-51 — getCategoryDefaultCapabilities (DB-backed) then hardcoded fallback"
+      "app/dashboard/layout.tsx:168-174 \u2014 queries is_enabled=true only, no merge logic",
+      "lib/capabilities/service.ts:13-51 \u2014 queries all rows, merges new defaults",
+      "app/dashboard/layout.tsx:176-184 \u2014 hardcoded CATEGORY_DEFAULT_CAPABILITIES fallback",
+      "lib/capabilities/service.ts:45-51 \u2014 getCategoryDefaultCapabilities (DB-backed) then hardcoded fallback"
     ],
     "blast_radius": "Bot can expose capabilities the dashboard doesn't show (or vice versa). Fallback paths produce different capability sets when rows are missing. Business cannot see or manage a capability the bot is offering to customers.",
-    "recommended_direction": "Unify to a single getEffectiveCapabilities() resolver used by both dashboard layout and bot service. The resolver should apply: enabled rows → tier filter → trial override → admin overrides, consistently.",
+    "recommended_direction": "Unify to a single getEffectiveCapabilities() resolver used by both dashboard layout and bot service. The resolver should apply: enabled rows \u2192 tier filter \u2192 trial override \u2192 admin overrides, consistently.",
     "implementation_status": "not_started",
     "requires_product_decision": true,
     "product_question": "Should newly-added category defaults auto-enable for existing businesses (bot behavior) or require explicit opt-in (dashboard behavior)?"

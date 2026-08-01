@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendEmail } from '@/lib/email/client';
 import { invoiceEmail } from '@/lib/email/templates';
@@ -100,20 +101,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
     }
 
-    // Verify ownership
-    const { data: biz } = await supabase
+    // ── Capability enforcement: invoice/create_new ──
+    const service = createServiceClient();
+    const guard = await requireCapability(supabase, service, {
+      businessId: invoice.business_id, userId: user.id, capability: 'invoice', action: 'create_new',
+    });
+    if (!guard.allowed) {
+      return NextResponse.json(guard.denial, { status: guard.status });
+    }
+
+    // Get business details
+    const { data: biz } = await service
       .from('businesses')
       .select('id, name, owner_id, country_code, logo_url, subscription_tier')
       .eq('id', invoice.business_id)
       .single();
 
-    if (!biz || biz.owner_id !== user.id) {
-      return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
-    }
+    if (!biz) return NextResponse.json({ error: 'Business data unavailable' }, { status: 500 });
 
     // Check conversation limit before sending WhatsApp
     const { checkConversationLimit } = await import('@/lib/bot/conversation-guard');
-    const service = createServiceClient();
     const convLimit = await checkConversationLimit(service, invoice.business_id);
     if (!convLimit.allowed) {
       return NextResponse.json({ error: `Monthly conversation limit reached (${convLimit.used}/${convLimit.limit}). Upgrade for more.` }, { status: 403 });
