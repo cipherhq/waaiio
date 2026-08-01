@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { finalizeOnboarding } from '@/lib/onboarding/finalize';
 import {
   generateSlug,
   generateBotCode,
@@ -20,10 +21,6 @@ import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate limit: max 5 registrations per IP per hour
-    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'onboarding-register'), 5, 3600_000);
-    if (rateLimit) return rateLimit;
-
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
 
@@ -31,7 +28,73 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    // Limit businesses per user (prevent abuse)
+    await loadCountries();
+    await loadCategories();
+    const body = await request.json();
+    const { first_name, last_name, name, city, state, zip_code, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode, retryBusinessId } = body;
+
+    // ── Retry path: resume a pending business that failed capability init ──
+    // Separate rate limiter keyed by authenticated user + business ID (not IP).
+    // A valid retry must not depend on or consume the fresh-registration quota.
+    if (retryBusinessId) {
+      // Rate limit retries: max 10 per user+business per hour
+      const retryKey = `onboarding-retry:${user.id}:${retryBusinessId}`;
+      const retryLimit = await rateLimitResponseAsync(retryKey, 10, 3600_000);
+      if (retryLimit) return retryLimit;
+
+      const service = createServiceClient();
+      const { data: pendingBiz, error: retryError } = await service
+        .from('businesses')
+        .select('id, owner_id, status, category, bot_code')
+        .eq('id', retryBusinessId)
+        .eq('owner_id', user.id)
+        .eq('status', 'pending')
+        .maybeSingle();
+
+      if (retryError || !pendingBiz) {
+        return NextResponse.json(
+          { message: 'Cannot resume setup: business not found, not owned by you, or already active.' },
+          { status: 400 },
+        );
+      }
+
+      // Retry capability initialization (idempotent upsert)
+      const capsToInit = (capabilities as CapabilityId[] | undefined);
+      try {
+        await initCapabilities(service, pendingBiz.id, pendingBiz.category, capsToInit);
+      } catch (err) {
+        logger.error('[ONBOARDING] Retry initCapabilities failed:', err);
+        return NextResponse.json(
+          { error: 'Capability setup failed on retry. Please try again.', recoverable: true, businessId: pendingBiz.id },
+          { status: 500 },
+        );
+      }
+
+      // Run shared finalization
+      try {
+        await finalizeOnboarding(service, {
+          businessId: pendingBiz.id,
+          userId: user.id,
+          capabilities: capsToInit || [],
+          firstName: body.first_name ? String(body.first_name) : undefined,
+          lastName: body.last_name ? String(body.last_name) : undefined,
+        });
+      } catch (err) {
+        logger.error('[ONBOARDING] Retry finalization failed:', err);
+        return NextResponse.json(
+          { error: 'Setup finalization failed. Please try again.', recoverable: true, businessId: pendingBiz.id },
+          { status: 500 },
+        );
+      }
+
+      return NextResponse.json({ business_id: pendingBiz.id, bot_code: pendingBiz.bot_code });
+    }
+
+    // ── Fresh registration path ──
+    // Rate limit: max 5 fresh registrations per IP per hour (abuse protection)
+    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'onboarding-register'), 5, 3600_000);
+    if (rateLimit) return rateLimit;
+    // Limit businesses per user (prevent abuse) — only for fresh registration, not retry
     const svcCheck = createServiceClient();
     const { count: bizCount } = await svcCheck
       .from('businesses')
@@ -43,10 +106,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: `Maximum number of businesses reached (${settings.max_businesses_per_user}). Contact support to increase.` }, { status: 400 });
     }
 
-    await loadCountries();
-    await loadCategories();
-    const body = await request.json();
-    const { first_name, last_name, name, city, state, zip_code, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode } = body;
     const countryCode: CountryCode = isValidCountryCode(country) ? country : 'NG';
 
     // Validate country matches phone number to prevent fee arbitrage
@@ -231,6 +290,7 @@ export async function POST(request: NextRequest) {
 
     // Auto-create capabilities
     // Priority: user-selected > template metadata > hardcoded defaults
+    // Uses upsert for idempotency — safe to retry on the same business
     const templateCaps = (template?.metadata as Record<string, unknown>)?.default_capabilities as CapabilityId[] | undefined;
     const capsToInit = (capabilities as CapabilityId[] | undefined) || (templateCaps?.length ? templateCaps : undefined);
     try {
@@ -242,58 +302,44 @@ export async function POST(request: NextRequest) {
       );
     } catch (err) {
       logger.error('[ONBOARDING] initCapabilities failed:', err);
+      // Capability initialization is required for a complete business setup.
+      // Return a recoverable error — the business exists but is not fully configured.
+      return NextResponse.json(
+        { error: 'Capability setup failed. Please try again.', recoverable: true, businessId: business.id },
+        { status: 500 },
+      );
     }
 
-    // Create default canned responses if chat capability is enabled
-    const enabledCaps = capabilities as CapabilityId[] | undefined;
-    if (enabledCaps?.includes('chat')) {
-      const defaultCanned = [
-        { title: 'Thanks for waiting', message_text: 'Thanks for your patience! How can I help you?', sort_order: 0 },
-        { title: 'Operating hours', message_text: 'Our operating hours are Monday - Saturday, 9am - 6pm. We\'re closed on Sundays.', sort_order: 1 },
-        { title: 'Price inquiry', message_text: 'I\'d be happy to help with pricing! What are you interested in?', sort_order: 2 },
-        { title: 'How to book', message_text: 'I can help you get started. Would you like to proceed?', sort_order: 3 },
-        { title: 'Follow up', message_text: 'Just following up on our conversation. Is there anything else I can help with?', sort_order: 4 },
-      ];
-      try {
-        const { error: cannedErr } = await service.from('canned_responses').insert(
-          defaultCanned.map((cr) => ({
-            business_id: business.id,
-            ...cr,
-          })),
-        );
-        if (cannedErr) logger.error('[ONBOARDING] canned_responses insert failed:', cannedErr);
-      } catch (err) {
-        logger.error('[ONBOARDING] canned_responses insert exception:', err);
-      }
+    // Shared finalization — canned responses + profile update
+    try {
+      await finalizeOnboarding(service, {
+        businessId: business.id,
+        userId: user.id,
+        capabilities: capsToInit || [],
+        firstName: first_name ? String(first_name) : undefined,
+        lastName: last_name ? String(last_name) : undefined,
+      });
+    } catch (err) {
+      logger.error('[ONBOARDING] Finalization failed:', err);
+      return NextResponse.json(
+        { error: 'Setup finalization failed. Please try again.', recoverable: true, businessId: business.id },
+        { status: 500 },
+      );
     }
 
-    // Update profile: role + owner name
-    const { data: profile } = await service
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single();
-
-    const isFirstBusiness = !profile?.role || profile.role === 'diner';
-    const profileUpdate: Record<string, string> = {};
-    if (isFirstBusiness) profileUpdate.role = 'restaurant_owner';
-    if (first_name) profileUpdate.first_name = String(first_name).trim();
-    if (last_name) profileUpdate.last_name = String(last_name).trim();
-
-    if (Object.keys(profileUpdate).length > 0) {
-      await service
-        .from('profiles')
-        .update(profileUpdate)
-        .eq('id', user.id);
-    }
-
-    // Send emails (non-blocking)
+    // Send emails (optional, non-blocking)
     const userEmail = user.email;
     if (userEmail) {
       const categoryLabel = (category as string).replace(/_/g, ' ');
-      if (isFirstBusiness) {
-        const welcome = welcomeEmail(name);
-        sendEmail({ to: userEmail, ...welcome }).catch(() => {});
+      // Welcome email for first-time business owners
+      const { data: profileCheck } = await service.from('profiles').select('role').eq('id', user.id).single();
+      if (profileCheck?.role === 'restaurant_owner') {
+        // Only send welcome if this was their first business (role was just set by finalization)
+        const { count: bizCount2 } = await service.from('businesses').select('id', { count: 'exact', head: true }).eq('owner_id', user.id);
+        if ((bizCount2 || 0) <= 1) {
+          const welcome = welcomeEmail(name);
+          sendEmail({ to: userEmail, ...welcome }).catch(() => {});
+        }
       }
       const registered = businessRegisteredEmail(name, business.bot_code, categoryLabel);
       sendEmail({ to: userEmail, ...registered }).catch(() => {});

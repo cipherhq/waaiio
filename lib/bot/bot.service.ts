@@ -8,7 +8,8 @@ import { StandaloneService } from './standalone.service';
 import { BotIntelligenceService } from './bot-intelligence';
 import { FlowExecutor } from './flows/executor';
 import { getLocale, formatCurrency, type BusinessCategoryKey, type FlowType, type CountryCode } from '@/lib/constants';
-import { getEnabledCapabilities } from '@/lib/capabilities/service';
+import { getConfiguredCapabilities } from '@/lib/capabilities/service';
+import { getEffectiveCapabilities as resolveEffectiveCaps } from '@/lib/capabilities/policy';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
@@ -905,12 +906,46 @@ export class BotService {
       let waConfig: import('./standalone.service').WhatsAppConfigBundle | null = null;
       let tierInfo: import('./standalone.service').TierCheckResult | null = null;
       if (business) {
-        const [caps, config, tier] = await Promise.all([
-          getEnabledCapabilities(this.supabase, business.id, business.category),
+        const [capResult, overrideRows, config, tier] = await Promise.all([
+          getConfiguredCapabilities(this.supabase, business.id),
+          this.supabase.from('capability_overrides').select('capability').eq('business_id', business.id),
           this.standaloneService.loadWhatsAppConfigBundle(business.id),
           this.standaloneService.checkTierLimitsFromBusiness(business.id, business.subscription_tier, business.is_whitelabel),
         ]);
-        capabilities = caps;
+
+        if (!capResult.ok) {
+          // DB read error — fail closed, do not expose any capabilities
+          await this.sendText(from, 'We\'re experiencing a temporary issue. Please try again shortly.');
+          return;
+        }
+
+        const overrides = overrideRows.error
+          ? [] // fail closed on override read error
+          : (overrideRows.data || []).map((r: { capability: string }) => r.capability);
+
+        if (capResult.rows.length > 0) {
+          const policyResult = resolveEffectiveCaps({
+            configuredCapabilities: capResult.rows,
+            overrides,
+            tier: business.subscription_tier,
+            trialEndsAt: business.trial_ends_at,
+          });
+          capabilities = policyResult.effective;
+        } else {
+          // Zero-row legacy fallback — route through policy for tier/trial filtering
+          const { CATEGORY_DEFAULT_CAPABILITIES } = await import('@/lib/capabilities/types');
+          const legacyDefaults = CATEGORY_DEFAULT_CAPABILITIES[business.category] || ['scheduling'];
+          const legacyRows = legacyDefaults.map((cap: string) => ({
+            capability: cap, is_enabled: true, sort_order: 0,
+          }));
+          const policyResult = resolveEffectiveCaps({
+            configuredCapabilities: legacyRows,
+            overrides,
+            tier: business.subscription_tier,
+            trialEndsAt: business.trial_ends_at,
+          });
+          capabilities = policyResult.effective;
+        }
         waConfig = config;
         tierInfo = tier;
       }

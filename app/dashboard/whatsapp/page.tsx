@@ -161,23 +161,31 @@ export default function WhatsAppPage() {
     const newCustomLabel = (!trimmed || trimmed === defaultLabel) ? null : trimmed;
 
     setSavingLabel(capId);
-    const supabase = createClient();
-    await supabase
-      .from('business_capabilities')
-      .update({ custom_label: newCustomLabel })
-      .eq('business_id', business.id)
-      .eq('capability', capId);
-
-    setCustomLabels(prev => {
-      const next = { ...prev };
-      if (newCustomLabel) {
-        next[capId] = newCustomLabel;
-      } else {
-        delete next[capId];
+    try {
+      const res = await fetch('/api/capabilities/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ businessId: business.id, capability: capId, custom_label: newCustomLabel }),
+      });
+      if (!res.ok) {
+        setSaveError('Failed to save label. Please try again.');
+        return;
       }
-      return next;
-    });
-    setSavingLabel(null);
+
+      setCustomLabels(prev => {
+        const next = { ...prev };
+        if (newCustomLabel) {
+          next[capId] = newCustomLabel;
+        } else {
+          delete next[capId];
+        }
+        return next;
+      });
+    } catch {
+      setSaveError('Network error saving label. Please try again.');
+    } finally {
+      setSavingLabel(null);
+    }
   }, [business.id, business.category]);
 
   const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
@@ -199,21 +207,37 @@ export default function WhatsAppPage() {
     setDragOverIndex(null);
     if (fromIndex === null || fromIndex === dropIndex) return;
 
+    // Capture previous order BEFORE mutation for reliable rollback
+    const previousOrder = [...orderedCaps];
+
     const newOrder = [...orderedCaps];
     const [moved] = newOrder.splice(fromIndex, 1);
     newOrder.splice(dropIndex, 0, moved);
     setOrderedCaps(newOrder);
 
     setSavingOrder(true);
-    const supabase = createClient();
     try {
-      await Promise.all(
+      const results = await Promise.all(
         newOrder.map((cap, i) =>
-          supabase.from('business_capabilities').update({ sort_order: i }).eq('business_id', business.id).eq('capability', cap),
+          fetch('/api/capabilities/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ businessId: business.id, capability: cap, sort_order: i }),
+          }),
         ),
       );
-    } catch { /* silent */ }
-    setSavingOrder(false);
+      if (results.some(r => !r.ok)) {
+        // Revert to captured previous order (not stale closure)
+        setOrderedCaps(previousOrder);
+        setSaveError('Failed to save order. Please try again.');
+      }
+    } catch {
+      // Network failure — rollback to captured previous order
+      setOrderedCaps(previousOrder);
+      setSaveError('Network error saving order. Please try again.');
+    } finally {
+      setSavingOrder(false);
+    }
   }, [dragIndex, orderedCaps, business.id]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);

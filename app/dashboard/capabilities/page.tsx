@@ -11,6 +11,7 @@ import {
   getRequiredTier,
   TIER_LABELS,
 } from '@/lib/capabilities/types';
+import { deriveCapabilityConfiguration, deriveNextOrder } from '@/lib/capabilities/derive-configuration';
 import type { SubscriptionTier } from '@/lib/constants';
 
 // ── Capability Groups ──
@@ -62,15 +63,18 @@ export default function CapabilitiesPage() {
   const business = useBusiness();
   const tier = (business.subscription_tier || 'free') as SubscriptionTier;
   const overrides = business.capabilityOverrides || [];
-  const [enabled, setEnabled] = useState<CapabilityId[]>(business.capabilities);
+  // Initialize from selectedCapabilities (includes paused) not effective capabilities
+  const selected = business.selectedCapabilities || business.capabilities;
+  const [enabled, setEnabled] = useState<CapabilityId[]>(selected);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
 
   // ── Drag-and-drop reorder state ──
-  const [orderedCaps, setOrderedCaps] = useState<CapabilityId[]>(business.capabilities);
+  const [orderedCaps, setOrderedCaps] = useState<CapabilityId[]>(selected);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [savingOrder, setSavingOrder] = useState(false);
+  const [error, setError] = useState('');
 
   // Sync orderedCaps when enabled changes
   useEffect(() => {
@@ -107,29 +111,41 @@ export default function CapabilitiesPage() {
 
     if (fromIndex === null || fromIndex === dropIndex) return;
 
+    // Snapshot current state synchronously
+    const previousOrder = [...orderedCaps];
+    const currentEnabled = [...enabled];
+
+    // Derive new order via splice
     const newOrder = [...orderedCaps];
     const [moved] = newOrder.splice(fromIndex, 1);
     newOrder.splice(dropIndex, 0, moved);
+
+    // Optimistic UI
     setOrderedCaps(newOrder);
 
-    // Auto-save sort_order to database
+    // Send explicit snapshot (not reading from potentially stale state)
     setSavingOrder(true);
-    const supabase = createClient();
     try {
-      await Promise.all(
-        newOrder.map((cap, i) =>
-          supabase
-            .from('business_capabilities')
-            .update({ sort_order: i })
-            .eq('business_id', business.id)
-            .eq('capability', cap),
-        ),
-      );
-    } catch (err) {
-      console.error('Failed to save sort order:', err);
+      const res = await fetch('/api/capabilities/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          capabilities: currentEnabled,
+          order: newOrder,
+        }),
+      });
+      if (!res.ok) {
+        setOrderedCaps(previousOrder);
+        setError('Failed to save order. Please try again.');
+      }
+    } catch {
+      setOrderedCaps(previousOrder);
+      setError('Network error saving order. Please try again.');
+    } finally {
+      setSavingOrder(false);
     }
-    setSavingOrder(false);
-  }, [dragIndex, orderedCaps, business.id]);
+  }, [dragIndex, orderedCaps, business.id, enabled]);
 
   const handleDragEnd = useCallback(() => {
     setDragIndex(null);
@@ -166,68 +182,102 @@ export default function CapabilitiesPage() {
   function handleToggle(capId: CapabilityId) {
     if (!canToggle(capId)) return;
 
-    let next = enabled.includes(capId)
+    let nextEnabled = enabled.includes(capId)
       ? enabled.filter(c => c !== capId)
       : [...enabled, capId];
 
     // Bundle: membership requires loyalty (they share the points system)
-    if (capId === 'membership' && next.includes('membership') && !next.includes('loyalty')) {
-      next = [...next, 'loyalty'];
+    if (capId === 'membership' && nextEnabled.includes('membership') && !nextEnabled.includes('loyalty')) {
+      nextEnabled = [...nextEnabled, 'loyalty'];
     }
     // If disabling loyalty, also disable membership (can't work without points)
-    if (capId === 'loyalty' && !next.includes('loyalty') && next.includes('membership')) {
-      next = next.filter(c => c !== 'membership');
+    if (capId === 'loyalty' && !nextEnabled.includes('loyalty') && nextEnabled.includes('membership')) {
+      nextEnabled = nextEnabled.filter(c => c !== 'membership');
     }
 
     // Must have at least one capability
-    if (next.length === 0) return;
+    if (nextEnabled.length === 0) return;
 
-    setEnabled(next);
+    // Derive the full configuration synchronously from current state
+    const config = deriveCapabilityConfiguration(
+      [...enabled],      // previous enabled (snapshot)
+      [...orderedCaps],  // previous order (snapshot)
+      nextEnabled,
+    );
 
-    // Auto-save with the new state directly
-    saveCapabilities(next);
+    // Optimistic UI update
+    setEnabled(config.capabilities);
+    setOrderedCaps(config.order);
+
+    // Save with explicit transaction snapshot (no stale closure reads)
+    saveCapabilities(config);
   }
 
-  async function saveCapabilities(caps: CapabilityId[]) {
+  async function saveCapabilities(config: {
+    capabilities: CapabilityId[];
+    order: CapabilityId[];
+    previousCapabilities: CapabilityId[];
+    previousOrder: CapabilityId[];
+  }) {
     setSaving(true);
-    const supabase = createClient();
+    setError('');
 
-    // Detect newly enabled capabilities (for provisioning)
-    const newlyEnabled = caps.filter(cap => !business.capabilities.includes(cap));
+    try {
+      // Detect newly enabled vs previous SELECTED state (not effective).
+      // A paused selected capability is NOT newly activated.
+      const previousSelected = new Set(business.selectedCapabilities || business.capabilities);
+      const newlyEnabled = config.capabilities.filter(cap => !previousSelected.has(cap));
 
-    // Disable all
-    await supabase
-      .from('business_capabilities')
-      .update({ is_enabled: false })
-      .eq('business_id', business.id);
+      // Use atomic bulk configuration endpoint with explicit snapshot
+      const res = await fetch('/api/capabilities/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          capabilities: config.capabilities,
+          order: config.order,
+        }),
+      });
 
-    // Enable selected — preserve sort_order from orderedCaps, new ones get 999
-    for (const cap of caps) {
-      const existingIndex = orderedCaps.indexOf(cap);
-      const sortOrder = existingIndex >= 0 ? existingIndex : 999;
-      await supabase
-        .from('business_capabilities')
-        .upsert(
-          { business_id: business.id, capability: cap, is_enabled: true, sort_order: sortOrder },
-          { onConflict: 'business_id,capability' },
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ reason: 'unknown' }));
+        // Rollback to exact previous snapshots
+        setEnabled(config.previousCapabilities);
+        setOrderedCaps(config.previousOrder);
+        setError(
+          data.reason === 'capabilities_denied'
+            ? 'Some capabilities require a higher plan. Please upgrade.'
+            : data.reason === 'dependency_missing'
+              ? `${data.capability} requires ${data.missing_dependencies?.join(', ')} to be enabled.`
+              : data.reason === 'configuration_conflict'
+                ? 'Configuration changed elsewhere. Please refresh the page.'
+                : 'Failed to save capabilities. Please try again.'
         );
-    }
-
-    // Auto-provision templates for newly enabled capabilities
-    for (const cap of newlyEnabled) {
-      try {
-        await fetch('/api/whatsapp/templates/provision', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ business_id: business.id, capability: cap }),
-        });
-      } catch {
-        console.warn(`Template provisioning failed for capability: ${cap}`);
+        return;
       }
-    }
 
-    setSaving(false);
-    window.location.reload();
+      // Auto-provision templates only for genuinely new capabilities
+      for (const cap of newlyEnabled) {
+        try {
+          await fetch('/api/whatsapp/templates/provision', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ business_id: business.id, capability: cap }),
+          });
+        } catch {
+          // Template provisioning is best-effort — capability is still enabled
+        }
+      }
+
+      window.location.reload();
+    } catch {
+      // Network error — rollback to exact previous snapshots
+      setEnabled(config.previousCapabilities);
+      setOrderedCaps(config.previousOrder);
+      setError('Network error. Please check your connection and try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   // Filter capabilities by search
@@ -441,7 +491,11 @@ export default function CapabilitiesPage() {
               </button>
               <button
                 id="cap-save-btn"
-                onClick={() => saveCapabilities(enabled)}
+                onClick={() => saveCapabilities(deriveCapabilityConfiguration(
+                  selected as CapabilityId[],
+                  [...orderedCaps],
+                  enabled,
+                ))}
                 disabled={saving}
                 className="rounded-lg bg-brand px-6 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
               >

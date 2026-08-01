@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { CAPABILITIES } from '@/lib/capabilities/types';
+
+const VALID_CAP_IDS = new Set<string>(CAPABILITIES.map(c => c.id));
 
 export async function GET(
   request: NextRequest,
@@ -13,7 +17,6 @@ export async function GET(
 
   const supabase = await createClient();
 
-  // Fetch business tier
   const { data: biz } = await supabase
     .from('businesses')
     .select('subscription_tier')
@@ -22,14 +25,12 @@ export async function GET(
 
   if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
 
-  // Fetch enabled capabilities
   const { data: capRows } = await supabase
     .from('business_capabilities')
     .select('capability')
     .eq('business_id', id)
     .eq('is_enabled', true);
 
-  // Fetch overrides
   const { data: overrideRows } = await supabase
     .from('capability_overrides')
     .select('capability')
@@ -51,59 +52,46 @@ export async function POST(
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
+  let body: { capability?: string; action?: string; reason?: string };
+  try { body = await request.json(); } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
+
+  const { capability, action, reason } = body;
+
+  if (!capability || !VALID_CAP_IDS.has(capability)) {
+    return NextResponse.json({ error: 'Invalid capability' }, { status: 400 });
+  }
+  if (action !== 'grant' && action !== 'revoke') {
+    return NextResponse.json({ error: 'Action must be grant or revoke' }, { status: 400 });
+  }
+
+  // Verify business exists
   const supabase = await createClient();
+  const { data: biz } = await supabase
+    .from('businesses')
+    .select('id')
+    .eq('id', id)
+    .single();
 
-  const body = await request.json();
-  const { capability, action, reason } = body as {
-    capability: string;
-    action: 'grant' | 'revoke';
-    reason?: string;
-  };
+  if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
 
-  if (!capability || !action) {
-    return NextResponse.json({ error: 'Missing capability or action' }, { status: 400 });
-  }
-
-  if (action === 'grant') {
-    // Insert override
-    await supabase
-      .from('capability_overrides')
-      .upsert(
-        { business_id: id, capability, granted_by: admin.id, reason: reason || null },
-        { onConflict: 'business_id,capability' },
-      );
-
-    // Enable the capability
-    await supabase
-      .from('business_capabilities')
-      .upsert(
-        { business_id: id, capability, is_enabled: true },
-        { onConflict: 'business_id,capability' },
-      );
-  } else {
-    // Delete override
-    await supabase
-      .from('capability_overrides')
-      .delete()
-      .eq('business_id', id)
-      .eq('capability', capability);
-
-    // Disable the capability
-    await supabase
-      .from('business_capabilities')
-      .update({ is_enabled: false })
-      .eq('business_id', id)
-      .eq('capability', capability);
-  }
-
-  // Audit log
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.id,
-    action: action === 'grant' ? 'grant_capability' : 'revoke_capability',
-    entity_type: 'business',
-    entity_id: id,
-    details: { capability, reason: reason || null },
+  // Execute atomic RPC via service client
+  const service = createServiceClient();
+  const rpcName = action === 'grant' ? 'admin_grant_capability' : 'admin_revoke_capability';
+  const { data: result, error: rpcError } = await service.rpc(rpcName, {
+    p_business_id: id,
+    p_capability: capability,
+    p_granted_by: admin.id,
+    p_reason: reason || null,
   });
 
-  return NextResponse.json({ success: true });
+  if (rpcError) {
+    return NextResponse.json(
+      { error: 'Operation failed. Please try again.' },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json(result || { success: true });
 }

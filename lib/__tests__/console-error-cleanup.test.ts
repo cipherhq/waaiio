@@ -67,7 +67,7 @@ describe('Production console.error allowlist (exact counts)', () => {
     // Client-side 'use client' pages — browser code, server logger unavailable
     'app/dashboard/analytics/page.tsx': { count: 1, client: true, reason: 'Browser error debugging for analytics load failure' },
     'app/dashboard/calendar/page.tsx': { count: 1, client: true, reason: 'Browser error debugging for calendar load failure' },
-    'app/dashboard/capabilities/page.tsx': { count: 1, client: true, reason: 'Browser error debugging for capability sort save' },
+    // Removed: app/dashboard/capabilities/page.tsx — sort save error now uses console.warn
     'app/dashboard/contracts/page.tsx': { count: 6, client: true, reason: 'Browser error debugging for contract CRUD operations' },
     'app/dashboard/events/scan/page.tsx': { count: 1, client: true, reason: 'Browser error debugging for camera init' },
     'app/dashboard/invoices/page.tsx': { count: 5, client: true, reason: 'Browser error debugging for invoice CRUD operations' },

@@ -10,6 +10,7 @@ import { Copilot } from '@/components/dashboard/Copilot';
 import { NotificationBell } from '@/components/dashboard/NotificationBell';
 import { IdleTimeout } from '@/components/dashboard/IdleTimeout';
 import { CATEGORY_DEFAULT_CAPABILITIES } from '@/lib/capabilities/types';
+import { getEffectiveCapabilities, type ConfiguredCapability } from '@/lib/capabilities/policy';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
@@ -164,27 +165,16 @@ export default async function DashboardLayout({
     redirect('/get-started');
   }
 
-  // Load capabilities from DB (ordered by sort_order for bot menu)
-  const { data: capRows } = await supabase
+  // Load all capability rows (enabled AND disabled) for policy resolution
+  const { data: capRows, error: capError } = await supabase
     .from('business_capabilities')
-    .select('capability')
+    .select('capability, is_enabled, sort_order')
     .eq('business_id', business.id)
-    .eq('is_enabled', true)
     .order('sort_order', { ascending: true })
     .order('capability', { ascending: true });
 
-  let capabilities: CapabilityId[];
-  if (capRows && capRows.length > 0) {
-    capabilities = capRows.map(r => r.capability as CapabilityId);
-  } else {
-    // Fallback: derive from category or flow_type
-    capabilities = CATEGORY_DEFAULT_CAPABILITIES[business.category] ||
-      [business.flow_type as CapabilityId] ||
-      ['scheduling'];
-  }
-
   // Load capability overrides
-  const { data: overrideRows } = await supabase
+  const { data: overrideRows, error: overrideError } = await supabase
     .from('capability_overrides')
     .select('capability')
     .eq('business_id', business.id);
@@ -193,7 +183,55 @@ export default async function DashboardLayout({
     r => r.capability as CapabilityId,
   );
 
-  const businessWithCaps = { ...business, capabilities, capabilityOverrides };
+  let capabilities: CapabilityId[] = [];  // effective — backward-compatible
+  let selectedCapabilities: CapabilityId[] = [];  // is_enabled=true (effective + paused)
+  let pausedCapabilities: Array<{ capability: CapabilityId; reason: string }> = [];
+  let disabledCapabilities: CapabilityId[] = [];
+
+  if (capError) {
+    // DB read error — fail closed with empty capabilities rather than exposing defaults
+    console.warn('[DASHBOARD] Capability read failed:', capError.message);
+    capabilities = [];
+  } else if (capRows && capRows.length > 0) {
+    // Use the authoritative policy resolver
+    const policyResult = getEffectiveCapabilities({
+      configuredCapabilities: capRows as ConfiguredCapability[],
+      overrides: overrideError ? [] : capabilityOverrides,
+      tier: business.subscription_tier,
+      trialEndsAt: business.trial_ends_at,
+    });
+    capabilities = policyResult.effective;
+    selectedCapabilities = policyResult.selected;
+    pausedCapabilities = policyResult.paused;
+    disabledCapabilities = policyResult.disabled;
+  } else {
+    // Zero-row fallback for legacy businesses — route through policy for tier/trial filtering
+    const legacyDefaults = CATEGORY_DEFAULT_CAPABILITIES[business.category] ||
+      [business.flow_type as CapabilityId] ||
+      ['scheduling'];
+    const legacyRows = legacyDefaults.map((cap: CapabilityId) => ({
+      capability: cap, is_enabled: true, sort_order: 0,
+    }));
+    const policyResult = getEffectiveCapabilities({
+      configuredCapabilities: legacyRows,
+      overrides: overrideError ? [] : capabilityOverrides,
+      tier: business.subscription_tier,
+      trialEndsAt: business.trial_ends_at,
+    });
+    capabilities = policyResult.effective;
+    selectedCapabilities = policyResult.selected;
+    pausedCapabilities = policyResult.paused;
+    disabledCapabilities = policyResult.disabled;
+  }
+
+  const businessWithCaps = {
+    ...business,
+    capabilities,              // effective — Sidebar gating, bot dispatch (backward-compatible)
+    selectedCapabilities,      // is_enabled=true — capability management page initialization
+    pausedCapabilities,        // selected but tier-blocked — upgrade prompts
+    disabledCapabilities,      // explicitly disabled — capability management
+    capabilityOverrides,
+  };
 
   // Build lightweight list for business switcher
   const allBusinessesList = (allUserBusinesses || []).map(b => ({

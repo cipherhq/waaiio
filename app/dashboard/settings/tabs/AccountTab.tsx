@@ -1249,25 +1249,33 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
               <button
                 onClick={async () => {
                   setCapSaving(true);
-                  const supabase = createClient();
-                  // Merge: keep existing enabled + add newly selected
-                  const allEnabled = [...new Set([...capabilities, ...newCapSelections])];
-                  // Disable all first
-                  await supabase
-                    .from('business_capabilities')
-                    .update({ is_enabled: false })
-                    .eq('business_id', business.id);
-                  // Enable selected
-                  for (const cap of allEnabled) {
-                    await supabase
-                      .from('business_capabilities')
-                      .upsert(
-                        { business_id: business.id, capability: cap, is_enabled: true },
-                        { onConflict: 'business_id,capability' },
+                  try {
+                    // Use selectedCapabilities (includes paused) — never effective-only
+                    const selectedBase = business.selectedCapabilities || business.capabilities || [];
+                    const allEnabled = [...new Set([...selectedBase, ...newCapSelections])];
+                    const res = await fetch('/api/capabilities/configure', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ businessId: business.id, capabilities: allEnabled }),
+                    });
+                    if (!res.ok) {
+                      const data = await res.json().catch(() => ({}));
+                      setUpgradeError(
+                        data.reason === 'capabilities_denied'
+                          ? 'Some capabilities require a plan upgrade.'
+                          : data.reason === 'configuration_conflict'
+                            ? 'Configuration changed elsewhere. Please refresh and try again.'
+                            : 'Failed to save capabilities. Please try again.'
                       );
+                      return;
+                    }
+                    setShowCapModal(false);
+                    window.location.reload();
+                  } catch {
+                    setUpgradeError('Network error saving capabilities. Please try again.');
+                  } finally {
+                    setCapSaving(false);
                   }
-                  setCapSaving(false);
-                  setShowCapModal(false);
                 }}
                 disabled={capSaving}
                 className="flex-1 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
@@ -1370,18 +1378,10 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                 action: 'downgrade',
                 status: 'success',
               });
-            const freeCaps: CapabilityId[] = (Object.entries(CAPABILITY_TIER_REQUIREMENTS) as [CapabilityId, string][])
-              .filter(([, tier]) => tier === 'free')
-              .map(([cap]) => cap);
-            const currentCaps = capabilities || [];
-            const capsToRemove = currentCaps.filter((c: string) => !freeCaps.includes(c as CapabilityId));
-            if (capsToRemove.length > 0) {
-              await supabase
-                .from('business_capabilities')
-                .delete()
-                .eq('business_id', business.id)
-                .in('capability', capsToRemove);
-            }
+            // Do NOT disable paid capabilities on downgrade.
+            // The capability policy resolver automatically pauses ineligible capabilities
+            // based on the new tier. The business's configuration is preserved so upgrading
+            // back restores access without reconfiguration.
             setDowngrading(false);
             setDowngraded(true);
           } else if (reAuthAction === 'delete') {

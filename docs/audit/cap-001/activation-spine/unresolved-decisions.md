@@ -1,41 +1,70 @@
-# Unresolved Product Decisions
+# Product Decisions
 
-These questions cannot be answered from repository evidence alone. They require explicit product decisions before implementation.
+## Approved Decisions (2026-07-31)
 
-## 1. Trial expiry behavior (affects CAS-007)
+### 1. Trial expiry — runtime filtering, no grace period
 
-**Question:** When a 30-day trial expires without the business upgrading to a paid plan, what should happen to capabilities that require growth or business tier?
+**Decision:** Runtime filtering. No destructive row deletion.
 
-**Options:**
-- **A. Immediate downgrade:** Disable all capabilities above the free tier when trial_ends_at passes. Simple but abrupt.
-- **B. Grace period:** Give 7 days after trial expiry before disabling. Sends warning notifications.
-- **C. Runtime filtering:** Don't modify business_capabilities rows. Instead, filter at query time — both bot and dashboard check tier+trial before including a capability.
-- **D. Do nothing (current behavior):** Capabilities remain enabled indefinitely. Rely on honor system and dashboard upgrade prompts.
+**Implementation:** `getEffectiveCapabilities()` in `lib/capabilities/policy.ts` filters at query time. Both dashboard and bot route legacy zero-row defaults through the policy for tier/trial filtering. DB read errors fail closed (empty capabilities, not defaults).
 
-**Recommendation:** Option C is safest — no data loss, no cron job needed, consistent enforcement. But it requires changes to getEnabledCapabilities(), layout.tsx, and the capabilities page.
+**Status:** implemented_pending_independent_review
 
-## 2. API capability enforcement (affects CAS-003)
+### 2. API capability enforcement — selective (writes only)
 
-**Question:** Should API routes independently verify that the business has the relevant capability enabled before allowing resource creation?
+**Decision:** Enforce on write operations, not reads.
 
-**Current state:** Zero API routes check capabilities. A client that bypasses the dashboard UI can create bookings, orders, tickets, etc. for disabled capabilities.
+**Implementation:** `canPerformAction()` in `lib/capabilities/policy.ts`. Broad rollout deferred to CAS-003.
 
-**Options:**
-- **A. Full enforcement:** Add capability middleware to all capability-specific API routes.
-- **B. Selective enforcement:** Only enforce on write operations (POST/PUT/DELETE), not reads.
-- **C. Accept current design:** UI and bot gating are sufficient. API callers are trusted.
+**Status:** Guard created. Rollout deferred.
 
-**Recommendation:** Option B — enforce on writes only. This prevents data creation for disabled capabilities while allowing read access for dashboard display.
+### 3. Capability writes — server API + atomic RPC + RLS enforcement
 
-## 3. Capability write mechanism (affects CAS-006)
+**Decision:** Server API route + PostgreSQL RPC + RLS migration.
 
-**Question:** Should the capability toggle on the dashboard use a Next.js API route instead of direct browser-to-Supabase writes?
+**Implementation:**
+- `POST /api/capabilities/configure` validates then calls `configure_business_capabilities` RPC (migration 300) for atomic bulk configuration
+- `POST /api/capabilities/toggle` handles single-field operations (sort_order, custom_label, individual toggle)
+- Admin grant/revoke uses `admin_grant_capability` / `admin_revoke_capability` RPCs (migration 301)
+- Migration 299 drops owner UPDATE/DELETE policies; only service_role can write
+- All browser direct writes to business_capabilities eliminated
 
-**Current state:** The capabilities page writes directly to business_capabilities via the browser Supabase client. RLS checks only owner_id, not tier.
+**Status:** implemented_pending_independent_review — RPC transaction rollback not runtime-tested
 
-**Options:**
-- **A. API route:** Create POST /api/capabilities/toggle that validates tier server-side.
-- **B. RLS function:** Add a PostgreSQL function called from RLS that checks tier.
-- **C. Keep direct writes:** Rely on client-side canEnableCapability() and accept the bypass risk.
+### 4. New category defaults — explicit opt-in for existing businesses
 
-**Recommendation:** Option A — a thin API route is the simplest way to add server-side tier validation without complex RLS functions.
+**Decision:** Never silently activate.
+
+**Implementation:** `getEnabledCapabilities()` no longer auto-merges new defaults. `getConfiguredCapabilities()` returns typed result distinguishing DB error from zero rows.
+
+**Status:** implemented_pending_independent_review
+
+### 5. Recoverable onboarding — end-to-end retry
+
+**Decision:** Genuine recoverable draft with same-business retry.
+
+**Implementation:**
+- Register route accepts `retryBusinessId`, verifies ownership + pending status, skips business creation, retries only capability init
+- Wizard detects recoverable response, stores businessId, sends it on retry
+- OnboardingDraft includes optional `pendingBusinessId` for page-refresh persistence
+- `initCapabilities()` uses upsert for idempotency
+- Bot rejects pending businesses (existing behavior, verified)
+
+**Status:** implemented_pending_independent_review
+
+### 6. Fail-closed capability reads
+
+**Decision:** DB errors must not be treated as zero rows.
+
+**Implementation:**
+- `getConfiguredCapabilities()` returns `ConfiguredCapabilitiesResult` with `ok` field
+- Dashboard fails closed (empty capabilities) on DB error
+- Bot sends "temporary issue" message and returns on DB error
+- Override query errors fail closed (treated as no overrides)
+
+**Status:** implemented_pending_independent_review
+
+## Deferred
+
+### CAS-003 — Broad API route capability enforcement
+Deferred to next controlled batch. The `canPerformAction()` guard exists but is not applied to individual capability-specific write routes.

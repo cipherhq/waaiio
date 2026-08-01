@@ -27,6 +27,8 @@ export interface OnboardingDraft {
   customBotCode: string;
   selectedPlan: SubscriptionTier;
   waMethod: WhatsAppMethod;
+  /** Pending business ID for retry after capability init failure */
+  pendingBusinessId?: string;
   savedAt: number;
 }
 
