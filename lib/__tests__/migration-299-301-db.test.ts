@@ -146,15 +146,15 @@ beforeAll(() => {
   runSQL(`DELETE FROM capability_overrides WHERE business_id = '${TEST_BIZ_ID}';`);
   runSQL(`DELETE FROM admin_audit_logs WHERE entity_id = '${TEST_BIZ_ID}';`);
 
-  // Ensure service_role has table grants (matches Supabase production behavior).
-  // In production, service_role has BYPASSRLS and full table access.
-  // In CI, SET LOCAL ROLE does not inherit BYPASSRLS, so we grant explicitly.
+  // Grant service_role table-level permissions needed for these tests.
+  // In production Supabase, service_role has full table grants.
+  // The RLS policies (migration 299) use TO service_role for UPDATE/DELETE.
+  // We need the base table grant for RLS policies to be evaluable.
   runSQL(`
-    GRANT ALL ON TABLE business_capabilities TO service_role;
-    GRANT ALL ON TABLE capability_overrides TO service_role;
-    GRANT ALL ON TABLE admin_audit_logs TO service_role;
-    GRANT ALL ON TABLE businesses TO service_role;
-    ALTER ROLE service_role BYPASSRLS;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE business_capabilities TO service_role;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE capability_overrides TO service_role;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE admin_audit_logs TO service_role;
+    GRANT SELECT, UPDATE ON TABLE businesses TO service_role;
   `);
 
   // Install a test-safe auth.uid() that reads JWT claims
