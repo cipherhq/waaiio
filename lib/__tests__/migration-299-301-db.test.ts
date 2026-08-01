@@ -37,10 +37,12 @@ const TEST_BIZ_ID = '88bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const OTHER_USER_ID = '88cccccc-cccc-cccc-cccc-cccccccccccc';
 
 beforeAll(() => {
-  // Create test fixtures
+  // Create test fixtures — disable trigger to avoid handle_new_user phone column issue
   runSQL(`
+    ALTER TABLE auth.users DISABLE TRIGGER ALL;
     INSERT INTO auth.users (id, email) VALUES ('${TEST_USER_ID}', 'cap-test@test.local') ON CONFLICT DO NOTHING;
     INSERT INTO auth.users (id, email) VALUES ('${OTHER_USER_ID}', 'cap-other@test.local') ON CONFLICT DO NOTHING;
+    ALTER TABLE auth.users ENABLE TRIGGER ALL;
     INSERT INTO profiles (id) VALUES ('${TEST_USER_ID}') ON CONFLICT DO NOTHING;
     INSERT INTO profiles (id) VALUES ('${OTHER_USER_ID}') ON CONFLICT DO NOTHING;
     INSERT INTO businesses (id, name, slug, owner_id, bot_code, city, address, phone, status, wa_method, country_code, category)
@@ -83,7 +85,7 @@ describe('Migration 299: business_capabilities RLS', () => {
 
   it('owner direct INSERT is denied', () => {
     const r = runSQL(`
-      SET LOCAL ROLE authenticated;
+      BEGIN; SET LOCAL ROLE authenticated;
       SET LOCAL request.jwt.claims = '{"sub":"${TEST_USER_ID}"}';
       INSERT INTO business_capabilities (business_id, capability, is_enabled) VALUES ('${TEST_BIZ_ID}', 'payment', true);
     `);
@@ -92,7 +94,7 @@ describe('Migration 299: business_capabilities RLS', () => {
 
   it('owner direct UPDATE is denied', () => {
     const r = runSQL(`
-      SET LOCAL ROLE authenticated;
+      BEGIN; SET LOCAL ROLE authenticated;
       SET LOCAL request.jwt.claims = '{"sub":"${TEST_USER_ID}"}';
       UPDATE business_capabilities SET is_enabled = false WHERE business_id = '${TEST_BIZ_ID}';
     `);
@@ -101,7 +103,7 @@ describe('Migration 299: business_capabilities RLS', () => {
 
   it('owner direct DELETE is denied', () => {
     const r = runSQL(`
-      SET LOCAL ROLE authenticated;
+      BEGIN; SET LOCAL ROLE authenticated;
       SET LOCAL request.jwt.claims = '{"sub":"${TEST_USER_ID}"}';
       DELETE FROM business_capabilities WHERE business_id = '${TEST_BIZ_ID}';
     `);
@@ -110,7 +112,7 @@ describe('Migration 299: business_capabilities RLS', () => {
 
   it('unrelated user is denied', () => {
     const r = runSQL(`
-      SET LOCAL ROLE authenticated;
+      BEGIN; SET LOCAL ROLE authenticated;
       SET LOCAL request.jwt.claims = '{"sub":"${OTHER_USER_ID}"}';
       UPDATE business_capabilities SET is_enabled = false WHERE business_id = '${TEST_BIZ_ID}';
     `);
@@ -196,7 +198,7 @@ describe('Migration 300: configure_business_capabilities RPC', () => {
 
   it('anon cannot execute the RPC', () => {
     const r = runSQL(`
-      SET LOCAL ROLE anon;
+      BEGIN; SET LOCAL ROLE anon;
       SELECT configure_business_capabilities('${TEST_BIZ_ID}', ARRAY['scheduling'], ARRAY[0], NULL, NULL, NULL);
     `);
     expect(r.exitCode).not.toBe(0);
@@ -204,7 +206,7 @@ describe('Migration 300: configure_business_capabilities RPC', () => {
 
   it('authenticated cannot execute the RPC', () => {
     const r = runSQL(`
-      SET LOCAL ROLE authenticated;
+      BEGIN; SET LOCAL ROLE authenticated;
       SELECT configure_business_capabilities('${TEST_BIZ_ID}', ARRAY['scheduling'], ARRAY[0], NULL, NULL, NULL);
     `);
     expect(r.exitCode).not.toBe(0);
@@ -256,12 +258,12 @@ describe('Migration 301: admin grant/revoke RPCs', () => {
   });
 
   it('anon cannot execute grant', () => {
-    const r = runSQL(`SET LOCAL ROLE anon; SELECT admin_grant_capability('${TEST_BIZ_ID}', 'chat', '${TEST_USER_ID}', null);`);
+    const r = runSQL(`BEGIN; SET LOCAL ROLE anon; SELECT admin_grant_capability('${TEST_BIZ_ID}', 'chat', '${TEST_USER_ID}', null);`);
     expect(r.exitCode).not.toBe(0);
   });
 
   it('authenticated cannot execute grant', () => {
-    const r = runSQL(`SET LOCAL ROLE authenticated; SELECT admin_grant_capability('${TEST_BIZ_ID}', 'chat', '${TEST_USER_ID}', null);`);
+    const r = runSQL(`BEGIN; SET LOCAL ROLE authenticated; SELECT admin_grant_capability('${TEST_BIZ_ID}', 'chat', '${TEST_USER_ID}', null);`);
     expect(r.exitCode).not.toBe(0);
   });
 
