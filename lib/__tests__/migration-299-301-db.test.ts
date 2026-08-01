@@ -71,8 +71,12 @@ function runAsAuthenticated(sql: string, userId: string): { stdout: string; stde
 
 /**
  * Run two concurrent psql sessions with controlled transaction ordering.
- * Session A executes sqlA, pauses at pg_advisory_lock. Session B runs sqlB.
- * Then session A is released. Returns both results.
+ * Session A executes sqlA (holds lock). Session B runs sqlB (blocked until A commits).
+ * Returns both results.
+ *
+ * Uses the full connection URL via psql's positional argument.
+ * The URL must include all auth info (user/password) since spawn doesn't
+ * inherit the interactive terminal's pg service file.
  */
 function runTwoSessions(
   sqlA: string,
@@ -88,37 +92,45 @@ function runTwoSessions(
     let bStdout = '';
     let bStderr = '';
     let bExitCode = 0;
+    let bDone = false;
+    let aDone = false;
+
+    function tryResolve() {
+      if (aDone && bDone) {
+        resolve({
+          a: { stdout: aStdout.trim(), stderr: aStderr.trim(), exitCode: aExitCode },
+          b: { stdout: bStdout.trim(), stderr: bStderr.trim(), exitCode: bExitCode },
+        });
+      }
+    }
 
     // Session A — starts first, acquires FOR UPDATE lock
-    const procA = spawn('psql', [dbUrl!, '-t', '-A', '-v', 'ON_ERROR_STOP=1'], { timeout });
-    procA.stdin.write(sqlA);
-    procA.stdin.end();
+    // Use shell mode to ensure proper URL parsing (same as execSync pattern)
+    const psqlCmd = `psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1`;
+    const procA = spawn('sh', ['-c', psqlCmd], { timeout });
+    procA.stdin!.write(sqlA);
+    procA.stdin!.end();
 
-    procA.stdout.on('data', (d: Buffer) => { aStdout += d.toString(); });
-    procA.stderr.on('data', (d: Buffer) => { aStderr += d.toString(); });
+    procA.stdout!.on('data', (d: Buffer) => { aStdout += d.toString(); });
+    procA.stderr!.on('data', (d: Buffer) => { aStderr += d.toString(); });
+    procA.on('close', (code: number | null) => {
+      aExitCode = code || 0;
+      aDone = true;
+      tryResolve();
+    });
 
     // Give session A 500ms to acquire lock, then start session B
     setTimeout(() => {
-      const procB = spawn('psql', [dbUrl!, '-t', '-A', '-v', 'ON_ERROR_STOP=1'], { timeout });
-      procB.stdin.write(sqlB);
-      procB.stdin.end();
+      const procB = spawn('sh', ['-c', psqlCmd], { timeout });
+      procB.stdin!.write(sqlB);
+      procB.stdin!.end();
 
-      procB.stdout.on('data', (d: Buffer) => { bStdout += d.toString(); });
-      procB.stderr.on('data', (d: Buffer) => { bStderr += d.toString(); });
-
+      procB.stdout!.on('data', (d: Buffer) => { bStdout += d.toString(); });
+      procB.stderr!.on('data', (d: Buffer) => { bStderr += d.toString(); });
       procB.on('close', (code: number | null) => {
         bExitCode = code || 0;
-      });
-
-      procA.on('close', (code: number | null) => {
-        aExitCode = code || 0;
-        // Wait for B to also finish
-        setTimeout(() => {
-          resolve({
-            a: { stdout: aStdout.trim(), stderr: aStderr.trim(), exitCode: aExitCode },
-            b: { stdout: bStdout.trim(), stderr: bStderr.trim(), exitCode: bExitCode },
-          });
-        }, 1000);
+        bDone = true;
+        tryResolve();
       });
     }, 500);
   });
