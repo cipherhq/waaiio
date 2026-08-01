@@ -146,6 +146,17 @@ beforeAll(() => {
   runSQL(`DELETE FROM capability_overrides WHERE business_id = '${TEST_BIZ_ID}';`);
   runSQL(`DELETE FROM admin_audit_logs WHERE entity_id = '${TEST_BIZ_ID}';`);
 
+  // Ensure service_role has table grants (matches Supabase production behavior).
+  // In production, service_role has BYPASSRLS and full table access.
+  // In CI, SET LOCAL ROLE does not inherit BYPASSRLS, so we grant explicitly.
+  runSQL(`
+    GRANT ALL ON TABLE business_capabilities TO service_role;
+    GRANT ALL ON TABLE capability_overrides TO service_role;
+    GRANT ALL ON TABLE admin_audit_logs TO service_role;
+    GRANT ALL ON TABLE businesses TO service_role;
+    ALTER ROLE service_role BYPASSRLS;
+  `);
+
   // Install a test-safe auth.uid() that reads JWT claims
   runSQL(`
     CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
