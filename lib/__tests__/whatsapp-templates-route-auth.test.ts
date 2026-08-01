@@ -215,6 +215,67 @@ describe('GET /api/whatsapp/templates — authorization', () => {
     // MetaCloudService never instantiated
     expect(metaInstantiations).toHaveLength(0);
   });
+
+  it('suspended business owner → 403 before service-role channel lookup', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
+    mockAuthFrom.mockImplementation(() => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            maybeSingle: () => Promise.resolve({ data: { id: '11111111-1111-1111-1111-111111111111', status: 'suspended' }, error: null }),
+          }),
+        }),
+      }),
+    }));
+
+    const { GET } = await import('@/app/api/whatsapp/templates/route');
+    const res = await GET(makeGetRequest({ business_id: '11111111-1111-1111-1111-111111111111' }));
+    expect(res.status).toBe(403);
+    expect(serviceClientUsed).toBe(false);
+    expect(metaInstantiations).toHaveLength(0);
+  });
+
+  it('owner with no dedicated channel gets shared-WABA read-only GET', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
+    mockAuthFrom.mockImplementation(() => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            maybeSingle: () => Promise.resolve({ data: { id: '11111111-1111-1111-1111-111111111111', status: 'active' }, error: null }),
+          }),
+        }),
+      }),
+    }));
+
+    // Override service client to return PGRST116 (no rows — legitimate absence)
+    const serviceMod = await import('@/lib/supabase/service');
+    (serviceMod as any).createServiceClient = () => {
+      serviceClientUsed = true;
+      return {
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                eq: () => ({
+                  single: () => Promise.resolve({
+                    data: null,
+                    error: { code: 'PGRST116', message: 'no rows' },
+                  }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      };
+    };
+
+    const { GET } = await import('@/app/api/whatsapp/templates/route');
+    const res = await GET(makeGetRequest({ business_id: '11111111-1111-1111-1111-111111111111' }));
+    expect(res.status).toBe(200);
+    // Shared MetaCloudService instantiated (no explicit credentials)
+    expect(metaInstantiations.length).toBeGreaterThan(0);
+    expect(metaInstantiations[metaInstantiations.length - 1].hasCredentials).toBe(false);
+  });
 });
 
 describe('POST /api/whatsapp/templates — admin-only', () => {

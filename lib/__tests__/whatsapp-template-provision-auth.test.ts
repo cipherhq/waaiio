@@ -244,7 +244,7 @@ describe('POST /api/whatsapp/templates/provision — authorization', () => {
     expect(serviceClientUsed).toBe(false);
   });
 
-  it('channel lookup DB error fails closed (not interpreted as shared)', async () => {
+  it('channel lookup DB error fails closed (500, not interpreted as shared)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1', email: 'test@test.com' } } });
     mockAuthFrom.mockImplementation(() => ({
       select: () => ({
@@ -256,13 +256,60 @@ describe('POST /api/whatsapp/templates/provision — authorization', () => {
       }),
     }));
 
-    // Mock the service client to return a DB error (not PGRST116)
-    vi.mocked(serviceClientUsed); // reset
+    // Override createServiceClient to return a DB error (not PGRST116)
+    const serviceMod = await import('@/lib/supabase/service');
+    const originalCreateService = serviceMod.createServiceClient;
+    (serviceMod as any).createServiceClient = () => {
+      serviceClientUsed = true;
+      return {
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                eq: () => ({
+                  single: () => Promise.resolve({
+                    data: null,
+                    error: { code: 'PGRST500', message: 'connection error' },
+                  }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      };
+    };
+
+    try {
+      const { POST } = await import('@/app/api/whatsapp/templates/provision/route');
+      const res = await POST(makeRequest({ business_id: '11111111-1111-1111-1111-111111111111', capability: 'whatsapp_sign' }));
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.message).toContain('Failed to look up channel');
+      // MetaCloudService must never be instantiated on DB error
+    } finally {
+      (serviceMod as any).createServiceClient = originalCreateService;
+    }
+  });
+
+  it('legitimate no-channel returns shared/no-provision result', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1', email: 'test@test.com' } } });
+    mockAuthFrom.mockImplementation(() => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            maybeSingle: () => Promise.resolve({ data: { id: '11111111-1111-1111-1111-111111111111', status: 'active' }, error: null }),
+          }),
+        }),
+      }),
+    }));
+
+    // Default service mock returns null channel (PGRST116-like no-row)
     const { POST } = await import('@/app/api/whatsapp/templates/provision/route');
     const res = await POST(makeRequest({ business_id: '11111111-1111-1111-1111-111111111111', capability: 'whatsapp_sign' }));
-    // The default mock returns null/null from service.from().single() which simulates no-channel
-    // For DB error, we'd need a more specific mock, but the current test proves the shared path
     expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.shared).toBe(true);
+    expect(body.provisioned).toBe(false);
   });
 
   it('suspended business → 403', async () => {

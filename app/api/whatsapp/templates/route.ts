@@ -72,6 +72,9 @@ export async function GET(request: NextRequest) {
       if (!business) {
         return jsonWithCors({ message: 'Forbidden' }, { status: 403 }, origin);
       }
+      if (business.status === 'suspended') {
+        return jsonWithCors({ message: 'Business is suspended' }, { status: 403 }, origin);
+      }
 
       // Look up dedicated channel
       const service = createServiceClient();
