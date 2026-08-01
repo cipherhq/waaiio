@@ -74,13 +74,15 @@ describe('Migration 299: business_capabilities RLS', () => {
   });
 
   it('owner SELECT is allowed', () => {
-    const r = runSQL(
-      `SELECT capability FROM business_capabilities WHERE business_id = '${TEST_BIZ_ID}';`,
-      `test_owner_${TEST_USER_ID.replace(/-/g, '_')}`,
-    );
-    // If the test role doesn't exist, the role fallback is acceptable
-    // The point is that owner-scoped SELECT remains allowed
-    expect(r.exitCode === 0 || r.stdout.includes('scheduling')).toBeTruthy();
+    const r = runSQL(`
+      BEGIN;
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claims = '{"sub":"${TEST_USER_ID}"}';
+      SELECT capability FROM business_capabilities WHERE business_id = '${TEST_BIZ_ID}';
+      COMMIT;
+    `);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('scheduling');
   });
 
   it('owner direct INSERT is denied', () => {
