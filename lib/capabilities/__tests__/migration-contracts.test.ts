@@ -57,10 +57,12 @@ describe('Migration 300 — atomic capability configuration RPC', () => {
     expect(sql).toMatch(/SET\s+search_path\s*=\s*public/i);
   });
 
-  it('accepts UUID, TEXT[], INT[] parameters', () => {
+  it('accepts required and snapshot parameters', () => {
     expect(sql).toMatch(/p_business_id\s+UUID/i);
     expect(sql).toMatch(/p_capabilities\s+TEXT\[\]/i);
     expect(sql).toMatch(/p_sort_orders\s+INT\[\]/i);
+    expect(sql).toMatch(/p_expected_tier/i);
+    expect(sql).toMatch(/p_expected_status/i);
   });
 
   it('validates array length match', () => {
@@ -73,6 +75,20 @@ describe('Migration 300 — atomic capability configuration RPC', () => {
 
   it('requires at least one capability', () => {
     expect(sql).toMatch(/must\s+select\s+at\s+least\s+one/i);
+  });
+
+  it('rejects duplicate sort orders', () => {
+    expect(sql).toMatch(/duplicate\s+sort\s+orders/i);
+  });
+
+  it('validates sort order bounds', () => {
+    expect(sql).toMatch(/sort\s+orders\s+must\s+be\s+between/i);
+  });
+
+  it('verifies snapshot against stale reads', () => {
+    expect(sql).toMatch(/configuration_conflict/i);
+    expect(sql).toMatch(/p_expected_tier/i);
+    expect(sql).toMatch(/p_expected_status/i);
   });
 
   it('locks business row with FOR UPDATE', () => {

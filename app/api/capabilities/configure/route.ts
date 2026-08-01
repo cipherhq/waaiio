@@ -145,16 +145,23 @@ export async function POST(request: NextRequest) {
   }
   const sortOrders = requestedCaps.map(cap => order.indexOf(cap));
 
-  // Execute atomic RPC
+  // Execute atomic RPC with snapshot verification to prevent stale-read race
   const { data: result, error: rpcError } = await service.rpc('configure_business_capabilities', {
     p_business_id: businessId,
     p_capabilities: requestedCaps,
     p_sort_orders: sortOrders,
+    p_expected_tier: business.subscription_tier,
+    p_expected_trial_ends_at: business.trial_ends_at,
+    p_expected_status: business.status,
   });
 
   if (rpcError) {
     console.warn('[CAP_CONFIGURE] RPC error:', rpcError.message);
-    return NextResponse.json({ success: false, reason: 'configuration_failed' }, { status: 500 });
+    const isConflict = rpcError.message?.includes('configuration_conflict');
+    return NextResponse.json(
+      { success: false, reason: isConflict ? 'configuration_conflict' : 'configuration_failed' },
+      { status: isConflict ? 409 : 500 },
+    );
   }
 
   return NextResponse.json({ success: true, state: result });

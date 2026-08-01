@@ -63,7 +63,7 @@ export default function CapabilitiesPage() {
   const tier = (business.subscription_tier || 'free') as SubscriptionTier;
   const overrides = business.capabilityOverrides || [];
   // Initialize from selectedCapabilities (includes paused) not effective capabilities
-  const selected = (business as any).selectedCapabilities || business.capabilities;
+  const selected = business.selectedCapabilities || business.capabilities;
   const [enabled, setEnabled] = useState<CapabilityId[]>(selected);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');

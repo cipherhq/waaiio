@@ -20,14 +20,18 @@ export async function finalizeOnboarding(
 ): Promise<void> {
   const { businessId, userId, capabilities, firstName, lastName } = params;
 
-  // ── Required: Canned responses (if chat enabled) ──
+  // ── Optional: Canned responses (if chat enabled) ──
+  // Sample content — should not block onboarding if it fails
   if (capabilities.includes('chat')) {
-    const { count } = await service
+    const { count, error: countError } = await service
       .from('canned_responses')
       .select('id', { count: 'exact', head: true })
       .eq('business_id', businessId);
 
-    if (!count || count === 0) {
+    if (countError) {
+      // Log but don't block — canned responses are optional sample content
+      console.warn('[ONBOARDING] Canned response count query failed:', countError.message);
+    } else if (!count || count === 0) {
       const defaultCanned = [
         { title: 'Thanks for waiting', message_text: 'Thanks for your patience! How can I help you?', sort_order: 0 },
         { title: 'Operating hours', message_text: 'Our operating hours are Monday - Saturday, 9am - 6pm.', sort_order: 1 },
@@ -39,17 +43,22 @@ export async function finalizeOnboarding(
         defaultCanned.map(cr => ({ business_id: businessId, ...cr })),
       );
       if (error) {
-        throw new Error(`Canned response initialization failed: ${error.message}`);
+        // Optional content — log but don't block onboarding
+        console.warn('[ONBOARDING] Canned response insert failed:', error.message);
       }
     }
   }
 
   // ── Required: Profile role and name update ──
-  const { data: profile } = await service
+  const { data: profile, error: profileError } = await service
     .from('profiles')
     .select('role')
     .eq('id', userId)
     .single();
+
+  if (profileError) {
+    throw new Error(`Profile read failed: ${profileError.message}`);
+  }
 
   const isFirstBusiness = !profile?.role || profile.role === 'diner';
   const profileUpdate: Record<string, string> = {};
