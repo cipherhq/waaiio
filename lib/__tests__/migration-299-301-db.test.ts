@@ -18,17 +18,17 @@ if (!dbUrl) {
   });
 } else {
 
-function runSQL(sql: string, role?: string): { stdout: string; exitCode: number } {
+function runSQL(sql: string, role?: string): { stdout: string; stderr: string; exitCode: number } {
   const fullSql = role ? `SET ROLE ${role};\n${sql}` : sql;
   try {
     const stdout = execSync(
       `psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1`,
       { input: fullSql, encoding: 'utf-8', timeout: 15000 },
     );
-    return { stdout: stdout.trim(), exitCode: 0 };
+    return { stdout: stdout.trim(), stderr: '', exitCode: 0 };
   } catch (err: unknown) {
     const e = err as { status?: number; stdout?: string; stderr?: string };
-    return { stdout: (e.stdout || '').trim(), exitCode: e.status || 1 };
+    return { stdout: (e.stdout || '').trim(), stderr: (e.stderr || '').trim(), exitCode: e.status || 1 };
   }
 }
 
@@ -150,7 +150,7 @@ describe('Migration 300: configure_business_capabilities RPC', () => {
       SELECT configure_business_capabilities('${TEST_BIZ_ID}', ARRAY['scheduling','scheduling'], ARRAY[0,1], NULL, NULL, NULL);
     `);
     expect(r.exitCode).not.toBe(0);
-    expect(r.stdout).toContain('duplicate');
+    expect(r.stderr).toContain('duplicate');
   });
 
   it('empty capabilities rejected', () => {
@@ -271,13 +271,13 @@ describe('Migration 301: admin grant/revoke RPCs', () => {
   it('nonexistent business raises error in grant', () => {
     const r = runSQL(`SELECT admin_grant_capability('00000000-0000-0000-0000-000000000000', 'chat', '${TEST_USER_ID}', null);`);
     expect(r.exitCode).not.toBe(0);
-    expect(r.stdout).toContain('business_not_found');
+    expect(r.stderr).toContain('business_not_found');
   });
 
   it('nonexistent business raises error in revoke', () => {
     const r = runSQL(`SELECT admin_revoke_capability('00000000-0000-0000-0000-000000000000', 'chat', '${TEST_USER_ID}', null);`);
     expect(r.exitCode).not.toBe(0);
-    expect(r.stdout).toContain('business_not_found');
+    expect(r.stderr).toContain('business_not_found');
   });
 });
 
