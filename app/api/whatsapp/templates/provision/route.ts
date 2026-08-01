@@ -2,8 +2,11 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
+import { CAPABILITIES } from '@/lib/capabilities/types';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+
+const VALID_CAPABILITY_IDS = new Set<string>(CAPABILITIES.map(c => c.id));
 
 /**
  * POST /api/whatsapp/templates/provision
@@ -205,36 +208,88 @@ const REQUIRED_TEMPLATES: Record<string, TemplateDef[]> = {
 
 export async function POST(request: NextRequest) {
   try {
+    // 1. Authenticate
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    const { business_id, capability } = await request.json();
-
-    if (!business_id || !capability) {
-      return NextResponse.json(
-        { message: 'Missing required fields: business_id, capability' },
-        { status: 400 },
-      );
+    // 2. Parse and validate request
+    let body: { business_id?: unknown; capability?: unknown };
+    try { body = await request.json(); } catch {
+      return NextResponse.json({ message: 'Invalid request body' }, { status: 400 });
     }
 
-    // Check if this capability requires template provisioning
+    const { business_id, capability } = body;
+
+    if (!business_id || typeof business_id !== 'string') {
+      return NextResponse.json({ message: 'Missing or invalid business_id' }, { status: 400 });
+    }
+    if (!capability || typeof capability !== 'string') {
+      return NextResponse.json({ message: 'Missing or invalid capability' }, { status: 400 });
+    }
+
+    // 3. Validate business_id format (UUID)
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(business_id)) {
+      return NextResponse.json({ message: 'Invalid business_id format' }, { status: 400 });
+    }
+
+    // 4. Validate capability against canonical registry
+    if (!VALID_CAPABILITY_IDS.has(capability)) {
+      return NextResponse.json({ message: 'Unknown capability' }, { status: 400 });
+    }
+
+    // 5. Check if this capability has templates to provision (valid cap, just no templates)
     const templateDefs = REQUIRED_TEMPLATES[capability];
     if (!templateDefs?.length) {
       return NextResponse.json({ message: 'No template provisioning needed', provisioned: false });
     }
 
-    // Look up the business's dedicated WhatsApp channel
+    // 5. Verify business ownership using authenticated context (RLS-aware)
+    // This is the SECURITY BOUNDARY — must occur BEFORE any service-role operation.
+    const { data: business, error: bizError } = await supabase
+      .from('businesses')
+      .select('id, status')
+      .eq('id', business_id)
+      .eq('owner_id', user.id)
+      .maybeSingle();
+
+    if (bizError) {
+      // Fail closed on authorization lookup error
+      logger.error('[PROVISION] Business authorization lookup failed:', bizError.message);
+      return NextResponse.json({ message: 'Authorization check failed' }, { status: 500 });
+    }
+
+    if (!business) {
+      // User is authenticated but NOT authorized for this business
+      logger.warn(`[PROVISION] Denied: user=${user.id} business=${business_id} reason=not_owner`);
+      return NextResponse.json({ message: 'Forbidden' }, { status: 403 });
+    }
+
+    // 6. Validate business status
+    if (business.status === 'suspended') {
+      return NextResponse.json({ message: 'Business is suspended' }, { status: 403 });
+    }
+
+    // ─── AUTHORIZATION PASSED ───
+    // Only AFTER proving ownership may we use service-role for privileged channel data.
+
     const service = createServiceClient();
-    const { data: channel } = await service
+    const { data: channel, error: channelError } = await service
       .from('whatsapp_channels')
       .select('waba_id, meta_access_token, provider')
       .eq('business_id', business_id)
       .eq('provider', 'meta_cloud')
       .eq('is_active', true)
       .single();
+
+    // Distinguish: no rows found (legitimate) vs database error (fail closed)
+    if (channelError && channelError.code !== 'PGRST116') {
+      logger.error('[PROVISION] Channel lookup error:', channelError.message);
+      return NextResponse.json({ message: 'Failed to look up channel' }, { status: 500 });
+    }
 
     if (!channel?.waba_id || !channel?.meta_access_token) {
       // No dedicated channel — they'll use the shared WABA which already has the template
@@ -276,10 +331,12 @@ export async function POST(request: NextRequest) {
           allow_category_change: true,
         });
 
-        logger.info(`[PROVISION] Created template "${templateDef.name}" on WABA ${channel.waba_id} for business ${business_id}:`, result);
+        // Log success without exposing tokens
+        logger.info(`[PROVISION] Created template "${templateDef.name}" on WABA ${channel.waba_id} for business ${business_id}, status=${result.status}`);
         results.push({ name: templateDef.name, status: result.status, action: 'created' });
       } catch (err) {
-        logger.withContext({ op: 'provision.create-template', ...safeLogErrorContext(err) }).error(`[PROVISION] Failed to create "${templateDef.name}"`);
+        // Log error safely — never include meta_access_token or raw provider response
+        logger.withContext({ op: 'provision.create-template', ...safeLogErrorContext(err) }).error(`[PROVISION] Failed to create "${templateDef.name}" for business ${business_id}`);
         results.push({ name: templateDef.name, status: 'error', action: 'creation_failed' });
       }
     }
