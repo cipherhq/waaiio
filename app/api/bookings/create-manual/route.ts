@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { requireCapability } from '@/lib/capabilities/api-guard';
+import { requireAnyCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
@@ -43,10 +43,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Date cannot be in the past' }, { status: 400 });
     }
 
-    // ── Capability enforcement: scheduling/create_new ──
+    // ── Capability enforcement: appointment OR scheduling / create_new ──
     const serviceClient = createServiceClient();
-    const guard = await requireCapability(supabase, serviceClient, {
-      businessId, userId: user.id, capability: 'scheduling', action: 'create_new',
+    const guard = await requireAnyCapability(supabase, serviceClient, {
+      businessId, userId: user.id, capabilities: ['appointment', 'scheduling'], action: 'create_new',
     });
     if (!guard.allowed) {
       return NextResponse.json(guard.denial, { status: guard.status });

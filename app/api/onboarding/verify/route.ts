@@ -219,6 +219,28 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Verify setup-complete invariant: business must have configured capabilities.
+    // A pending business without capability rows has not completed onboarding setup.
+    // Do NOT activate — return recoverable error to allow retry.
+    const { count: configuredCapCount, error: capCheckError } = await service
+      .from('business_capabilities')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', businessId);
+
+    if (capCheckError) {
+      return NextResponse.json(
+        { status: 'error', message: 'Setup verification failed. Please try again.', recoverable: true },
+        { status: 500 },
+      );
+    }
+
+    if (!configuredCapCount || configuredCapCount === 0) {
+      return NextResponse.json(
+        { status: 'error', message: 'Business setup incomplete. Please complete capability configuration first.', recoverable: true, businessId },
+        { status: 400 },
+      );
+    }
+
     await service
       .from('businesses')
       .update({

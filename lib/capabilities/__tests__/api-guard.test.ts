@@ -20,7 +20,7 @@
  * 16. suspended business → denied
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { requireCapability } from '../api-guard';
+import { requireCapability, requireAnyCapability } from '../api-guard';
 import type { CapabilityId } from '../types';
 
 // ── Mock factories ──
@@ -311,5 +311,72 @@ describe('requireCapability — zero-row legacy', () => {
       { businessId: 'biz-1', userId: 'user-1', capability: 'invoice', action: 'create_new' },
     );
     expect(result.allowed).toBe(false);
+  });
+});
+
+describe('requireAnyCapability — appointment OR scheduling', () => {
+  it('appointment effective, scheduling absent → allowed', async () => {
+    const result = await requireAnyCapability(
+      mockSupabase({ business: ACTIVE_BIZ }),
+      mockService({ capabilities: [{ capability: 'appointment', is_enabled: true, sort_order: 0 }] }),
+      { businessId: 'biz-1', userId: 'user-1', capabilities: ['appointment', 'scheduling'], action: 'create_new' },
+    );
+    expect(result.allowed).toBe(true);
+  });
+
+  it('scheduling effective, appointment absent → allowed', async () => {
+    const result = await requireAnyCapability(
+      mockSupabase({ business: ACTIVE_BIZ }),
+      mockService({ capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }] }),
+      { businessId: 'biz-1', userId: 'user-1', capabilities: ['appointment', 'scheduling'], action: 'create_new' },
+    );
+    expect(result.allowed).toBe(true);
+  });
+
+  it('neither configured → denied', async () => {
+    const result = await requireAnyCapability(
+      mockSupabase({ business: ACTIVE_BIZ }),
+      mockService({ capabilities: [{ capability: 'payment', is_enabled: true, sort_order: 0 }] }),
+      { businessId: 'biz-1', userId: 'user-1', capabilities: ['appointment', 'scheduling'], action: 'create_new' },
+    );
+    expect(result.allowed).toBe(false);
+  });
+
+  it('appointment disabled, scheduling absent → denied', async () => {
+    const result = await requireAnyCapability(
+      mockSupabase({ business: ACTIVE_BIZ }),
+      mockService({ capabilities: [{ capability: 'appointment', is_enabled: false, sort_order: 0 }] }),
+      { businessId: 'biz-1', userId: 'user-1', capabilities: ['appointment', 'scheduling'], action: 'create_new' },
+    );
+    expect(result.allowed).toBe(false);
+  });
+
+  it('pending business → denied for create_new', async () => {
+    const result = await requireAnyCapability(
+      mockSupabase({ business: PENDING_BIZ }),
+      mockService({ capabilities: [{ capability: 'appointment', is_enabled: true, sort_order: 0 }] }),
+      { businessId: 'biz-1', userId: 'user-1', capabilities: ['appointment', 'scheduling'], action: 'create_new' },
+    );
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) expect(result.denial.reason).toBe('business_setup_incomplete');
+  });
+
+  it('unrelated capability cannot authorize booking', async () => {
+    const result = await requireAnyCapability(
+      mockSupabase({ business: ACTIVE_BIZ }),
+      mockService({ capabilities: [{ capability: 'broadcast', is_enabled: true, sort_order: 0 }] }),
+      { businessId: 'biz-1', userId: 'user-1', capabilities: ['appointment', 'scheduling'], action: 'create_new' },
+    );
+    expect(result.allowed).toBe(false);
+  });
+
+  it('ownership failure → denied', async () => {
+    const result = await requireAnyCapability(
+      mockSupabase({ business: null }),
+      mockService({ capabilities: [] }),
+      { businessId: 'biz-1', userId: 'attacker', capabilities: ['appointment', 'scheduling'], action: 'create_new' },
+    );
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) expect(result.status).toBe(403);
   });
 });

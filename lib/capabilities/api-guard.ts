@@ -191,3 +191,98 @@ export async function requireCapability(
     resolution,
   };
 }
+
+/**
+ * Variant that authorizes when ANY of the listed capabilities is effective.
+ * Used for routes that serve multiple capability categories (e.g. bookings
+ * serve both 'appointment' and 'scheduling' businesses).
+ *
+ * Resolves entitlement state ONCE, then checks each capability.
+ * The server defines the capability list — client cannot influence it.
+ */
+export async function requireAnyCapability(
+  supabase: SupabaseClient,
+  service: SupabaseClient,
+  params: {
+    businessId: string;
+    userId: string;
+    capabilities: CapabilityId[];
+    action: CapabilityAction;
+  },
+): Promise<CapabilityGuardResult> {
+  const { businessId, userId, capabilities, action } = params;
+
+  // 1. Verify business ownership
+  const { data: business, error: bizError } = await supabase
+    .from('businesses')
+    .select('id, status, subscription_tier, trial_ends_at, category')
+    .eq('id', businessId)
+    .eq('owner_id', userId)
+    .maybeSingle();
+
+  if (bizError) {
+    return { allowed: false, status: 500, denial: { success: false, reason: 'authorization_error' } };
+  }
+  if (!business) {
+    return { allowed: false, status: 403, denial: { success: false, reason: 'business_not_found' } };
+  }
+  if (business.status === 'suspended') {
+    return { allowed: false, status: 403, denial: { success: false, reason: 'business_suspended' } };
+  }
+  if (business.status === 'pending' && action === 'create_new') {
+    return { allowed: false, status: 403, denial: { success: false, reason: 'business_setup_incomplete', detail: 'complete_onboarding_first' } };
+  }
+
+  // 2. Load capability + override state (single read)
+  const capResult = await getConfiguredCapabilities(service, businessId);
+  if (!capResult.ok) {
+    return { allowed: false, status: 500, denial: { success: false, reason: 'capability_read_error' } };
+  }
+
+  const { data: overrideRows, error: overrideError } = await service
+    .from('capability_overrides')
+    .select('capability')
+    .eq('business_id', businessId);
+
+  if (overrideError) {
+    return { allowed: false, status: 500, denial: { success: false, reason: 'override_read_error' } };
+  }
+
+  const overrides = (overrideRows || []).map(r => r.capability as string);
+
+  // 3. Zero-row legacy fallback
+  let configuredRows = capResult.rows;
+  if (configuredRows.length === 0) {
+    const defaultCaps = getLegacyDefaultCapabilities(business.category);
+    configuredRows = defaultCaps.map((cap, i) => ({ capability: cap, is_enabled: true, sort_order: i }));
+  }
+
+  // 4. Resolve effective capabilities
+  const resolution = getEffectiveCapabilities({
+    configuredCapabilities: configuredRows,
+    overrides,
+    tier: business.subscription_tier || 'free',
+    trialEndsAt: business.trial_ends_at,
+  });
+
+  // 5. Check if ANY of the listed capabilities passes the action check
+  for (const capability of capabilities) {
+    const actionResult = canPerformAction({ action, capability, effectiveCapabilities: resolution.effective });
+    if (actionResult.allowed) {
+      return { allowed: true, business, resolution };
+    }
+  }
+
+  // None passed — return denial for the first capability
+  return {
+    allowed: false,
+    status: 403,
+    denial: {
+      success: false,
+      reason: 'capability_not_effective',
+      detail: 'none_of_required_capabilities_effective',
+      capability: capabilities.join(','),
+      action,
+    },
+  };
+}
