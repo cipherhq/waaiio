@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requireAnyCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
@@ -42,17 +43,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Date cannot be in the past' }, { status: 400 });
     }
 
-    // Verify ownership
-    const { data: biz } = await supabase
-      .from('businesses')
-      .select('id, name, country_code')
-      .eq('id', businessId)
-      .eq('owner_id', user.id)
-      .single();
-    if (!biz) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-
-    // Get service details
+    // ── Capability enforcement: appointment OR scheduling / create_new ──
     const serviceClient = createServiceClient();
+    const guard = await requireAnyCapability(supabase, serviceClient, {
+      businessId, userId: user.id, capabilities: ['appointment', 'scheduling'], action: 'create_new',
+    });
+    if (!guard.allowed) {
+      return NextResponse.json(guard.denial, { status: guard.status });
+    }
+
+    // Get business name/country for notifications
+    const { data: biz } = await serviceClient
+      .from('businesses')
+      .select('name, country_code')
+      .eq('id', businessId)
+      .single();
+    if (!biz) return NextResponse.json({ error: 'Business data unavailable' }, { status: 500 });
     const { data: service } = await serviceClient
       .from('services')
       .select('name, price, duration_minutes')

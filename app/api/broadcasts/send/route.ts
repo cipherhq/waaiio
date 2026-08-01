@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { type SubscriptionTier } from '@/lib/constants';
@@ -51,13 +52,20 @@ export async function POST(request: NextRequest) {
     const rateLimited = await rateLimitResponseAsync(`broadcast:${business_id}`, 3, 60_000);
     if (rateLimited) return rateLimited;
 
-    // Fetch business with subscription tier
+    // ── Capability enforcement: broadcast/create_new ──
     const service = createServiceClient();
+    const guard = await requireCapability(supabase, service, {
+      businessId: business_id, userId: user.id, capability: 'broadcast', action: 'create_new',
+    });
+    if (!guard.allowed) {
+      return NextResponse.json(guard.denial, { status: guard.status });
+    }
+
+    // Fetch full business details for broadcast logic
     const { data: business } = await service
       .from('businesses')
       .select('id, owner_id, name, subscription_tier, country_code')
       .eq('id', business_id)
-      .eq('owner_id', user.id)
       .single();
 
     if (!business) {

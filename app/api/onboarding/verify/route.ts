@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { finalizeOnboarding } from '@/lib/onboarding/finalize';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
+import type { CapabilityId } from '@/lib/capabilities/types';
 
 export async function POST(request: NextRequest) {
   try {
@@ -159,6 +161,48 @@ export async function POST(request: NextRequest) {
     }
 
     const service = createServiceClient();
+
+    // ── Setup-complete gate: BEFORE any subscription/activation mutation ──
+    // 1. Load configured capability rows from DB (trusted, not request-supplied)
+    const { data: capRows, error: capCheckError } = await service
+      .from('business_capabilities')
+      .select('capability, is_enabled')
+      .eq('business_id', businessId);
+
+    if (capCheckError) {
+      return NextResponse.json(
+        { status: 'error', message: 'Setup verification failed. Please try again.', recoverable: true },
+        { status: 500 },
+      );
+    }
+
+    if (!capRows || capRows.length === 0) {
+      return NextResponse.json(
+        { status: 'error', message: 'Business setup incomplete. Please complete capability configuration first.', recoverable: true, businessId },
+        { status: 400 },
+      );
+    }
+
+    // 2. Derive trusted capability IDs from DB rows (never from request)
+    const trustedCapabilities = capRows
+      .filter(r => r.is_enabled)
+      .map(r => r.capability as CapabilityId);
+
+    // 3. Run required finalization (idempotent — safe to retry)
+    try {
+      await finalizeOnboarding(service, {
+        businessId,
+        userId: user.id,
+        capabilities: trustedCapabilities,
+      });
+    } catch (err) {
+      return NextResponse.json(
+        { status: 'error', message: 'Setup finalization failed. Please try again.', recoverable: true, businessId },
+        { status: 500 },
+      );
+    }
+
+    // ── Setup verified. Proceed with subscription/activation. ──
 
     const tier = PRICING_TIERS[plan as SubscriptionTier] || PRICING_TIERS.growth;
     const periodEnd = new Date();

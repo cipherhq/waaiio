@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requireAnyCapability } from '@/lib/capabilities/api-guard';
 import { logger } from '@/lib/logger';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { notifyWaitlistOnSlotOpen } from '@/lib/waitlist/auto-notify';
@@ -48,7 +49,16 @@ export async function PATCH(
 
     const biz = booking.businesses as unknown as { name: string; country_code?: string; owner_id: string; metadata?: Record<string, unknown> } | null;
     if (!biz || biz.owner_id !== user.id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+      return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
+    }
+
+    // ── Capability enforcement: appointment OR scheduling / manage_existing ──
+    // manage_existing is allowed even when paused (existing obligations)
+    const guard = await requireAnyCapability(supabase, service, {
+      businessId: booking.business_id, userId: user.id, capabilities: ['appointment', 'scheduling'], action: 'manage_existing',
+    });
+    if (!guard.allowed) {
+      return NextResponse.json(guard.denial, { status: guard.status });
     }
 
     const now = new Date().toISOString();

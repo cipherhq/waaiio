@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { authenticateRequest } from '@/lib/api-auth';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
@@ -35,7 +37,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` }, { status: 400 });
     }
 
+    // ── Capability enforcement: ordering/manage_existing ──
+    const authSupabase = await createClient();
     const supabase = createServiceClient();
+    const guard = await requireCapability(authSupabase, supabase, {
+      businessId, userId: auth.user.id, capability: 'ordering', action: 'manage_existing',
+    });
+    if (!guard.allowed) {
+      return NextResponse.json(guard.denial, { status: guard.status });
+    }
 
     // Validate order belongs to business
     const { data: order, error: orderError } = await supabase

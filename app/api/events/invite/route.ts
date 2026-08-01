@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { authenticateRequest } from '@/lib/api-auth';
+import { createClient } from '@/lib/supabase/server';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendWithTemplate } from '@/lib/channels/send-with-template';
 import { checkOptInBatch } from '@/lib/security/check-optin';
@@ -44,6 +46,15 @@ export async function POST(request: NextRequest) {
   });
   if (auth instanceof NextResponse) return auth;
   const { user, service } = auth;
+
+  // ── Capability enforcement: ticketing/create_new ──
+  const supabase = await createClient();
+  const guard = await requireCapability(supabase, service, {
+    businessId, userId: user.id, capability: 'ticketing', action: 'create_new',
+  });
+  if (!guard.allowed) {
+    return NextResponse.json(guard.denial, { status: guard.status });
+  }
 
   if (!checkRateLimit(user.id)) {
     return NextResponse.json({ error: 'Rate limit exceeded. Max 50 invites per minute.' }, { status: 429 });
