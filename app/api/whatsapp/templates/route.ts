@@ -3,6 +3,33 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService, type CreateTemplateInput } from '@/lib/channels/meta-cloud';
 import { logger } from '@/lib/logger';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+/**
+ * Verify the authenticated user owns the specified business.
+ * Returns the business data or null (deny).
+ */
+async function verifyBusinessOwnership(
+  supabase: SupabaseClient,
+  businessId: string,
+  userId: string,
+): Promise<{ id: string; status: string } | null> {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID_RE.test(businessId)) return null;
+
+  const { data, error } = await supabase
+    .from('businesses')
+    .select('id, status')
+    .eq('id', businessId)
+    .eq('owner_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    logger.error('[TEMPLATES] Business ownership check failed:', error.message);
+    return null;
+  }
+  return data;
+}
 
 function corsHeaders(origin?: string | null) {
   const allowedOrigins = [
@@ -58,8 +85,15 @@ export async function GET(request: NextRequest) {
     let meta: MetaCloudService;
 
     if (directWabaId && directToken) {
+      // Admin direct-access path — credentials provided by admin panel
       meta = new MetaCloudService({ accessToken: directToken, phoneNumberId: '', wabaId: directWabaId });
     } else if (businessId) {
+      // Dashboard path — verify business ownership BEFORE service-role lookup
+      const business = await verifyBusinessOwnership(supabase, businessId, user.id);
+      if (!business) {
+        return jsonWithCors({ message: 'Forbidden' }, { status: 403 }, origin);
+      }
+
       const service = createServiceClient();
       const { data: channel } = await service
         .from('whatsapp_channels')
@@ -128,8 +162,15 @@ export async function POST(request: NextRequest) {
     let meta: MetaCloudService;
 
     if (waba_id && access_token) {
+      // Admin direct-access path
       meta = new MetaCloudService({ accessToken: access_token, phoneNumberId: '', wabaId: waba_id });
     } else if (business_id) {
+      // Dashboard path — verify ownership BEFORE service-role channel lookup
+      const business = await verifyBusinessOwnership(supabase, business_id, user.id);
+      if (!business) {
+        return jsonWithCors({ message: 'Forbidden' }, { status: 403 }, origin);
+      }
+
       const service = createServiceClient();
       const { data: channel } = await service
         .from('whatsapp_channels')
@@ -191,8 +232,15 @@ export async function DELETE(request: NextRequest) {
     let meta: MetaCloudService;
 
     if (directWabaId && directToken) {
+      // Admin direct-access path
       meta = new MetaCloudService({ accessToken: directToken, phoneNumberId: '', wabaId: directWabaId });
     } else if (businessId) {
+      // Dashboard path — verify ownership BEFORE service-role channel lookup
+      const business = await verifyBusinessOwnership(supabase, businessId, user.id);
+      if (!business) {
+        return jsonWithCors({ message: 'Forbidden' }, { status: 403 }, origin);
+      }
+
       const service = createServiceClient();
       const { data: channel } = await service
         .from('whatsapp_channels')
