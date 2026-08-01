@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { logger } from '@/lib/logger';
 import { loadPlatformSettings } from '@/lib/platformSettings';
@@ -105,6 +106,12 @@ export async function POST(request: NextRequest) {
     if (!biz || biz.owner_id !== user.id) {
       return NextResponse.json({ error: 'Business not found' }, { status: 403 });
     }
+
+    // ── Capability enforcement: whatsapp_sign/manage_existing ──
+    const guard = await requireCapability(supabase, service, {
+      businessId: contract.business_id, userId: user.id, capability: 'whatsapp_sign', action: 'manage_existing',
+    });
+    if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
     if (contract.status === 'signed') {
       return NextResponse.json({ error: 'This contract has already been signed' }, { status: 400 });

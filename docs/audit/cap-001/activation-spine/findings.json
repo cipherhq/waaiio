@@ -73,7 +73,7 @@
     ],
     "blast_radius": "Direct API calls or custom integrations could create data for disabled capabilities. Dashboard pages without useRequireCapability could also reach these APIs.",
     "recommended_direction": "Add capability middleware or per-route checks for capability-specific API routes",
-    "implementation_status": "partially_implemented",
+    "implementation_status": "implemented",
     "requires_product_decision": false,
     "product_question": null,
     "batch_1_coverage": {
@@ -106,7 +106,28 @@
         "orders/request-balance"
       ],
       "enforcement_contract": "create_new requires effective; manage_existing/read_history always allowed",
-      "evidence": "Guard unit tests + build passes"
+      "evidence": "Guard unit tests + build passes",
+      "note": "Batch 1 merged as PR #87"
+    },
+    "batch_2_coverage": {
+      "routes": [
+        "POST /api/broadcasts/schedule (broadcast/create_new)",
+        "POST /api/recurring/setup (recurring/create_new)",
+        "POST /api/surveys/[id]/send (survey/create_new)",
+        "POST /api/polls/[id]/send (poll/create_new)",
+        "POST /api/contracts/bulk-send (whatsapp_sign/create_new)",
+        "POST /api/recurring/manage (recurring/manage_existing)",
+        "POST /api/contracts/resend (whatsapp_sign/manage_existing)",
+        "POST /api/bookings/[id]/reschedule (appointment|scheduling/manage_existing)",
+        "POST /api/orders/bulk-update-status (ordering/manage_existing)",
+        "POST /api/orders/tracking (ordering/manage_existing)",
+        "POST /api/queue/call-next (queue/manage_existing)",
+        "POST /api/payments/refund (payment/manage_existing)",
+        "POST /api/bookings/request-balance (payment/manage_existing)",
+        "POST /api/orders/request-balance (payment/manage_existing)"
+      ],
+      "tests": "lib/__tests__/cas-003-batch2-integration.test.ts (17 tests)",
+      "status": "CAS-003 identified high-consequence capability-owned API action rollout completed"
     }
   },
   {

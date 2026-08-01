@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { logger } from '@/lib/logger';
 import { loadPlatformSettings } from '@/lib/platformSettings';
@@ -49,7 +50,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Business not found' }, { status: 403 });
     }
 
+    // ── Capability enforcement: whatsapp_sign/create_new ──
     const service = createServiceClient();
+    const guard = await requireCapability(supabase, service, {
+      businessId: business_id, userId: user.id, capability: 'whatsapp_sign', action: 'create_new',
+    });
+    if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
     const settings = await loadPlatformSettings({ useServiceClient: true });
     const expiresAt = new Date(Date.now() + settings.contract_signing_hours * 60 * 60 * 1000).toISOString();

@@ -1,4 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { authenticateRequest } from '@/lib/api-auth';
@@ -18,6 +20,13 @@ export async function POST(request: NextRequest) {
     if (auth instanceof NextResponse) return auth;
 
     const supabase = auth.service;
+
+    // ── Capability enforcement: payment/manage_existing ──
+    const authSupabase = await createClient();
+    const guard = await requireCapability(authSupabase, supabase, {
+      businessId: business_id, userId: auth.user.id, capability: 'payment', action: 'manage_existing',
+    });
+    if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
     // Fetch order
     const { data: order, error: orderError } = await supabase
