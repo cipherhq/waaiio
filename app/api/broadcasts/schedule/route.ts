@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { type SubscriptionTier } from '@/lib/constants';
 import { loadPlatformSettings } from '@/lib/platformSettings';
@@ -40,6 +41,13 @@ export async function POST(request: NextRequest) {
     }
 
     const service = createServiceClient();
+
+    // ── Capability enforcement: broadcast/create_new ──
+    const guard = await requireCapability(supabase, service, {
+      businessId: business_id, userId: user.id, capability: 'broadcast', action: 'create_new',
+    });
+    if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
+
     const { data: business } = await service
       .from('businesses')
       .select('id, owner_id, subscription_tier')

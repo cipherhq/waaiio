@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { createClient } from '@/lib/supabase/server';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { handlePostCompletion } from '@/lib/bot/flows/shared/post-completion';
 import { authenticateRequest } from '@/lib/api-auth';
@@ -19,6 +21,14 @@ export async function POST(request: NextRequest) {
     if (!businessId) {
       return NextResponse.json({ error: 'businessId required' }, { status: 400 });
     }
+
+    // ── Capability enforcement: queue/manage_existing ──
+    const authSupabase = await createClient();
+    const serviceGuard = createServiceClient();
+    const guard = await requireCapability(authSupabase, serviceGuard, {
+      businessId, userId: auth.user.id, capability: 'queue', action: 'manage_existing',
+    });
+    if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
     const supabase = createServiceClient();
 

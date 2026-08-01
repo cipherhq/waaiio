@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
@@ -31,7 +32,13 @@ export async function POST(request: NextRequest) {
 
     if (!biz) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
+    // ── Capability enforcement: payment/manage_existing ──
     const serviceClient = createServiceClient();
+    const guard = await requireCapability(supabase, serviceClient, {
+      businessId, userId: user.id, capability: 'payment', action: 'manage_existing',
+    });
+    if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
+
     const dbTable = table === 'reservations' ? 'reservations' : 'bookings';
 
     // Get booking

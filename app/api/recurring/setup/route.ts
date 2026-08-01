@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { createClient } from '@/lib/supabase/server';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { getPaymentGateway } from '@/lib/payments/factory';
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
 import type { CountryCode } from '@/lib/constants';
@@ -22,6 +24,14 @@ export async function POST(request: NextRequest) {
     if (!businessId || !serviceId || !amount || !frequency || !customerName || !customerEmail || !customerPhone) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
+
+    // ── Capability enforcement: recurring/create_new ──
+    const authSupabase = await createClient();
+    const supabaseService = createServiceClient();
+    const guard = await requireCapability(authSupabase, supabaseService, {
+      businessId, userId: auth.user.id, capability: 'recurring', action: 'create_new',
+    });
+    if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
     const supabase = createServiceClient();
 

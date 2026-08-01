@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { createClient } from '@/lib/supabase/server';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { authenticateRequest } from '@/lib/api-auth';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
@@ -37,6 +39,14 @@ export async function POST(request: NextRequest) {
     if (!validStatuses.includes(status)) {
       return NextResponse.json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` }, { status: 400 });
     }
+
+    // ── Capability enforcement: ordering/manage_existing ──
+    const authSupabase = await createClient();
+    const serviceGuard = createServiceClient();
+    const guard = await requireCapability(authSupabase, serviceGuard, {
+      businessId, userId: auth.user.id, capability: 'ordering', action: 'manage_existing',
+    });
+    if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
     const supabase = createServiceClient();
 

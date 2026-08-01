@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { logger } from '@/lib/logger';
 
 /**
@@ -39,6 +40,12 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (!biz) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+
+    // ── Capability enforcement: recurring/manage_existing ──
+    const guard = await requireCapability(supabase, service, {
+      businessId: sub.business_id, userId: user.id, capability: 'recurring', action: 'manage_existing',
+    });
+    if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
     const now = new Date().toISOString();
 
