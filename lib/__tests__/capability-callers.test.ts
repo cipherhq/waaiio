@@ -55,14 +55,20 @@ describe('AccountTab: post-upgrade capability save', () => {
 describe('Capabilities page: save and rollback', () => {
   const src = readSource('app/dashboard/capabilities/page.tsx');
 
-  it('captures previous state before save for rollback', () => {
-    expect(src).toContain('const previousEnabled = [...enabled]');
-    expect(src).toContain('const previousOrder = [...orderedCaps]');
+  it('uses deriveCapabilityConfiguration for toggle', () => {
+    expect(src).toContain('deriveCapabilityConfiguration(');
   });
 
-  it('restores previous state on API failure', () => {
-    expect(src).toContain('setEnabled(previousEnabled)');
-    expect(src).toContain('setOrderedCaps(previousOrder)');
+  it('passes explicit config to saveCapabilities (not reading closure state)', () => {
+    // saveCapabilities receives config object, does not read orderedCaps or enabled
+    expect(src).toContain('saveCapabilities(config)');
+    // The save function signature takes explicit config
+    expect(src).toContain('async function saveCapabilities(config:');
+  });
+
+  it('restores previous state from config on API failure', () => {
+    expect(src).toContain('setEnabled(config.previousCapabilities)');
+    expect(src).toContain('setOrderedCaps(config.previousOrder)');
   });
 
   it('wraps fetch in try/catch with finally', () => {
@@ -76,7 +82,6 @@ describe('Capabilities page: save and rollback', () => {
   });
 
   it('paused selected capability is NOT newly activated', () => {
-    // The comparison uses selectedCapabilities which includes paused
     expect(src).toContain('previousSelected.has(cap)');
   });
 
@@ -86,16 +91,24 @@ describe('Capabilities page: save and rollback', () => {
   });
 
   it('uses atomic configure endpoint for reorder (not multiple toggle calls)', () => {
-    // handleDrop should use /api/capabilities/configure, not Promise.all of /api/capabilities/toggle
-    // The old pattern with Promise.all + toggle should be gone from handleDrop
     const handleDropSection = src.slice(src.indexOf('const handleDrop'), src.indexOf('const handleDragEnd'));
     expect(handleDropSection).toContain('/api/capabilities/configure');
     expect(handleDropSection).not.toContain('Promise.all');
   });
 
-  it('reorder rollback captures previous order before mutation', () => {
+  it('reorder sends explicit currentEnabled snapshot', () => {
     const handleDropSection = src.slice(src.indexOf('const handleDrop'), src.indexOf('const handleDragEnd'));
-    expect(handleDropSection).toContain('const previousOrder = [...orderedCaps]');
+    expect(handleDropSection).toContain('const currentEnabled = [...enabled]');
+    expect(handleDropSection).toContain('capabilities: currentEnabled');
+  });
+
+  it('order in API payload uses synchronously derived newOrder (not stale state)', () => {
+    // In handleToggle, order comes from deriveCapabilityConfiguration
+    // In handleDrop, order comes from the synchronous splice
+    // Neither reads orderedCaps at fetch-time from closure
+    const saveSection = src.slice(src.indexOf('async function saveCapabilities'));
+    expect(saveSection).toContain('order: config.order');
+    expect(saveSection).not.toContain('order: orderedCaps');
   });
 });
 

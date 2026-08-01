@@ -11,6 +11,7 @@ import {
   getRequiredTier,
   TIER_LABELS,
 } from '@/lib/capabilities/types';
+import { deriveCapabilityConfiguration, deriveNextOrder } from '@/lib/capabilities/derive-configuration';
 import type { SubscriptionTier } from '@/lib/constants';
 
 // ── Capability Groups ──
@@ -110,15 +111,19 @@ export default function CapabilitiesPage() {
 
     if (fromIndex === null || fromIndex === dropIndex) return;
 
-    // Capture previous order for rollback
+    // Snapshot current state synchronously
     const previousOrder = [...orderedCaps];
+    const currentEnabled = [...enabled];
 
+    // Derive new order via splice
     const newOrder = [...orderedCaps];
     const [moved] = newOrder.splice(fromIndex, 1);
     newOrder.splice(dropIndex, 0, moved);
+
+    // Optimistic UI
     setOrderedCaps(newOrder);
 
-    // Auto-save sort_order via atomic configure endpoint
+    // Send explicit snapshot (not reading from potentially stale state)
     setSavingOrder(true);
     try {
       const res = await fetch('/api/capabilities/configure', {
@@ -126,17 +131,15 @@ export default function CapabilitiesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           businessId: business.id,
-          capabilities: enabled,
+          capabilities: currentEnabled,
           order: newOrder,
         }),
       });
       if (!res.ok) {
-        // Restore previous order on failure
         setOrderedCaps(previousOrder);
         setError('Failed to save order. Please try again.');
       }
     } catch {
-      // Restore previous order on network failure
       setOrderedCaps(previousOrder);
       setError('Network error saving order. Please try again.');
     } finally {
@@ -179,33 +182,43 @@ export default function CapabilitiesPage() {
   function handleToggle(capId: CapabilityId) {
     if (!canToggle(capId)) return;
 
-    let next = enabled.includes(capId)
+    let nextEnabled = enabled.includes(capId)
       ? enabled.filter(c => c !== capId)
       : [...enabled, capId];
 
     // Bundle: membership requires loyalty (they share the points system)
-    if (capId === 'membership' && next.includes('membership') && !next.includes('loyalty')) {
-      next = [...next, 'loyalty'];
+    if (capId === 'membership' && nextEnabled.includes('membership') && !nextEnabled.includes('loyalty')) {
+      nextEnabled = [...nextEnabled, 'loyalty'];
     }
     // If disabling loyalty, also disable membership (can't work without points)
-    if (capId === 'loyalty' && !next.includes('loyalty') && next.includes('membership')) {
-      next = next.filter(c => c !== 'membership');
+    if (capId === 'loyalty' && !nextEnabled.includes('loyalty') && nextEnabled.includes('membership')) {
+      nextEnabled = nextEnabled.filter(c => c !== 'membership');
     }
 
     // Must have at least one capability
-    if (next.length === 0) return;
+    if (nextEnabled.length === 0) return;
 
-    setEnabled(next);
+    // Derive the full configuration synchronously from current state
+    const config = deriveCapabilityConfiguration(
+      [...enabled],      // previous enabled (snapshot)
+      [...orderedCaps],  // previous order (snapshot)
+      nextEnabled,
+    );
 
-    // Auto-save with the new state directly
-    saveCapabilities(next);
+    // Optimistic UI update
+    setEnabled(config.capabilities);
+    setOrderedCaps(config.order);
+
+    // Save with explicit transaction snapshot (no stale closure reads)
+    saveCapabilities(config);
   }
 
-  async function saveCapabilities(caps: CapabilityId[]) {
-    // Capture previous state for rollback
-    const previousEnabled = [...enabled];
-    const previousOrder = [...orderedCaps];
-
+  async function saveCapabilities(config: {
+    capabilities: CapabilityId[];
+    order: CapabilityId[];
+    previousCapabilities: CapabilityId[];
+    previousOrder: CapabilityId[];
+  }) {
     setSaving(true);
     setError('');
 
@@ -213,24 +226,24 @@ export default function CapabilitiesPage() {
       // Detect newly enabled vs previous SELECTED state (not effective).
       // A paused selected capability is NOT newly activated.
       const previousSelected = new Set(business.selectedCapabilities || business.capabilities);
-      const newlyEnabled = caps.filter(cap => !previousSelected.has(cap));
+      const newlyEnabled = config.capabilities.filter(cap => !previousSelected.has(cap));
 
-      // Use atomic bulk configuration endpoint
+      // Use atomic bulk configuration endpoint with explicit snapshot
       const res = await fetch('/api/capabilities/configure', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           businessId: business.id,
-          capabilities: caps,
-          order: orderedCaps.length > 0 ? orderedCaps : caps,
+          capabilities: config.capabilities,
+          order: config.order,
         }),
       });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({ reason: 'unknown' }));
-        // Rollback optimistic state
-        setEnabled(previousEnabled);
-        setOrderedCaps(previousOrder);
+        // Rollback to exact previous snapshots
+        setEnabled(config.previousCapabilities);
+        setOrderedCaps(config.previousOrder);
         setError(
           data.reason === 'capabilities_denied'
             ? 'Some capabilities require a higher plan. Please upgrade.'
@@ -258,9 +271,9 @@ export default function CapabilitiesPage() {
 
       window.location.reload();
     } catch {
-      // Network error — rollback
-      setEnabled(previousEnabled);
-      setOrderedCaps(previousOrder);
+      // Network error — rollback to exact previous snapshots
+      setEnabled(config.previousCapabilities);
+      setOrderedCaps(config.previousOrder);
       setError('Network error. Please check your connection and try again.');
     } finally {
       setSaving(false);
@@ -478,7 +491,11 @@ export default function CapabilitiesPage() {
               </button>
               <button
                 id="cap-save-btn"
-                onClick={() => saveCapabilities(enabled)}
+                onClick={() => saveCapabilities(deriveCapabilityConfiguration(
+                  selected as CapabilityId[],
+                  [...orderedCaps],
+                  enabled,
+                ))}
                 disabled={saving}
                 className="rounded-lg bg-brand px-6 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
               >

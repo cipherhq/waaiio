@@ -679,23 +679,95 @@ describe('Migration 301: admin grant/revoke RPCs', () => {
     expect(r.stdout.trim()).toBe('0');
   });
 
-  // ── Forced rollback test ──
+  // ── Late-stage forced rollback tests ──
+  // These prove that earlier mutations are rolled back when a later step fails.
 
-  it('forced capability mutation failure rolls back override and audit', () => {
+  it('Test A: capability mutation failure AFTER override INSERT rolls back override', () => {
     runSQL(`DELETE FROM business_capabilities WHERE business_id = '${TEST_BIZ_ID}';`);
     runSQL(`DELETE FROM capability_overrides WHERE business_id = '${TEST_BIZ_ID}';`);
     runSQL(`DELETE FROM admin_audit_logs WHERE entity_id = '${TEST_BIZ_ID}';`);
 
-    // Try to grant an invalid capability type — will fail at cast
-    const r = runSQL(`SELECT admin_grant_capability('${TEST_BIZ_ID}', 'INVALID_NOT_REAL', '${TEST_USER_ID}', 'test');`, 'service_role');
-    expect(r.exitCode).not.toBe(0);
+    // Install a trigger that rejects INSERT on business_capabilities for our test fixture
+    runSQL(`
+      CREATE OR REPLACE FUNCTION test_reject_cap_insert() RETURNS TRIGGER AS $$
+      BEGIN
+        IF NEW.business_id = '${TEST_BIZ_ID}' AND NEW.capability = 'feedback' THEN
+          RAISE EXCEPTION 'test_forced_cap_failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER test_cap_reject_trigger
+        BEFORE INSERT ON business_capabilities
+        FOR EACH ROW EXECUTE FUNCTION test_reject_cap_insert();
+    `);
 
-    // Verify no override was created
-    const ov = runSQL(`SELECT COUNT(*) FROM capability_overrides WHERE business_id = '${TEST_BIZ_ID}';`);
-    expect(ov.stdout.trim()).toBe('0');
-    // Verify no audit log created
-    const audit = runSQL(`SELECT COUNT(*) FROM admin_audit_logs WHERE entity_id = '${TEST_BIZ_ID}';`);
-    expect(audit.stdout.trim()).toBe('0');
+    try {
+      // Call grant — override INSERT will succeed, but capability INSERT will fail
+      const r = runSQL(`SELECT admin_grant_capability('${TEST_BIZ_ID}', 'feedback', '${TEST_USER_ID}', 'rollback test A');`, 'service_role');
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr).toContain('test_forced_cap_failure');
+
+      // Verify override was rolled back (does NOT remain)
+      const ov = runSQL(`SELECT COUNT(*) FROM capability_overrides WHERE business_id = '${TEST_BIZ_ID}' AND capability = 'feedback';`);
+      expect(ov.stdout.trim()).toBe('0');
+
+      // Verify capability state unchanged
+      const cap = runSQL(`SELECT COUNT(*) FROM business_capabilities WHERE business_id = '${TEST_BIZ_ID}' AND capability = 'feedback';`);
+      expect(cap.stdout.trim()).toBe('0');
+
+      // Verify no audit record
+      const audit = runSQL(`SELECT COUNT(*) FROM admin_audit_logs WHERE entity_id = '${TEST_BIZ_ID}' AND details::text LIKE '%feedback%';`);
+      expect(audit.stdout.trim()).toBe('0');
+    } finally {
+      // Cleanup trigger even on test failure
+      runSQL(`DROP TRIGGER IF EXISTS test_cap_reject_trigger ON business_capabilities;`);
+      runSQL(`DROP FUNCTION IF EXISTS test_reject_cap_insert();`);
+    }
+  });
+
+  it('Test B: audit insertion failure AFTER override + capability rolls back both', () => {
+    runSQL(`DELETE FROM business_capabilities WHERE business_id = '${TEST_BIZ_ID}';`);
+    runSQL(`DELETE FROM capability_overrides WHERE business_id = '${TEST_BIZ_ID}';`);
+    runSQL(`DELETE FROM admin_audit_logs WHERE entity_id = '${TEST_BIZ_ID}';`);
+
+    // Install a trigger that rejects INSERT on admin_audit_logs for our test entity
+    runSQL(`
+      CREATE OR REPLACE FUNCTION test_reject_audit_insert() RETURNS TRIGGER AS $$
+      BEGIN
+        IF NEW.entity_id = '${TEST_BIZ_ID}' AND NEW.details::text LIKE '%survey%' THEN
+          RAISE EXCEPTION 'test_forced_audit_failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER test_audit_reject_trigger
+        BEFORE INSERT ON admin_audit_logs
+        FOR EACH ROW EXECUTE FUNCTION test_reject_audit_insert();
+    `);
+
+    try {
+      // Call grant — override INSERT succeeds, capability INSERT succeeds, audit INSERT fails
+      const r = runSQL(`SELECT admin_grant_capability('${TEST_BIZ_ID}', 'survey', '${TEST_USER_ID}', 'rollback test B');`, 'service_role');
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr).toContain('test_forced_audit_failure');
+
+      // Verify override was rolled back
+      const ov = runSQL(`SELECT COUNT(*) FROM capability_overrides WHERE business_id = '${TEST_BIZ_ID}' AND capability = 'survey';`);
+      expect(ov.stdout.trim()).toBe('0');
+
+      // Verify capability was rolled back
+      const cap = runSQL(`SELECT COUNT(*) FROM business_capabilities WHERE business_id = '${TEST_BIZ_ID}' AND capability = 'survey';`);
+      expect(cap.stdout.trim()).toBe('0');
+
+      // Verify no audit record
+      const audit = runSQL(`SELECT COUNT(*) FROM admin_audit_logs WHERE entity_id = '${TEST_BIZ_ID}' AND details::text LIKE '%survey%';`);
+      expect(audit.stdout.trim()).toBe('0');
+    } finally {
+      // Cleanup trigger even on test failure
+      runSQL(`DROP TRIGGER IF EXISTS test_audit_reject_trigger ON admin_audit_logs;`);
+      runSQL(`DROP FUNCTION IF EXISTS test_reject_audit_insert();`);
+    }
   });
 
   // ── Concurrency tests ──
