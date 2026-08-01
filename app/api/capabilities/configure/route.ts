@@ -145,7 +145,11 @@ export async function POST(request: NextRequest) {
   }
   const sortOrders = requestedCaps.map(cap => order.indexOf(cap));
 
-  // Execute atomic RPC with snapshot verification to prevent stale-read race
+  // Build canonical snapshot of current selected capabilities for stale-read detection
+  const currentSelectedSorted = [...currentSelected].sort();
+  const currentOverridesSorted = [...overrides].sort();
+
+  // Execute atomic RPC with full snapshot verification to prevent stale-read race
   const { data: result, error: rpcError } = await service.rpc('configure_business_capabilities', {
     p_business_id: businessId,
     p_capabilities: requestedCaps,
@@ -153,6 +157,8 @@ export async function POST(request: NextRequest) {
     p_expected_tier: business.subscription_tier,
     p_expected_trial_ends_at: business.trial_ends_at,
     p_expected_status: business.status,
+    p_expected_selected: currentSelectedSorted,
+    p_expected_overrides: currentOverridesSorted,
   });
 
   if (rpcError) {

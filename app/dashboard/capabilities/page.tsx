@@ -110,28 +110,39 @@ export default function CapabilitiesPage() {
 
     if (fromIndex === null || fromIndex === dropIndex) return;
 
+    // Capture previous order for rollback
+    const previousOrder = [...orderedCaps];
+
     const newOrder = [...orderedCaps];
     const [moved] = newOrder.splice(fromIndex, 1);
     newOrder.splice(dropIndex, 0, moved);
     setOrderedCaps(newOrder);
 
-    // Auto-save sort_order via server API
+    // Auto-save sort_order via atomic configure endpoint
     setSavingOrder(true);
-    const results = await Promise.all(
-      newOrder.map((cap, i) =>
-        fetch('/api/capabilities/toggle', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ businessId: business.id, capability: cap, sort_order: i }),
+    try {
+      const res = await fetch('/api/capabilities/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          capabilities: enabled,
+          order: newOrder,
         }),
-      ),
-    );
-    const failed = results.filter(r => !r.ok);
-    if (failed.length > 0) {
-      setError('Failed to save order. Please try again.');
+      });
+      if (!res.ok) {
+        // Restore previous order on failure
+        setOrderedCaps(previousOrder);
+        setError('Failed to save order. Please try again.');
+      }
+    } catch {
+      // Restore previous order on network failure
+      setOrderedCaps(previousOrder);
+      setError('Network error saving order. Please try again.');
+    } finally {
+      setSavingOrder(false);
     }
-    setSavingOrder(false);
-  }, [dragIndex, orderedCaps, business.id]);
+  }, [dragIndex, orderedCaps, business.id, enabled]);
 
   const handleDragEnd = useCallback(() => {
     setDragIndex(null);
@@ -191,49 +202,69 @@ export default function CapabilitiesPage() {
   }
 
   async function saveCapabilities(caps: CapabilityId[]) {
+    // Capture previous state for rollback
+    const previousEnabled = [...enabled];
+    const previousOrder = [...orderedCaps];
+
     setSaving(true);
     setError('');
 
-    // Detect newly enabled capabilities (for provisioning)
-    const newlyEnabled = caps.filter(cap => !business.capabilities.includes(cap));
+    try {
+      // Detect newly enabled vs previous SELECTED state (not effective).
+      // A paused selected capability is NOT newly activated.
+      const previousSelected = new Set(business.selectedCapabilities || business.capabilities);
+      const newlyEnabled = caps.filter(cap => !previousSelected.has(cap));
 
-    // Use atomic bulk configuration endpoint
-    const res = await fetch('/api/capabilities/configure', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        businessId: business.id,
-        capabilities: caps,
-        order: orderedCaps.length > 0 ? orderedCaps : caps,
-      }),
-    });
+      // Use atomic bulk configuration endpoint
+      const res = await fetch('/api/capabilities/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          capabilities: caps,
+          order: orderedCaps.length > 0 ? orderedCaps : caps,
+        }),
+      });
 
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({ reason: 'unknown' }));
-      setError(data.reason === 'capabilities_denied'
-        ? 'Some capabilities require a higher plan. Please upgrade.'
-        : data.reason === 'dependency_missing'
-          ? `${data.capability} requires ${data.missing_dependencies?.join(', ')} to be enabled.`
-          : 'Failed to save capabilities. Please try again.');
-      setSaving(false);
-      return;
-    }
-
-    // Auto-provision templates only after successful save
-    for (const cap of newlyEnabled) {
-      try {
-        await fetch('/api/whatsapp/templates/provision', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ business_id: business.id, capability: cap }),
-        });
-      } catch {
-        // Template provisioning is best-effort — capability is still enabled
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ reason: 'unknown' }));
+        // Rollback optimistic state
+        setEnabled(previousEnabled);
+        setOrderedCaps(previousOrder);
+        setError(
+          data.reason === 'capabilities_denied'
+            ? 'Some capabilities require a higher plan. Please upgrade.'
+            : data.reason === 'dependency_missing'
+              ? `${data.capability} requires ${data.missing_dependencies?.join(', ')} to be enabled.`
+              : data.reason === 'configuration_conflict'
+                ? 'Configuration changed elsewhere. Please refresh the page.'
+                : 'Failed to save capabilities. Please try again.'
+        );
+        return;
       }
-    }
 
-    setSaving(false);
-    window.location.reload();
+      // Auto-provision templates only for genuinely new capabilities
+      for (const cap of newlyEnabled) {
+        try {
+          await fetch('/api/whatsapp/templates/provision', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ business_id: business.id, capability: cap }),
+          });
+        } catch {
+          // Template provisioning is best-effort — capability is still enabled
+        }
+      }
+
+      window.location.reload();
+    } catch {
+      // Network error — rollback
+      setEnabled(previousEnabled);
+      setOrderedCaps(previousOrder);
+      setError('Network error. Please check your connection and try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   // Filter capabilities by search

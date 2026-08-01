@@ -1249,21 +1249,33 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
               <button
                 onClick={async () => {
                   setCapSaving(true);
-                  // Use atomic bulk configure endpoint
-                  const allEnabled = [...new Set([...capabilities, ...newCapSelections])];
-                  const res = await fetch('/api/capabilities/configure', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ businessId: business.id, capabilities: allEnabled }),
-                  });
-                  setCapSaving(false);
-                  if (!res.ok) {
-                    const data = await res.json().catch(() => ({}));
-                    alert(data.reason === 'capabilities_denied' ? 'Some capabilities require a plan upgrade.' : 'Failed to save. Try again.');
-                    return;
+                  try {
+                    // Use selectedCapabilities (includes paused) — never effective-only
+                    const selectedBase = business.selectedCapabilities || business.capabilities || [];
+                    const allEnabled = [...new Set([...selectedBase, ...newCapSelections])];
+                    const res = await fetch('/api/capabilities/configure', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ businessId: business.id, capabilities: allEnabled }),
+                    });
+                    if (!res.ok) {
+                      const data = await res.json().catch(() => ({}));
+                      setUpgradeError(
+                        data.reason === 'capabilities_denied'
+                          ? 'Some capabilities require a plan upgrade.'
+                          : data.reason === 'configuration_conflict'
+                            ? 'Configuration changed elsewhere. Please refresh and try again.'
+                            : 'Failed to save capabilities. Please try again.'
+                      );
+                      return;
+                    }
+                    setShowCapModal(false);
+                    window.location.reload();
+                  } catch {
+                    setUpgradeError('Network error saving capabilities. Please try again.');
+                  } finally {
+                    setCapSaving(false);
                   }
-                  setShowCapModal(false);
-                  window.location.reload();
                 }}
                 disabled={capSaving}
                 className="flex-1 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"

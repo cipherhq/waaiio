@@ -3,6 +3,9 @@
 -- Ensures override mutation + capability state + audit log all
 -- succeed or fail together in a single transaction.
 --
+-- Enforces functional dependencies (e.g. membership requires loyalty).
+-- Admin overrides bypass tier/entitlement checks, NOT functional dependencies.
+--
 -- Rollback:
 --   DROP FUNCTION IF EXISTS admin_grant_capability(UUID, TEXT, UUID, TEXT);
 --   DROP FUNCTION IF EXISTS admin_revoke_capability(UUID, TEXT, UUID, TEXT);
@@ -22,6 +25,16 @@ BEGIN
   -- Lock business row to serialize concurrent admin operations
   IF NOT EXISTS (SELECT 1 FROM businesses WHERE id = p_business_id FOR UPDATE) THEN
     RAISE EXCEPTION 'business_not_found';
+  END IF;
+
+  -- Enforce functional dependencies: membership requires loyalty
+  IF p_capability = 'membership' THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM business_capabilities
+      WHERE business_id = p_business_id AND capability = 'loyalty' AND is_enabled = true
+    ) THEN
+      RAISE EXCEPTION 'dependency_missing: membership requires loyalty to be enabled';
+    END IF;
   END IF;
 
   -- Upsert override
@@ -62,7 +75,30 @@ BEGIN
     RAISE EXCEPTION 'business_not_found';
   END IF;
 
-  -- Delete override
+  -- Enforce functional dependencies: revoking loyalty must cascade to membership
+  IF p_capability = 'loyalty' THEN
+    -- If membership is currently enabled, atomically disable it and remove its override
+    IF EXISTS (
+      SELECT 1 FROM business_capabilities
+      WHERE business_id = p_business_id AND capability = 'membership' AND is_enabled = true
+    ) THEN
+      -- Disable membership capability
+      UPDATE business_capabilities
+      SET is_enabled = false, updated_at = now()
+      WHERE business_id = p_business_id AND capability = 'membership';
+
+      -- Remove membership override if present
+      DELETE FROM capability_overrides
+      WHERE business_id = p_business_id AND capability = 'membership';
+
+      -- Audit the cascaded revocation
+      INSERT INTO admin_audit_logs (actor_id, action, entity_type, entity_id, details)
+      VALUES (p_granted_by, 'revoke_capability', 'business', p_business_id,
+        jsonb_build_object('capability', 'membership', 'reason', 'cascaded: loyalty dependency revoked'));
+    END IF;
+  END IF;
+
+  -- Delete override for the requested capability
   DELETE FROM capability_overrides
   WHERE business_id = p_business_id AND capability = p_capability::capability_type;
 

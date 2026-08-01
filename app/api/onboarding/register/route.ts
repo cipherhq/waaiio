@@ -21,10 +21,6 @@ import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate limit: max 5 registrations per IP per hour
-    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'onboarding-register'), 5, 3600_000);
-    if (rateLimit) return rateLimit;
-
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
 
@@ -38,8 +34,14 @@ export async function POST(request: NextRequest) {
     const { first_name, last_name, name, city, state, zip_code, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode, retryBusinessId } = body;
 
     // ── Retry path: resume a pending business that failed capability init ──
-    // Must come before business-count check so a retried pending business is not counted as a new attempt
+    // Separate rate limiter keyed by authenticated user + business ID (not IP).
+    // A valid retry must not depend on or consume the fresh-registration quota.
     if (retryBusinessId) {
+      // Rate limit retries: max 10 per user+business per hour
+      const retryKey = `onboarding-retry:${user.id}:${retryBusinessId}`;
+      const retryLimit = await rateLimitResponseAsync(retryKey, 10, 3600_000);
+      if (retryLimit) return retryLimit;
+
       const service = createServiceClient();
       const { data: pendingBiz, error: retryError } = await service
         .from('businesses')
@@ -87,6 +89,11 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({ business_id: pendingBiz.id, bot_code: pendingBiz.bot_code });
     }
+
+    // ── Fresh registration path ──
+    // Rate limit: max 5 fresh registrations per IP per hour (abuse protection)
+    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'onboarding-register'), 5, 3600_000);
+    if (rateLimit) return rateLimit;
     // Limit businesses per user (prevent abuse) — only for fresh registration, not retry
     const svcCheck = createServiceClient();
     const { count: bizCount } = await svcCheck

@@ -3,12 +3,13 @@
 -- Replaces the multi-step disable-all → upsert pattern with a single
 -- transaction that rolls back entirely on failure.
 --
--- Accepts a state snapshot (tier, trial, status) from the API layer.
--- After acquiring the business lock, verifies the snapshot matches current DB state.
--- If state changed between API validation and RPC execution, raises configuration_conflict.
+-- Accepts a full state snapshot (tier, trial, status, selected capabilities,
+-- overrides) from the API layer. After acquiring the business lock, verifies
+-- the snapshot matches current DB state. If state changed between API
+-- validation and RPC execution, raises configuration_conflict.
 --
 -- Rollback:
---   DROP FUNCTION IF EXISTS configure_business_capabilities(UUID, TEXT[], INT[], TEXT, TIMESTAMPTZ, TEXT);
+--   DROP FUNCTION IF EXISTS configure_business_capabilities(UUID, TEXT[], INT[], TEXT, TIMESTAMPTZ, TEXT, TEXT[], TEXT[]);
 
 CREATE OR REPLACE FUNCTION configure_business_capabilities(
   p_business_id UUID,
@@ -16,7 +17,9 @@ CREATE OR REPLACE FUNCTION configure_business_capabilities(
   p_sort_orders INT[],
   p_expected_tier TEXT DEFAULT NULL,
   p_expected_trial_ends_at TIMESTAMPTZ DEFAULT NULL,
-  p_expected_status TEXT DEFAULT NULL
+  p_expected_status TEXT DEFAULT NULL,
+  p_expected_selected TEXT[] DEFAULT NULL,
+  p_expected_overrides TEXT[] DEFAULT NULL
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -27,6 +30,8 @@ DECLARE
   v_idx INT;
   v_result JSONB;
   v_biz RECORD;
+  v_current_selected TEXT[];
+  v_current_overrides TEXT[];
 BEGIN
   -- Validate input lengths match
   IF array_length(p_capabilities, 1) IS DISTINCT FROM array_length(p_sort_orders, 1) THEN
@@ -64,7 +69,7 @@ BEGIN
     RAISE EXCEPTION 'business_not_found';
   END IF;
 
-  -- Verify snapshot — detect stale reads between API validation and RPC execution
+  -- Verify business-level snapshot — detect stale reads
   IF p_expected_tier IS NOT NULL AND v_biz.subscription_tier::TEXT != p_expected_tier THEN
     RAISE EXCEPTION 'configuration_conflict: tier changed';
   END IF;
@@ -73,6 +78,34 @@ BEGIN
   END IF;
   IF p_expected_trial_ends_at IS NOT NULL AND v_biz.trial_ends_at IS DISTINCT FROM p_expected_trial_ends_at THEN
     RAISE EXCEPTION 'configuration_conflict: trial changed';
+  END IF;
+
+  -- Verify selected-capability set snapshot (canonical set comparison, order-independent)
+  IF p_expected_selected IS NOT NULL THEN
+    SELECT ARRAY(
+      SELECT capability::TEXT FROM business_capabilities
+      WHERE business_id = p_business_id AND is_enabled = true
+      ORDER BY capability
+    ) INTO v_current_selected;
+
+    -- Compare as sorted sets
+    IF v_current_selected IS DISTINCT FROM (SELECT ARRAY(SELECT unnest(p_expected_selected) ORDER BY 1)) THEN
+      RAISE EXCEPTION 'configuration_conflict: selected capabilities changed';
+    END IF;
+  END IF;
+
+  -- Verify override set snapshot (canonical set comparison, order-independent)
+  IF p_expected_overrides IS NOT NULL THEN
+    SELECT ARRAY(
+      SELECT capability::TEXT FROM capability_overrides
+      WHERE business_id = p_business_id
+      ORDER BY capability
+    ) INTO v_current_overrides;
+
+    -- Compare as sorted sets
+    IF v_current_overrides IS DISTINCT FROM (SELECT ARRAY(SELECT unnest(p_expected_overrides) ORDER BY 1)) THEN
+      RAISE EXCEPTION 'configuration_conflict: overrides changed';
+    END IF;
   END IF;
 
   -- Step 1: Disable all existing capabilities for this business
@@ -109,6 +142,6 @@ END;
 $$;
 
 -- Only service_role can execute this RPC
-REVOKE ALL ON FUNCTION configure_business_capabilities(UUID, TEXT[], INT[], TEXT, TIMESTAMPTZ, TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION configure_business_capabilities(UUID, TEXT[], INT[], TEXT, TIMESTAMPTZ, TEXT) FROM authenticated;
-GRANT EXECUTE ON FUNCTION configure_business_capabilities(UUID, TEXT[], INT[], TEXT, TIMESTAMPTZ, TEXT) TO service_role;
+REVOKE ALL ON FUNCTION configure_business_capabilities(UUID, TEXT[], INT[], TEXT, TIMESTAMPTZ, TEXT, TEXT[], TEXT[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION configure_business_capabilities(UUID, TEXT[], INT[], TEXT, TIMESTAMPTZ, TEXT, TEXT[], TEXT[]) FROM authenticated;
+GRANT EXECUTE ON FUNCTION configure_business_capabilities(UUID, TEXT[], INT[], TEXT, TIMESTAMPTZ, TEXT, TEXT[], TEXT[]) TO service_role;

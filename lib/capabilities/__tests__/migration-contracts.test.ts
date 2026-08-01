@@ -63,6 +63,8 @@ describe('Migration 300 — atomic capability configuration RPC', () => {
     expect(sql).toMatch(/p_sort_orders\s+INT\[\]/i);
     expect(sql).toMatch(/p_expected_tier/i);
     expect(sql).toMatch(/p_expected_status/i);
+    expect(sql).toMatch(/p_expected_selected\s+TEXT\[\]/i);
+    expect(sql).toMatch(/p_expected_overrides\s+TEXT\[\]/i);
   });
 
   it('validates array length match', () => {
@@ -144,6 +146,27 @@ describe('Migration 301 — atomic admin capability RPCs', () => {
   it('revoke deletes override + disables capability + audit log', () => {
     expect(sql).toMatch(/DELETE\s+FROM\s+capability_overrides/i);
     expect(sql).toMatch(/UPDATE\s+business_capabilities/i);
+  });
+
+  it('grant enforces membership requires loyalty dependency', () => {
+    expect(sql).toMatch(/membership/i);
+    expect(sql).toMatch(/loyalty/i);
+    expect(sql).toMatch(/dependency_missing/i);
+  });
+
+  it('revoke loyalty cascades to disable membership', () => {
+    // The revoke function should check if membership is enabled when revoking loyalty
+    expect(sql).toMatch(/loyalty.*membership|IF.*p_capability\s*=\s*'loyalty'/is);
+  });
+
+  it('verifies selected-capability set snapshot', () => {
+    const sql300 = readMigration('300_atomic_capability_config.sql');
+    expect(sql300).toMatch(/configuration_conflict:\s*selected\s+capabilities\s+changed/i);
+  });
+
+  it('verifies override set snapshot', () => {
+    const sql300 = readMigration('300_atomic_capability_config.sql');
+    expect(sql300).toMatch(/configuration_conflict:\s*overrides\s+changed/i);
   });
 
   it('revokes access from PUBLIC and authenticated for both functions', () => {
