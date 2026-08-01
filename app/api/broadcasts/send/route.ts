@@ -74,7 +74,9 @@ export async function POST(request: NextRequest) {
 
     const tier = (business.subscription_tier || 'free') as SubscriptionTier;
     const settings = await loadPlatformSettings({ useServiceClient: true });
-    const limits = settings.broadcast_limits[tier];
+    // Guard already authorized broadcast. For free-tier with trial/override, use growth limits.
+    const effectiveLimitTier: SubscriptionTier = tier === 'free' ? 'growth' : tier;
+    const limits = settings.broadcast_limits[effectiveLimitTier];
 
     // Check conversation limit
     const { checkConversationLimit } = await import('@/lib/bot/conversation-guard');
@@ -82,14 +84,6 @@ export async function POST(request: NextRequest) {
     if (!convLimit.allowed) {
       return NextResponse.json(
         { message: `Monthly conversation limit reached (${convLimit.used}/${convLimit.limit}). Upgrade your plan for more conversations.` },
-        { status: 403 },
-      );
-    }
-
-    // Tier gate: free tier cannot broadcast
-    if (tier === 'free') {
-      return NextResponse.json(
-        { message: 'Broadcast messages are available on Pro and Premium plans. Please upgrade to send broadcasts.' },
         { status: 403 },
       );
     }

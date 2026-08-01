@@ -58,13 +58,12 @@ export async function POST(request: NextRequest) {
     if (!business) return NextResponse.json({ message: 'Business not found' }, { status: 404 });
 
     const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-    if (tier === 'free') {
-      return NextResponse.json({ message: 'Broadcasts require a Pro+ plan' }, { status: 403 });
-    }
+    // Guard already authorized. For free-tier with trial/override, use growth limits.
+    const effectiveLimitTier: SubscriptionTier = tier === 'free' ? 'growth' : tier;
 
     // Check monthly limits
     const settings = await loadPlatformSettings({ useServiceClient: true });
-    const limits = settings.broadcast_limits[tier];
+    const limits = settings.broadcast_limits[effectiveLimitTier];
     const monthKey = new Date().toISOString().slice(0, 7);
     const { data: usage } = await service
       .from('broadcast_usage')
@@ -159,6 +158,12 @@ export async function DELETE(request: NextRequest) {
     .single();
 
   if (!business) return NextResponse.json({ message: 'Business not found' }, { status: 404 });
+
+  // ── Capability enforcement: broadcast/manage_existing ──
+  const guard = await requireCapability(supabase, service, {
+    businessId: business_id, userId: user.id, capability: 'broadcast', action: 'manage_existing',
+  });
+  if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
   const { error } = await service
     .from('business_broadcasts')
