@@ -2,8 +2,11 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
+import { CAPABILITIES } from '@/lib/capabilities/types';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+
+const VALID_CAPABILITY_IDS = new Set<string>(CAPABILITIES.map(c => c.id));
 
 /**
  * POST /api/whatsapp/templates/provision
@@ -233,7 +236,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Invalid business_id format' }, { status: 400 });
     }
 
-    // 4. Validate capability has templates to provision
+    // 4. Validate capability against canonical registry
+    if (!VALID_CAPABILITY_IDS.has(capability)) {
+      return NextResponse.json({ message: 'Unknown capability' }, { status: 400 });
+    }
+
+    // 5. Check if this capability has templates to provision (valid cap, just no templates)
     const templateDefs = REQUIRED_TEMPLATES[capability];
     if (!templateDefs?.length) {
       return NextResponse.json({ message: 'No template provisioning needed', provisioned: false });
@@ -269,13 +277,19 @@ export async function POST(request: NextRequest) {
     // Only AFTER proving ownership may we use service-role for privileged channel data.
 
     const service = createServiceClient();
-    const { data: channel } = await service
+    const { data: channel, error: channelError } = await service
       .from('whatsapp_channels')
       .select('waba_id, meta_access_token, provider')
       .eq('business_id', business_id)
       .eq('provider', 'meta_cloud')
       .eq('is_active', true)
       .single();
+
+    // Distinguish: no rows found (legitimate) vs database error (fail closed)
+    if (channelError && channelError.code !== 'PGRST116') {
+      logger.error('[PROVISION] Channel lookup error:', channelError.message);
+      return NextResponse.json({ message: 'Failed to look up channel' }, { status: 500 });
+    }
 
     if (!channel?.waba_id || !channel?.meta_access_token) {
       // No dedicated channel — they'll use the shared WABA which already has the template
