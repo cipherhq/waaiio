@@ -136,24 +136,27 @@ beforeAll(() => {
   runSQL(`DELETE FROM capability_overrides WHERE business_id = '${TEST_BIZ_ID}';`);
   runSQL(`DELETE FROM admin_audit_logs WHERE entity_id = '${TEST_BIZ_ID}';`);
 
-  // Grant service_role table-level permissions needed for these tests.
-  // In production Supabase, service_role has full table grants.
-  // The RLS policies (migration 299) use TO service_role for UPDATE/DELETE.
-  // We need the base table grant for RLS policies to be evaluable.
+  // Grant table-level permissions needed for these tests.
+  // In production Supabase, all roles have table-level grants via default privileges.
+  // The CI environment creates tables without these defaults so we add them explicitly.
   runSQL(`
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE business_capabilities TO service_role;
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE capability_overrides TO service_role;
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE admin_audit_logs TO service_role;
     GRANT SELECT, UPDATE ON TABLE businesses TO service_role;
+    GRANT SELECT ON TABLE business_capabilities TO authenticated;
+    GRANT SELECT ON TABLE businesses TO authenticated;
+    GRANT SELECT ON TABLE business_capabilities TO anon;
   `);
 
-  // Install a test-safe auth.uid() that reads JWT claims
+  // Install a test-safe auth.uid() that reads JWT claims.
+  // Uses NULLIF to handle empty string from current_setting when not set.
   runSQL(`
     CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
       SELECT COALESCE(
-        (current_setting('request.jwt.claims', true)::jsonb ->> 'sub')::UUID,
-        '00000000-0000-0000-0000-000000000000'::UUID
-      );
+        NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub',
+        '00000000-0000-0000-0000-000000000000'
+      )::UUID;
     $$ LANGUAGE SQL STABLE;
   `);
 });
