@@ -94,6 +94,7 @@ const ACTIVE_BIZ = { id: 'biz-1', status: 'active', subscription_tier: 'growth',
 const FREE_BIZ_EXPIRED_TRIAL = { id: 'biz-1', status: 'active', subscription_tier: 'free', trial_ends_at: '2020-01-01T00:00:00Z', category: 'salon' };
 const FREE_BIZ_ACTIVE_TRIAL = { id: 'biz-1', status: 'active', subscription_tier: 'free', trial_ends_at: '2099-01-01T00:00:00Z', category: 'salon' };
 const SUSPENDED_BIZ = { id: 'biz-1', status: 'suspended', subscription_tier: 'growth', trial_ends_at: null, category: 'salon' };
+const PENDING_BIZ = { id: 'biz-1', status: 'pending', subscription_tier: 'free', trial_ends_at: '2099-01-01T00:00:00Z', category: 'salon' };
 
 describe('requireCapability — create_new', () => {
   it('effective capability → allowed', async () => {
@@ -226,6 +227,27 @@ describe('requireCapability — create_new', () => {
     if (!result.allowed) {
       expect(result.denial.reason).toBe('business_suspended');
     }
+  });
+
+  it('pending (setup-incomplete) business → denied for create_new', async () => {
+    const result = await requireCapability(
+      mockSupabase({ business: PENDING_BIZ }),
+      mockService({ capabilities: [{ capability: 'broadcast', is_enabled: true, sort_order: 0 }] }),
+      { businessId: 'biz-1', userId: 'user-1', capability: 'broadcast', action: 'create_new' },
+    );
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.denial.reason).toBe('business_setup_incomplete');
+    }
+  });
+
+  it('pending business + manage_existing → allowed (can manage existing)', async () => {
+    const result = await requireCapability(
+      mockSupabase({ business: PENDING_BIZ }),
+      mockService({ capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }] }),
+      { businessId: 'biz-1', userId: 'user-1', capability: 'scheduling', action: 'manage_existing' },
+    );
+    expect(result.allowed).toBe(true);
   });
 
   it('active trial on free tier → allowed', async () => {

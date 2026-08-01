@@ -25,8 +25,7 @@ import {
   type GetEffectiveCapabilitiesResult,
 } from '@/lib/capabilities/policy';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
-import { getCategoryDefaultCapabilities } from '@/lib/categoryConfig';
-import { CATEGORY_DEFAULT_CAPABILITIES } from '@/lib/capabilities/types';
+import { getLegacyDefaultCapabilities } from '@/lib/capabilities/legacy-defaults';
 
 // ── Result types ──
 
@@ -96,6 +95,17 @@ export async function requireCapability(
     };
   }
 
+  // Reject pending (setup-incomplete) businesses for create_new.
+  // A pending business has not completed onboarding verification.
+  // It must not initiate new customer/payment/messaging activity.
+  if (business.status === 'pending' && action === 'create_new') {
+    return {
+      allowed: false,
+      status: 403,
+      denial: { success: false, reason: 'business_setup_incomplete', detail: 'complete_onboarding_first' },
+    };
+  }
+
   // 2. Load capability rows via service client (bypasses RLS for server reads)
   const capResult = await getConfiguredCapabilities(service, businessId);
   if (!capResult.ok) {
@@ -123,20 +133,11 @@ export async function requireCapability(
 
   const overrides = (overrideRows || []).map(r => r.capability as string);
 
-  // 4. Handle zero-row legacy businesses consistently with bot/dashboard
+  // 4. Handle zero-row legacy businesses consistently with bot/dashboard.
+  // Uses the shared pure deterministic resolver (no DB, no mutable cache).
   let configuredRows = capResult.rows;
   if (configuredRows.length === 0) {
-    // Legacy business without explicit configuration.
-    // Match the bot/dashboard behavior: use category defaults as implicitly enabled.
-    const category = business.category;
-    let defaultCaps: string[] = [];
-    if (category) {
-      const dbCaps = getCategoryDefaultCapabilities(category);
-      defaultCaps = dbCaps || CATEGORY_DEFAULT_CAPABILITIES[category] || ['scheduling'];
-    } else {
-      defaultCaps = ['scheduling'];
-    }
-    // Synthesize capability rows as if they were explicitly enabled
+    const defaultCaps = getLegacyDefaultCapabilities(business.category);
     configuredRows = defaultCaps.map((cap, i) => ({
       capability: cap,
       is_enabled: true,
