@@ -106,19 +106,23 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
   });
 
   it('EXECUTE is restricted to service_role', () => {
-    // Check that PUBLIC, anon, and authenticated cannot execute
-    const publicHasExec = psql(`
-      SELECT has_function_privilege('public', 'atomic_escalate_to_human(UUID, UUID, TEXT, TEXT, JSONB, TEXT)', 'EXECUTE')
-    `);
-    // public should not have it (revoked from PUBLIC)
-    // Note: if roles don't exist in test DB, this may error — we just check the function config
-    const aclStr = psql(`
-      SELECT proacl FROM pg_proc WHERE proname = 'atomic_escalate_to_human'
-    `);
-    // ACL should contain service_role grant and not contain anon or authenticated
-    expect(aclStr).toContain('service_role');
-    expect(aclStr).not.toContain('anon=X');
-    expect(aclStr).not.toContain('authenticated=X');
+    const sig = 'atomic_escalate_to_human(UUID, UUID, TEXT, TEXT, JSONB, TEXT)';
+
+    // service_role MUST have EXECUTE
+    const serviceHasExec = psql(`SELECT has_function_privilege('service_role', '${sig}', 'EXECUTE')`);
+    expect(serviceHasExec).toBe('t');
+
+    // anon MUST NOT have EXECUTE
+    const anonHasExec = psql(`SELECT has_function_privilege('anon', '${sig}', 'EXECUTE')`);
+    expect(anonHasExec).toBe('f');
+
+    // authenticated MUST NOT have EXECUTE
+    const authHasExec = psql(`SELECT has_function_privilege('authenticated', '${sig}', 'EXECUTE')`);
+    expect(authHasExec).toBe('f');
+
+    // PUBLIC MUST NOT have EXECUTE (revoked)
+    const publicHasExec = psql(`SELECT has_function_privilege('public', '${sig}', 'EXECUTE')`);
+    expect(publicHasExec).toBe('f');
   });
 
   it('1. SUCCESS: creates handoff atomically', () => {
@@ -145,15 +149,12 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
     expect(result.conversation_id).toBeTruthy();
 
     // Verify session is in handoff state
-    const session = psqlJson(`
-      SELECT current_step, handed_off, session_data->>'_pre_handoff_step' as pre_step
-      FROM bot_sessions WHERE id = '${sessionId}'
-    `);
-    // psql -tAX returns columns pipe-separated for plain selects
     const sessionStep = psql(`SELECT current_step FROM bot_sessions WHERE id = '${sessionId}'`);
     const sessionHandoff = psql(`SELECT handed_off FROM bot_sessions WHERE id = '${sessionId}'`);
+    const preHandoffStep = psql(`SELECT session_data->>'_pre_handoff_step' FROM bot_sessions WHERE id = '${sessionId}'`);
     expect(sessionStep).toBe('chat_handoff');
     expect(sessionHandoff).toBe('t');
+    expect(preHandoffStep).toBe('select_service');
 
     // Verify conversation exists
     const convStatus = psql(`
