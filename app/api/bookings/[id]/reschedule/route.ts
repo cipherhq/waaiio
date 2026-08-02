@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { createClient } from '@/lib/supabase/server';
+import { requireAnyCapability } from '@/lib/capabilities/api-guard';
 import { authenticateRequest } from '@/lib/api-auth';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail } from '@/lib/channels/send-or-email';
@@ -47,6 +49,13 @@ export async function POST(
     if (auth instanceof NextResponse) return auth;
 
     const { service } = auth;
+
+    // ── Capability enforcement: appointment|scheduling / manage_existing ──
+    const authSupabase = await createClient();
+    const guard = await requireAnyCapability(authSupabase, service, {
+      businessId: businessId, userId: auth.user.id, capabilities: ['appointment', 'scheduling'], action: 'manage_existing',
+    });
+    if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
     // Fetch the booking and verify it belongs to this business
     const { data: booking, error: fetchError } = await service

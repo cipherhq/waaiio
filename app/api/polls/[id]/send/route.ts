@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
@@ -23,6 +24,13 @@ export async function POST(request: NextRequest, { params }: Params) {
     .from('businesses').select('id, owner_id, name')
     .eq('id', poll.business_id).eq('owner_id', user.id).single();
   if (!biz) return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
+
+  // ── Capability enforcement: poll/create_new ──
+  const serviceGuard = createServiceClient();
+  const guard = await requireCapability(supabase, serviceGuard, {
+    businessId: poll.business_id, userId: user.id, capability: 'poll', action: 'create_new',
+  });
+  if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
   const rateLimited = await rateLimitResponseAsync(`poll-send:${poll.business_id}`, 3, 60_000);
   if (rateLimited) return rateLimited;

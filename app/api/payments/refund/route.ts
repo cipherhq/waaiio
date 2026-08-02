@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { processRefund } from '@/lib/payments/refund-handler';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
@@ -36,6 +38,13 @@ export async function POST(request: NextRequest) {
     if (!business) {
       return NextResponse.json({ error: 'Business not found or not authorized' }, { status: 403 });
     }
+
+    // ── Capability enforcement: payment/manage_existing ──
+    const service = createServiceClient();
+    const guard = await requireCapability(supabase, service, {
+      businessId, userId: user.id, capability: 'payment', action: 'manage_existing',
+    });
+    if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
     // Verify the payment belongs to this business
     const { data: payment } = await supabase

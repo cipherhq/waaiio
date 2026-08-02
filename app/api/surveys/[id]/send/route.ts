@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
@@ -33,6 +34,13 @@ export async function POST(request: NextRequest, { params }: Params) {
     .eq('owner_id', user.id)
     .single();
   if (!biz) return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
+
+  // ── Capability enforcement: survey/create_new ──
+  const service0Guard = createServiceClient();
+  const guard = await requireCapability(supabase, service0Guard, {
+    businessId: survey.business_id, userId: user.id, capability: 'survey', action: 'create_new',
+  });
+  if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
   // Rate limit
   const rateLimited = await rateLimitResponseAsync(`survey-send:${survey.business_id}`, 3, 60_000);
