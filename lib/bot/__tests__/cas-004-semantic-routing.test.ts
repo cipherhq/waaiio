@@ -1,0 +1,441 @@
+/**
+ * CAS-004 — Semantic routing tests.
+ * Proves: semantic family detection, no-substitution rules, single-capability
+ * mismatch prevention, action-awareness, multilingual parity, language gating.
+ */
+import { describe, it, expect, vi } from 'vitest';
+import { parseSmartIntent } from '../smart-intent';
+import { resolveSemanticCapability, disambiguateByCategory } from '../semantic-resolver';
+import { validateSemanticFamily, validateRequestedAction } from '../semantic-types';
+import type { CapabilityId } from '@/lib/capabilities/types';
+
+// ═══════════════════════════════════════════════════════
+// SEMANTIC FAMILY DETECTION (parseSmartIntent)
+// ═══════════════════════════════════════════════════════
+
+describe('CAS-004 semantic family detection', () => {
+  it('1. "reserve a room" → property_reservation', () => {
+    const r = parseSmartIntent('I want to reserve a room');
+    expect(r.semanticFamily).toBe('property_reservation');
+    expect(r.intent).toBe('booking');
+  });
+
+  it('2. "book a table for four" → table_reservation', () => {
+    const r = parseSmartIntent('book a table for four');
+    expect(r.semanticFamily).toBe('table_reservation');
+    expect(r.intent).toBe('booking');
+  });
+
+  it('3. "doctor\'s appointment" → service_time_booking', () => {
+    const r = parseSmartIntent("I need a doctor's appointment");
+    expect(r.semanticFamily).toBe('service_time_booking');
+    expect(r.intent).toBe('booking');
+  });
+
+  it('4. "donate" → giving', () => {
+    const r = parseSmartIntent('I want to donate');
+    expect(r.semanticFamily).toBe('giving');
+  });
+
+  it('5. "pay tithe" → giving', () => {
+    const r = parseSmartIntent('I want to pay my tithe');
+    expect(r.semanticFamily).toBe('giving');
+  });
+
+  it('6. "pay electricity bill" → payment', () => {
+    const r = parseSmartIntent('I want to pay my electricity bill');
+    expect(r.semanticFamily).toBe('payment');
+  });
+
+  it('7. "order food" → ordering', () => {
+    const r = parseSmartIntent('I want to order food');
+    expect(r.semanticFamily).toBe('ordering');
+  });
+
+  it('8. "buy concert tickets" → ticketing', () => {
+    const r = parseSmartIntent('buy concert tickets');
+    expect(r.semanticFamily).toBe('ticketing');
+  });
+
+  // Pidgin equivalents
+  it('Pidgin: "I wan lodge" → property_reservation', () => {
+    const r = parseSmartIntent('I wan lodge for hotel');
+    expect(r.semanticFamily).toBe('property_reservation');
+  });
+
+  it('Pidgin: "abeg donate" → giving', () => {
+    const r = parseSmartIntent('abeg donate money');
+    expect(r.semanticFamily).toBe('giving');
+  });
+
+  it('Pidgin: "I wan barb" → service_time_booking', () => {
+    const r = parseSmartIntent('I wan barb tomorrow');
+    expect(r.semanticFamily).toBe('service_time_booking');
+  });
+
+  it('Pidgin: "I wan chop" → ordering', () => {
+    const r = parseSmartIntent('I wan chop jollof');
+    expect(r.semanticFamily).toBe('ordering');
+  });
+
+  // Generic booking remains ambiguous-friendly
+  it('"I want to book" → service_time_booking (generic)', () => {
+    const r = parseSmartIntent('I want to book');
+    expect(r.semanticFamily).toBe('service_time_booking');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// REQUESTED ACTION DETECTION
+// ═══════════════════════════════════════════════════════
+
+describe('CAS-004 requested action detection', () => {
+  it('16. "My bookings" → read_history', () => {
+    const r = parseSmartIntent('My bookings');
+    expect(r.requestedAction).toBe('read_history');
+  });
+
+  it('17. "Change my booking" → manage_existing', () => {
+    const r = parseSmartIntent('Change my booking');
+    expect(r.requestedAction).toBe('manage_existing');
+  });
+
+  it('18. "Do you offer appointments?" → informational', () => {
+    const r = parseSmartIntent('Do you offer appointments?');
+    expect(r.requestedAction).toBe('informational');
+  });
+
+  it('"Book me tomorrow" → create_new', () => {
+    const r = parseSmartIntent('Book me tomorrow');
+    expect(r.requestedAction).toBe('create_new');
+  });
+
+  it('"Where is my order?" → manage_existing', () => {
+    const r = parseSmartIntent('Where is my order?');
+    expect(r.requestedAction).toBe('manage_existing');
+  });
+
+  it('Pidgin: "wetin be my booking" → read_history', () => {
+    const r = parseSmartIntent('wetin be my booking');
+    expect(r.requestedAction).toBe('read_history');
+  });
+
+  it('Pidgin: "I wan see my order" → read_history', () => {
+    const r = parseSmartIntent('I wan see my order');
+    expect(r.requestedAction).toBe('read_history');
+  });
+
+  it('32. Active flow data: "Tomorrow at 5" → create_new (default)', () => {
+    const r = parseSmartIntent('Tomorrow at 5');
+    expect(r.requestedAction).toBe('create_new');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// NO-SUBSTITUTION RULES (semantic resolver)
+// ═══════════════════════════════════════════════════════
+
+describe('CAS-004 no-substitution semantic resolver', () => {
+  it('9. room reservation does NOT select scheduling', () => {
+    const res = resolveSemanticCapability('property_reservation', 'create_new', ['scheduling'] as CapabilityId[]);
+    expect(res.canRoute).toBe(false);
+    expect(res.reason).toBe('family_unavailable');
+  });
+
+  it('10. donate does NOT select payment', () => {
+    const res = resolveSemanticCapability('giving', 'create_new', ['payment'] as CapabilityId[]);
+    expect(res.canRoute).toBe(false);
+  });
+
+  it('11. table request does NOT select scheduling', () => {
+    const res = resolveSemanticCapability('table_reservation', 'create_new', ['scheduling'] as CapabilityId[]);
+    expect(res.canRoute).toBe(false);
+  });
+
+  it('12. doctor appointment MAY select scheduling (same family)', () => {
+    const res = resolveSemanticCapability('service_time_booking', 'create_new', ['scheduling'] as CapabilityId[]);
+    expect(res.canRoute).toBe(true);
+    expect(res.matchedCapability).toBe('scheduling');
+  });
+
+  it('scheduling + appointment both resolve service_time_booking', () => {
+    const res = resolveSemanticCapability('service_time_booking', 'create_new', ['appointment'] as CapabilityId[]);
+    expect(res.canRoute).toBe(true);
+    expect(res.matchedCapability).toBe('appointment');
+  });
+
+  it('exact reservation available → routes', () => {
+    const res = resolveSemanticCapability('property_reservation', 'create_new', ['reservation'] as CapabilityId[]);
+    expect(res.canRoute).toBe(true);
+    expect(res.matchedCapability).toBe('reservation');
+  });
+
+  it('exact giving available → routes', () => {
+    const res = resolveSemanticCapability('giving', 'create_new', ['giving'] as CapabilityId[]);
+    expect(res.canRoute).toBe(true);
+    expect(res.matchedCapability).toBe('giving');
+  });
+
+  it('MANAGE_EXISTING always allowed regardless of family', () => {
+    const res = resolveSemanticCapability('property_reservation', 'manage_existing', [] as CapabilityId[]);
+    expect(res.canRoute).toBe(true);
+  });
+
+  it('READ_HISTORY always allowed', () => {
+    const res = resolveSemanticCapability('ordering', 'read_history', [] as CapabilityId[]);
+    expect(res.canRoute).toBe(true);
+  });
+
+  it('INFORMATIONAL always allowed', () => {
+    const res = resolveSemanticCapability('ticketing', 'informational', [] as CapabilityId[]);
+    expect(res.canRoute).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// CAPABILITY-SELECTION VALIDATE — NO FALLBACK
+// ═══════════════════════════════════════════════════════
+
+describe('CAS-004 capability-selection semantic fixes', () => {
+  // These test the actual validate() function through the flow step
+
+  it('9. "reserve a room" does NOT fall through to scheduling', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
+    const { createMockContext } = await import('../flows/__tests__/helpers');
+
+    const ctx = createMockContext({
+      session: {
+        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
+        session_data: { capabilities: ['scheduling'], _filtered_capabilities: ['scheduling'] },
+      },
+      business: { id: 'b1', name: 'Test', slug: 'test', category: 'salon' as any, flow_type: 'scheduling' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
+    });
+
+    const result = await step.validate!('I want to reserve a room', ctx);
+    expect(result.valid).toBe(false);
+  });
+
+  it('10. "donate" does NOT fall through to payment', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
+    const { createMockContext } = await import('../flows/__tests__/helpers');
+
+    const ctx = createMockContext({
+      session: {
+        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
+        session_data: { capabilities: ['payment'], _filtered_capabilities: ['payment'] },
+      },
+      business: { id: 'b1', name: 'Test', slug: 'test', category: 'church' as any, flow_type: 'payment' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
+    });
+
+    const result = await step.validate!('I want to donate', ctx);
+    expect(result.valid).toBe(false);
+  });
+
+  it('11. "table for four" does NOT fall through to scheduling', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
+    const { createMockContext } = await import('../flows/__tests__/helpers');
+
+    const ctx = createMockContext({
+      session: {
+        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
+        session_data: { capabilities: ['scheduling'], _filtered_capabilities: ['scheduling'] },
+      },
+      business: { id: 'b1', name: 'Test', slug: 'test', category: 'restaurant' as any, flow_type: 'scheduling' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
+    });
+
+    const result = await step.validate!('book a table for four', ctx);
+    expect(result.valid).toBe(false);
+  });
+
+  it('12. "doctor appointment" DOES resolve to scheduling (same family)', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
+    const { createMockContext } = await import('../flows/__tests__/helpers');
+
+    const ctx = createMockContext({
+      session: {
+        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
+        session_data: { capabilities: ['scheduling'], _filtered_capabilities: ['scheduling'] },
+      },
+      business: { id: 'b1', name: 'Test', slug: 'test', category: 'clinic' as any, flow_type: 'scheduling' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
+    });
+
+    const result = await step.validate!("doctor's appointment", ctx);
+    expect(result.valid).toBe(true);
+    expect(result.data?.active_capability).toBe('scheduling');
+  });
+
+  it('9b. generic "I want to book" DOES resolve to scheduling', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
+    const { createMockContext } = await import('../flows/__tests__/helpers');
+
+    const ctx = createMockContext({
+      session: {
+        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
+        session_data: { capabilities: ['scheduling'], _filtered_capabilities: ['scheduling'] },
+      },
+      business: { id: 'b1', name: 'Test', slug: 'test', category: 'salon' as any, flow_type: 'scheduling' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
+    });
+
+    const result = await step.validate!('I want to book', ctx);
+    expect(result.valid).toBe(true);
+  });
+
+  it('31. custom label "Sow a Seed" with giving unavailable does NOT fall to payment', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
+    const { createMockContext } = await import('../flows/__tests__/helpers');
+
+    const ctx = createMockContext({
+      session: {
+        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
+        session_data: { capabilities: ['payment'], _filtered_capabilities: ['payment'] },
+      },
+      business: { id: 'b1', name: 'Church', slug: 'church', category: 'church' as any, flow_type: 'payment' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
+    });
+
+    const result = await step.validate!('sow a seed', ctx);
+    expect(result.valid).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// MULTILINGUAL SEMANTIC FAMILY PARITY
+// ═══════════════════════════════════════════════════════
+
+describe('CAS-004 multilingual semantic parity', () => {
+  it('21. English and Pidgin "reserve room" produce same family', () => {
+    const en = parseSmartIntent('I want to reserve a room');
+    const pcm = parseSmartIntent('I wan lodge for hotel');
+    expect(en.semanticFamily).toBe('property_reservation');
+    expect(pcm.semanticFamily).toBe('property_reservation');
+  });
+
+  it('21b. English and Pidgin "donate" produce same family', () => {
+    const en = parseSmartIntent('I want to donate');
+    const pcm = parseSmartIntent('abeg donate money');
+    expect(en.semanticFamily).toBe('giving');
+    expect(pcm.semanticFamily).toBe('giving');
+  });
+
+  it('21c. English and Pidgin booking produce same family', () => {
+    const en = parseSmartIntent('book a haircut');
+    const pcm = parseSmartIntent('I wan barb');
+    expect(en.semanticFamily).toBe('service_time_booking');
+    expect(pcm.semanticFamily).toBe('service_time_booking');
+  });
+
+  it('22. LLM result validates canonical enums', () => {
+    expect(validateSemanticFamily('property_reservation')).toBe('property_reservation');
+    expect(validateSemanticFamily('giving')).toBe('giving');
+    expect(validateSemanticFamily('service_time_booking')).toBe('service_time_booking');
+    expect(validateSemanticFamily('invalid_value')).toBe(null);
+    expect(validateSemanticFamily(undefined)).toBe(null);
+    expect(validateRequestedAction('create_new')).toBe('create_new');
+    expect(validateRequestedAction('manage_existing')).toBe('manage_existing');
+    expect(validateRequestedAction('bad')).toBe(null);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// LANGUAGE GATING
+// ═══════════════════════════════════════════════════════
+
+describe('CAS-004 language tier gating', () => {
+  it('23. Free tier: parseSmartIntentHybrid does not call LLM', async () => {
+    // Mock classifyWithLLM to spy on calls
+    vi.resetModules();
+    const llmSpy = vi.fn().mockResolvedValue({
+      flow: null, entities: { serviceKeywords: [], date: null, timePreference: null, quantity: null },
+      confidence: 0, language: 'en', semanticFamily: null, requestedAction: null,
+    });
+    vi.doMock('../llm-intent', () => ({ classifyWithLLM: llmSpy }));
+    vi.doMock('@/lib/posthog/flags', () => ({
+      isFeatureEnabledServer: vi.fn().mockResolvedValue(true),
+      FLAGS: { LLM_INTENT_ENABLED: 'llm-intent-enabled' },
+    }));
+    vi.doMock('../classification-logger', () => ({ logClassification: vi.fn() }));
+
+    const { parseSmartIntentHybrid: hybrid } = await import('../smart-intent');
+    // Free tier + ambiguous text (regex won't match confidently)
+    await hybrid('wetin dey happen', 'salon', { from: vi.fn() } as any, 'biz-1', undefined, 'free');
+
+    // LLM must NOT have been called for free tier
+    expect(llmSpy).not.toHaveBeenCalled();
+
+    vi.doUnmock('../llm-intent');
+    vi.doUnmock('@/lib/posthog/flags');
+    vi.doUnmock('../classification-logger');
+  });
+
+  it('25. Growth tier: LLM IS called when regex not confident', async () => {
+    vi.resetModules();
+    const llmSpy = vi.fn().mockResolvedValue({
+      flow: 'booking', entities: { serviceKeywords: [], date: null, timePreference: null, quantity: null },
+      confidence: 0.8, language: 'pcm', semanticFamily: 'service_time_booking', requestedAction: 'create_new',
+    });
+    vi.doMock('../llm-intent', () => ({ classifyWithLLM: llmSpy }));
+    vi.doMock('@/lib/posthog/flags', () => ({
+      isFeatureEnabledServer: vi.fn().mockResolvedValue(true),
+      FLAGS: { LLM_INTENT_ENABLED: 'llm-intent-enabled' },
+    }));
+    vi.doMock('../classification-logger', () => ({ logClassification: vi.fn() }));
+
+    const { parseSmartIntentHybrid: hybrid } = await import('../smart-intent');
+    await hybrid('mo fe ri dokita', 'clinic', { from: vi.fn() } as any, 'biz-1', undefined, 'growth');
+
+    // LLM should be called for growth tier
+    expect(llmSpy).toHaveBeenCalled();
+
+    vi.doUnmock('../llm-intent');
+    vi.doUnmock('@/lib/posthog/flags');
+    vi.doUnmock('../classification-logger');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// CONFIDENCE POLICY
+// ═══════════════════════════════════════════════════════
+
+describe('CAS-004 confidence', () => {
+  it('28. null semantic family → no auto-route', () => {
+    const res = resolveSemanticCapability(null, 'create_new', ['scheduling'] as CapabilityId[]);
+    expect(res.canRoute).toBe(false);
+  });
+
+  it('29. unknown family → no route', () => {
+    const res = resolveSemanticCapability(null, null, ['scheduling'] as CapabilityId[]);
+    expect(res.canRoute).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// BUSINESS CONTEXT DISAMBIGUATION
+// ═══════════════════════════════════════════════════════
+
+describe('CAS-004 business context', () => {
+  it('hotel category suggests property_reservation', () => {
+    const family = disambiguateByCategory('hotel', ['reservation'] as CapabilityId[]);
+    expect(family).toBe('property_reservation');
+  });
+
+  it('restaurant category suggests table_reservation', () => {
+    const family = disambiguateByCategory('restaurant', ['table_reservation'] as CapabilityId[]);
+    expect(family).toBe('table_reservation');
+  });
+
+  it('salon category suggests service_time_booking', () => {
+    const family = disambiguateByCategory('salon', ['scheduling'] as CapabilityId[]);
+    expect(family).toBe('service_time_booking');
+  });
+
+  it('falls back to any available booking-family cap', () => {
+    const family = disambiguateByCategory('hotel', ['scheduling'] as CapabilityId[]);
+    // hotel suggests reservation, but only scheduling effective — falls back
+    expect(family).toBe('service_time_booking');
+  });
+});

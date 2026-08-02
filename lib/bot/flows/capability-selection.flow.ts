@@ -241,23 +241,55 @@ const selectCapabilityStep: FlowStepConfig = {
             return lower.includes(label) || label.includes(lower);
           }) || null;
         }
-        // Keyword-based intent matching
+        // CAS-004: Keyword-based intent matching with semantic-family awareness.
+        // Specific words must NOT fall through to unrelated capabilities.
+        // Generic "book" may resolve to any booking-family capability.
         if (!capId) {
-          if (/\b(book|appoint|schedule|reserv|table\s*for|dinner|lunch|brunch|seat|dine)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'table_reservation') || userFacing.find(c => c === 'scheduling' || c === 'appointment' || c === 'reservation') || null;
-          } else if (/\b(give|tithe?|offer|donat|sadaqah|zakat|pay\s*tithe?|pay\s*offer|pay\s*seed)\b/i.test(input)) {
-            // Prioritize giving over payment — "pay tithe" should go to giving, not payment
-            capId = userFacing.find(c => c === 'giving') || userFacing.find(c => c === 'payment') || null;
-          } else if (/\b(pay|fee|bill|dues|levy)\b/i.test(input)) {
+          // ── Specific property reservation (NOT generic booking) ──
+          if (/\b(room|lodge|hotel|stay|apartment|shortlet|airbnb|property|accommodation)\b/i.test(input)
+            || /\b(i\s*wan|abeg)\b.*\b(lodge|sleep|stay|rest)\b/i.test(input)) {
+            capId = userFacing.find(c => c === 'reservation') || null;
+          }
+          // ── Specific table/restaurant reservation ──
+          else if (/\b(table\s*for|dinner\s*reserv|brunch\s*reserv|lunch\s*reserv|reserv.*table|seat\s*for|dine\s*in)\b/i.test(input)) {
+            capId = userFacing.find(c => c === 'table_reservation') || null;
+          }
+          // ── Specific giving/donation (NOT generic payment) ──
+          else if (/\b(give|tithe?|offer|donat|sadaqah|zakat|sow\s*(?:a\s*)?seed|first\s*fruit|waqf|lillah|infaq|fidyah|kaffara|fitrah)\b/i.test(input)
+            || /\b(i\s*wan|abeg|jowo|biko)\b.*\b(give|donat|tithe|offering|seed)\b/i.test(input)) {
+            capId = userFacing.find(c => c === 'giving') || null;
+          }
+          // ── Generic booking/appointment (may resolve to scheduling family) ──
+          else if (/\b(book|appoint\w*|schedule|reserv)\b/i.test(input)) {
+            capId = userFacing.find(c => c === 'table_reservation')
+              || userFacing.find(c => c === 'scheduling' || c === 'appointment' || c === 'reservation')
+              || null;
+          }
+          // ── Generic payment (NOT giving) ──
+          else if (/\b(pay|fee|bill|dues|levy)\b/i.test(input)) {
             capId = userFacing.find(c => c === 'payment') || null;
-          } else if (/\b(order|buy|shop|menu|food)\b/i.test(input)) {
+          }
+          // ── Ordering ──
+          else if (/\b(order|buy|shop|menu|food)\b/i.test(input)) {
             capId = userFacing.find(c => c === 'ordering') || null;
-          } else if (/\b(ticket|event|show|concert)\b/i.test(input)) {
+          }
+          // ── Ticketing ──
+          else if (/\b(ticket|event|show|concert)\b/i.test(input)) {
             capId = userFacing.find(c => c === 'ticketing') || null;
-          } else if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
+          }
+          // ── Chat ──
+          else if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
             capId = userFacing.find(c => c === 'chat') || null;
-          } else if (/\b(waiver|sign|release\s*form|liability)\b/i.test(input)) {
+          }
+          // ── Waiver ──
+          else if (/\b(waiver|sign|release\s*form|liability)\b/i.test(input)) {
             capId = userFacing.find(c => c === 'waiver') || null;
+          }
+          // ── Table keywords that didn't match specific table_reservation ──
+          else if (/\b(dinner|lunch|brunch|dine|seat)\b/i.test(input)) {
+            capId = userFacing.find(c => c === 'table_reservation')
+              || userFacing.find(c => c === 'scheduling' || c === 'appointment')
+              || null;
           }
         }
       }
@@ -273,7 +305,7 @@ const selectCapabilityStep: FlowStepConfig = {
       try {
         const { parseSmartIntentHybrid, matchServiceFromKeywords } = await import('@/lib/bot/smart-intent');
         const bizTz = (ctx.session.session_data as Record<string, unknown>).business_timezone as string | undefined;
-        const parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null, bizTz);
+        const parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null, bizTz, ctx.business.subscription_tier);
 
         if (parsed.understood) {
           // Match service keywords — single match skips, multiple shows picker

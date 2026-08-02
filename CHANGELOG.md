@@ -7,6 +7,18 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-02
 
+### fix(bot): CAS-004 — Semantic-family-aware free-text routing
+- **Root cause:** Free-text routing used broad intent categories (booking/payment) that collapsed distinct semantic families. "Reserve a room" could silently become scheduling. "Donate" could silently become generic payment. Single-capability businesses auto-entered the sole flow regardless of customer intent. LLM intent classification lacked tier enforcement.
+- **Fix — 4 changes:**
+  - **Semantic family model:** New `SemanticFamily` and `RequestedAction` canonical types. `parseSmartIntent` now detects fine-grained families (property_reservation, table_reservation, giving vs payment, etc.) from existing regex sub-patterns. LLM prompt extended to return canonical family.
+  - **No-substitution routing:** capability-selection validate() now uses specific-family patterns that do NOT fall through to unrelated capabilities. Property reservation → only reservation. Giving → only giving. Generic "book" still allowed to resolve within the booking family.
+  - **Single-capability semantic check:** Before entering a sole-capability flow, compares parsed semantic family against the capability's family. Mismatches redirect to select_capability instead of silently entering wrong flow.
+  - **LLM tier enforcement:** Free tier no longer invokes paid LLM classification. Growth/Business tiers respect both feature flag and tier policy.
+- **Also:** Action-aware routing intercept for non-English MANAGE_EXISTING/READ_HISTORY patterns (prevents Pidgin READ_HISTORY from collapsing into CREATE_NEW).
+- **Files:** `lib/bot/semantic-types.ts` (NEW), `lib/bot/semantic-resolver.ts` (NEW), `lib/bot/smart-intent.ts`, `lib/bot/llm-intent.ts`, `lib/bot/bot.service.ts`, `lib/bot/conversation-orchestrator.ts`, `lib/bot/flows/capability-selection.flow.ts`, `lib/bot/__tests__/cas-004-semantic-routing.test.ts` (NEW), `CHANGELOG.md`
+- **49 focused tests** covering: semantic family detection (8 intents + 4 Pidgin), action detection (8), no-substitution resolver (11), capability-selection fixes (6), multilingual parity (4), language gating (2), confidence (2), business context (4).
+- **Deferred:** Growth per-business language selection persistence (no existing schema found — requires CTO decision for new migration). Global query handlers remain English-only regex (Category B — separate concern from semantic routing).
+
 ### fix(bot): CAP-001 Phase 1 — WhatsApp CREATE_NEW capability enforcement
 - **Root cause:** WhatsApp bot resolved effective capabilities ONCE at session creation (~24h TTL) but never re-validated. Multiple bypass paths existed: `start_capability` keyword, `quick_rebook` button, stale session resume, and `checkin` keyword all could enter capability flows without checking current entitlement. No capability check existed at any CREATE_NEW commit point (booking INSERT, order INSERT, payment initiation, etc.). Business status was not checked on existing session resume.
 - **Fix — 3 enforcement boundaries:**

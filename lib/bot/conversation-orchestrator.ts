@@ -43,6 +43,7 @@ export class ConversationOrchestrator {
     session: BotSession | null,
     _customerPhone: string,
     timezone?: string,
+    subscriptionTier?: string,
   ): Promise<ConversationUnderstanding> {
     const normalizedText = text.trim();
 
@@ -90,6 +91,7 @@ export class ConversationOrchestrator {
       this.supabase,
       businessId,
       timezone,
+      subscriptionTier,
     );
 
     // 4. Build entities from smart intent result

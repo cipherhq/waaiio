@@ -1281,7 +1281,15 @@ export class BotService {
         if (text && text.length > 2 && !isRestart) {
           try {
             const bizTimezone = (waConfig?.business_hours as BusinessHours | undefined)?.timezone;
-            const parsed = await parseSmartIntentHybrid(text, business?.category || null, this.supabase, business?.id || null, bizTimezone);
+            const parsed = await parseSmartIntentHybrid(text, business?.category || null, this.supabase, business?.id || null, bizTimezone, business?.subscription_tier);
+
+            // CAS-004: Store semantic family for downstream routing check
+            if (parsed.semanticFamily) {
+              session.session_data._parsed_semantic_family = parsed.semanticFamily;
+            }
+            if (parsed.requestedAction) {
+              session.session_data._parsed_requested_action = parsed.requestedAction;
+            }
 
             // Store detected language as pending — confirmation already sent during session creation
             if ('language' in parsed && parsed.language && parsed.language !== 'en' && !session.session_data._detected_language) {
@@ -1368,6 +1376,40 @@ export class BotService {
             }
           } catch (err) {
             logger.error('[BOT] Smart intent parse error (non-fatal):', err);
+          }
+        }
+
+        // CAS-004: Semantic family check before entering sole-capability flow.
+        // When only 1 user-facing capability exists and the customer's first message
+        // has a specific semantic family that CONFLICTS with that capability,
+        // redirect to select_capability to show what's available instead of silently
+        // entering the wrong flow.
+        if (business && session.current_step !== 'select_capability') {
+          try {
+            const { resolveSemanticCapability } = await import('./semantic-resolver');
+            const parsedFamily = session.session_data._parsed_semantic_family as string | undefined;
+            const parsedAction = session.session_data._parsed_requested_action as string | undefined;
+
+            // Only check CREATE_NEW — MANAGE_EXISTING/READ_HISTORY are handled by global handlers
+            if (parsedFamily && (!parsedAction || parsedAction === 'create_new')) {
+              const resolution = resolveSemanticCapability(
+                parsedFamily as import('./semantic-types').SemanticFamily,
+                'create_new',
+                capabilities,
+              );
+
+              if (!resolution.canRoute) {
+                // Customer asked for something the sole capability cannot fulfill.
+                // Redirect to select_capability so the menu shows what's available.
+                session.current_step = 'select_capability';
+                await this.supabase.from('bot_sessions')
+                  .update({ current_step: 'select_capability' })
+                  .eq('id', session.id);
+                logger.debug('[BOT] CAS-004: semantic mismatch — redirecting to select_capability');
+              }
+            }
+          } catch (err) {
+            logger.warn('[BOT] CAS-004 semantic check error (non-fatal):', err);
           }
         }
 
@@ -1892,6 +1934,32 @@ export class BotService {
       }
     }
 
+    // ── CAS-004: Action-aware multilingual routing ──
+    // Detect READ_HISTORY / MANAGE_EXISTING / INFORMATIONAL from free text
+    // so non-English equivalents don't collapse into CREATE_NEW.
+    if (session.business_id && text && (step === 'select_capability' || step === 'greeting')) {
+      try {
+        const { parseSmartIntent: quickParse } = await import('./smart-intent');
+        const quickResult = quickParse(text);
+        if (quickResult.requestedAction === 'read_history' || quickResult.requestedAction === 'manage_existing') {
+          // Route to existing global handlers by re-invoking handleMessage
+          // which checks global queries first (READ_HISTORY/MANAGE_EXISTING)
+          // The global handlers already exist for English; this extends the semantic net
+          const { handleGlobalQuery: reRouteGlobal } = await import('./handlers/global-queries');
+          const globalRe = await reRouteGlobal({
+            supabase: this.supabase, messageSender: this.messageSender,
+            flowExecutor: this.flowExecutor, sendText: this.sendText.bind(this),
+            from, session, text, messageType, destinationPhone,
+            getProfile: async () => null, handleMessage: this.handleMessage.bind(this),
+          });
+          if (globalRe.handled) return;
+          // If global handler didn't recognize it either, continue to normal routing
+        }
+      } catch (err) {
+        logger.warn('[BOT] CAS-004 action routing error (non-fatal):', err);
+      }
+    }
+
     // ── Conversational AI Layer (feature-flagged) ──
     // Runs AFTER specialized handlers / keywords / escape hatches, BEFORE the
     // fallback flow executor path.  Only fires when the business has AI enabled
@@ -1901,6 +1969,13 @@ export class BotService {
         const convConfig = await loadConversationConfig(this.supabase, session.business_id);
         if (convConfig.aiEnabled) {
           const orchestrator = new ConversationOrchestrator(this.supabase, convConfig);
+          // Load subscription tier from session or DB for LLM tier gating
+          let sessionTier: string | undefined;
+          if (session.business_id) {
+            const { data: bizTierData } = await this.supabase
+              .from('businesses').select('subscription_tier').eq('id', session.business_id).single();
+            sessionTier = bizTierData?.subscription_tier || 'free';
+          }
           const understanding = await orchestrator.understand(
             text,
             session.business_id,
@@ -1908,6 +1983,7 @@ export class BotService {
             session as BotSession,
             from,
             undefined, // timezone — not available here; orchestrator handles fallback
+            sessionTier,
           );
 
           // Handle temporary questions (mid-flow "what are your hours?" etc.)
