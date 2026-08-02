@@ -304,7 +304,6 @@ const queueConfirmCheckinStep: FlowStepConfig = {
       businessId: ctx.business.id,
       capability: 'queue',
       action: 'create_new',
-      currentBusiness: ctx.business,
     });
     if (!capGuard.allowed) {
       return { valid: false, errorMessage: capGuard.customerMessage };

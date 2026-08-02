@@ -372,7 +372,6 @@ const donationPaymentStep: FlowStepConfig = {
         businessId: ctx.business.id,
         capability: 'crowdfunding',
         action: 'create_new',
-        currentBusiness: ctx.business,
       });
       if (!capGuard.allowed) {
         return [{ type: 'text' as const, text: await ctx.t(capGuard.customerMessage) }];

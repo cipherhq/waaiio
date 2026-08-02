@@ -322,7 +322,6 @@ export const paymentFlow: FlowDefinition = {
             businessId: ctx.business.id,
             capability: activeCap as import('@/lib/capabilities/types').CapabilityId,
             action: 'create_new',
-            currentBusiness: ctx.business,
           });
           if (!capGuard.allowed) {
             return [{ type: 'text' as const, text: await ctx.t(capGuard.customerMessage) }];

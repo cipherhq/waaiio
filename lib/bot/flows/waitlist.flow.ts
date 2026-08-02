@@ -102,7 +102,6 @@ const waitlistConfirmStep: FlowStepConfig = {
         businessId: ctx.business.id,
         capability: 'waitlist',
         action: 'create_new',
-        currentBusiness: ctx.business,
       });
       if (!capGuard.allowed) {
         return [{ type: 'text' as const, text: capGuard.customerMessage }];

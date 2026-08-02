@@ -2471,7 +2471,6 @@ export const orderingFlow: FlowDefinition = {
             businessId: ctx.business.id,
             capability: 'ordering',
             action: 'create_new',
-            currentBusiness: ctx.business,
           });
           if (!capGuard.allowed) {
             return [{ type: 'text' as const, text: await ctx.t(capGuard.customerMessage) }];

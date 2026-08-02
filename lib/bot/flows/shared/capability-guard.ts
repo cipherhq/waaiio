@@ -7,6 +7,9 @@
  *
  * Does NOT replace the session-resume revalidation or flow-start guards —
  * those are complementary. This is the final pre-commit check.
+ *
+ * For CREATE_NEW: always queries CURRENT business state from the database.
+ * Does not accept stale/pre-loaded business data for authorization.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -36,13 +39,15 @@ export interface BotCapabilityGuardDenied {
 export type BotCapabilityGuardResult = BotCapabilityGuardAllowed | BotCapabilityGuardDenied;
 
 /**
- * Verify CURRENT capability entitlement immediately before a CREATE_NEW commit.
+ * Verify CURRENT capability entitlement immediately before a protected operation.
  *
- * Loads fresh business state, capability rows, overrides, and resolves via
- * the canonical getEffectiveCapabilities() policy. Fails closed on DB errors.
+ * Always loads fresh business state, capability rows, and overrides from the
+ * database. Resolves via the canonical getEffectiveCapabilities() policy.
+ * Fails closed on DB errors.
  *
  * For MANAGE_EXISTING operations (e.g. payment retry on an existing booking),
- * callers should pass action='manage_existing' — those are always allowed.
+ * callers should pass action='manage_existing' — those are always allowed
+ * provided the business is not suspended.
  */
 export async function requireCurrentCapability(
   supabase: SupabaseClient,
@@ -50,58 +55,44 @@ export async function requireCurrentCapability(
     businessId: string;
     capability: CapabilityId;
     action: CapabilityAction;
-    /** Optional pre-loaded business from the executor context.
-     *  When provided, skips the business query (avoids re-query when executor already loaded it). */
-    currentBusiness?: { id: string; status?: string; subscription_tier: string; trial_ends_at: string | null; category: string | null };
   },
 ): Promise<BotCapabilityGuardResult> {
   const { businessId, capability, action } = params;
 
-  // 1. Load current business state (use pre-loaded if available)
-  let business = params.currentBusiness as { id: string; status: string; subscription_tier: string; trial_ends_at: string | null; category: string | null } | null;
-  if (!business) {
-    const { data, error: bizError } = await supabase
-      .from('businesses')
-      .select('id, status, subscription_tier, trial_ends_at, category')
-      .eq('id', businessId)
-      .single();
+  // 1. Load CURRENT business state — always fresh from DB
+  const { data: business, error: bizError } = await supabase
+    .from('businesses')
+    .select('id, status, subscription_tier, trial_ends_at, category')
+    .eq('id', businessId)
+    .single();
 
-    if (bizError || !data) {
-      logger.error('[BOT-GUARD] Business read failed:', bizError?.message);
-      return {
-        allowed: false,
-        reason: 'business_read_error',
-        customerMessage: 'We\'re experiencing a temporary issue. Please try again shortly.',
-      };
-    }
-    business = data;
+  if (bizError || !business) {
+    logger.error('[BOT-GUARD] Business read failed:', bizError?.message);
+    return {
+      allowed: false,
+      reason: 'business_read_error',
+      customerMessage: 'We\'re experiencing a temporary issue. Please try again shortly.',
+    };
   }
 
   // 2. Business operational status
-  // When currentBusiness is provided from flow executor context, status may not be
-  // in the select. Point A (session-resume revalidation) already enforces business
-  // status before the executor runs, so we only do the status check here when we
-  // performed the fresh DB query ourselves.
-  const hasStatus = 'status' in business && business.status !== undefined;
-  if (hasStatus) {
-    if (business.status === 'suspended') {
-      return {
-        allowed: false,
-        reason: 'business_suspended',
-        customerMessage: 'This business is currently unavailable. Please try again later.',
-      };
-    }
-
-    if (business.status !== 'active' && action === 'create_new') {
-      return {
-        allowed: false,
-        reason: 'business_not_active',
-        customerMessage: 'This business is currently unavailable. Please try again later.',
-      };
-    }
+  if (business.status === 'suspended') {
+    return {
+      allowed: false,
+      reason: 'business_suspended',
+      customerMessage: 'This business is currently unavailable. Please try again later.',
+    };
   }
 
-  // 3. Load current configured capabilities
+  if (business.status !== 'active' && action === 'create_new') {
+    return {
+      allowed: false,
+      reason: 'business_not_active',
+      customerMessage: 'This business is currently unavailable. Please try again later.',
+    };
+  }
+
+  // 3. Load CURRENT configured capabilities
   const capResult = await getConfiguredCapabilities(supabase, businessId);
   if (!capResult.ok) {
     logger.error('[BOT-GUARD] Capability read failed:', capResult.error);
@@ -112,7 +103,7 @@ export async function requireCurrentCapability(
     };
   }
 
-  // 4. Load current overrides
+  // 4. Load CURRENT overrides
   const { data: overrideRows, error: overrideError } = await supabase
     .from('capability_overrides')
     .select('capability')
@@ -158,7 +149,7 @@ export async function requireCurrentCapability(
   if (!actionResult.allowed) {
     const blockedEntry = resolution.blocked.find(b => b.capability === capability);
     const detail = blockedEntry?.reason || 'capability_not_effective';
-    logger.warn(`[BOT-GUARD] CREATE_NEW denied: capability=${capability} reason=${detail} business=${businessId}`);
+    logger.warn(`[BOT-GUARD] ${action} denied: capability=${capability} reason=${detail} business=${businessId}`);
 
     return {
       allowed: false,

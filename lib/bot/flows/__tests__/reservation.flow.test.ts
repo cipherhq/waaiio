@@ -248,8 +248,40 @@ describe('Reservation Flow', () => {
       const step = getStep(reservationFlow, 'create_reservation');
 
       const mockSupabase = createMockSupabase();
-      // Make the reservation insert fail
-      const fromMock = vi.fn(() => {
+      // Make the reservation insert fail, but let capability guard tables succeed
+      const fromMock = vi.fn((table: string) => {
+        // CAP-001: capability guard queries businesses, business_capabilities, capability_overrides
+        // before reaching the reservation INSERT — these must succeed for the guard to pass
+        if (table === 'businesses') {
+          const bizChain: Record<string, any> = {};
+          bizChain.select = vi.fn().mockReturnValue(bizChain);
+          bizChain.eq = vi.fn().mockReturnValue(bizChain);
+          bizChain.single = vi.fn().mockResolvedValue({
+            data: { id: 'b1', status: 'active', subscription_tier: 'growth', trial_ends_at: new Date(Date.now() + 86400000).toISOString(), category: 'hotel' },
+            error: null,
+          });
+          return bizChain;
+        }
+        if (table === 'business_capabilities') {
+          const capChain: Record<string, any> = {};
+          capChain.select = () => capChain;
+          capChain.eq = () => capChain;
+          capChain.order = () => capChain;
+          const capData = Promise.resolve({ data: [{ capability: 'reservation', is_enabled: true, sort_order: 0 }], error: null });
+          capChain.then = capData.then.bind(capData);
+          capChain.catch = capData.catch.bind(capData);
+          return capChain;
+        }
+        if (table === 'capability_overrides') {
+          const ovChain: Record<string, any> = {};
+          ovChain.select = () => ovChain;
+          ovChain.eq = () => ovChain;
+          const ovData = Promise.resolve({ data: [], error: null });
+          ovChain.then = ovData.then.bind(ovData);
+          ovChain.catch = ovData.catch.bind(ovData);
+          return ovChain;
+        }
+        // All other tables (reservations, profiles, etc.) — fail insert to test error handling
         const chain: Record<string, any> = {
           select: vi.fn().mockReturnThis(),
           insert: vi.fn().mockReturnThis(),
