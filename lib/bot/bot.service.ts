@@ -528,6 +528,66 @@ export class BotService {
 
     let session = await this.getActiveSession(from);
 
+    // ── CAP-001 Point A: Session resume capability revalidation ──
+    // When an existing business-associated session is found, refresh capabilities
+    // and verify business status using the canonical policy resolver.
+    // This ensures stale sessions cannot bypass entitlement changes (trial expiry,
+    // capability disabled, business suspended, etc.).
+    if (session?.business_id) {
+      try {
+        const { data: currentBiz } = await this.supabase
+          .from('businesses')
+          .select('id, status, subscription_tier, trial_ends_at, category')
+          .eq('id', session.business_id)
+          .single();
+
+        if (!currentBiz || currentBiz.status !== 'active') {
+          // Business no longer active — deactivate session with recoverable message
+          await this.deactivateSession(session.id);
+          await this.sendText(from, 'This business is currently unavailable. Send *Hi* to start over.');
+          return;
+        }
+
+        // Re-resolve effective capabilities using canonical policy
+        const [capResult, overrideRows] = await Promise.all([
+          getConfiguredCapabilities(this.supabase, currentBiz.id),
+          this.supabase.from('capability_overrides').select('capability').eq('business_id', currentBiz.id),
+        ]);
+
+        if (capResult.ok) {
+          const overrides = overrideRows.error
+            ? []
+            : (overrideRows.data || []).map((r: { capability: string }) => r.capability);
+
+          let configuredRows = capResult.rows;
+          if (configuredRows.length === 0) {
+            const { getLegacyDefaultCapabilities } = await import('@/lib/capabilities/legacy-defaults');
+            const legacyDefaults = getLegacyDefaultCapabilities(currentBiz.category);
+            configuredRows = legacyDefaults.map((cap: string, i: number) => ({
+              capability: cap, is_enabled: true, sort_order: i,
+            }));
+          }
+
+          const policyResult = resolveEffectiveCaps({
+            configuredCapabilities: configuredRows,
+            overrides,
+            tier: currentBiz.subscription_tier || 'free',
+            trialEndsAt: currentBiz.trial_ends_at,
+          });
+
+          // Refresh the session's capabilities array with CURRENT effective set
+          session.session_data.capabilities = policyResult.effective;
+          await this.supabase.from('bot_sessions')
+            .update({ session_data: session.session_data })
+            .eq('id', session.id);
+        }
+        // On capability read failure, leave existing capabilities in place (fail-open for
+        // session navigation, but commit guards at Point C will fail closed independently)
+      } catch (err) {
+        logger.warn('[BOT] Session resume revalidation error (non-fatal):', err);
+      }
+    }
+
     // ── Global "my X" query handlers (location, orders, bookings, receipts, etc.) ──
     const globalResult = await handleGlobalQuery({
       supabase: this.supabase,
@@ -1521,13 +1581,27 @@ export class BotService {
 
     // Handle quick rebook button tap — pre-fill service and jump to date picker
     if (text === 'quick_rebook' && session.session_data._quick_rebook_service_id) {
+      // CAP-001 Point B: Verify target capability is currently effective before rebook
+      const isGivingRebook = session.session_data._rebook_is_giving === true;
+      const rebookCap = isGivingRebook ? 'giving' : 'scheduling';
+      const currentCaps = (session.session_data.capabilities as CapabilityId[]) || [];
+      if (!currentCaps.includes(rebookCap as CapabilityId)) {
+        // Capability no longer effective — clean up rebook state
+        delete session.session_data._quick_rebook_service_id;
+        delete session.session_data._quick_rebook_service_name;
+        delete session.session_data._rebook_flow_type;
+        delete session.session_data._rebook_is_giving;
+        delete session.session_data._quick_rebook_sent;
+        await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
+        await this.sendText(from, 'This service is currently unavailable. Send *Hi* to see what\'s available.');
+        return;
+      }
+
       const rebookServiceId = session.session_data._quick_rebook_service_id as string;
       session.session_data.service_id = rebookServiceId;
       session.session_data.service_name = session.session_data._quick_rebook_service_name;
       session.session_data.skip_service = true;
-      // Determine capability from the pre-resolved flag (set when greeting was shown)
-      const isGivingRebook = session.session_data._rebook_is_giving === true;
-      session.session_data.active_capability = isGivingRebook ? 'giving' : 'scheduling';
+      session.session_data.active_capability = rebookCap;
 
       // Fetch service details to pre-fill duration, price, etc.
       const { data: svc } = await this.supabase

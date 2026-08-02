@@ -170,7 +170,8 @@ export async function executeKeywordAction(
 
         if (action === 'checkin') {
           if (session.business_id) {
-            const caps = (session.session_data?.capabilities as CapabilityId[]) || await getEnabledCapabilities(supabase, session.business_id);
+            // CAP-001 Point B: Use session's refreshed effective capabilities (not tier-blind getEnabledCapabilities)
+            const caps = (session.session_data?.capabilities as CapabilityId[]) || [];
             if (caps.includes('queue')) {
               await supabase.from('bot_sessions').update({
                 current_step: 'queue_start',
@@ -236,6 +237,12 @@ export async function executeKeywordAction(
         const isRoutingStep = !step || step === 'greeting' || step === 'select_capability';
         if (!isRoutingStep) return false;
         if (session.business_id) {
+          // CAP-001 Point B: Verify capability is currently effective before starting
+          const currentCaps = (session.session_data?.capabilities as string[]) || [];
+          if (!currentCaps.includes(capability)) {
+            await sendText(from, 'This service is currently unavailable. Send *Hi* to see what\'s available.');
+            return true;
+          }
           session.session_data.active_capability = capability;
           const capFirstStep = capabilityToFirstStep(capability as CapabilityId);
           await supabase.from('bot_sessions').update({

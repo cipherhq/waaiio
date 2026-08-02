@@ -314,6 +314,21 @@ export const paymentFlow: FlowDefinition = {
           return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
         }
 
+        // CAP-001 Point C: Verify CURRENT capability before CREATE_NEW payment/giving
+        if (ctx.business) {
+          const { requireCurrentCapability } = await import('./shared/capability-guard');
+          const activeCap = (d.active_capability as string) || 'payment';
+          const capGuard = await requireCurrentCapability(ctx.supabase, {
+            businessId: ctx.business.id,
+            capability: activeCap as import('@/lib/capabilities/types').CapabilityId,
+            action: 'create_new',
+            currentBusiness: ctx.business,
+          });
+          if (!capGuard.allowed) {
+            return [{ type: 'text' as const, text: await ctx.t(capGuard.customerMessage) }];
+          }
+        }
+
         // Create a booking record for payment tracking
         const { data: booking, error } = await ctx.supabase
           .from('bookings')

@@ -95,6 +95,20 @@ const waitlistConfirmStep: FlowStepConfig = {
       return [{ type: 'text', text: `You're already on the waitlist, ${customerName}! We'll notify you when a spot opens up.\n\n💡 *What you can do:*\n• Type *my bookings* to check your bookings\n• Send *Hi* to start over` }];
     }
 
+    // CAP-001 Point C: Verify CURRENT capability before CREATE_NEW waitlist entry
+    {
+      const { requireCurrentCapability } = await import('./shared/capability-guard');
+      const capGuard = await requireCurrentCapability(ctx.supabase, {
+        businessId: ctx.business.id,
+        capability: 'waitlist',
+        action: 'create_new',
+        currentBusiness: ctx.business,
+      });
+      if (!capGuard.allowed) {
+        return [{ type: 'text' as const, text: capGuard.customerMessage }];
+      }
+    }
+
     // Insert waitlist entry
     const { error } = await ctx.supabase
       .from('waitlist_entries')
