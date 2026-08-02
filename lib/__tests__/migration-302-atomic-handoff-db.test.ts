@@ -24,7 +24,8 @@ const MIGRATION_PATH = path.resolve('supabase/migrations/302_atomic_handoff.sql'
 const dbUrl = process.env.TEST_DATABASE_URL;
 
 function psql(sql: string): string {
-  return execSync(`psql "${dbUrl}" -tAX -c "${sql.replace(/"/g, '\\"')}"`, {
+  return execSync(`psql "${dbUrl}" -tAX`, {
+    input: sql,
     encoding: 'utf-8',
     timeout: 15000,
   }).trim();
