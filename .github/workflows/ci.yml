@@ -475,11 +475,11 @@ jobs:
           set -e
 
           # Create a dedicated database — never use the shared waaiio_test
-          dropdb --if-exists waaiio_m302_test
-          createdb waaiio_m302_test
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m302_test
+          createdb --maintenance-db=waaiio_test waaiio_m302_test
 
           cleanup() {
-            dropdb --if-exists waaiio_m302_test
+            dropdb --maintenance-db=waaiio_test --if-exists waaiio_m302_test
           }
           trap cleanup EXIT
 
