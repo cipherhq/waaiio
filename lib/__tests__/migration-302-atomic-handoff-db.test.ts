@@ -175,14 +175,15 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
     // receives this specific test phone — this forces the conversation INSERT
     // to fail AFTER the session UPDATE within the same transaction.
     psql(`
-      CREATE OR REPLACE FUNCTION _m302_force_conv_fail() RETURNS TRIGGER AS $t$
+      CREATE OR REPLACE FUNCTION _m302_force_conv_fail() RETURNS TRIGGER
+      LANGUAGE plpgsql AS $t$
       BEGIN
         IF NEW.customer_phone = '${testPhone}' THEN
           RAISE EXCEPTION 'forced_test_failure' USING ERRCODE = 'raise_exception';
         END IF;
         RETURN NEW;
       END;
-      $t$ LANGUAGE plpgsql
+      $t$;
     `);
     psql(`
       CREATE TRIGGER _m302_fail_trigger
