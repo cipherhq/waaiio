@@ -19,9 +19,29 @@
     ],
     "blast_radius": "Regressions in onboarding are undetected until a real user signs up",
     "recommended_direction": "Add integration tests for POST /api/onboarding/register covering capability persistence and trial initialization",
-    "implementation_status": "not_started",
+    "implementation_status": "implemented",
     "requires_product_decision": false,
-    "product_question": null
+    "product_question": null,
+    "implementation_evidence": {
+      "test_file": "lib/__tests__/onboarding-behavioral.test.ts (18 tests)",
+      "coverage": [
+        "fresh registration creates pending business",
+        "trial_ends_at uses TRIAL_DAYS constant",
+        "initCapabilities + finalizeOnboarding called on success",
+        "initCapabilities failure returns recoverable error, no finalize call",
+        "finalization failure returns recoverable error",
+        "retry reruns init + finalize idempotently",
+        "retry does not create second business",
+        "retry preserves same business ID",
+        "foreign/non-pending retry rejected",
+        "retry init/finalize failure returns recoverable error",
+        "no provider/deployment behavior"
+      ],
+      "existing_tests_preserved": [
+        "onboarding-verify-activation.test.ts (3 tests \u2014 activation invariants)",
+        "onboarding-retry-limiter.test.ts (5 tests \u2014 rate-limit separation)"
+      ]
+    }
   },
   {
     "id": "CAS-002",
@@ -35,16 +55,21 @@
       "scenario:A"
     ],
     "expected_behavior": "trial_ends_at calculation uses the TRIAL_DAYS constant from lib/constants.ts",
-    "actual_behavior": "register/route.ts:185 uses inline Date.now() + 30 * 24 * 60 * 60 * 1000 instead of importing TRIAL_DAYS",
+    "actual_behavior": "register/route.ts now imports and uses TRIAL_DAYS constant from lib/constants.ts",
     "evidence": [
-      "register/route.ts:185 inline 30-day calculation",
-      "lib/constants.ts:8 TRIAL_DAYS = 30 defined but not imported"
+      "register/route.ts:245 uses TRIAL_DAYS * 24 * 60 * 60 * 1000",
+      "lib/constants.ts:8 TRIAL_DAYS = 30 is the authoritative source",
+      "onboarding-behavioral.test.ts validates trial_ends_at is 30 days from now"
     ],
-    "blast_radius": "If TRIAL_DAYS changes, register route would not update. Low risk since both currently equal 30.",
+    "blast_radius": "Resolved \u2014 single source of truth for trial duration",
     "recommended_direction": "Import and use TRIAL_DAYS constant",
-    "implementation_status": "not_started",
+    "implementation_status": "implemented",
     "requires_product_decision": false,
-    "product_question": null
+    "product_question": null,
+    "implementation_evidence": {
+      "fix": "register/route.ts imports TRIAL_DAYS from lib/constants and uses it in trial_ends_at calculation",
+      "test": "onboarding-behavioral.test.ts 'sets trial_ends_at using TRIAL_DAYS constant (30 days from now)' validates the duration"
+    }
   },
   {
     "id": "CAS-003",
