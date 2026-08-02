@@ -13,9 +13,9 @@
 --   failure + session_not_found: no matching active session
 --
 -- Rollback:
---   DROP FUNCTION IF EXISTS atomic_escalate_to_human(UUID, UUID, TEXT, TEXT, JSONB, TEXT);
+--   DROP FUNCTION IF EXISTS public.atomic_escalate_to_human(UUID, UUID, TEXT, TEXT, JSONB, TEXT);
 
-CREATE OR REPLACE FUNCTION atomic_escalate_to_human(
+CREATE OR REPLACE FUNCTION public.atomic_escalate_to_human(
   p_session_id UUID,
   p_business_id UUID,
   p_customer_phone TEXT,
@@ -25,17 +25,17 @@ CREATE OR REPLACE FUNCTION atomic_escalate_to_human(
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 DECLARE
-  v_session bot_sessions;
+  v_session public.bot_sessions;
   v_conv_exists BOOLEAN;
   v_conv_id UUID;
   v_new_session_data JSONB;
 BEGIN
   -- 1. Lock and fetch the session row
   SELECT * INTO v_session
-  FROM bot_sessions
+  FROM public.bot_sessions
   WHERE id = p_session_id
     AND is_active = true
   FOR UPDATE;
@@ -56,7 +56,7 @@ BEGIN
 
   -- 4. Check for existing active conversation for this business+phone
   SELECT id INTO v_conv_id
-  FROM chat_conversations
+  FROM public.chat_conversations
   WHERE business_id = p_business_id
     AND customer_phone = p_customer_phone
     AND status IN ('open', 'pending');
@@ -87,7 +87,7 @@ BEGIN
   END IF;
 
   -- 7. Atomically update session to handoff state, increment CAS version
-  UPDATE bot_sessions
+  UPDATE public.bot_sessions
   SET
     current_step = 'chat_handoff',
     handed_off = true,
@@ -97,7 +97,7 @@ BEGIN
   WHERE id = p_session_id;
 
   -- 8. Upsert chat_conversations
-  INSERT INTO chat_conversations (
+  INSERT INTO public.chat_conversations (
     business_id, customer_phone, customer_name,
     status, escalated_from_step, escalated_at,
     bot_session_id, session_context, last_message_at
@@ -135,8 +135,8 @@ BEGIN
 END;
 $$;
 
--- Security: service_role only
-REVOKE ALL ON FUNCTION atomic_escalate_to_human(UUID, UUID, TEXT, TEXT, JSONB, TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION atomic_escalate_to_human(UUID, UUID, TEXT, TEXT, JSONB, TEXT) FROM anon;
-REVOKE ALL ON FUNCTION atomic_escalate_to_human(UUID, UUID, TEXT, TEXT, JSONB, TEXT) FROM authenticated;
-GRANT EXECUTE ON FUNCTION atomic_escalate_to_human(UUID, UUID, TEXT, TEXT, JSONB, TEXT) TO service_role;
+-- Security: exposed for Supabase RPC routing, executable by service_role only.
+REVOKE ALL ON FUNCTION public.atomic_escalate_to_human(UUID, UUID, TEXT, TEXT, JSONB, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.atomic_escalate_to_human(UUID, UUID, TEXT, TEXT, JSONB, TEXT) FROM anon;
+REVOKE ALL ON FUNCTION public.atomic_escalate_to_human(UUID, UUID, TEXT, TEXT, JSONB, TEXT) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.atomic_escalate_to_human(UUID, UUID, TEXT, TEXT, JSONB, TEXT) TO service_role;
