@@ -30,6 +30,13 @@ function psql(sql: string): string {
   }).trim();
 }
 
+function psqlFile(filePath: string): string {
+  return execSync(`psql "${dbUrl}" -tAX -f "${filePath}"`, {
+    encoding: 'utf-8',
+    timeout: 15000,
+  }).trim();
+}
+
 function psqlJson(sql: string): any {
   const raw = psql(sql);
   return raw ? JSON.parse(raw) : null;
@@ -70,9 +77,8 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
       );
     `);
 
-    // Apply the migration
-    const migrationSql = fs.readFileSync(MIGRATION_PATH, 'utf-8');
-    psql(migrationSql.replace(/'/g, "'\"'\"'"));
+    // Apply the migration (use -f to avoid shell quoting issues with plpgsql)
+    psqlFile(MIGRATION_PATH);
   });
 
   afterAll(() => {
