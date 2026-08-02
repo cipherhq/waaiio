@@ -24,15 +24,21 @@ const MIGRATION_PATH = path.resolve('supabase/migrations/302_atomic_handoff.sql'
 const dbUrl = process.env.TEST_DATABASE_URL;
 
 function psql(sql: string): string {
-  return execSync(`psql "${dbUrl}" -tAX -v ON_ERROR_STOP=1`, {
+  const raw = execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
     input: sql,
     encoding: 'utf-8',
     timeout: 15000,
-  }).trim();
+  });
+  // Filter out empty lines and command-status tags (INSERT 0 1, UPDATE N, etc.)
+  const lines = raw.split('\n').filter(l => {
+    const t = l.trim();
+    return t !== '' && !/^(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE|DO|SET|COMMENT)\b/.test(t);
+  });
+  return lines.join('\n').trim();
 }
 
 function psqlFile(filePath: string): string {
-  return execSync(`psql "${dbUrl}" -tAX -v ON_ERROR_STOP=1 -f "${filePath}"`, {
+  return execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${filePath}"`, {
     encoding: 'utf-8',
     timeout: 15000,
   }).trim();
