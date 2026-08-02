@@ -153,6 +153,73 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
     psql(`DELETE FROM bot_sessions WHERE id = '${sessionId}'`);
   });
 
+  it('2. FORCED FAILURE: conversation insert error rolls back session mutation', () => {
+    const bizId = 'a0000000-0000-0000-0000-000000000010';
+    const testPhone = '__FORCE_FAIL_2349';
+
+    // Create a valid session
+    const sessionId = psql(`
+      INSERT INTO bot_sessions (whatsapp_number, business_id, current_step, is_active, handed_off)
+      VALUES ('${testPhone}', '${bizId}', 'select_service', true, false)
+      RETURNING id
+    `);
+
+    // Install a temporary trigger that raises an error when chat_conversations
+    // receives this specific test phone — this forces the conversation INSERT
+    // to fail AFTER the session UPDATE within the same transaction.
+    psql(`
+      CREATE OR REPLACE FUNCTION _m302_force_conv_fail() RETURNS TRIGGER AS $t$
+      BEGIN
+        IF NEW.customer_phone = '${testPhone}' THEN
+          RAISE EXCEPTION 'forced_test_failure' USING ERRCODE = 'raise_exception';
+        END IF;
+        RETURN NEW;
+      END;
+      $t$ LANGUAGE plpgsql
+    `);
+    psql(`
+      CREATE TRIGGER _m302_fail_trigger
+      BEFORE INSERT OR UPDATE ON chat_conversations
+      FOR EACH ROW EXECUTE FUNCTION _m302_force_conv_fail()
+    `);
+
+    // Invoke the atomic RPC — it must fail because conversation insert raises
+    let rpcFailed = false;
+    try {
+      psql(`
+        SELECT atomic_escalate_to_human(
+          '${sessionId}'::UUID,
+          '${bizId}'::UUID,
+          '${testPhone}',
+          'FailUser',
+          '{"test":"forced_fail"}'::JSONB,
+          'select_service'
+        )
+      `);
+    } catch {
+      rpcFailed = true;
+    }
+    expect(rpcFailed).toBe(true);
+
+    // Verify session was NOT mutated — transaction rolled back entirely
+    const sessionStep = psql(`SELECT current_step FROM bot_sessions WHERE id = '${sessionId}'`);
+    const sessionHandoff = psql(`SELECT handed_off FROM bot_sessions WHERE id = '${sessionId}'`);
+    expect(sessionStep).toBe('select_service');
+    expect(sessionHandoff).toBe('f');
+
+    // Verify no conversation was created
+    const convCount = psql(`
+      SELECT count(*) FROM chat_conversations
+      WHERE business_id = '${bizId}' AND customer_phone = '${testPhone}'
+    `);
+    expect(convCount).toBe('0');
+
+    // Cleanup: remove trigger and function
+    psql('DROP TRIGGER IF EXISTS _m302_fail_trigger ON chat_conversations');
+    psql('DROP FUNCTION IF EXISTS _m302_force_conv_fail()');
+    psql(`DELETE FROM bot_sessions WHERE id = '${sessionId}'`);
+  });
+
   it('3. CROSS-BUSINESS: blocks foreign session', () => {
     const sessionId = psql(`
       INSERT INTO bot_sessions (whatsapp_number, business_id, current_step, is_active)
