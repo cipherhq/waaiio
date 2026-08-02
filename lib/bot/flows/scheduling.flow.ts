@@ -2206,9 +2206,22 @@ export const schedulingFlow: FlowDefinition = {
         const isNewBooking = !(d.booking_id && d.reference_code);
         let booking: { id: string; reference_code: string };
         if (!isNewBooking) {
-          // Reuse existing booking — just proceed to payment initiation
+          // Reuse existing booking — just proceed to payment initiation (MANAGE_EXISTING)
           booking = { id: d.booking_id as string, reference_code: d.reference_code as string };
         } else {
+          // CAP-001 Point C: Verify CURRENT capability before CREATE_NEW booking
+          const { requireCurrentCapability } = await import('./shared/capability-guard');
+          const activeCap = (d.active_capability as string) || (d._is_appointment ? 'appointment' : 'scheduling');
+          const capGuard = await requireCurrentCapability(ctx.supabase, {
+            businessId: ctx.business!.id,
+            capability: activeCap as import('@/lib/capabilities/types').CapabilityId,
+            action: 'create_new',
+            currentBusiness: ctx.business!,
+          });
+          if (!capGuard.allowed) {
+            return [{ type: 'text' as const, text: await ctx.t(capGuard.customerMessage) }];
+          }
+
           // Use atomic booking function to prevent double-booking race condition
           const svcMetaBooking = d._service_metadata as Record<string, unknown> | undefined;
           const maxCapacity = svcMetaBooking?.is_dropoff ? 9999 : ((d._service_max_capacity as number) || 1);

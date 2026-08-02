@@ -5,6 +5,21 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-02
+
+### fix(bot): CAP-001 Phase 1 — WhatsApp CREATE_NEW capability enforcement
+- **Root cause:** WhatsApp bot resolved effective capabilities ONCE at session creation (~24h TTL) but never re-validated. Multiple bypass paths existed: `start_capability` keyword, `quick_rebook` button, stale session resume, and `checkin` keyword all could enter capability flows without checking current entitlement. No capability check existed at any CREATE_NEW commit point (booking INSERT, order INSERT, payment initiation, etc.). Business status was not checked on existing session resume.
+- **Fix — 3 enforcement boundaries:**
+  - **Point A (session resume):** After `getActiveSession()` returns a business-associated session, re-resolves effective capabilities via canonical `getEffectiveCapabilities()` policy resolver. Checks business status. Refreshes `session_data.capabilities` with CURRENT effective set.
+  - **Point B (flow-start guards):** `start_capability`, `quick_rebook`, and `checkin` keyword handlers now verify target capability exists in the (freshly resolved) effective set before setting `active_capability`.
+  - **Point C (commit guards):** New `requireCurrentCapability()` shared guard called immediately before every CREATE_NEW durable mutation. Uses canonical policy resolver (tier/trial/override). Distinguishes CREATE_NEW from MANAGE_EXISTING (payment retries for existing bookings not blocked). Fails closed on DB errors.
+- **Commit points protected:** scheduling `book_slot_atomic`, ordering `orders.insert`, ticketing `bookings.insert`, reservation `reservations.insert`, payment/giving `bookings.insert`, crowdfunding `initializePayment`, queue `queue_entries.insert`, waitlist `waitlist_entries.insert`.
+- **Legacy zero-row:** Uses canonical `getLegacyDefaultCapabilities()` — no duplicate category-default logic.
+- **Tests:** 28 new tests in `lib/bot/flows/__tests__/capability-enforcement.test.ts` covering: effective allow, paused deny, trial expiry, mid-flow expiry, disabled capability, MANAGE_EXISTING preservation, business status, zero-row legacy, admin overrides, DB error fail-closed, bypass guards.
+  - **Files changed:** `lib/bot/bot.service.ts`, `lib/bot/handlers/keyword-actions.ts`, `lib/bot/flows/shared/capability-guard.ts` (NEW), `lib/bot/flows/scheduling.flow.ts`, `lib/bot/flows/ordering.flow.ts`, `lib/bot/flows/ticketing.flow.ts`, `lib/bot/flows/reservation.flow.ts`, `lib/bot/flows/payment.flow.ts`, `lib/bot/flows/crowdfunding.flow.ts`, `lib/bot/flows/queue-checkin.flow.ts`, `lib/bot/flows/waitlist.flow.ts`, `lib/bot/flows/__tests__/capability-enforcement.test.ts` (NEW), `CHANGELOG.md`
+  - **Affects:** All WhatsApp customers interacting with businesses. Every CREATE_NEW flow now enforces current capability at commit time.
+  - **Could break:** Flows that were previously reachable with stale/expired entitlement will now be blocked at the commit point with a recoverable customer message. MANAGE_EXISTING (payment retries, booking management) is preserved. CAS-008 human handoff unchanged.
+
 ## 2026-08-01
 
 ### fix(bot): CAS-008 — make human handoff deterministic and recoverable
