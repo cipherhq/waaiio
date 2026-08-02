@@ -15,6 +15,11 @@ interface EscalateParams {
   customerName: string | null;
 }
 
+export interface EscalateResult {
+  success: boolean;
+  reason?: 'already_active' | 'session_update_failed' | 'conversation_failed' | 'cross_business';
+}
+
 interface ResolveParams {
   supabase: SupabaseClient;
   sender: MessageSender;
@@ -23,14 +28,40 @@ interface ResolveParams {
   resolvedBy?: string;
 }
 
-export async function escalateToHuman(params: EscalateParams): Promise<void> {
+export async function escalateToHuman(params: EscalateParams): Promise<EscalateResult> {
   const {
     supabase, sender, from, businessId, businessName,
     sessionId, sessionData, currentStep, customerName,
   } = params;
 
+  // Guard: verify session belongs to this business (cross-business protection)
+  const { data: sessionRow, error: sessionLookupErr } = await supabase
+    .from('bot_sessions')
+    .select('id, business_id, current_step, handed_off')
+    .eq('id', sessionId)
+    .single();
+
+  if (sessionLookupErr || !sessionRow) {
+    logger.error('[HANDOFF] Session not found:', sessionId);
+    return { success: false, reason: 'session_update_failed' };
+  }
+
+  if (sessionRow.business_id !== businessId) {
+    logger.error('[HANDOFF] Cross-business escalation blocked:', { sessionId, sessionBiz: sessionRow.business_id, requestedBiz: businessId });
+    return { success: false, reason: 'cross_business' };
+  }
+
+  // Duplicate check: if already in chat_handoff with handed_off=true, respond idempotently
+  if (sessionRow.current_step === 'chat_handoff' && sessionRow.handed_off) {
+    await sender.sendText({
+      to: from,
+      text: `You're already connected to the team at *${businessName}*. A team member will respond shortly.\n\nType *end chat* to return to the menu.`,
+    });
+    return { success: true, reason: 'already_active' };
+  }
+
   // 1. Update bot session: pause at chat_handoff, mark as handed off
-  await supabase.from('bot_sessions').update({
+  const { error: sessionErr } = await supabase.from('bot_sessions').update({
     current_step: 'chat_handoff',
     handed_off: true,
     session_data: {
@@ -39,8 +70,13 @@ export async function escalateToHuman(params: EscalateParams): Promise<void> {
     },
   }).eq('id', sessionId);
 
+  if (sessionErr) {
+    logger.error('[HANDOFF] Failed to update session:', sessionErr);
+    return { success: false, reason: 'session_update_failed' };
+  }
+
   // 2. Upsert chat_conversations
-  await supabase.from('chat_conversations').upsert({
+  const { error: convErr } = await supabase.from('chat_conversations').upsert({
     business_id: businessId,
     customer_phone: from,
     customer_name: customerName,
@@ -52,29 +88,42 @@ export async function escalateToHuman(params: EscalateParams): Promise<void> {
     last_message_at: new Date().toISOString(),
   }, { onConflict: 'business_id,customer_phone' });
 
-  // 3. Send customer message
+  if (convErr) {
+    logger.error('[HANDOFF] Failed to upsert conversation:', convErr);
+    // Roll back session state — don't leave it in chat_handoff if conversation record failed
+    await supabase.from('bot_sessions').update({
+      current_step: currentStep,
+      handed_off: false,
+      session_data: sessionData,
+    }).eq('id', sessionId);
+    return { success: false, reason: 'conversation_failed' };
+  }
+
+  // 3. Send customer confirmation (only after both DB operations succeeded)
   await sender.sendText({
     to: from,
     text: `Connecting you to a team member at *${businessName}*... 🙋\n\nType *end chat* to close this session and return to the menu.`,
   });
 
-  // 4. Insert system message in chat_messages
-  const { data: conv } = await supabase
-    .from('chat_conversations')
-    .select('id')
-    .eq('business_id', businessId)
-    .eq('customer_phone', from)
-    .single();
+  // 4. Insert system message in chat_messages (non-critical)
+  try {
+    const { data: conv } = await supabase
+      .from('chat_conversations')
+      .select('id')
+      .eq('business_id', businessId)
+      .eq('customer_phone', from)
+      .single();
 
-  await supabase.from('chat_messages').insert({
-    business_id: businessId,
-    customer_phone: from,
-    customer_name: customerName,
-    direction: 'inbound',
-    message_text: `[Escalated from bot: ${currentStep.replace(/_/g, ' ')}]`,
-    is_read: false,
-    conversation_id: conv?.id || null,
-  });
+    await supabase.from('chat_messages').insert({
+      business_id: businessId,
+      customer_phone: from,
+      customer_name: customerName,
+      direction: 'inbound',
+      message_text: `[Escalated from bot: ${currentStep.replace(/_/g, ' ')}]`,
+      is_read: false,
+      conversation_id: conv?.id || null,
+    });
+  } catch (err) { logger.warn('[HANDOFF] System message insert failed (non-critical):', err); }
 
   // 5. Dispatch webhook (non-critical)
   try {
@@ -85,7 +134,7 @@ export async function escalateToHuman(params: EscalateParams): Promise<void> {
     });
   } catch (err) { logger.warn('[HANDOFF] Webhook dispatch failed (non-critical):', err); }
 
-  // 6. Send WhatsApp notification to business owner if phone available
+  // 6. Send WhatsApp notification to business owner if phone available (non-critical)
   try {
     const { data: biz } = await supabase
       .from('businesses')
@@ -102,6 +151,8 @@ export async function escalateToHuman(params: EscalateParams): Promise<void> {
       });
     }
   } catch (err) { logger.warn('[HANDOFF] Owner WhatsApp notification failed (non-critical):', err); }
+
+  return { success: true };
 }
 
 export async function resolveConversation(params: ResolveParams): Promise<void> {

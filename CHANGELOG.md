@@ -5,6 +5,18 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-01
+
+### fix(bot): CAS-008 — make human handoff deterministic and recoverable
+- **Root cause:** `executor.ts` escalation block had no else branch when `caps.includes('chat')` was false — customer request for a human silently fell through to regular flow validation. Additionally, the `talk_to_human` button payload (underscored) didn't match the escalation regex (space-separated words).
+- **Fix 1 — executor.ts:** Added else branch sending explicit "Live chat isn't available" message with recovery path. Added `talk_to_human` button payload detection alongside the regex.
+- **Fix 2 — handoff.service.ts:** `escalateToHuman` now returns `EscalateResult` with `success` and `reason`. Added: cross-business guard, duplicate handoff detection (idempotent response), session rollback when conversation upsert fails, no customer confirmation until both DB operations succeed.
+- **Fix 3 — executor.ts:** When `escalateToHuman` returns `success: false`, sends recoverable failure message instead of silent return.
+- **Tests:** 12 behavioral tests in `lib/__tests__/cas-008-human-handoff.test.ts`.
+  - **Files:** `lib/bot/flows/executor.ts`, `lib/bot/handoff.service.ts`, `lib/__tests__/cas-008-human-handoff.test.ts`, `docs/audit/cap-001/activation-spine/findings.json`, `CHANGELOG.md`
+  - **Affects:** All customers requesting human help via text or button, all businesses with or without chat capability
+  - **Could break:** Nothing — adds else branch to previously-missing path, strengthens existing escalation function with error handling. No schema changes.
+
 ## 2026-07-31
 
 ### Operations: Batch 9 migration-history repair complete — final batch (4 versions)
