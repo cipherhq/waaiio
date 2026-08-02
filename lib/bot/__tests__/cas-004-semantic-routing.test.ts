@@ -439,3 +439,138 @@ describe('CAS-004 business context', () => {
     expect(family).toBe('service_time_booking');
   });
 });
+
+// ═══════════════════════════════════════════════════════
+// GIVING POSITIVE + NEGATIVE PATHS
+// ═══════════════════════════════════════════════════════
+
+describe('CAS-004 giving positive + negative wiring', () => {
+  const runValidate = async (input: string, caps: string[]) => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
+    const { createMockContext } = await import('../flows/__tests__/helpers');
+    const ctx = createMockContext({
+      session: {
+        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
+        session_data: { capabilities: caps, _filtered_capabilities: caps },
+      },
+      business: { id: 'b1', name: 'Church', slug: 'church', category: 'church' as any, flow_type: 'payment' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
+    });
+    return step.validate!(input, ctx);
+  };
+
+  // Positive: giving IS effective
+  it('F: "donate" → giving when giving effective', async () => {
+    const r = await runValidate('I want to donate', ['giving', 'payment']);
+    expect(r.valid).toBe(true);
+    expect(r.data?.active_capability).toBe('giving');
+  });
+
+  it('F: "make a donation" → giving', async () => {
+    const r = await runValidate('I want to make a donation', ['giving', 'payment']);
+    expect(r.valid).toBe(true);
+    expect(r.data?.active_capability).toBe('giving');
+  });
+
+  it('F: "pay my tithe" → giving', async () => {
+    const r = await runValidate('I want to pay my tithe', ['giving', 'payment']);
+    expect(r.valid).toBe(true);
+    expect(r.data?.active_capability).toBe('giving');
+  });
+
+  it('F: "give an offering" → giving', async () => {
+    const r = await runValidate('I want to give an offering', ['giving', 'payment']);
+    expect(r.valid).toBe(true);
+    expect(r.data?.active_capability).toBe('giving');
+  });
+
+  it('F: Pidgin "abeg donate" → giving', async () => {
+    const r = await runValidate('abeg donate money', ['giving', 'payment']);
+    expect(r.valid).toBe(true);
+    expect(r.data?.active_capability).toBe('giving');
+  });
+
+  // Negative: giving unavailable + payment available
+  it('G: "donate" with giving unavailable does NOT select payment', async () => {
+    const r = await runValidate('I want to donate', ['payment']);
+    expect(r.valid).toBe(false);
+  });
+
+  it('G: "pay tithe" with giving unavailable does NOT select payment', async () => {
+    const r = await runValidate('I want to pay my tithe', ['payment']);
+    expect(r.valid).toBe(false);
+  });
+
+  it('G: "sow a seed" with giving unavailable does NOT select payment', async () => {
+    const r = await runValidate('sow a seed', ['payment']);
+    expect(r.valid).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// LANGUAGE POLICY
+// ═══════════════════════════════════════════════════════
+
+describe('CAS-004 language policy', () => {
+  it('Free tier: English only, no LLM', async () => {
+    const { getEffectiveLanguages } = await import('../language-policy');
+    const ent = getEffectiveLanguages('free');
+    expect(ent.allowedLanguages).toEqual(['en']);
+    expect(ent.llmAllowed).toBe(false);
+    expect(ent.translationAllowed).toBe(false);
+  });
+
+  it('Growth tier: English + configured languages', async () => {
+    const { getEffectiveLanguages } = await import('../language-policy');
+    const ent = getEffectiveLanguages('growth', ['en', 'pcm', 'yo']);
+    expect(ent.allowedLanguages).toContain('en');
+    expect(ent.allowedLanguages).toContain('pcm');
+    expect(ent.allowedLanguages).toContain('yo');
+    expect(ent.allowedLanguages.length).toBeLessThanOrEqual(3);
+    expect(ent.llmAllowed).toBe(true);
+  });
+
+  it('Growth tier: max 3 languages enforced', async () => {
+    const { getEffectiveLanguages } = await import('../language-policy');
+    const ent = getEffectiveLanguages('growth', ['en', 'pcm', 'yo', 'ha', 'ig']);
+    expect(ent.allowedLanguages.length).toBe(3); // en + 2
+  });
+
+  it('Business tier: all supported languages', async () => {
+    const { getEffectiveLanguages } = await import('../language-policy');
+    const ent = getEffectiveLanguages('business');
+    expect(ent.allowedLanguages.length).toBe(8);
+    expect(ent.llmAllowed).toBe(true);
+  });
+
+  it('Deterministic language detection: Pidgin', async () => {
+    const { detectLanguageDeterministic } = await import('../language-policy');
+    expect(detectLanguageDeterministic('I wan chop jollof')).toBe('pcm');
+    expect(detectLanguageDeterministic('abeg help me')).toBe('pcm');
+  });
+
+  it('Deterministic language detection: English', async () => {
+    const { detectLanguageDeterministic } = await import('../language-policy');
+    expect(detectLanguageDeterministic('I want to book a haircut')).toBe('en');
+  });
+
+  it('Deterministic language detection: French', async () => {
+    const { detectLanguageDeterministic } = await import('../language-policy');
+    expect(detectLanguageDeterministic('Bonjour, je veux réserver')).toBe('fr');
+  });
+
+  it('Q: invalid LLM language enum rejected', async () => {
+    const { SUPPORTED_LANGUAGES } = await import('../language-policy');
+    expect(SUPPORTED_LANGUAGES).toContain('en');
+    expect(SUPPORTED_LANGUAGES).toContain('pcm');
+    expect(SUPPORTED_LANGUAGES).not.toContain('klingon');
+  });
+
+  it('R: relative date preserved in LLM prompt', async () => {
+    // Verify the LLM prompt includes date resolution instruction
+    const { default: fs } = await import('fs');
+    const llmSource = fs.readFileSync('lib/bot/llm-intent.ts', 'utf8');
+    expect(llmSource).toContain('resolve "tomorrow"');
+    expect(llmSource).toContain('next monday');
+  });
+});

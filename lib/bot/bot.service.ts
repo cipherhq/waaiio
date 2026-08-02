@@ -1027,10 +1027,25 @@ export class BotService {
         }
       }
 
+      // CAS-004: Early semantic parse of first message BEFORE firstStep determination.
+      // This ensures a specific semantic request (e.g., "reserve a room") does not
+      // silently enter the wrong flow when only one capability is available.
+      let earlySemanticFamily: string | null = null;
+      let earlyRequestedAction: string | null = null;
+      if (business && text && text.length > 2 && !isRestart) {
+        try {
+          const { parseSmartIntent: earlyParse } = await import('./smart-intent');
+          const earlyResult = earlyParse(text);
+          earlySemanticFamily = earlyResult.semanticFamily || null;
+          earlyRequestedAction = earlyResult.requestedAction || null;
+        } catch (err) { logger.warn('[BOT] Early semantic parse error (non-fatal):', err); }
+      }
+
       // Deep-link: if QR code had a capability suffix (e.g. "SALON-LOLA:payment"),
       // skip the capability menu and go straight to that flow — but only if the
       // business actually has that capability enabled
       let firstStep: string;
+      let forceCapabilityMenu = false;
       if (business && deepLinkCapability && capabilities.includes(deepLinkCapability as CapabilityId)) {
         firstStep = this.capabilityToFirstStep(deepLinkCapability as CapabilityId);
         logger.debug('[BOT] Deep-link → skipping menu, starting at:', firstStep);
@@ -1038,6 +1053,24 @@ export class BotService {
         firstStep = business
           ? this.getFirstStepFromCapabilities(capabilities, business.flow_type)
           : 'greeting';
+
+        // CAS-004: Check semantic family mismatch for sole-capability auto-skip.
+        // If customer's first message has a CREATE_NEW semantic family that doesn't
+        // match the sole capability, force the capability menu instead.
+        if (business && firstStep !== 'select_capability' && firstStep !== 'greeting'
+            && earlySemanticFamily && earlyRequestedAction === 'create_new') {
+          const { resolveSemanticCapability } = await import('./semantic-resolver');
+          const resolution = resolveSemanticCapability(
+            earlySemanticFamily as import('./semantic-types').SemanticFamily,
+            'create_new',
+            capabilities,
+          );
+          if (!resolution.canRoute) {
+            firstStep = 'select_capability';
+            forceCapabilityMenu = true;
+            logger.debug('[BOT] CAS-004: semantic mismatch — forcing capability menu');
+          }
+        }
       }
 
       const sessionData: Record<string, unknown> = businessId && business
@@ -1045,6 +1078,9 @@ export class BotService {
             business_id: businessId, business_name: business.name, business_category: business.category, capabilities,
             ...(deepLinkCapability ? { _deep_link_capability: deepLinkCapability } : {}),
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
+            ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
+            ...(earlySemanticFamily ? { _parsed_semantic_family: earlySemanticFamily } : {}),
+            ...(earlyRequestedAction ? { _parsed_requested_action: earlyRequestedAction } : {}),
           }
         : { ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}) };
 
@@ -1376,40 +1412,6 @@ export class BotService {
             }
           } catch (err) {
             logger.error('[BOT] Smart intent parse error (non-fatal):', err);
-          }
-        }
-
-        // CAS-004: Semantic family check before entering sole-capability flow.
-        // When only 1 user-facing capability exists and the customer's first message
-        // has a specific semantic family that CONFLICTS with that capability,
-        // redirect to select_capability to show what's available instead of silently
-        // entering the wrong flow.
-        if (business && session.current_step !== 'select_capability') {
-          try {
-            const { resolveSemanticCapability } = await import('./semantic-resolver');
-            const parsedFamily = session.session_data._parsed_semantic_family as string | undefined;
-            const parsedAction = session.session_data._parsed_requested_action as string | undefined;
-
-            // Only check CREATE_NEW — MANAGE_EXISTING/READ_HISTORY are handled by global handlers
-            if (parsedFamily && (!parsedAction || parsedAction === 'create_new')) {
-              const resolution = resolveSemanticCapability(
-                parsedFamily as import('./semantic-types').SemanticFamily,
-                'create_new',
-                capabilities,
-              );
-
-              if (!resolution.canRoute) {
-                // Customer asked for something the sole capability cannot fulfill.
-                // Redirect to select_capability so the menu shows what's available.
-                session.current_step = 'select_capability';
-                await this.supabase.from('bot_sessions')
-                  .update({ current_step: 'select_capability' })
-                  .eq('id', session.id);
-                logger.debug('[BOT] CAS-004: semantic mismatch — redirecting to select_capability');
-              }
-            }
-          } catch (err) {
-            logger.warn('[BOT] CAS-004 semantic check error (non-fatal):', err);
           }
         }
 
@@ -1936,24 +1938,53 @@ export class BotService {
 
     // ── CAS-004: Action-aware multilingual routing ──
     // Detect READ_HISTORY / MANAGE_EXISTING / INFORMATIONAL from free text
-    // so non-English equivalents don't collapse into CREATE_NEW.
+    // and route directly to existing handlers instead of falling into CREATE_NEW.
     if (session.business_id && text && (step === 'select_capability' || step === 'greeting')) {
       try {
         const { parseSmartIntent: quickParse } = await import('./smart-intent');
         const quickResult = quickParse(text);
+
         if (quickResult.requestedAction === 'read_history' || quickResult.requestedAction === 'manage_existing') {
-          // Route to existing global handlers by re-invoking handleMessage
-          // which checks global queries first (READ_HISTORY/MANAGE_EXISTING)
-          // The global handlers already exist for English; this extends the semantic net
-          const { handleGlobalQuery: reRouteGlobal } = await import('./handlers/global-queries');
-          const globalRe = await reRouteGlobal({
-            supabase: this.supabase, messageSender: this.messageSender,
-            flowExecutor: this.flowExecutor, sendText: this.sendText.bind(this),
-            from, session, text, messageType, destinationPhone,
-            getProfile: async () => null, handleMessage: this.handleMessage.bind(this),
-          });
-          if (globalRe.handled) return;
-          // If global handler didn't recognize it either, continue to normal routing
+          const family = quickResult.semanticFamily;
+          const phoneP = from.startsWith('+') ? from : `+${from}`;
+          const phoneN = from.startsWith('+') ? from.slice(1) : from;
+          const { data: actionProfile } = await this.supabase.from('profiles').select('id')
+            .or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`)
+            .limit(1).maybeSingle();
+
+          if (actionProfile?.id) {
+            let actionHandled = false;
+            if (family === 'ordering' && quickResult.requestedAction === 'read_history') {
+              await this.deactivateSession(session.id);
+              const { data: newSess } = await this.supabase.from('bot_sessions').insert({
+                whatsapp_number: from, user_id: actionProfile.id, business_id: session.business_id,
+                current_step: 'my_orders', session_data: { ...session.session_data },
+                is_active: true, expires_at: new Date(Date.now() + 86400000).toISOString(),
+              }).select().single();
+              if (newSess) { await this.handleMyOrders(newSess as BotSession, from, ''); actionHandled = true; }
+            } else if ((family === 'service_time_booking' || family === 'property_reservation') &&
+                       (quickResult.requestedAction === 'read_history' || quickResult.requestedAction === 'manage_existing')) {
+              await this.deactivateSession(session.id);
+              const { data: newSess } = await this.supabase.from('bot_sessions').insert({
+                whatsapp_number: from, user_id: actionProfile.id, business_id: session.business_id,
+                current_step: 'my_bookings', session_data: { ...session.session_data },
+                is_active: true, expires_at: new Date(Date.now() + 86400000).toISOString(),
+              }).select().single();
+              if (newSess) { await this.handleMyBookings(newSess as BotSession, from, ''); actionHandled = true; }
+            }
+            if (actionHandled) return;
+          }
+          // If no profile or handler couldn't help, fall through to normal routing
+        }
+
+        if (quickResult.requestedAction === 'informational') {
+          // Informational: use existing business knowledge handler
+          try {
+            const { answerTemporaryQuestion } = await import('./business-knowledge');
+            const bizName = (session.session_data?.business_name as string) || 'this business';
+            const answer = await answerTemporaryQuestion(this.supabase, session.business_id, { type: 'general', query: text }, bizName);
+            if (answer) { await this.sendText(from, answer); return; }
+          } catch (_) { /* fall through */ }
         }
       } catch (err) {
         logger.warn('[BOT] CAS-004 action routing error (non-fatal):', err);

@@ -35,6 +35,11 @@ const selectCapabilityStep: FlowStepConfig = {
 
   async skipIf(ctx: FlowContext) {
     if (!ctx.business) return false;
+    // CAS-004: If semantic mismatch forced the menu, do NOT auto-skip
+    if (ctx.session.session_data._force_capability_menu) {
+      delete ctx.session.session_data._force_capability_menu;
+      return false;
+    }
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
     const businessId = ctx.business.id;
 
@@ -241,55 +246,33 @@ const selectCapabilityStep: FlowStepConfig = {
             return lower.includes(label) || label.includes(lower);
           }) || null;
         }
-        // CAS-004: Keyword-based intent matching with semantic-family awareness.
-        // Specific words must NOT fall through to unrelated capabilities.
-        // Generic "book" may resolve to any booking-family capability.
+        // CAS-004: Use canonical semantic family from smart-intent to route.
+        // Single source of truth — no duplicated regex patterns here.
         if (!capId) {
-          // ── Specific property reservation (NOT generic booking) ──
-          if (/\b(room|lodge|hotel|stay|apartment|shortlet|airbnb|property|accommodation)\b/i.test(input)
-            || /\b(i\s*wan|abeg)\b.*\b(lodge|sleep|stay|rest)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'reservation') || null;
+          const { parseSmartIntent } = await import('@/lib/bot/smart-intent');
+          const { resolveSemanticCapability, disambiguateByCategory } = await import('@/lib/bot/semantic-resolver');
+          const parsed = parseSmartIntent(input);
+
+          let family = parsed.semanticFamily;
+
+          // For genuinely ambiguous/generic text (null family), use business context
+          if (!family && parsed.intent) {
+            family = disambiguateByCategory(category, userFacing);
           }
-          // ── Specific table/restaurant reservation ──
-          else if (/\b(table\s*for|dinner\s*reserv|brunch\s*reserv|lunch\s*reserv|reserv.*table|seat\s*for|dine\s*in)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'table_reservation') || null;
-          }
-          // ── Specific giving/donation (NOT generic payment) ──
-          else if (/\b(give|tithe?|offer|donat|sadaqah|zakat|sow\s*(?:a\s*)?seed|first\s*fruit|waqf|lillah|infaq|fidyah|kaffara|fitrah)\b/i.test(input)
-            || /\b(i\s*wan|abeg|jowo|biko)\b.*\b(give|donat|tithe|offering|seed)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'giving') || null;
-          }
-          // ── Generic booking/appointment (may resolve to scheduling family) ──
-          else if (/\b(book|appoint\w*|schedule|reserv)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'table_reservation')
-              || userFacing.find(c => c === 'scheduling' || c === 'appointment' || c === 'reservation')
-              || null;
-          }
-          // ── Generic payment (NOT giving) ──
-          else if (/\b(pay|fee|bill|dues|levy)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'payment') || null;
-          }
-          // ── Ordering ──
-          else if (/\b(order|buy|shop|menu|food)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'ordering') || null;
-          }
-          // ── Ticketing ──
-          else if (/\b(ticket|event|show|concert)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'ticketing') || null;
-          }
-          // ── Chat ──
-          else if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'chat') || null;
-          }
-          // ── Waiver ──
-          else if (/\b(waiver|sign|release\s*form|liability)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'waiver') || null;
-          }
-          // ── Table keywords that didn't match specific table_reservation ──
-          else if (/\b(dinner|lunch|brunch|dine|seat)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'table_reservation')
-              || userFacing.find(c => c === 'scheduling' || c === 'appointment')
-              || null;
+
+          if (family) {
+            const resolution = resolveSemanticCapability(family, 'create_new', userFacing);
+            if (resolution.canRoute && resolution.matchedCapability) {
+              capId = resolution.matchedCapability as CapabilityId;
+            }
+            // If family is specific but unavailable, capId stays null → reject at L266
+          } else {
+            // No semantic family detected — try simple keyword fallback for chat/waiver
+            if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
+              capId = userFacing.find(c => c === 'chat') || null;
+            } else if (/\b(waiver|sign|release\s*form|liability)\b/i.test(input)) {
+              capId = userFacing.find(c => c === 'waiver') || null;
+            }
           }
         }
       }

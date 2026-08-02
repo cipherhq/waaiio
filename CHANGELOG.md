@@ -17,7 +17,8 @@ If something breaks, check this log to find what changed and when.
 - **Also:** Action-aware routing intercept for non-English MANAGE_EXISTING/READ_HISTORY patterns (prevents Pidgin READ_HISTORY from collapsing into CREATE_NEW).
 - **Files:** `lib/bot/semantic-types.ts` (NEW), `lib/bot/semantic-resolver.ts` (NEW), `lib/bot/smart-intent.ts`, `lib/bot/llm-intent.ts`, `lib/bot/bot.service.ts`, `lib/bot/conversation-orchestrator.ts`, `lib/bot/flows/capability-selection.flow.ts`, `lib/bot/__tests__/cas-004-semantic-routing.test.ts` (NEW), `CHANGELOG.md`
 - **49 focused tests** covering: semantic family detection (8 intents + 4 Pidgin), action detection (8), no-substitution resolver (11), capability-selection fixes (6), multilingual parity (4), language gating (2), confidence (2), business context (4).
-- **Deferred:** Growth per-business language selection persistence (no existing schema found — requires CTO decision for new migration). Global query handlers remain English-only regex (Category B — separate concern from semantic routing).
+- **Migration 303:** `enabled_languages TEXT[]` column on `ai_conversation_config` for per-business Growth language selection.
+- **Language policy:** `lib/bot/language-policy.ts` — canonical `getEffectiveLanguages()` with tier enforcement (Free=en-only, Growth=en+2, Business=all). Deterministic language detection without LLM for Free tier.
 
 ### fix(bot): CAP-001 Phase 1 — WhatsApp CREATE_NEW capability enforcement
 - **Root cause:** WhatsApp bot resolved effective capabilities ONCE at session creation (~24h TTL) but never re-validated. Multiple bypass paths existed: `start_capability` keyword, `quick_rebook` button, stale session resume, and `checkin` keyword all could enter capability flows without checking current entitlement. No capability check existed at any CREATE_NEW commit point (booking INSERT, order INSERT, payment initiation, etc.). Business status was not checked on existing session resume.

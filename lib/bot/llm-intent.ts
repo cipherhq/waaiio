@@ -62,7 +62,7 @@ Rules:
   - "informational" = asking about availability, prices, whether service exists
   - "navigation" = menu, help, start over, back
 - serviceKeywords: extract service/product names mentioned
-- date: extract as YYYY-MM-DD if mentioned
+- date: extract as YYYY-MM-DD if mentioned (resolve "tomorrow", "next monday" etc relative to today)
 - timePreference: "morning"|"afternoon"|"evening" if mentioned
 - quantity: number of people/items if mentioned
 - confidence: how sure you are (0.0 to 1.0)
