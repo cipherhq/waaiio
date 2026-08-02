@@ -298,6 +298,17 @@ const queueConfirmCheckinStep: FlowStepConfig = {
       return { valid: true };
     }
 
+    // CAP-001 Point C: Verify CURRENT capability before CREATE_NEW queue entry
+    const { requireCurrentCapability } = await import('./shared/capability-guard');
+    const capGuard = await requireCurrentCapability(ctx.supabase, {
+      businessId: ctx.business.id,
+      capability: 'queue',
+      action: 'create_new',
+    });
+    if (!capGuard.allowed) {
+      return { valid: false, errorMessage: capGuard.customerMessage };
+    }
+
     // Insert queue entry now that user confirmed
     const { error } = await ctx.supabase
       .from('queue_entries')

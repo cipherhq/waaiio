@@ -2464,6 +2464,19 @@ export const orderingFlow: FlowDefinition = {
         }
         if (!userId) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
+        // CAP-001 Point C: Verify CURRENT capability before CREATE_NEW order
+        if (ctx.business) {
+          const { requireCurrentCapability } = await import('./shared/capability-guard');
+          const capGuard = await requireCurrentCapability(ctx.supabase, {
+            businessId: ctx.business.id,
+            capability: 'ordering',
+            action: 'create_new',
+          });
+          if (!capGuard.allowed) {
+            return [{ type: 'text' as const, text: await ctx.t(capGuard.customerMessage) }];
+          }
+        }
+
         // ── Tier limit check for orders ──
         if (ctx.business) {
           const tierResult = await checkTierLimit(

@@ -792,6 +792,19 @@ export const reservationFlow: FlowDefinition = {
           channel: 'whatsapp',
         };
 
+        // CAP-001 Point C: Verify CURRENT capability before CREATE_NEW reservation
+        if (ctx.business) {
+          const { requireCurrentCapability } = await import('./shared/capability-guard');
+          const capGuard = await requireCurrentCapability(ctx.supabase, {
+            businessId: ctx.business.id,
+            capability: 'reservation',
+            action: 'create_new',
+          });
+          if (!capGuard.allowed) {
+            return [{ type: 'text' as const, text: await ctx.t(capGuard.customerMessage) }];
+          }
+        }
+
         const { data: reservation, error: insertError } = await ctx.supabase
           .from('reservations')
           .insert(insertPayload)

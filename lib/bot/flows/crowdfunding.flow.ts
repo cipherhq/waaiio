@@ -365,6 +365,19 @@ const donationPaymentStep: FlowStepConfig = {
     const amount = sd.donation_amount as number;
     const country = (ctx.business?.country_code || 'NG') as CountryCode;
 
+    // CAP-001 Point C: Verify CURRENT capability before CREATE_NEW donation
+    if (ctx.business) {
+      const { requireCurrentCapability } = await import('./shared/capability-guard');
+      const capGuard = await requireCurrentCapability(ctx.supabase, {
+        businessId: ctx.business.id,
+        capability: 'crowdfunding',
+        action: 'create_new',
+      });
+      if (!capGuard.allowed) {
+        return [{ type: 'text' as const, text: await ctx.t(capGuard.customerMessage) }];
+      }
+    }
+
     // ── Tier limit check for giving/donations ──
     if (ctx.business) {
       const tierResult = await checkTierLimit(
