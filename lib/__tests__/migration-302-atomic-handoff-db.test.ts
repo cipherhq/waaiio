@@ -8,6 +8,9 @@
  * 4. Returns already_active for valid duplicate
  * 5. Repairs inconsistent state (session handoff without conversation)
  * 6. Has correct EXECUTE privileges (service_role only)
+ * 7. Preserves _pre_handoff_step during repair
+ * 8. Blocks phone mismatch
+ * 9. Increments CAS version
  *
  * Requires TEST_DATABASE_URL environment variable (NOT staging or production).
  *
@@ -17,7 +20,6 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
-import * as fs from 'fs';
 import * as path from 'path';
 
 const MIGRATION_PATH = path.resolve('supabase/migrations/302_atomic_handoff.sql');
@@ -61,7 +63,7 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
       GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
     `);
 
-    // Create minimal stub tables matching the real schema
+    // Create minimal stub tables matching the real schema (includes version for CAS)
     psql(`
       CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
@@ -73,6 +75,7 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
         session_data JSONB DEFAULT '{}',
         is_active BOOLEAN NOT NULL DEFAULT true,
         handed_off BOOLEAN DEFAULT false,
+        version BIGINT NOT NULL DEFAULT 0,
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
 
@@ -114,28 +117,23 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
   it('EXECUTE is restricted to service_role', () => {
     const sig = 'atomic_escalate_to_human(UUID, UUID, TEXT, TEXT, JSONB, TEXT)';
 
-    // service_role MUST have EXECUTE
     const serviceHasExec = psql(`SELECT has_function_privilege('service_role', '${sig}', 'EXECUTE')`);
     expect(serviceHasExec).toBe('t');
 
-    // anon MUST NOT have EXECUTE
     const anonHasExec = psql(`SELECT has_function_privilege('anon', '${sig}', 'EXECUTE')`);
     expect(anonHasExec).toBe('f');
 
-    // authenticated MUST NOT have EXECUTE
     const authHasExec = psql(`SELECT has_function_privilege('authenticated', '${sig}', 'EXECUTE')`);
     expect(authHasExec).toBe('f');
 
-    // PUBLIC MUST NOT have EXECUTE (revoked)
     const publicHasExec = psql(`SELECT has_function_privilege('public', '${sig}', 'EXECUTE')`);
     expect(publicHasExec).toBe('f');
   });
 
-  it('1. SUCCESS: creates handoff atomically', () => {
-    // Insert a test session
+  it('1. SUCCESS: creates handoff atomically and increments version', () => {
     const sessionId = psql(`
-      INSERT INTO bot_sessions (whatsapp_number, business_id, current_step, is_active, handed_off)
-      VALUES ('2349000000001', 'a0000000-0000-0000-0000-000000000001', 'select_service', true, false)
+      INSERT INTO bot_sessions (whatsapp_number, business_id, current_step, is_active, handed_off, version)
+      VALUES ('2349000000001', 'a0000000-0000-0000-0000-000000000001', 'select_service', true, false, 5)
       RETURNING id
     `);
 
@@ -162,6 +160,10 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
     expect(sessionHandoff).toBe('t');
     expect(preHandoffStep).toBe('select_service');
 
+    // Verify version was incremented (5 -> 6)
+    const version = psql(`SELECT version FROM bot_sessions WHERE id = '${sessionId}'`);
+    expect(version).toBe('6');
+
     // Verify conversation exists
     const convStatus = psql(`
       SELECT status FROM chat_conversations
@@ -179,16 +181,13 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
     const bizId = 'a0000000-0000-0000-0000-000000000010';
     const testPhone = '__FORCE_FAIL_2349';
 
-    // Create a valid session
     const sessionId = psql(`
-      INSERT INTO bot_sessions (whatsapp_number, business_id, current_step, is_active, handed_off)
-      VALUES ('${testPhone}', '${bizId}', 'select_service', true, false)
+      INSERT INTO bot_sessions (whatsapp_number, business_id, current_step, is_active, handed_off, version)
+      VALUES ('${testPhone}', '${bizId}', 'select_service', true, false, 3)
       RETURNING id
     `);
 
-    // Install a temporary trigger that raises an error when chat_conversations
-    // receives this specific test phone — this forces the conversation INSERT
-    // to fail AFTER the session UPDATE within the same transaction.
+    // Install a temporary trigger that forces conversation INSERT to fail
     psql(`
       CREATE OR REPLACE FUNCTION _m302_force_conv_fail() RETURNS TRIGGER
       LANGUAGE plpgsql AS $t$
@@ -206,7 +205,6 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
       FOR EACH ROW EXECUTE FUNCTION _m302_force_conv_fail()
     `);
 
-    // Invoke the atomic RPC — it must fail because conversation insert raises
     let rpcFailed = false;
     try {
       psql(`
@@ -224,20 +222,21 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
     }
     expect(rpcFailed).toBe(true);
 
-    // Verify session was NOT mutated — transaction rolled back entirely
+    // Session was NOT mutated — transaction rolled back entirely
     const sessionStep = psql(`SELECT current_step FROM bot_sessions WHERE id = '${sessionId}'`);
     const sessionHandoff = psql(`SELECT handed_off FROM bot_sessions WHERE id = '${sessionId}'`);
+    const sessionVersion = psql(`SELECT version FROM bot_sessions WHERE id = '${sessionId}'`);
     expect(sessionStep).toBe('select_service');
     expect(sessionHandoff).toBe('f');
+    expect(sessionVersion).toBe('3');
 
-    // Verify no conversation was created
     const convCount = psql(`
       SELECT count(*) FROM chat_conversations
       WHERE business_id = '${bizId}' AND customer_phone = '${testPhone}'
     `);
     expect(convCount).toBe('0');
 
-    // Cleanup: remove trigger and function
+    // Cleanup
     psql('DROP TRIGGER IF EXISTS _m302_fail_trigger ON chat_conversations');
     psql('DROP FUNCTION IF EXISTS _m302_force_conv_fail()');
     psql(`DELETE FROM bot_sessions WHERE id = '${sessionId}'`);
@@ -264,7 +263,6 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
     expect(result.success).toBe(false);
     expect(result.reason).toBe('cross_business');
 
-    // Verify NO mutation occurred
     const step = psql(`SELECT current_step FROM bot_sessions WHERE id = '${sessionId}'`);
     expect(step).toBe('select_service');
 
@@ -303,7 +301,6 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
     expect(result.success).toBe(true);
     expect(result.outcome).toBe('already_active');
 
-    // Only one conversation exists (no duplicate)
     const convCount = psql(`
       SELECT count(*) FROM chat_conversations
       WHERE business_id = '${bizId}' AND customer_phone = '2349000000003'
@@ -314,11 +311,12 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
     psql(`DELETE FROM bot_sessions WHERE id = '${sessionId}'`);
   });
 
-  it('5. INCONSISTENT STATE: repairs missing conversation when session claims handoff', () => {
+  it('5. INCONSISTENT STATE: repairs and preserves original _pre_handoff_step', () => {
     const bizId = 'a0000000-0000-0000-0000-000000000004';
     const sessionId = psql(`
-      INSERT INTO bot_sessions (whatsapp_number, business_id, current_step, is_active, handed_off)
-      VALUES ('2349000000004', '${bizId}', 'chat_handoff', true, true)
+      INSERT INTO bot_sessions (whatsapp_number, business_id, current_step, is_active, handed_off, session_data, version)
+      VALUES ('2349000000004', '${bizId}', 'chat_handoff', true, true,
+              '{"_pre_handoff_step":"select_date","selected_service":"haircut"}'::JSONB, 7)
       RETURNING id
     `);
     // Deliberately NO conversation record — simulates inconsistent state
@@ -344,9 +342,102 @@ describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQ
     `);
     expect(convStatus).toBe('open');
 
-    // Session still in handoff (correct state)
+    // Session still in handoff
     const step = psql(`SELECT current_step FROM bot_sessions WHERE id = '${sessionId}'`);
     expect(step).toBe('chat_handoff');
+
+    // Original _pre_handoff_step is preserved (select_date, NOT chat_handoff)
+    const preStep = psql(`SELECT session_data->>'_pre_handoff_step' FROM bot_sessions WHERE id = '${sessionId}'`);
+    expect(preStep).toBe('select_date');
+
+    // Version was incremented (7 -> 8)
+    const version = psql(`SELECT version FROM bot_sessions WHERE id = '${sessionId}'`);
+    expect(version).toBe('8');
+
+    psql(`DELETE FROM chat_conversations WHERE business_id = '${bizId}'`);
+    psql(`DELETE FROM bot_sessions WHERE id = '${sessionId}'`);
+  });
+
+  it('6. PHONE MISMATCH: blocks conversation for wrong phone', () => {
+    const bizId = 'a0000000-0000-0000-0000-000000000006';
+    const sessionId = psql(`
+      INSERT INTO bot_sessions (whatsapp_number, business_id, current_step, is_active, handed_off)
+      VALUES ('2349000000006', '${bizId}', 'select_service', true, false)
+      RETURNING id
+    `);
+
+    // Supply a different phone than the session's whatsapp_number
+    const result = psqlJson(`
+      SELECT atomic_escalate_to_human(
+        '${sessionId}'::UUID,
+        '${bizId}'::UUID,
+        '2349999999999',
+        NULL,
+        '{}'::JSONB,
+        'select_service'
+      )
+    `);
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('phone_mismatch');
+
+    // No session mutation
+    const step = psql(`SELECT current_step FROM bot_sessions WHERE id = '${sessionId}'`);
+    expect(step).toBe('select_service');
+    const handoff = psql(`SELECT handed_off FROM bot_sessions WHERE id = '${sessionId}'`);
+    expect(handoff).toBe('f');
+
+    // No conversation created for the wrong phone
+    const convCount = psql(`
+      SELECT count(*) FROM chat_conversations
+      WHERE business_id = '${bizId}' AND customer_phone = '2349999999999'
+    `);
+    expect(convCount).toBe('0');
+
+    psql(`DELETE FROM bot_sessions WHERE id = '${sessionId}'`);
+  });
+
+  it('7. STALE CAS: old version cannot overwrite handoff', () => {
+    const bizId = 'a0000000-0000-0000-0000-000000000007';
+    const sessionId = psql(`
+      INSERT INTO bot_sessions (whatsapp_number, business_id, current_step, is_active, handed_off, version)
+      VALUES ('2349000000007', '${bizId}', 'select_service', true, false, 10)
+      RETURNING id
+    `);
+
+    // Perform handoff — version goes from 10 to 11
+    const result = psqlJson(`
+      SELECT atomic_escalate_to_human(
+        '${sessionId}'::UUID,
+        '${bizId}'::UUID,
+        '2349000000007',
+        NULL,
+        '{}'::JSONB,
+        'select_service'
+      )
+    `);
+    expect(result.success).toBe(true);
+    expect(result.outcome).toBe('created');
+
+    const versionAfter = psql(`SELECT version FROM bot_sessions WHERE id = '${sessionId}'`);
+    expect(versionAfter).toBe('11');
+
+    // Simulate a stale writer trying to update with old version 10
+    // This directly tests the CAS mechanism — UPDATE WHERE version = 10 should match 0 rows
+    const staleUpdateCount = psql(`
+      UPDATE bot_sessions
+      SET current_step = 'select_service', handed_off = false, version = version + 1
+      WHERE id = '${sessionId}' AND version = 10
+      RETURNING id
+    `);
+    // No rows updated — stale version
+    expect(staleUpdateCount).toBe('');
+
+    // Session remains in handoff state at version 11
+    const step = psql(`SELECT current_step FROM bot_sessions WHERE id = '${sessionId}'`);
+    expect(step).toBe('chat_handoff');
+    const handoff = psql(`SELECT handed_off FROM bot_sessions WHERE id = '${sessionId}'`);
+    expect(handoff).toBe('t');
 
     psql(`DELETE FROM chat_conversations WHERE business_id = '${bizId}'`);
     psql(`DELETE FROM bot_sessions WHERE id = '${sessionId}'`);

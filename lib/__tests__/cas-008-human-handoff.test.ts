@@ -212,6 +212,29 @@ describe('CAS-008: Human Handoff Reliability (Atomic)', () => {
       expect(sentMessages).toHaveLength(0);
     });
 
+    it('3b. PHONE MISMATCH: RPC returns phone_mismatch, zero mutations', async () => {
+      const { escalateToHuman } = await import('@/lib/bot/handoff.service');
+
+      mockRpcResult = { success: false, reason: 'phone_mismatch' };
+
+      const supabase = createMockSupabase();
+      const result = await escalateToHuman({
+        supabase: supabase as any,
+        sender: mockSender,
+        from: '2349999999999',
+        businessId: 'biz-1',
+        businessName: 'Test Salon',
+        sessionId: 'session-1',
+        sessionData: {},
+        currentStep: 'select_service',
+        customerName: null,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('phone_mismatch');
+      expect(sentMessages).toHaveLength(0);
+    });
+
     it('4. DUPLICATE VALID HANDOFF: already_active with existing conversation', async () => {
       const { escalateToHuman } = await import('@/lib/bot/handoff.service');
 

@@ -17,7 +17,7 @@ interface EscalateParams {
 
 export interface EscalateResult {
   success: boolean;
-  reason?: 'already_active' | 'session_not_found' | 'transaction_failed' | 'cross_business';
+  reason?: 'already_active' | 'session_not_found' | 'transaction_failed' | 'cross_business' | 'phone_mismatch';
 }
 
 interface ResolveParams {
@@ -58,6 +58,10 @@ export async function escalateToHuman(params: EscalateParams): Promise<EscalateR
     if (reason === 'session_not_found') {
       logger.error('[HANDOFF] Session not found:', sessionId);
       return { success: false, reason: 'session_not_found' };
+    }
+    if (reason === 'phone_mismatch') {
+      logger.error('[HANDOFF] Phone mismatch:', { sessionId, businessId });
+      return { success: false, reason: 'phone_mismatch' };
     }
     logger.error('[HANDOFF] Atomic escalation failed:', rpcResult);
     return { success: false, reason: 'transaction_failed' };

@@ -9,6 +9,7 @@
 --   success + created: new handoff created atomically
 --   success + repaired: session claimed handoff but conversation was missing; repaired
 --   failure + cross_business: session does not belong to supplied business
+--   failure + phone_mismatch: supplied phone does not match session whatsapp_number
 --   failure + session_not_found: no matching active session
 --
 -- Rollback:
@@ -30,6 +31,7 @@ DECLARE
   v_session bot_sessions;
   v_conv_exists BOOLEAN;
   v_conv_id UUID;
+  v_new_session_data JSONB;
 BEGIN
   -- 1. Lock and fetch the session row
   SELECT * INTO v_session
@@ -47,7 +49,12 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'reason', 'cross_business');
   END IF;
 
-  -- 3. Check for existing active conversation for this business+phone
+  -- 3. Phone mismatch guard — conversation phone must match session phone
+  IF v_session.whatsapp_number IS DISTINCT FROM p_customer_phone THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'phone_mismatch');
+  END IF;
+
+  -- 4. Check for existing active conversation for this business+phone
   SELECT id INTO v_conv_id
   FROM chat_conversations
   WHERE business_id = p_business_id
@@ -56,7 +63,7 @@ BEGIN
 
   v_conv_exists := v_conv_id IS NOT NULL;
 
-  -- 4. Already-active check: session says handoff AND conversation exists
+  -- 5. Already-active check: session says handoff AND conversation exists
   IF v_session.current_step = 'chat_handoff'
      AND v_session.handed_off = true
      AND v_conv_exists THEN
@@ -67,16 +74,29 @@ BEGIN
     );
   END IF;
 
-  -- 5. Atomically update session to handoff state
+  -- 6. Build session_data: preserve existing _pre_handoff_step during repair
+  IF v_session.current_step = 'chat_handoff' AND v_session.handed_off = true THEN
+    -- Repair path: keep the original _pre_handoff_step if it exists
+    v_new_session_data := p_session_data || jsonb_build_object(
+      '_pre_handoff_step',
+      COALESCE(v_session.session_data->>'_pre_handoff_step', p_current_step)
+    );
+  ELSE
+    -- Fresh handoff: store the current step as the pre-handoff step
+    v_new_session_data := p_session_data || jsonb_build_object('_pre_handoff_step', p_current_step);
+  END IF;
+
+  -- 7. Atomically update session to handoff state, increment CAS version
   UPDATE bot_sessions
   SET
     current_step = 'chat_handoff',
     handed_off = true,
-    session_data = p_session_data || jsonb_build_object('_pre_handoff_step', p_current_step),
+    session_data = v_new_session_data,
+    version = COALESCE(version, 0) + 1,
     updated_at = NOW()
   WHERE id = p_session_id;
 
-  -- 6. Upsert chat_conversations
+  -- 8. Upsert chat_conversations
   INSERT INTO chat_conversations (
     business_id, customer_phone, customer_name,
     status, escalated_from_step, escalated_at,
@@ -97,7 +117,7 @@ BEGIN
     updated_at = NOW()
   RETURNING id INTO v_conv_id;
 
-  -- 7. Determine outcome: was this a repair of inconsistent state or fresh creation?
+  -- 9. Determine outcome: was this a repair of inconsistent state or fresh creation?
   IF v_session.current_step = 'chat_handoff' AND v_session.handed_off = true THEN
     -- Session claimed handoff but conversation was missing — now repaired
     RETURN jsonb_build_object(
