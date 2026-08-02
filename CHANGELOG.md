@@ -5,6 +5,19 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-01
+
+### fix(bot): CAS-008 — make human handoff deterministic and recoverable
+- **Root cause:** `executor.ts` escalation block had no else branch when `caps.includes('chat')` was false — customer request for a human silently fell through to regular flow validation. Additionally, the `talk_to_human` button payload (underscored) didn't match the escalation regex (space-separated words).
+- **Fix 1 — executor.ts:** Added else branch sending explicit "Live chat isn't available" message with recovery path. Added `talk_to_human` button payload detection alongside the regex.
+- **Fix 2 — handoff.service.ts:** `escalateToHuman` now uses `atomic_escalate_to_human` RPC for transactional persistence. Session update + conversation upsert happen in one PostgreSQL transaction. No partial state possible.
+- **Fix 3 — executor.ts:** When `escalateToHuman` returns `success: false`, sends recoverable failure message instead of silent return.
+- **Migration 302:** `atomic_escalate_to_human` RPC — SECURITY DEFINER, service_role only, cross-business guard, duplicate detection, inconsistent state repair.
+- **Tests:** 12 application tests in `lib/__tests__/cas-008-human-handoff.test.ts` + 8 real PostgreSQL tests in `lib/__tests__/migration-302-atomic-handoff-db.test.ts`. CI runs migration-302 tests in dedicated `waaiio_m302_test` database.
+  - **Files:** `lib/bot/flows/executor.ts`, `lib/bot/handoff.service.ts`, `supabase/migrations/302_atomic_handoff.sql`, `lib/__tests__/cas-008-human-handoff.test.ts`, `lib/__tests__/migration-302-atomic-handoff-db.test.ts`, `.github/workflows/ci.yml`, `docs/audit/cap-001/activation-spine/findings.json`, `CHANGELOG.md`
+  - **Affects:** All customers requesting human help via text or button, all businesses with or without chat capability
+  - **Could break:** Nothing — adds else branch to previously-missing path, replaces non-atomic two-step with transactional RPC. New migration adds a function only.
+
 ## 2026-07-31
 
 ### Operations: Batch 9 migration-history repair complete — final batch (4 versions)

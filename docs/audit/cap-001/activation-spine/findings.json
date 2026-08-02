@@ -238,14 +238,18 @@
       "scenario:H"
     ],
     "expected_behavior": "When a customer says 'talk to someone' and the business doesn't have chat enabled, the bot explains that live chat isn't available",
-    "actual_behavior": "executor.ts:296-330 checks caps.includes('chat'). If chat is not enabled, the escalation block does nothing \u2014 the input falls through to the regular flow validator, which treats it as invalid input.",
+    "actual_behavior": "Fixed. Explicit human requests no longer silently fall through. talk_to_human button is recognized. Unavailable chat returns explicit recovery response. Handoff persistence uses atomic_escalate_to_human RPC (migration 302) \u2014 session + conversation commit atomically. Cross-business escalation blocked. Duplicate valid handoff is idempotent. Inconsistent historical state repaired. Transaction failure produces no false success.",
     "evidence": [
-      "executor.ts:296-330 escalation regex check",
-      "No else branch or customer-facing message when chat is not enabled"
+      "lib/bot/flows/executor.ts: else branch for chat-disabled, talk_to_human button detection, failure handling",
+      "lib/bot/handoff.service.ts: uses atomic_escalate_to_human RPC, no compensating rollback",
+      "supabase/migrations/302_atomic_handoff.sql: SECURITY DEFINER, service_role only, FOR UPDATE lock, single-transaction",
+      "lib/__tests__/cas-008-human-handoff.test.ts: 12 application tests",
+      "lib/__tests__/migration-302-atomic-handoff-db.test.ts: 8 real PostgreSQL tests (forced-failure rollback, cross-business, duplicate, inconsistent state repair, privilege checks)",
+      "CI: dedicated waaiio_m302_test database step in migration validation job"
     ],
-    "blast_radius": "Customer asks for human help and gets no acknowledgment \u2014 appears as if the bot ignored them",
-    "recommended_direction": "Add an else branch that tells the customer live chat is not available and offers alternatives",
-    "implementation_status": "not_started",
+    "blast_radius": "Customer asking for human help now always receives a deterministic response: handoff confirmed, already active, unavailable, or recoverable failure",
+    "recommended_direction": "Resolved",
+    "implementation_status": "complete",
     "requires_product_decision": false,
     "product_question": null
   },
