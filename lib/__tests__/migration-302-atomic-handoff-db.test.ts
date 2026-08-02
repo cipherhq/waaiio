@@ -24,7 +24,7 @@ const MIGRATION_PATH = path.resolve('supabase/migrations/302_atomic_handoff.sql'
 const dbUrl = process.env.TEST_DATABASE_URL;
 
 function psql(sql: string): string {
-  return execSync(`psql "${dbUrl}" -tAX`, {
+  return execSync(`psql "${dbUrl}" -tAX -v ON_ERROR_STOP=1`, {
     input: sql,
     encoding: 'utf-8',
     timeout: 15000,
@@ -32,7 +32,7 @@ function psql(sql: string): string {
 }
 
 function psqlFile(filePath: string): string {
-  return execSync(`psql "${dbUrl}" -tAX -f "${filePath}"`, {
+  return execSync(`psql "${dbUrl}" -tAX -v ON_ERROR_STOP=1 -f "${filePath}"`, {
     encoding: 'utf-8',
     timeout: 15000,
   }).trim();
@@ -46,6 +46,14 @@ function psqlJson(sql: string): any {
 describe.skipIf(!dbUrl)('Migration 302: atomic_escalate_to_human (real PostgreSQL)', () => {
   beforeAll(() => {
     if (!dbUrl) return;
+
+    // Create stub roles (may already exist in CI shared DB)
+    psql(`
+      DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+    `);
 
     // Create minimal stub tables matching the real schema
     psql(`
