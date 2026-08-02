@@ -147,7 +147,7 @@ export async function executeKeywordAction(
               }
               const businessName = (session.session_data.business_name as string) || 'the business';
               const { escalateToHuman } = await import('@/lib/bot/handoff.service');
-              await escalateToHuman({
+              const escResult = await escalateToHuman({
                 supabase,
                 sender: messageSender,
                 from,
@@ -158,6 +158,9 @@ export async function executeKeywordAction(
                 currentStep: step,
                 customerName: escCustomerName,
               });
+              if (!escResult.success && escResult.reason !== 'already_active') {
+                await sendText(from, "Sorry, I couldn't connect you to a team member right now. Please try again in a moment, or type *menu* to continue with the assistant.");
+              }
               return true;
             }
           }

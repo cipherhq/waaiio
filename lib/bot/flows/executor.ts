@@ -295,7 +295,8 @@ export class FlowExecutor {
 
     // Global escalation escape hatch: "talk to human" works at any step
     const escalationPattern = /\b(talk|speak|chat)\s+(to|with)\s+(a\s+)?(human|agent|person|staff|someone)\b|\b(live\s+(agent|chat|support))\b|\b(customer\s+service)\b|\b(i\s+need\s+(a\s+)?(human|agent|help))\b/i;
-    if (escalationPattern.test(lowerInput) && business) {
+    const isTalkToHumanButton = lowerInput === 'talk_to_human';
+    if ((escalationPattern.test(lowerInput) || isTalkToHumanButton) && business) {
       const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
       const caps = await getEnabledCapabilities(this.supabase, business.id);
       if (caps.includes('chat')) {
@@ -313,7 +314,7 @@ export class FlowExecutor {
         if (profile?.first_name) {
           customerName = `${profile.first_name}${profile.last_name ? ' ' + profile.last_name : ''}`;
         }
-        await escalateToHuman({
+        const result = await escalateToHuman({
           supabase: this.supabase,
           sender: this.sender,
           from,
@@ -324,6 +325,25 @@ export class FlowExecutor {
           currentStep: session.current_step,
           customerName,
         });
+        if (!result.success) {
+          // Escalation failed — send recoverable message, do not leave false state
+          const failMsg = await this.maybeTranslate(
+            "Sorry, I couldn't connect you to a team member right now. Please try again in a moment, or type *menu* to continue with the assistant.",
+            session,
+          );
+          session.conversation_log.push({ role: 'bot', content: failMsg, timestamp: new Date().toISOString() });
+          await this.sendText(from, failMsg);
+        }
+        await this.persistConversationLog(session.id, session.conversation_log || []);
+        return;
+      } else {
+        // CAS-008: Chat capability not enabled — tell the customer clearly
+        const unavailableMsg = await this.maybeTranslate(
+          `Live chat isn't available for *${business.name}* right now.\n\nYou can continue with the assistant — type *menu* to see what's available.`,
+          session,
+        );
+        session.conversation_log.push({ role: 'bot', content: unavailableMsg, timestamp: new Date().toISOString() });
+        await this.sendText(from, unavailableMsg);
         await this.persistConversationLog(session.id, session.conversation_log || []);
         return;
       }
