@@ -6,6 +6,7 @@ import {
   generateSlug,
   generateBotCode,
   CATEGORY_FLOW_MAP,
+  TRIAL_DAYS,
   type BusinessCategoryKey,
   type CountryCode,
 } from '@/lib/constants';
@@ -241,7 +242,7 @@ export async function POST(request: NextRequest) {
         wa_method: wa_method || 'shared',
         subscription_tier: 'free',
         status: 'pending',
-        trial_ends_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        trial_ends_at: new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString(),
       })
       .select('id, bot_code, slug')
       .single();
