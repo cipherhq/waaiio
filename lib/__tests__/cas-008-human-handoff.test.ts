@@ -2,14 +2,15 @@
  * CAS-008 Human Handoff Reliability Tests
  *
  * Proves that:
- * 1. Human handoff succeeds when chat capability is enabled
+ * 1. Atomic handoff succeeds when RPC returns success+created
  * 2. Handoff produces clear unavailable message when chat is disabled
- * 3. DB/persistence failure does not produce false success
- * 4. Duplicate handoff requests are handled idempotently
- * 5. Cross-business escalation is blocked
+ * 3. RPC/transaction failure does not produce false success
+ * 4. Duplicate handoff requests are handled idempotently (already_active)
+ * 5. Cross-business escalation is blocked by RPC
  * 6. Bot does not continue normal flows after handoff
  * 7. talk_to_human button payload is handled (not silently dropped)
- * 8. Existing non-handoff bot behavior is not broken
+ * 8. Inconsistent historical state (session says handoff, no conversation) is repaired
+ * 9. Session not found returns failure
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -24,70 +25,15 @@ const mockSender: any = {
   sendButtons: vi.fn().mockResolvedValue(undefined),
 };
 
-// ── Mock Supabase ──
-let mockSessionRow: any = null;
-let mockSessionUpdateError: any = null;
-let mockConvUpsertError: any = null;
+// ── Mock RPC result ──
+let mockRpcResult: any = null;
+let mockRpcError: any = null;
 
 const createMockSupabase = () => {
   return {
     from: vi.fn().mockImplementation((table: string) => {
-      if (table === 'bot_sessions') {
-        const updateChain: any = {};
-        updateChain.eq = vi.fn().mockImplementation(() => {
-          const inner: any = {};
-          inner.eq = vi.fn().mockImplementation(() => inner);
-          inner.then = (resolve: any) => Promise.resolve({ data: null, error: mockSessionUpdateError }).then(resolve);
-          inner.catch = (fn: any) => Promise.resolve({ data: null, error: mockSessionUpdateError }).catch(fn);
-          return inner;
-        });
-        updateChain.then = (resolve: any) => Promise.resolve({ data: null, error: mockSessionUpdateError }).then(resolve);
-        updateChain.catch = (fn: any) => Promise.resolve({ data: null, error: mockSessionUpdateError }).catch(fn);
-
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({
-                data: mockSessionRow,
-                error: mockSessionRow ? null : { message: 'not found' },
-              }),
-            }),
-          }),
-          update: vi.fn().mockReturnValue(updateChain),
-        };
-      }
-      if (table === 'chat_conversations') {
-        const updateConvChain: any = {};
-        updateConvChain.eq = vi.fn().mockImplementation(() => {
-          const inner: any = {};
-          inner.eq = vi.fn().mockImplementation(() => inner);
-          inner.then = (resolve: any) => Promise.resolve({ data: null, error: null }).then(resolve);
-          inner.catch = (fn: any) => Promise.resolve({ data: null, error: null }).catch(fn);
-          return inner;
-        });
-
-        return {
-          upsert: vi.fn().mockResolvedValue({
-            data: null,
-            error: mockConvUpsertError,
-          }),
-          update: vi.fn().mockReturnValue(updateConvChain),
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                single: vi.fn().mockResolvedValue({
-                  data: { id: 'conv-1' },
-                  error: null,
-                }),
-              }),
-            }),
-          }),
-        };
-      }
       if (table === 'chat_messages') {
-        return {
-          insert: vi.fn().mockResolvedValue({ data: null, error: null }),
-        };
+        return { insert: vi.fn().mockResolvedValue({ data: null, error: null }) };
       }
       if (table === 'businesses') {
         return {
@@ -101,18 +47,34 @@ const createMockSupabase = () => {
           }),
         };
       }
+      if (table === 'chat_conversations') {
+        const chain: any = {};
+        chain.eq = vi.fn().mockReturnValue(chain);
+        chain.update = vi.fn().mockReturnValue(chain);
+        chain.then = (resolve: any) => Promise.resolve({ data: null, error: null }).then(resolve);
+        chain.catch = (fn: any) => Promise.resolve({ data: null, error: null }).catch(fn);
+        return { update: vi.fn().mockReturnValue(chain) };
+      }
+      if (table === 'bot_sessions') {
+        const chain: any = {};
+        chain.eq = vi.fn().mockReturnValue(chain);
+        chain.update = vi.fn().mockReturnValue(chain);
+        chain.then = (resolve: any) => Promise.resolve({ data: null, error: null }).then(resolve);
+        chain.catch = (fn: any) => Promise.resolve({ data: null, error: null }).catch(fn);
+        return { update: vi.fn().mockReturnValue(chain) };
+      }
       // Default fallback
       const chain: any = {};
       chain.select = vi.fn().mockReturnValue(chain);
       chain.insert = vi.fn().mockReturnValue(chain);
       chain.update = vi.fn().mockReturnValue(chain);
-      chain.upsert = vi.fn().mockReturnValue(chain);
       chain.eq = vi.fn().mockReturnValue(chain);
       chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
-      chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
       return chain;
     }),
-    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    rpc: vi.fn().mockImplementation(() => {
+      return Promise.resolve({ data: mockRpcResult, error: mockRpcError });
+    }),
   };
 };
 
@@ -122,25 +84,19 @@ vi.mock('@/lib/webhooks/dispatcher', () => ({
 }));
 
 // ── Tests ──
-describe('CAS-008: Human Handoff Reliability', () => {
+describe('CAS-008: Human Handoff Reliability (Atomic)', () => {
   beforeEach(() => {
     sentMessages = [];
-    mockSessionRow = null;
-    mockSessionUpdateError = null;
-    mockConvUpsertError = null;
+    mockRpcResult = null;
+    mockRpcError = null;
     vi.clearAllMocks();
   });
 
-  describe('escalateToHuman', () => {
-    it('succeeds when chat capability is available and DB operations work', async () => {
+  describe('escalateToHuman — atomic RPC', () => {
+    it('1. SUCCESS: atomic handoff creates session+conversation and sends confirmation', async () => {
       const { escalateToHuman } = await import('@/lib/bot/handoff.service');
 
-      mockSessionRow = {
-        id: 'session-1',
-        business_id: 'biz-1',
-        current_step: 'select_service',
-        handed_off: false,
-      };
+      mockRpcResult = { success: true, outcome: 'created', conversation_id: 'conv-1' };
 
       const supabase = createMockSupabase();
       const result = await escalateToHuman({
@@ -158,27 +114,108 @@ describe('CAS-008: Human Handoff Reliability', () => {
       expect(result.success).toBe(true);
       expect(result.reason).toBeUndefined();
 
-      // Customer must receive confirmation
+      // RPC was called with correct params
+      expect(supabase.rpc).toHaveBeenCalledWith('atomic_escalate_to_human', {
+        p_session_id: 'session-1',
+        p_business_id: 'biz-1',
+        p_customer_phone: '2349000000001',
+        p_customer_name: 'Ada',
+        p_session_data: { selected_service: 'haircut' },
+        p_current_step: 'select_service',
+      });
+
+      // Customer receives confirmation
       const customerMsg = sentMessages.find(m => m.to === '2349000000001');
       expect(customerMsg).toBeTruthy();
       expect(customerMsg!.text).toContain('Connecting you to a team member');
       expect(customerMsg!.text).toContain('end chat');
 
-      // Business owner must be notified
+      // Business owner notified
       const ownerMsg = sentMessages.find(m => m.to === '2341234567890');
       expect(ownerMsg).toBeTruthy();
       expect(ownerMsg!.text).toContain('Live chat request');
     });
 
-    it('returns already_active and does not create duplicate when session is already in handoff', async () => {
+    it('2. TRANSACTION FAILURE: RPC error returns failure, no success confirmation', async () => {
       const { escalateToHuman } = await import('@/lib/bot/handoff.service');
 
-      mockSessionRow = {
-        id: 'session-1',
-        business_id: 'biz-1',
-        current_step: 'chat_handoff',
-        handed_off: true,
-      };
+      mockRpcError = { message: 'transaction failed', code: '42P01' };
+
+      const supabase = createMockSupabase();
+      const result = await escalateToHuman({
+        supabase: supabase as any,
+        sender: mockSender,
+        from: '2349000000001',
+        businessId: 'biz-1',
+        businessName: 'Test Salon',
+        sessionId: 'session-1',
+        sessionData: {},
+        currentStep: 'select_service',
+        customerName: null,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('transaction_failed');
+
+      // No "Connecting you" message — atomic failure means no partial state
+      const connectMsg = sentMessages.find(m => m.text?.includes('Connecting'));
+      expect(connectMsg).toBeUndefined();
+
+      // No "already connected" message either
+      const alreadyMsg = sentMessages.find(m => m.text?.includes('already connected'));
+      expect(alreadyMsg).toBeUndefined();
+    });
+
+    it('2b. RPC returns success=false: no confirmation sent', async () => {
+      const { escalateToHuman } = await import('@/lib/bot/handoff.service');
+
+      mockRpcResult = { success: false, reason: 'session_not_found' };
+
+      const supabase = createMockSupabase();
+      const result = await escalateToHuman({
+        supabase: supabase as any,
+        sender: mockSender,
+        from: '2349000000001',
+        businessId: 'biz-1',
+        businessName: 'Test Salon',
+        sessionId: 'nonexistent',
+        sessionData: {},
+        currentStep: 'select_service',
+        customerName: null,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('session_not_found');
+      expect(sentMessages).toHaveLength(0);
+    });
+
+    it('3. CROSS-BUSINESS: RPC returns cross_business, zero mutations', async () => {
+      const { escalateToHuman } = await import('@/lib/bot/handoff.service');
+
+      mockRpcResult = { success: false, reason: 'cross_business' };
+
+      const supabase = createMockSupabase();
+      const result = await escalateToHuman({
+        supabase: supabase as any,
+        sender: mockSender,
+        from: '2349000000001',
+        businessId: 'biz-1',
+        businessName: 'Test Salon',
+        sessionId: 'session-1',
+        sessionData: {},
+        currentStep: 'select_service',
+        customerName: null,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('cross_business');
+      expect(sentMessages).toHaveLength(0);
+    });
+
+    it('4. DUPLICATE VALID HANDOFF: already_active with existing conversation', async () => {
+      const { escalateToHuman } = await import('@/lib/bot/handoff.service');
+
+      mockRpcResult = { success: true, outcome: 'already_active', conversation_id: 'conv-1' };
 
       const supabase = createMockSupabase();
       const result = await escalateToHuman({
@@ -200,82 +237,17 @@ describe('CAS-008: Human Handoff Reliability', () => {
       const msg = sentMessages.find(m => m.to === '2349000000001');
       expect(msg!.text).toContain('already connected');
 
-      // No session update beyond the initial select
-      const sessionFromCalls = supabase.from.mock.calls.filter(
-        (c: any) => c[0] === 'bot_sessions'
-      );
-      expect(sessionFromCalls.length).toBe(1);
-    });
-
-    it('blocks cross-business escalation', async () => {
-      const { escalateToHuman } = await import('@/lib/bot/handoff.service');
-
-      mockSessionRow = {
-        id: 'session-1',
-        business_id: 'other-biz',
-        current_step: 'select_service',
-        handed_off: false,
-      };
-
-      const supabase = createMockSupabase();
-      const result = await escalateToHuman({
-        supabase: supabase as any,
-        sender: mockSender,
-        from: '2349000000001',
-        businessId: 'biz-1',
-        businessName: 'Test Salon',
-        sessionId: 'session-1',
-        sessionData: {},
-        currentStep: 'select_service',
-        customerName: null,
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.reason).toBe('cross_business');
-      expect(sentMessages).toHaveLength(0);
-    });
-
-    it('does not send false success when session update fails', async () => {
-      const { escalateToHuman } = await import('@/lib/bot/handoff.service');
-
-      mockSessionRow = {
-        id: 'session-1',
-        business_id: 'biz-1',
-        current_step: 'select_service',
-        handed_off: false,
-      };
-      mockSessionUpdateError = { message: 'DB error' };
-
-      const supabase = createMockSupabase();
-      const result = await escalateToHuman({
-        supabase: supabase as any,
-        sender: mockSender,
-        from: '2349000000001',
-        businessId: 'biz-1',
-        businessName: 'Test Salon',
-        sessionId: 'session-1',
-        sessionData: {},
-        currentStep: 'select_service',
-        customerName: null,
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.reason).toBe('session_update_failed');
-
+      // No "Connecting you" message (no duplicate handoff)
       const connectMsg = sentMessages.find(m => m.text?.includes('Connecting'));
       expect(connectMsg).toBeUndefined();
     });
 
-    it('rolls back session and does not send success when conversation upsert fails', async () => {
+    it('5. INCONSISTENT HISTORICAL STATE: session says handoff but conversation missing — repaired', async () => {
       const { escalateToHuman } = await import('@/lib/bot/handoff.service');
 
-      mockSessionRow = {
-        id: 'session-1',
-        business_id: 'biz-1',
-        current_step: 'select_service',
-        handed_off: false,
-      };
-      mockConvUpsertError = { message: 'unique constraint' };
+      // RPC detects session is chat_handoff+handed_off but no conversation exists
+      // It repairs by creating the conversation and returns 'repaired'
+      mockRpcResult = { success: true, outcome: 'repaired', conversation_id: 'conv-new' };
 
       const supabase = createMockSupabase();
       const result = await escalateToHuman({
@@ -285,45 +257,22 @@ describe('CAS-008: Human Handoff Reliability', () => {
         businessId: 'biz-1',
         businessName: 'Test Salon',
         sessionId: 'session-1',
-        sessionData: { selected_service: 'haircut' },
-        currentStep: 'select_service',
-        customerName: null,
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.reason).toBe('conversation_failed');
-
-      const connectMsg = sentMessages.find(m => m.text?.includes('Connecting'));
-      expect(connectMsg).toBeUndefined();
-
-      // Session should have been rolled back (select + update + rollback = 3 calls)
-      const sessionUpdateCalls = supabase.from.mock.calls.filter(
-        (c: any) => c[0] === 'bot_sessions'
-      );
-      expect(sessionUpdateCalls.length).toBe(3);
-    });
-
-    it('fails safely when session not found', async () => {
-      const { escalateToHuman } = await import('@/lib/bot/handoff.service');
-
-      mockSessionRow = null;
-
-      const supabase = createMockSupabase();
-      const result = await escalateToHuman({
-        supabase: supabase as any,
-        sender: mockSender,
-        from: '2349000000001',
-        businessId: 'biz-1',
-        businessName: 'Test Salon',
-        sessionId: 'nonexistent',
         sessionData: {},
-        currentStep: 'select_service',
+        currentStep: 'chat_handoff',
         customerName: null,
       });
 
-      expect(result.success).toBe(false);
-      expect(result.reason).toBe('session_update_failed');
-      expect(sentMessages).toHaveLength(0);
+      expect(result.success).toBe(true);
+      // NOT already_active — it was repaired
+      expect(result.reason).toBeUndefined();
+
+      // Customer gets confirmation (handoff state was repaired)
+      const msg = sentMessages.find(m => m.to === '2349000000001');
+      expect(msg!.text).toContain('Connecting you to a team member');
+
+      // Must NOT say "already connected" — that would be false
+      const alreadyMsg = sentMessages.find(m => m.text?.includes('already connected'));
+      expect(alreadyMsg).toBeUndefined();
     });
   });
 
@@ -346,11 +295,8 @@ describe('CAS-008: Human Handoff Reliability', () => {
       const lowerInput = 'talk_to_human';
       const isTalkToHumanButton = lowerInput === 'talk_to_human';
 
-      // Regex alone misses the underscored button payload
       expect(escalationPattern.test(lowerInput)).toBe(false);
-      // Explicit button check catches it
       expect(isTalkToHumanButton).toBe(true);
-      // Combined detection works
       expect(escalationPattern.test(lowerInput) || isTalkToHumanButton).toBe(true);
     });
   });
@@ -406,7 +352,6 @@ describe('CAS-008: Human Handoff Reliability', () => {
       expect(restartMatch.test('menu')).toBe(true);
       expect(restartMatch.test('cancel')).toBe(true);
 
-      // Normal messages should NOT match
       expect(restartMatch.test('hello')).toBe(false);
       expect(restartMatch.test('I need help with my order')).toBe(false);
     });
