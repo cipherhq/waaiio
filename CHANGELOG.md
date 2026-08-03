@@ -9,11 +9,15 @@ If something breaks, check this log to find what changed and when.
 
 ### fix(bot): CAS-007 — Runtime surface closure
 
-- **Re-order shortcut** — `global-queries.ts` now checks `caps.includes('ordering')` before routing into ordering flow. Previously hardcoded `active_capability: 'ordering'` without verifying ordering was effective.
-- **Chat handoff** — `ordering.flow.ts` and `scheduling.flow.ts` now check `chatCaps.includes('chat')` before setting `active_capability: 'chat'`. Previously bypassed capability policy.
-- **Quote request CREATE_NEW boundary** — `ordering.flow.ts` `submit_quote_request` step now calls `requireCurrentCapability` with `action: 'create_new'` before `quote_requests` INSERT. Previously had no commit-point guard.
-- **31 CAS-007 tests** — `cas-007-runtime-surface.test.ts`: capability selection, start_capability rejection, quick rebook, re-order shortcut, chat handoff, quote request boundary, all 8 CREATE_NEW boundaries, session resume revalidation, CAS-005 recovery, regression safety.
-- Could break: Re-order shortcut returns error if ordering is disabled (correct behavior). Chat handoff silently skips if chat is disabled (falls through to flow completion).
+- **Revoked active_capability recovery** — Point A now checks if `active_capability` is still in the effective set. If revoked, clears transactional state via CAS-005 recovery and redirects to `select_capability`. MANAGE_EXISTING steps exempt.
+- **Point A CAS persistence** — Capability refresh now uses `update_session_cas` instead of direct `.update()`. Prevents stale worker from overwriting newer session state.
+- **FlowExecutor authorization** — Executor now verifies `active_capability` is in `session.session_data.capabilities` before entering a flow. Unauthorized capability → recovery message.
+- **Chat escalation effective policy** — All chat entry paths (executor "talk to human", keyword `escalate`, `chat-handoff.ts`) now use session's effective capabilities instead of tier-blind `getEnabledCapabilities`.
+- **Re-order shortcut** — Uses session effective caps (tier-aware from Point A).
+- **Queue shortcut** — Uses session effective caps.
+- **Chat handoff** — `ordering.flow.ts` and `scheduling.flow.ts` check `chatCaps.includes('chat')`.
+- **Quote request CREATE_NEW boundary** — `submit_quote_request` calls `requireCurrentCapability`.
+- Could break: Sessions with revoked active capabilities are redirected to capability menu. Chat escalation denied if chat is not in effective set (was previously allowed if merely enabled in DB).
 
 ### fix(bot): Session resilience hardening
 

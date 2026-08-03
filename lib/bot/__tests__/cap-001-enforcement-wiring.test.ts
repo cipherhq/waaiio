@@ -132,7 +132,15 @@ function createTableMock(config: {
       // Default catch-all
       return makeChain();
     }),
-    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    rpc: vi.fn().mockImplementation((name: string) => {
+      if (name === 'update_session_cas') {
+        return Promise.resolve({ data: { success: true, version: 1 }, error: null });
+      }
+      if (name === 'deactivate_session_atomic') {
+        return Promise.resolve({ data: { success: true }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    }),
     storage: { from: vi.fn(() => ({ upload: vi.fn(), createSignedUrl: vi.fn(), getPublicUrl: vi.fn() })) },
   } as any;
 }
@@ -309,19 +317,12 @@ describe('CAP-001 Point A — session resume via BotService.handleMessage', () =
     // reservation should be absent from capabilities, so validation fails
     await bot.handleMessage(TEST_PHONE, 'cap_reservation', 'text');
 
-    // Assert: bot_sessions was updated with refreshed capabilities
-    const sessionUpdates = updateTracker.filter(u => u.table === 'bot_sessions');
-    const capRefresh = sessionUpdates.find(u => {
-      const d = u.data as Record<string, unknown>;
-      const sd = d.session_data as Record<string, unknown> | undefined;
-      return sd && Array.isArray(sd.capabilities);
-    });
-    expect(capRefresh).toBeTruthy();
-
-    // The refreshed capabilities should NOT contain reservation (requires growth, trial expired)
-    const refreshedCaps = ((capRefresh!.data as any).session_data as any).capabilities as string[];
-    expect(refreshedCaps).toContain('scheduling'); // free-tier, stays
-    expect(refreshedCaps).not.toContain('reservation'); // growth-tier, trial expired
+    // Assert: Point A used CAS to persist refreshed capabilities
+    const casCalls = supabase.rpc.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
+    expect(casCalls.length).toBeGreaterThan(0);
+    const casSessionData = casCalls[0][1].p_session_data;
+    expect(casSessionData.capabilities).toContain('scheduling'); // free-tier, stays
+    expect(casSessionData.capabilities).not.toContain('reservation'); // growth-tier, trial expired
 
     // Assert: businesses table was queried (status/tier/trial)
     const bizCalls = supabase.from.mock.calls.filter((c: string[]) => c[0] === 'businesses');
@@ -372,14 +373,10 @@ describe('CAP-001 Point A — session resume via BotService.handleMessage', () =
     const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
     await bot.handleMessage(TEST_PHONE, 'help', 'text');
 
-    // With active trial, Point A refresh should keep reservation
-    const capRefresh = updateTracker.find(u => {
-      const d = u.data as Record<string, unknown>;
-      const sd = d.session_data as Record<string, unknown> | undefined;
-      return u.table === 'bot_sessions' && sd && Array.isArray(sd.capabilities);
-    });
-    expect(capRefresh).toBeTruthy();
-    const refreshedCaps = ((capRefresh!.data as any).session_data as any).capabilities as string[];
-    expect(refreshedCaps).toContain('reservation');
+    // With active trial, Point A CAS refresh should keep reservation
+    const casCalls = supabase.rpc.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
+    expect(casCalls.length).toBeGreaterThan(0);
+    const casSessionData = casCalls[0][1].p_session_data;
+    expect(casSessionData.capabilities).toContain('reservation');
   });
 });

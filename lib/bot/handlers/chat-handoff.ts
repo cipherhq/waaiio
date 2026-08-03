@@ -192,7 +192,8 @@ export async function handleChatStart(
   // This is a chat session — store message and acknowledge
   // Skip if the chat flow validate() already handled this message
   const alreadyHandled = session.session_data?.first_message_handled;
-  const caps = (session.session_data?.capabilities as CapabilityId[]) || await getEnabledCapabilities(supabase, session.business_id);
+  // CAS-007: Use session's effective capabilities only (no tier-blind fallback)
+  const caps = (session.session_data?.capabilities as CapabilityId[]) || [];
   if (caps.includes('chat') && !alreadyHandled) {
     // Get customer name
     const chatPhoneP = from.startsWith('+') ? from : `+${from}`;

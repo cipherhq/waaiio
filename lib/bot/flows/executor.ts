@@ -65,6 +65,29 @@ export class FlowExecutor {
       : (business?.flow_type || 'scheduling');
     const stepId = session.current_step;
 
+    // CAS-007: Verify active_capability is authorized (in session's effective set).
+    // Prevents defective/pre-filled session state from starting an unauthorized flow.
+    // MANAGE_EXISTING steps and pseudo-capabilities are exempt.
+    const MANAGE_EXISTING_STEPS = new Set([
+      'my_bookings', 'modify_booking', 'my_orders', 'order_detail',
+      'list_subscriptions', 'loyalty_menu', 'invoice_list', 'my_account_menu',
+      'refund_select', 'refund_confirm', 'chat_handoff', 'chat_start',
+      'post_completion',
+    ]);
+    const PSEUDO_CAPS = new Set(['my_account', 'waiver']);
+    if (activeCap && !PSEUDO_CAPS.has(activeCap) && !MANAGE_EXISTING_STEPS.has(stepId)) {
+      const effectiveCaps = (session.session_data.capabilities as string[]) || [];
+      if (!effectiveCaps.includes(activeCap)) {
+        // Unauthorized capability — send recovery and return
+        const { buildCapabilityRecoveryMessage } = await import('@/lib/bot/capability-recovery');
+        const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
+        const ufCaps = getUserFacingCapabilities(effectiveCaps as CapabilityId[]);
+        const msg = buildCapabilityRecoveryMessage(activeCap, ufCaps, business?.category || 'other');
+        await this.sendText(from, msg);
+        return;
+      }
+    }
+
     // Store business ID for outbound tracking
     this.currentBusinessId = business?.id || session.business_id || null;
 
@@ -300,8 +323,8 @@ export class FlowExecutor {
     const escalationPattern = /\b(talk|speak|chat)\s+(to|with)\s+(a\s+)?(human|agent|person|staff|someone)\b|\b(live\s+(agent|chat|support))\b|\b(customer\s+service)\b|\b(i\s+need\s+(a\s+)?(human|agent|help))\b/i;
     const isTalkToHumanButton = lowerInput === 'talk_to_human';
     if ((escalationPattern.test(lowerInput) || isTalkToHumanButton) && business) {
-      const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
-      const caps = await getEnabledCapabilities(this.supabase, business.id);
+      // CAS-007: Use session's effective capabilities (tier-aware), not tier-blind getEnabledCapabilities
+      const caps = (session.session_data.capabilities as string[]) || [];
       if (caps.includes('chat')) {
         const { escalateToHuman } = await import('@/lib/bot/handoff.service');
         // Get customer name
