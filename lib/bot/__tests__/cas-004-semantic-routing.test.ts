@@ -718,6 +718,42 @@ describe('CAS-004 capability-selection canonical consumption', () => {
     expect(result2.data?.active_capability).toBe('ordering');
   });
 
+  it('parseSmartIntentHybrid NOT called when canonical result exists (spy)', async () => {
+    vi.resetModules();
+    const hybridSpy = vi.fn();
+    vi.doMock('@/lib/bot/smart-intent', () => ({
+      parseSmartIntent: vi.fn(() => ({ understood: false, intent: null, serviceKeywords: [], date: null, specificTime: null, timePreference: null, quantity: null, amount: null, variantKeywords: [] })),
+      parseSmartIntentHybrid: hybridSpy,
+      matchServiceFromKeywords: vi.fn().mockResolvedValue(null),
+      matchServicesFromKeywords: vi.fn().mockResolvedValue([]),
+      matchProductsFromKeywords: vi.fn().mockResolvedValue([]),
+      buildAcknowledgment: vi.fn(() => null),
+    }));
+
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
+    const { createMockContext } = await import('../flows/__tests__/helpers');
+
+    const ctx = createMockContext({
+      session: {
+        id: 's-spy', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
+        session_data: {
+          capabilities: ['reservation', 'scheduling'],
+          _canonical_result: { semanticFamily: 'property_reservation' },
+        },
+      },
+      business: { id: 'b1', name: 'Hotel', slug: 'hotel', category: 'hotel' as any, flow_type: 'reservation' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
+    });
+
+    const result = await step.validate!('Je veux réserver', ctx);
+    expect(result.valid).toBe(true);
+    expect(result.data?.active_capability).toBe('reservation');
+    // The key assertion: parseSmartIntentHybrid was NEVER called
+    expect(hybridSpy).not.toHaveBeenCalled();
+
+    vi.doUnmock('@/lib/bot/smart-intent');
+  });
+
   it('H: getUserFacingCapabilities used for selection', async () => {
     const { getUserFacingCapabilities } = await import('../handlers/flow-routing');
     const caps = getUserFacingCapabilities(['scheduling', 'payment', 'feedback', 'staff'] as any[]);
