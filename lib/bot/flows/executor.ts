@@ -427,6 +427,17 @@ export class FlowExecutor {
     const result = await step.validate(input, ctx);
 
     if (!result.valid) {
+      // CAS-005: If validation cleanup modified session_data, persist it before responding.
+      // This ensures rejected transactional state doesn't reappear on the next message.
+      if (result.persistSessionDataOnFailure) {
+        const casSaved = await this.casUpdateSession(session, {
+          current_step: session.current_step,
+          session_data: session.session_data,
+          conversation_log: session.conversation_log,
+        });
+        if (!casSaved) return; // Stale worker — do not send response
+      }
+
       if (result.errorMessage) {
         const translatedError = await this.maybeTranslate(result.errorMessage, session);
         const cancelHint = await this.maybeTranslate('Type *back* to go back, *menu* to restart, or *exit* to leave.', session);
@@ -435,13 +446,14 @@ export class FlowExecutor {
         await this.sendText(from, errText);
       }
       // Re-send interactive prompts (buttons/list) so user gets fresh clickable options
-      // WhatsApp buttons are single-use — once tapped, they gray out
       const retryMessages = await step.prompt(ctx);
       if (retryMessages.some(m => m.type === 'buttons' || m.type === 'list')) {
         this.logPromptMessages(session, retryMessages);
         await this.sendMessages(from, retryMessages);
       }
-      await this.persistConversationLog(session.id, session.conversation_log);
+      if (!result.persistSessionDataOnFailure) {
+        await this.persistConversationLog(session.id, session.conversation_log);
+      }
       return;
     }
 

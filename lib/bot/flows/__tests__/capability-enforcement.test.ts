@@ -596,8 +596,11 @@ describe('Scheduling F2 — create_booking wiring with RPC spy', () => {
   it('F2: book_slot_atomic NOT called when scheduling disabled at commit time', async () => {
     const step = getStep(schedulingFlow, 'create_booking');
 
-    const rpcSpy = vi.fn().mockReturnValue({
-      single: vi.fn().mockResolvedValue({ data: { booking_id: 'b1', reference_code: 'WA-001', slot_available: true }, error: null }),
+    const rpcSpy = vi.fn().mockImplementation((name: string) => {
+      if (name === 'update_session_cas') {
+        return Promise.resolve({ data: { success: true, version: 1 }, error: null });
+      }
+      return { single: vi.fn().mockResolvedValue({ data: { booking_id: 'b1', reference_code: 'WA-001', slot_available: true }, error: null }) };
     });
     const fromMock = vi.fn((table: string) => {
       // Guard tables: business active but scheduling DISABLED
@@ -641,8 +644,9 @@ describe('Scheduling F2 — create_booking wiring with RPC spy', () => {
 
     const messages = await step.prompt(ctx);
 
-    // book_slot_atomic RPC must NOT have been called
-    expect(rpcSpy).not.toHaveBeenCalled();
+    // book_slot_atomic RPC must NOT have been called (update_session_cas may be called for recovery)
+    const bookSlotCalls = rpcSpy.mock.calls.filter((c: unknown[]) => c[0] === 'book_slot_atomic');
+    expect(bookSlotCalls.length).toBe(0);
     // Must return a recoverable message (not crash)
     expect(messages.length).toBeGreaterThanOrEqual(1);
     const msgText = (messages[0] as any).text || (messages[0] as any).body || '';

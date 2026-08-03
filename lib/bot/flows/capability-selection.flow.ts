@@ -310,7 +310,7 @@ const selectCapabilityStep: FlowStepConfig = {
         businessCategory: category,
       });
 
-      return { valid: false, errorMessage: recoveryMsg };
+      return { valid: false, errorMessage: recoveryMsg, persistSessionDataOnFailure: true };
     }
 
     // Entity extraction: use ctx.currentCanonical if available, otherwise ONE fresh parse

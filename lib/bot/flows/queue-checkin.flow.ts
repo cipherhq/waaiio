@@ -301,6 +301,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
     // CAP-001 Point C: Verify CURRENT capability before CREATE_NEW queue entry
     const { requireCurrentCapability } = await import('./shared/capability-guard');
     const capGuard = await requireCurrentCapability(ctx.supabase, {
+            session: { id: ctx.session.id, version: ctx.session.version, session_data: ctx.session.session_data },
       businessId: ctx.business.id,
       capability: 'queue',
       action: 'create_new',

@@ -56,6 +56,9 @@ export interface ValidationResult {
   errorMessage?: string;
   /** Merge into session_data */
   data?: Record<string, unknown>;
+  /** CAS-005: When true, FlowExecutor persists session_data on validation failure.
+   *  Used when validation-failure cleanup must survive across messages. */
+  persistSessionDataOnFailure?: boolean;
 }
 
 // ── Flow context (passed to every step) ──

@@ -55,6 +55,8 @@ export async function requireCurrentCapability(
     businessId: string;
     capability: CapabilityId;
     action: CapabilityAction;
+    /** CAS-005: Session context for recovery on denial */
+    session?: { id: string; version: number; session_data: Record<string, unknown> };
   },
 ): Promise<BotCapabilityGuardResult> {
   const { businessId, capability, action } = params;
@@ -151,13 +153,24 @@ export async function requireCurrentCapability(
     const detail = blockedEntry?.reason || 'capability_not_effective';
     logger.warn(`[BOT-GUARD] ${action} denied: capability=${capability} reason=${detail} business=${businessId}`);
 
-    // CAS-005: Build a helpful customer message
-    const { buildCapabilityRecoveryMessage } = await import('@/lib/bot/capability-recovery');
+    // CAS-005: Build recovery message + recover session if available
+    const { buildCapabilityRecoveryMessage, recoverFromRevokedCapability } = await import('@/lib/bot/capability-recovery');
     const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
     const ufCaps = getUserFacingCapabilities(resolution.effective);
     const customerMessage = buildCapabilityRecoveryMessage(
       capability, ufCaps, business.category || 'other',
     );
+
+    // If session context provided, perform CAS recovery (move to select_capability)
+    if (params.session && action === 'create_new') {
+      await recoverFromRevokedCapability({
+        supabase, sessionId: params.session.id, sessionVersion: params.session.version,
+        sessionData: params.session.session_data,
+        revokedCapability: capability,
+        effectiveCapabilities: resolution.effective,
+        businessCategory: business.category || 'other',
+      });
+    }
 
     return {
       allowed: false,

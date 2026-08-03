@@ -491,6 +491,7 @@ export const ticketingFlow: FlowDefinition = {
         if (ctx.business) {
           const { requireCurrentCapability } = await import('./shared/capability-guard');
           const capGuard = await requireCurrentCapability(ctx.supabase, {
+            session: { id: ctx.session.id, version: ctx.session.version, session_data: ctx.session.session_data },
             businessId: ctx.business.id,
             capability: 'ticketing',
             action: 'create_new',

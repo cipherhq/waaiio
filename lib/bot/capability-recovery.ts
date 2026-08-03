@@ -130,3 +130,95 @@ export function buildCapabilityRecoveryMessage(
     businessCategory,
   });
 }
+
+// ── Cleanup modes ──────────────────────────────────────
+
+export type CleanupMode =
+  | 'selection_rejection'    // At capability selection, chose unavailable
+  | 'quick_rebook_rejection' // Quick rebook target unavailable
+  | 'current_flow_revoked'   // Active CREATE_NEW capability revoked mid-flow
+  | 'different_family_mid_flow'; // Asked for different unavailable family mid-flow
+
+/**
+ * Context-aware state cleanup.
+ * Different modes preserve different state.
+ */
+export function cleanupByMode(
+  sessionData: Record<string, unknown>,
+  mode: CleanupMode,
+): void {
+  switch (mode) {
+    case 'selection_rejection':
+    case 'quick_rebook_rejection':
+      // Clear all transactional state — customer hasn't started a flow yet
+      clearRejectedTransactionalState(sessionData);
+      break;
+
+    case 'current_flow_revoked':
+      // Active flow revoked — clear CREATE_NEW transactional state, move to menu
+      clearRejectedTransactionalState(sessionData);
+      break;
+
+    case 'different_family_mid_flow':
+      // Customer asked for a DIFFERENT unavailable family while in a valid flow.
+      // Preserve the CURRENT valid flow state. Only clear ephemeral canonical state.
+      // currentCanonical is already ephemeral (not persisted), so nothing to clear.
+      break;
+  }
+}
+
+// ── Mid-flow guard-denial recovery ─────────────────────
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+export interface GuardRecoveryParams {
+  supabase: SupabaseClient;
+  sessionId: string;
+  sessionVersion: number;
+  sessionData: Record<string, unknown>;
+  revokedCapability: string;
+  effectiveCapabilities: CapabilityId[];
+  businessCategory: string;
+}
+
+export interface GuardRecoveryResult {
+  success: boolean;
+  customerMessage: string;
+  reason?: 'cas_conflict' | 'no_alternatives';
+}
+
+/**
+ * Recover a session after a CREATE_NEW guard denial.
+ * Cleans transactional state, moves to select_capability, persists via CAS.
+ */
+export async function recoverFromRevokedCapability(
+  params: GuardRecoveryParams,
+): Promise<GuardRecoveryResult> {
+  const { supabase, sessionId, sessionVersion, sessionData, revokedCapability, effectiveCapabilities, businessCategory } = params;
+
+  // Clean transactional state
+  cleanupByMode(sessionData, 'current_flow_revoked');
+
+  // Update effective capabilities in session
+  sessionData.capabilities = effectiveCapabilities;
+
+  // Build recovery message
+  const { getUserFacingCapabilities } = await import('./handlers/flow-routing');
+  const ufCaps = getUserFacingCapabilities(effectiveCapabilities);
+  const customerMessage = buildCapabilityRecoveryMessage(revokedCapability, ufCaps, businessCategory);
+
+  // Persist via CAS — move to select_capability
+  const { data: casResult } = await supabase.rpc('update_session_cas', {
+    p_session_id: sessionId,
+    p_expected_version: sessionVersion,
+    p_current_step: 'select_capability',
+    p_session_data: sessionData,
+  });
+
+  if (!casResult?.success) {
+    return { success: false, customerMessage, reason: 'cas_conflict' };
+  }
+
+  return { success: true, customerMessage };
+}
+
