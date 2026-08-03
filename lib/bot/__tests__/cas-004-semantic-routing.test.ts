@@ -630,7 +630,7 @@ describe('CAS-004 routeByConfidence requestedAction override', () => {
 });
 
 describe('CAS-004 capability-selection canonical consumption', () => {
-  it('G: stored canonical family used — no reparse', async () => {
+  it('G: stored canonical result used — no reparse', async () => {
     const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
     const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
     const { createMockContext } = await import('../flows/__tests__/helpers');
@@ -640,18 +640,54 @@ describe('CAS-004 capability-selection canonical consumption', () => {
         id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
         session_data: {
           capabilities: ['reservation', 'scheduling'],
-          _parsed_semantic_family: 'property_reservation', // Canonical result stored
+          // ONE canonical result object — consumed once
+          _canonical_result: {
+            semanticFamily: 'property_reservation',
+            requestedAction: 'create_new',
+            serviceKeywords: [],
+            date: null,
+          },
         },
       },
       business: { id: 'b1', name: 'Hotel', slug: 'hotel', category: 'hotel' as any, flow_type: 'reservation' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
     });
 
     const result = await step.validate!('Je veux réserver une chambre', ctx);
-    // Should use stored canonical family → reservation
     expect(result.valid).toBe(true);
     expect(result.data?.active_capability).toBe('reservation');
-    // Stored family should be cleared after use
-    expect(ctx.session.session_data._parsed_semantic_family).toBeUndefined();
+    // Canonical result consumed and cleared
+    expect(ctx.session.session_data._canonical_result).toBeUndefined();
+  });
+
+  it('G2: canonical with serviceKeywords + date — no second LLM', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
+    const { createMockContext } = await import('../flows/__tests__/helpers');
+
+    const ctx = createMockContext({
+      session: {
+        id: 's2', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
+        session_data: {
+          capabilities: ['scheduling'],
+          _canonical_result: {
+            semanticFamily: 'service_time_booking',
+            serviceKeywords: ['haircut'],
+            date: '2026-09-15',
+            specificTime: '14:00',
+          },
+        },
+      },
+      business: { id: 'b1', name: 'Salon', slug: 'salon', category: 'salon' as any, flow_type: 'scheduling' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
+    });
+
+    const result = await step.validate!('Book me a haircut tomorrow at 2pm', ctx);
+    expect(result.valid).toBe(true);
+    expect(result.data?.active_capability).toBe('scheduling');
+    // Entities should be prefilled from canonical result
+    expect(ctx.session.session_data.date).toBe('2026-09-15');
+    expect(ctx.session.session_data.time).toBe('14:00');
+    // Canonical result consumed
+    expect(ctx.session.session_data._canonical_result).toBeUndefined();
   });
 
   it('H: getUserFacingCapabilities used for selection', async () => {

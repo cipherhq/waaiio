@@ -1168,14 +1168,20 @@ export class BotService {
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
             ...(canonicalActivatedLanguage ? { _detected_language: canonicalActivatedLanguage } : {}),
-            ...(canonicalResult?.semanticFamily ? { _parsed_semantic_family: canonicalResult.semanticFamily } : {}),
-            // CAS-004: Preserve canonical entities for flow prefill
-            ...(canonicalResult?.entities?.date ? { date: canonicalResult.entities.date } : {}),
-            ...(canonicalResult?.entities?.specificTime ? { time: canonicalResult.entities.specificTime } : {}),
-            ...(canonicalResult?.entities?.timePreference ? { _time_preference: canonicalResult.entities.timePreference } : {}),
-            ...(canonicalResult?.entities?.quantity ? { party_size: canonicalResult.entities.quantity } : {}),
-            ...(canonicalResult?.entities?.amount ? { amount: canonicalResult.entities.amount } : {}),
-            ...(canonicalResult?.requestedAction ? { _parsed_requested_action: canonicalResult.requestedAction } : {}),
+            // CAS-004: Store ONE canonical result object — consumed once by capability-selection
+            ...(canonicalResult ? { _canonical_result: {
+              semanticFamily: canonicalResult.semanticFamily,
+              requestedAction: canonicalResult.requestedAction,
+              confidence: canonicalResult.confidence,
+              language: canonicalResult.language,
+              serviceKeywords: canonicalResult.entities.serviceKeywords,
+              variantKeywords: canonicalResult.entities.variantKeywords,
+              date: canonicalResult.entities.date,
+              specificTime: canonicalResult.entities.specificTime,
+              timePreference: canonicalResult.entities.timePreference,
+              quantity: canonicalResult.entities.quantity,
+              amount: canonicalResult.entities.amount,
+            } } : {}),
           }
         : { ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}) };
 

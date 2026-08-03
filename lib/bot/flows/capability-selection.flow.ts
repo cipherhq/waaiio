@@ -246,30 +246,35 @@ const selectCapabilityStep: FlowStepConfig = {
             return lower.includes(label) || label.includes(lower);
           }) || null;
         }
-        // CAS-004: Use canonical semantic understanding — do NOT reparse.
+        // CAS-004: Use canonical result if present — ONE message, ONE classification.
         if (!capId) {
           const { resolveSemanticCapability, disambiguateByCategory } = await import('@/lib/bot/semantic-resolver');
           const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
           const ufCaps = getUserFacingCapabilities(capabilities);
 
-          // Check if canonical understanding exists in session (from first-message pipeline)
-          const storedFamily = ctx.session.session_data._parsed_semantic_family as string | undefined;
+          // Check for stored canonical result (from first-message pipeline)
+          const canonicalR = ctx.session.session_data._canonical_result as {
+            semanticFamily?: string; requestedAction?: string; confidence?: number;
+            serviceKeywords?: string[]; variantKeywords?: string[];
+            date?: string; specificTime?: string; timePreference?: string;
+            quantity?: number; amount?: number;
+          } | undefined;
 
-          let family: import('@/lib/bot/semantic-types').SemanticFamily = (storedFamily || null) as import('@/lib/bot/semantic-types').SemanticFamily;
+          let family: import('@/lib/bot/semantic-types').SemanticFamily = null;
 
-          if (!family) {
-            // No stored canonical result — this is a NEW message at select_capability.
-            // Use the canonical understanding pipeline (one parse, no LLM duplicate).
+          if (canonicalR) {
+            // Use stored canonical family — no reparse
+            family = (canonicalR.semanticFamily || null) as import('@/lib/bot/semantic-types').SemanticFamily;
+          } else {
+            // No stored canonical result — genuinely NEW message at select_capability
             const { parseSmartIntent } = await import('@/lib/bot/smart-intent');
             const parsed = parseSmartIntent(input);
             family = parsed.semanticFamily || null;
 
-            // Generic booking disambiguation
             if (!family && parsed.intent === 'booking') {
               family = disambiguateByCategory(category, ufCaps);
             }
 
-            // Chat/waiver fallback
             if (!family && !parsed.intent) {
               if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
                 capId = ufCaps.find(c => c === 'chat') || null;
@@ -279,15 +284,11 @@ const selectCapabilityStep: FlowStepConfig = {
             }
           }
 
-          // Clear the stored family so it's not reused for a different message
-          if (storedFamily) delete ctx.session.session_data._parsed_semantic_family;
-
           if (family && !capId) {
             const resolution = resolveSemanticCapability(family, 'create_new', ufCaps);
             if (resolution.canRoute && resolution.matchedCapability) {
               capId = resolution.matchedCapability as CapabilityId;
             }
-            // If family specific but unavailable → capId stays null → reject
           }
         }
       }
@@ -297,31 +298,34 @@ const selectCapabilityStep: FlowStepConfig = {
       return { valid: false, errorMessage: 'I didn\'t understand that. Try typing *book*, *order*, *tickets*, or tap *View Options* to see the menu.' };
     }
 
-    // Smart intent: extract date/time/service from natural language input
-    // CAS-004: If canonical entities already exist in session (from first-message
-    // pipeline), reuse them — do NOT reparse/re-LLM the same message.
+    // Entity extraction: use canonical entities if present, otherwise parse new text
     if ((capId === 'scheduling' || capId === 'reservation' || capId === 'payment' || capId === 'giving' || capId === 'ticketing' || capId === 'ordering') && ctx.business) {
       try {
         const sd = ctx.session.session_data;
-        const hasCanonicalEntities = sd._parsed_semantic_family || sd.date || sd.time || sd._time_preference || sd.party_size || sd.amount;
+        const canonicalR = sd._canonical_result as {
+          serviceKeywords?: string[]; variantKeywords?: string[];
+          date?: string; specificTime?: string; timePreference?: string;
+          quantity?: number; amount?: number;
+        } | undefined;
 
-        // Build a parsed-like object from canonical entities if they exist
         let parsed: import('@/lib/bot/smart-intent').SmartParseResult;
-        if (hasCanonicalEntities) {
-          // Reuse stored canonical result — no second LLM call
+        if (canonicalR) {
+          // Reuse stored canonical entities — NO second LLM call
           parsed = {
             understood: true,
             intent: null,
-            serviceKeywords: [],
-            date: (sd.date as string) || null,
-            specificTime: (sd.time as string) || null,
-            timePreference: (sd._time_preference as 'morning' | 'afternoon' | 'evening' | null) || null,
-            quantity: (sd.party_size as number) || null,
-            amount: (sd.amount as number) || null,
-            variantKeywords: [],
+            serviceKeywords: canonicalR.serviceKeywords || [],
+            date: canonicalR.date || null,
+            specificTime: canonicalR.specificTime || null,
+            timePreference: (canonicalR.timePreference as 'morning' | 'afternoon' | 'evening' | null) || null,
+            quantity: canonicalR.quantity || null,
+            amount: canonicalR.amount || null,
+            variantKeywords: canonicalR.variantKeywords || [],
           };
+          // Consume the canonical result — clear so a NEW message can be classified
+          delete sd._canonical_result;
         } else {
-          // Genuinely new message at select_capability — classify once
+          // Genuinely new message — classify once
           const { parseSmartIntentHybrid } = await import('@/lib/bot/smart-intent');
           const bizTz = (sd.business_timezone as string) || undefined;
           const hybridResult = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null, bizTz, ctx.business.subscription_tier);
