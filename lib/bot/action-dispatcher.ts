@@ -1,11 +1,10 @@
 /**
  * CAS-004 — Canonical Action Dispatcher.
- * Routes READ_HISTORY, MANAGE_EXISTING, INFORMATIONAL, and NAVIGATION
- * actions to existing Waaiio handlers. Never falls through into CREATE_NEW.
+ * Routes non-CREATE_NEW actions to existing handlers.
+ * Never falls through into CREATE_NEW.
  *
- * Used by BOTH new-session and existing-session paths.
- *
- * Session deactivation happens ONLY after confirming the handler can work.
+ * Session transitions use CAS update (same row) when an existing session
+ * exists, or normal insert for new sessions. Atomic and failure-safe.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -27,24 +26,25 @@ export interface ActionDispatchParams {
   semanticFamily: SemanticFamily;
   requestedAction: RequestedAction;
   originalText: string;
-  existingSessionId?: string;
+  /** Existing session — will be CAS-updated to destination step, NOT deleted */
+  existingSession?: { id: string; version: number };
 }
 
 export interface ActionDispatchResult {
   handled: boolean;
-  reason?: 'unsupported_action' | 'no_profile' | 'no_handler' | 'session_create_failed' | 'handler_failed';
+  reason?: 'unsupported_action' | 'no_profile' | 'no_handler' | 'session_create_failed' | 'session_cas_conflict' | 'handler_failed';
 }
 
 export async function dispatchAction(
   params: ActionDispatchParams,
 ): Promise<ActionDispatchResult> {
-  const { supabase, messageSender, flowExecutor, from, businessId, businessName, sessionData, semanticFamily, requestedAction, existingSessionId } = params;
+  const { supabase, messageSender, flowExecutor, from, businessId, businessName, sessionData, semanticFamily, requestedAction, existingSession } = params;
 
   const sendText = async (to: string, text: string) => {
     await messageSender.sendText({ to, text });
   };
 
-  // Resolve customer profile FIRST — needed for all handlers
+  // Resolve customer profile
   const phoneP = from.startsWith('+') ? from : `+${from}`;
   const phoneN = from.startsWith('+') ? from.slice(1) : from;
   const { data: profile } = await supabase.from('profiles').select('id')
@@ -55,8 +55,8 @@ export async function dispatchAction(
     return { handled: false, reason: 'no_profile' };
   }
 
-  // Determine which handler to use BEFORE modifying any session state
-  type HandlerFn = () => Promise<void>;
+  // Determine handler BEFORE modifying session state
+  type HandlerFn = (session: BotSession) => Promise<void>;
   let handler: HandlerFn | null = null;
   let targetStep: string | null = null;
 
@@ -64,20 +64,16 @@ export async function dispatchAction(
   if (requestedAction === 'read_history') {
     if (semanticFamily === 'ordering') {
       targetStep = 'my_orders';
-      handler = async () => {
+      handler = async (sess) => {
         const { handleMyOrders } = await import('./handlers/my-orders');
         const routeToMenu = async (_s: BotSession, _f: string) => {};
-        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!, existingSessionId);
-        if (!sess) throw new Error('session_create_failed');
-        await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess as BotSession, from, '');
+        await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess, from, '');
       };
     } else if (semanticFamily === 'service_time_booking' || semanticFamily === 'property_reservation' || semanticFamily === 'table_reservation') {
       targetStep = 'my_bookings';
-      handler = async () => {
+      handler = async (sess) => {
         const { handleMyBookings } = await import('./handlers/my-bookings');
-        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!, existingSessionId);
-        if (!sess) throw new Error('session_create_failed');
-        await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess as BotSession, from, '');
+        await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess, from, '');
       };
     } else if (semanticFamily === 'giving' || semanticFamily === 'payment') {
       handler = async () => {
@@ -87,44 +83,32 @@ export async function dispatchAction(
     }
   }
 
-  // MANAGE_EXISTING — route to management handlers, NOT to read_history
+  // MANAGE_EXISTING
   if (requestedAction === 'manage_existing') {
     if (semanticFamily === 'service_time_booking' || semanticFamily === 'property_reservation' || semanticFamily === 'table_reservation') {
       targetStep = 'my_bookings';
-      handler = async () => {
+      handler = async (sess) => {
         const { handleMyBookings } = await import('./handlers/my-bookings');
-        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!, existingSessionId);
-        if (!sess) throw new Error("session_create_failed");
-        await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess as BotSession, from, '');
+        await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess, from, '');
       };
     } else if (semanticFamily === 'ordering') {
       targetStep = 'my_orders';
-      handler = async () => {
+      handler = async (sess) => {
         const { handleMyOrders } = await import('./handlers/my-orders');
         const routeToMenu = async (_s: BotSession, _f: string) => {};
-        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!, existingSessionId);
-        if (!sess) throw new Error("session_create_failed");
-        await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess as BotSession, from, '');
+        await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess, from, '');
       };
     }
-    // giving/payment MANAGE_EXISTING: no substitution to history
-    // Return as unsupported if no direct management handler exists
   }
 
-  // INFORMATIONAL
+  // INFORMATIONAL — preserves existing session
   if (requestedAction === 'informational') {
     handler = async () => {
       try {
         const { answerTemporaryQuestion } = await import('./business-knowledge');
         const answer = await answerTemporaryQuestion(supabase, businessId, { type: 'general', query: params.originalText }, businessName);
-        if (answer) {
-          await sendText(from, answer);
-          return;
-        }
-      } catch (err) {
-        logger.warn('[ACTION-DISPATCH] Knowledge answer failed:', err);
-      }
-      // No knowledge answer — send informational recovery
+        if (answer) { await sendText(from, answer); return; }
+      } catch (err) { logger.warn('[ACTION-DISPATCH] Knowledge answer failed:', err); }
       await sendText(from, "I'm not sure about that. Type *menu* to see what's available, or type *Hi* to start over.");
     };
   }
@@ -133,69 +117,76 @@ export async function dispatchAction(
     return { handled: false, reason: 'no_handler' };
   }
 
-  // INFORMATIONAL preserves the existing session (customer may be mid-flow)
-  const preserveSession = requestedAction === 'informational';
+  // INFORMATIONAL preserves session — no transition needed
+  if (requestedAction === 'informational') {
+    try {
+      // Pass existing session if available, or a minimal placeholder
+      const sess = existingSession
+        ? { id: existingSession.id, user_id: profile.id, business_id: businessId, current_step: 'informational', session_data: sessionData, version: existingSession.version } as unknown as BotSession
+        : { id: '', user_id: profile.id, business_id: businessId, current_step: 'informational', session_data: sessionData, version: 0 } as unknown as BotSession;
+      await handler(sess);
+      return { handled: true };
+    } catch (err) {
+      logger.error('[ACTION-DISPATCH] Informational handler failed:', err);
+      return { handled: false, reason: 'handler_failed' };
+    }
+  }
 
-  // Session transition is handled INSIDE the handler (after destination session
-  // is successfully created). The handler throws on failure, preserving the
-  // original session.
+  // TRANSITION: CAS-update existing session to destination step (atomic)
+  let actionSession: BotSession;
+
+  if (existingSession && targetStep) {
+    // Atomic CAS update — same row, no delete/insert race
+    const updatedData = { ...sessionData, user_id: profile.id };
+    const { data: casResult } = await supabase.rpc('update_session_cas', {
+      p_session_id: existingSession.id,
+      p_expected_version: existingSession.version,
+      p_current_step: targetStep,
+      p_session_data: updatedData,
+    });
+
+    if (!casResult?.success) {
+      logger.warn('[ACTION-DISPATCH] CAS conflict:', casResult?.reason);
+      return { handled: false, reason: 'session_cas_conflict' };
+    }
+
+    actionSession = {
+      id: existingSession.id,
+      user_id: profile.id,
+      business_id: businessId,
+      current_step: targetStep,
+      session_data: updatedData,
+      version: casResult.version,
+    } as unknown as BotSession;
+  } else if (targetStep) {
+    // No existing session — create new (for new-session action dispatch)
+    await supabase.from('bot_sessions').delete()
+      .eq('whatsapp_number', from).eq('is_active', false).eq('business_id', businessId);
+
+    const { data: newSess, error: insertErr } = await supabase.from('bot_sessions').insert({
+      whatsapp_number: from, user_id: profile.id, business_id: businessId,
+      current_step: targetStep, session_data: sessionData,
+      is_active: true, expires_at: new Date(Date.now() + 86400000).toISOString(),
+    }).select().single();
+
+    if (insertErr || !newSess) {
+      return { handled: false, reason: 'session_create_failed' };
+    }
+    actionSession = newSess as BotSession;
+  } else {
+    // Handler doesn't need a session transition (e.g., transaction history)
+    actionSession = { id: '', user_id: profile.id, business_id: businessId, current_step: '', session_data: sessionData, version: 0 } as unknown as BotSession;
+  }
 
   try {
-    await handler();
+    await handler(actionSession);
     return { handled: true };
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    logger.error('[ACTION-DISPATCH] Handler execution failed:', errMsg);
-    const reason = errMsg === 'session_create_failed' ? 'session_create_failed' as const : 'handler_failed' as const;
-    return { handled: false, reason };
+    logger.error('[ACTION-DISPATCH] Handler failed:', err);
+    return { handled: false, reason: 'handler_failed' };
   }
 }
 
-/**
- * Create a new action session, handling the unique constraint on
- * (whatsapp_number, business_id).
- *
- * Pattern: deactivate old → delete inactive → insert new.
- * This matches the existing bot.service.ts session-creation pattern.
- * The unique index requires only one row per phone+business.
- *
- * If insert fails, the old session is already deactivated — but this
- * is the same risk as the existing new-session path. A subsequent "Hi"
- * will create a fresh session.
- */
-async function createActionSession(
-  supabase: SupabaseClient,
-  from: string,
-  userId: string,
-  businessId: string,
-  sessionData: Record<string, unknown>,
-  currentStep: string,
-  existingSessionToDeactivate?: string,
-) {
-  // 1. Deactivate existing active session
-  if (existingSessionToDeactivate) {
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', existingSessionToDeactivate);
-  }
-
-  // 2. Remove old inactive sessions to satisfy unique constraint
-  await supabase.from('bot_sessions').delete()
-    .eq('whatsapp_number', from).eq('is_active', false).eq('business_id', businessId);
-
-  // 3. Insert new session
-  return supabase.from('bot_sessions').insert({
-    whatsapp_number: from,
-    user_id: userId,
-    business_id: businessId,
-    current_step: currentStep,
-    session_data: sessionData,
-    is_active: true,
-    expires_at: new Date(Date.now() + 86400000).toISOString(),
-  }).select().single();
-}
-
-/**
- * Send safe recovery for unfulfilled actions. NEVER falls into CREATE_NEW.
- */
 export async function sendActionRecovery(
   messageSender: MessageSender,
   from: string,
@@ -203,14 +194,10 @@ export async function sendActionRecovery(
   reason: string,
 ): Promise<void> {
   let msg: string;
-  if (reason === 'no_profile') {
-    msg = "I don't have an account for this number yet. Send *Hi* to get started!";
-  } else if (requestedAction === 'informational') {
-    msg = "I'm not sure about that. Type *menu* to see what's available, or type *Hi* to start over.";
-  } else if (requestedAction === 'manage_existing') {
-    msg = "I couldn't find a way to manage that right now. Type *my account* to see your options, or *Hi* to start over.";
-  } else {
-    msg = "I couldn't find what you're looking for. Type *my account* to view your history, or *Hi* to start over.";
-  }
+  if (reason === 'no_profile') msg = "I don't have an account for this number yet. Send *Hi* to get started!";
+  else if (requestedAction === 'informational') msg = "I'm not sure about that. Type *menu* to see what's available, or type *Hi* to start over.";
+  else if (requestedAction === 'manage_existing') msg = "I couldn't find a way to manage that right now. Type *my account* to see your options, or *Hi* to start over.";
+  else if (reason === 'session_cas_conflict') msg = "Something changed. Please try again.";
+  else msg = "I couldn't find what you're looking for. Type *my account* to view your history, or *Hi* to start over.";
   await messageSender.sendText({ to: from, text: msg });
 }

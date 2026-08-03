@@ -1210,34 +1210,38 @@ export class BotService {
         return;
       }
 
-      // Auto-detect language from first message — tier-gated (Growth+ only)
-      // CAS-004: Skip if canonical understanding already activated a language
-      const bizTier = business?.subscription_tier || 'free';
-      if (text.length >= 3 && !canonicalActivatedLanguage && isLanguageAllowed(bizTier, 'non-en')) {
-        try {
-          const lang = await detectLanguage(text);
-          if (lang !== 'en') {
-            // Store as pending — don't activate until user confirms
-            await this.supabase.from('bot_sessions')
-              .update({ session_data: { ...sessionData, _pending_language: lang } })
-              .eq('id', newSession.id);
-            logger.debug('[BOT] Detected language:', lang, 'for', from, '— asking confirmation');
+      // CAS-004: Language activation uses canonical policy only.
+      // If canonical understanding detected + activated a language, it's already
+      // stored in sessionData._detected_language. No separate detection needed.
+      // For uncertain language where canonical result was null:
+      // only prompt confirmation if canonical language policy allows it AND
+      // the language is production-certified.
+      if (text.length >= 3 && !canonicalActivatedLanguage && canonicalResult?.language
+          && canonicalResult.language !== 'en'
+          && canonicalResult.languageEntitlement.allowedLanguages.includes(canonicalResult.language)) {
+        // Language was detected but not high-confidence-activated.
+        // Check if it's certified before offering confirmation.
+        const { CERTIFIED_LANGUAGES: certLangs } = await import('./language-policy');
+        if (certLangs.includes(canonicalResult.language)) {
+          const updatedSd = { ...sessionData, _pending_language: canonicalResult.language };
+          await this.supabase.from('bot_sessions')
+            .update({ session_data: updatedSd })
+            .eq('id', newSession.id);
 
-            const langName = getLanguageName(lang);
-            try {
-              await this.messageSender.sendButtons({
-                to: from,
-                body: `I noticed you might prefer ${langName}. Would you like me to respond in ${langName}?`,
-                buttons: [
-                  { id: 'lang_yes', title: `Yes, ${langName}` },
-                  { id: 'lang_no', title: 'English is fine' },
-                ],
-              });
-            } catch (err) {
-              logger.error('[BOT] Language confirm send error:', err);
-            }
+          const langName = getLanguageName(canonicalResult.language);
+          try {
+            await this.messageSender.sendButtons({
+              to: from,
+              body: `I noticed you might prefer ${langName}. Would you like me to respond in ${langName}?`,
+              buttons: [
+                { id: 'lang_yes', title: `Yes, ${langName}` },
+                { id: 'lang_no', title: 'English is fine' },
+              ],
+            });
+          } catch (err) {
+            logger.error('[BOT] Language confirm send error:', err);
           }
-        } catch (err) { logger.warn('[BOT] Language detection failed (continuing in English):', err); }
+        }
       }
 
       session = newSession as BotSession;
@@ -2071,7 +2075,7 @@ export class BotService {
             semanticFamily: resumedUnderstanding.semanticFamily,
             requestedAction: resumedUnderstanding.requestedAction,
             originalText: text,
-            existingSessionId: session.id,
+            existingSession: { id: session.id, version: session.version || 0 },
           });
           if (actionResult.handled) return;
           await sendActionRecovery(this.messageSender, from, resumedUnderstanding.requestedAction, actionResult.reason || 'no_handler');

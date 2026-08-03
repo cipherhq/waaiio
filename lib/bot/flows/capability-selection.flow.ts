@@ -298,18 +298,42 @@ const selectCapabilityStep: FlowStepConfig = {
     }
 
     // Smart intent: extract date/time/service from natural language input
-    // so the scheduling flow can fast-track (skip already-answered steps)
+    // CAS-004: If canonical entities already exist in session (from first-message
+    // pipeline), reuse them — do NOT reparse/re-LLM the same message.
     if ((capId === 'scheduling' || capId === 'reservation' || capId === 'payment' || capId === 'giving' || capId === 'ticketing' || capId === 'ordering') && ctx.business) {
       try {
-        const { parseSmartIntentHybrid, matchServiceFromKeywords } = await import('@/lib/bot/smart-intent');
-        const bizTz = (ctx.session.session_data as Record<string, unknown>).business_timezone as string | undefined;
-        const parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null, bizTz, ctx.business.subscription_tier);
+        const sd = ctx.session.session_data;
+        const hasCanonicalEntities = sd._parsed_semantic_family || sd.date || sd.time || sd._time_preference || sd.party_size || sd.amount;
+
+        // Build a parsed-like object from canonical entities if they exist
+        let parsed: import('@/lib/bot/smart-intent').SmartParseResult;
+        if (hasCanonicalEntities) {
+          // Reuse stored canonical result — no second LLM call
+          parsed = {
+            understood: true,
+            intent: null,
+            serviceKeywords: [],
+            date: (sd.date as string) || null,
+            specificTime: (sd.time as string) || null,
+            timePreference: (sd._time_preference as 'morning' | 'afternoon' | 'evening' | null) || null,
+            quantity: (sd.party_size as number) || null,
+            amount: (sd.amount as number) || null,
+            variantKeywords: [],
+          };
+        } else {
+          // Genuinely new message at select_capability — classify once
+          const { parseSmartIntentHybrid } = await import('@/lib/bot/smart-intent');
+          const bizTz = (sd.business_timezone as string) || undefined;
+          const hybridResult = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null, bizTz, ctx.business.subscription_tier);
+          parsed = hybridResult;
+        }
 
         if (parsed.understood) {
           // Match service keywords — single match skips, multiple shows picker
-          if (parsed.serviceKeywords.length > 0) {
+          const serviceKw = parsed.serviceKeywords.length > 0 ? parsed.serviceKeywords : [];
+          if (serviceKw.length > 0) {
             const { matchServicesFromKeywords } = await import('@/lib/bot/smart-intent');
-            const matches = await matchServicesFromKeywords(ctx.supabase, ctx.business.id, parsed.serviceKeywords);
+            const matches = await matchServicesFromKeywords(ctx.supabase, ctx.business.id, serviceKw);
             if (matches.length === 1) {
               // Unambiguous — skip service picker
               ctx.session.session_data.service_id = matches[0].id;
@@ -335,9 +359,9 @@ const selectCapabilityStep: FlowStepConfig = {
           }
 
           // Match products for ordering flow
-          if (capId === 'ordering' && parsed.serviceKeywords.length > 0) {
+          if (capId === 'ordering' && serviceKw.length > 0) {
             const { matchProductsFromKeywords } = await import('@/lib/bot/smart-intent');
-            const productMatches = await matchProductsFromKeywords(ctx.supabase, ctx.business.id, parsed.serviceKeywords);
+            const productMatches = await matchProductsFromKeywords(ctx.supabase, ctx.business.id, serviceKw);
             if (productMatches.length === 1) {
               // Single match — pre-add to cart
               const p = productMatches[0];
