@@ -187,3 +187,77 @@ describe('CAS-005 commit-guard recovery', () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════
+// CAS-005 PERSISTENCE BEHAVIORAL TESTS
+// ═══════════════════════════════════════════════════════
+
+describe('CAS-005 replaceSessionDataContents', () => {
+  it('2. deletes removed keys from target', async () => {
+    const { replaceSessionDataContents } = await import('../capability-recovery');
+    const target: Record<string, unknown> = {
+      business_id: 'b1', active_capability: 'reservation',
+      service_id: 'svc-1', date: '2026-09-01', cart: [{ id: 'p1' }],
+      capabilities: ['ordering'],
+    };
+    const replacement: Record<string, unknown> = {
+      business_id: 'b1', capabilities: ['ordering'],
+    };
+
+    replaceSessionDataContents(target, replacement);
+
+    expect(target.business_id).toBe('b1');
+    expect(target.capabilities).toEqual(['ordering']);
+    // Deleted fields must be absent
+    expect(target.active_capability).toBeUndefined();
+    expect(target.service_id).toBeUndefined();
+    expect(target.date).toBeUndefined();
+    expect(target.cart).toBeUndefined();
+  });
+});
+
+describe('CAS-005 guard CAS failure preserves original', () => {
+  it('4. CAS conflict leaves original session_data unchanged', async () => {
+    const { requireCurrentCapability } = await import('../flows/shared/capability-guard');
+
+    const originalData: Record<string, unknown> = {
+      business_id: 'b1', active_capability: 'reservation',
+      service_id: 'svc-1', date: '2026-09-01',
+    };
+    // Deep copy to compare after
+    const originalSnapshot = JSON.parse(JSON.stringify(originalData));
+
+    const supabase = {
+      from: vi.fn((table: string) => {
+        if (table === 'businesses') {
+          const c: Record<string, any> = {}; c.select = () => c; c.eq = () => c;
+          c.single = vi.fn().mockResolvedValue({ data: { id: 'b1', status: 'active', subscription_tier: 'free', trial_ends_at: '2024-01-01', category: 'hotel' }, error: null });
+          return c;
+        }
+        if (table === 'business_capabilities') {
+          const d = Promise.resolve({ data: [{ capability: 'reservation', is_enabled: true, sort_order: 0 }], error: null });
+          return { select: () => ({ eq: () => ({ order: () => ({ order: () => ({ then: d.then.bind(d), catch: d.catch.bind(d) }) }) }) }) };
+        }
+        if (table === 'capability_overrides') {
+          const d = Promise.resolve({ data: [], error: null });
+          return { select: () => ({ eq: () => ({ then: d.then.bind(d), catch: d.catch.bind(d) }) }) };
+        }
+        return { select: () => ({ eq: () => ({ single: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) };
+      }),
+      // CAS FAILS
+      rpc: vi.fn().mockResolvedValue({ data: { success: false, reason: 'version_conflict' }, error: null }),
+    } as any;
+
+    const result = await requireCurrentCapability(supabase, {
+      businessId: 'b1', capability: 'reservation', action: 'create_new',
+      session: { id: 's1', version: 5, session_data: originalData },
+    });
+
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.recoveryStatus).toBe('stale');
+    }
+    // Original session_data must remain UNCHANGED
+    expect(originalData).toEqual(originalSnapshot);
+  });
+});

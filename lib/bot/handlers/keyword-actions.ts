@@ -264,8 +264,9 @@ export async function executeKeywordAction(
               return true;
             }
 
-            // CAS succeeded — update in-memory state and send recovery
-            Object.assign(session.session_data, cleanedData);
+            // CAS succeeded — replace in-memory state (deletes removed keys)
+            const { replaceSessionDataContents } = await import('@/lib/bot/capability-recovery');
+            replaceSessionDataContents(session.session_data, cleanedData);
             session.current_step = 'select_capability';
 
             const msg = buildCapabilityRecoveryMessage(capability, ufCaps, (session.session_data?.business_category as string) || 'other');

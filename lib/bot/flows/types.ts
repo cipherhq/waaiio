@@ -59,6 +59,9 @@ export interface ValidationResult {
   /** CAS-005: When true, FlowExecutor persists session_data on validation failure.
    *  Used when validation-failure cleanup must survive across messages. */
   persistSessionDataOnFailure?: boolean;
+  /** CAS-005: When true, FlowExecutor returns immediately — no messages, no
+   *  persistence, no prompts. Used when a stale CAS worker must silently exit. */
+  abortSilently?: boolean;
 }
 
 // ── Flow context (passed to every step) ──

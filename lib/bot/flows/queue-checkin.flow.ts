@@ -306,7 +306,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
       capability: 'queue',
       action: 'create_new',
     });
-    if (!capGuard.allowed) { if (capGuard.recoveryStatus === 'stale') return { valid: false, errorMessage: '' };
+    if (!capGuard.allowed) { if (capGuard.recoveryStatus === 'stale') return { valid: false, abortSilently: true };
       return { valid: false, errorMessage: capGuard.customerMessage };
     }
 

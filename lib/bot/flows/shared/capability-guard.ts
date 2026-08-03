@@ -156,7 +156,7 @@ export async function requireCurrentCapability(
     logger.warn(`[BOT-GUARD] ${action} denied: capability=${capability} reason=${detail} business=${businessId}`);
 
     // CAS-005: Build recovery message + recover session if available
-    const { buildCapabilityRecoveryMessage, recoverFromRevokedCapability } = await import('@/lib/bot/capability-recovery');
+    const { buildCapabilityRecoveryMessage, recoverFromRevokedCapability, replaceSessionDataContents } = await import('@/lib/bot/capability-recovery');
     const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
     const ufCaps = getUserFacingCapabilities(resolution.effective);
     const customerMessage = buildCapabilityRecoveryMessage(
@@ -176,8 +176,8 @@ export async function requireCurrentCapability(
         businessCategory: business.category || 'other',
       });
       if (recoveryResult.success) {
-        // CAS succeeded — update caller's in-memory state to match
-        Object.assign(params.session.session_data, clonedData);
+        // CAS succeeded — replace caller's in-memory state (deletes removed keys)
+        replaceSessionDataContents(params.session.session_data, clonedData);
         recoveryStatus = 'persisted';
       } else {
         // CAS failed (conflict or error) — caller must NOT respond

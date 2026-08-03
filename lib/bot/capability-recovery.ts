@@ -131,6 +131,21 @@ export function buildCapabilityRecoveryMessage(
   });
 }
 
+/**
+ * Replace all contents of target with replacement.
+ * Deletes existing keys NOT in replacement. Copies all replacement keys.
+ * Used after successful CAS to update the caller's in-memory state.
+ */
+export function replaceSessionDataContents(
+  target: Record<string, unknown>,
+  replacement: Record<string, unknown>,
+): void {
+  for (const key of Object.keys(target)) {
+    if (!(key in replacement)) delete target[key];
+  }
+  Object.assign(target, replacement);
+}
+
 // ── Cleanup modes ──────────────────────────────────────
 
 export type CleanupMode =

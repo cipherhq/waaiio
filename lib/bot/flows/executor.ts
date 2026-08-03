@@ -427,6 +427,9 @@ export class FlowExecutor {
     const result = await step.validate(input, ctx);
 
     if (!result.valid) {
+      // CAS-005: Stale worker must exit silently — no messages, no persistence
+      if (result.abortSilently) return;
+
       // CAS-005: Build complete conversation_log BEFORE CAS persistence
       let errText = '';
       if (result.errorMessage) {
