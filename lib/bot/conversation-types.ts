@@ -23,6 +23,14 @@ export interface ConversationUnderstanding {
   targetStep?: string;
   responseText?: string; // For knowledge answers
   corrections?: CorrectionResult[];
+  /** CAS-004: Fine-grained semantic family */
+  semanticFamily?: import('./semantic-types').SemanticFamily;
+  /** CAS-004: Requested action */
+  requestedAction?: import('./semantic-types').RequestedAction;
+  /** CAS-004: Detected language code */
+  detectedLanguage?: string;
+  /** CAS-004: Classification confidence from source (regex or LLM) */
+  classificationConfidence?: number;
 }
 
 // ── Intent taxonomy ─────────────────────────────────────

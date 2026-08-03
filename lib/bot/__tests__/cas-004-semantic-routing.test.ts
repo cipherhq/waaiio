@@ -78,10 +78,11 @@ describe('CAS-004 semantic family detection', () => {
     expect(r.semanticFamily).toBe('ordering');
   });
 
-  // Generic booking remains ambiguous-friendly
-  it('"I want to book" → service_time_booking (generic)', () => {
+  // Generic booking is now ambiguous — needs business context
+  it('"I want to book" → null (ambiguous, needs category)', () => {
     const r = parseSmartIntent('I want to book');
-    expect(r.semanticFamily).toBe('service_time_booking');
+    expect(r.semanticFamily).toBe(null);
+    expect(r.intent).toBe('booking'); // broad intent still detected
   });
 });
 
@@ -268,7 +269,7 @@ describe('CAS-004 capability-selection semantic fixes', () => {
     expect(result.data?.active_capability).toBe('scheduling');
   });
 
-  it('9b. generic "I want to book" DOES resolve to scheduling', async () => {
+  it('9b. salon generic "I want to book" resolves to scheduling via category', async () => {
     const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
     const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
     const { createMockContext } = await import('../flows/__tests__/helpers');
@@ -283,6 +284,7 @@ describe('CAS-004 capability-selection semantic fixes', () => {
 
     const result = await step.validate!('I want to book', ctx);
     expect(result.valid).toBe(true);
+    expect(result.data?.active_capability).toBe('scheduling');
   });
 
   it('31. custom label "Sow a Seed" with giving unavailable does NOT fall to payment', async () => {
@@ -433,10 +435,10 @@ describe('CAS-004 business context', () => {
     expect(family).toBe('service_time_booking');
   });
 
-  it('falls back to any available booking-family cap', () => {
+  it('hotel + only scheduling → null (zero silent guessing)', () => {
     const family = disambiguateByCategory('hotel', ['scheduling'] as CapabilityId[]);
-    // hotel suggests reservation, but only scheduling effective — falls back
-    expect(family).toBe('service_time_booking');
+    // hotel suggests reservation, but reservation not available — do NOT substitute
+    expect(family).toBe(null);
   });
 });
 

@@ -91,7 +91,12 @@ export function disambiguateByCategory(
     return suggested;
   }
 
-  // Fallback: try any booking-family capability that's effective
+  // Category-specific family is unavailable. Under zero-silent-guessing,
+  // do NOT fall back to a different booking family. Return null → clarify/menu.
+  return null;
+
+  // Dead code below — kept as documentation of why we don't fall back
+  /* istanbul ignore next */
   for (const family of ['service_time_booking', 'property_reservation', 'table_reservation'] as SemanticFamily[]) {
     const caps = FAMILY_TO_CAPABILITIES[family!];
     if (caps && effectiveCapabilities.some(c => caps.includes(c))) {

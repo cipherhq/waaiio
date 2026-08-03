@@ -532,7 +532,13 @@ function detectSemanticFamily(text: string, broadIntent: SmartParseResult['inten
 
   // Map remaining broad intents to families
   switch (broadIntent) {
-    case 'booking': return 'service_time_booking'; // generic booking → service/appointment
+    case 'booking': {
+      // Check if the text has specific service/appointment keywords vs purely generic "book"
+      const hasServiceKeywords = /\b(barb|haircut|trim|shave|massage|facial|consult|checkup|doctor|appointment|vet|tattoo|photo|lesson|class|gym|cowork|wash|clean)\b/i.test(text);
+      // If specific service words → service_time_booking
+      // If purely generic "book" / "reserve" → null (ambiguous, use business context)
+      return hasServiceKeywords ? 'service_time_booking' : null;
+    }
     case 'ordering': return 'ordering';
     case 'payment': return 'payment'; // generic payment (not giving)
     case 'ticketing': return 'ticketing';
@@ -609,7 +615,7 @@ export async function parseSmartIntentHybrid(
   timezone?: string,
   /** CAS-004: Business subscription tier — gates LLM fallback (free = no LLM) */
   subscriptionTier?: string,
-): Promise<SmartParseResult & { language?: string; llmUsed?: boolean }> {
+): Promise<SmartParseResult & { language?: string; llmUsed?: boolean; confidence?: number }> {
   // Step 1: Try regex
   const regexResult = parseSmartIntent(text, timezone);
 
@@ -708,7 +714,7 @@ export async function parseSmartIntentHybrid(
       model: 'claude-haiku-4-5-20251001',
     });
 
-    return { ...merged, language: llmResult.language, llmUsed: true };
+    return { ...merged, language: llmResult.language, llmUsed: true, confidence: llmResult.confidence };
   } catch (err) {
     logger.warn('[SMART-INTENT] LLM classification failed, using regex result:', err);
     return regexResult;

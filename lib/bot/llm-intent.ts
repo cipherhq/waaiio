@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
-import { validateSemanticFamily, validateRequestedAction, type SemanticFamily, type RequestedAction } from './semantic-types';
+import { validateSemanticFamily, validateRequestedAction, validateLanguage, type SemanticFamily, type RequestedAction } from './semantic-types';
 
 export interface LLMIntentResult {
   flow: 'booking' | 'ordering' | 'payment' | 'ticketing' | null;
@@ -120,7 +120,7 @@ export async function classifyWithLLM(
         quantity: typeof parsed.entities?.quantity === 'number' ? parsed.entities.quantity : null,
       },
       confidence: typeof parsed.confidence === 'number' ? Math.min(1, Math.max(0, parsed.confidence)) : 0,
-      language: parsed.language || 'en',
+      language: validateLanguage(parsed.language),
       // CAS-004: validate structured semantic output against allowed enums
       semanticFamily: validateSemanticFamily(parsed.semanticFamily),
       requestedAction: validateRequestedAction(parsed.requestedAction),

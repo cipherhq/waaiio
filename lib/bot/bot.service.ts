@@ -1028,8 +1028,9 @@ export class BotService {
       }
 
       // CAS-004: Early semantic parse of first message BEFORE firstStep determination.
-      // This ensures a specific semantic request (e.g., "reserve a room") does not
-      // silently enter the wrong flow when only one capability is available.
+      // Determines semantic family, requested action, and language BEFORE committing
+      // any flow. Non-CREATE_NEW actions (read_history, manage_existing, informational)
+      // are routed to existing handlers BEFORE the CREATE_NEW session is created.
       let earlySemanticFamily: string | null = null;
       let earlyRequestedAction: string | null = null;
       if (business && text && text.length > 2 && !isRestart) {
@@ -1038,6 +1039,51 @@ export class BotService {
           const earlyResult = earlyParse(text);
           earlySemanticFamily = earlyResult.semanticFamily || null;
           earlyRequestedAction = earlyResult.requestedAction || null;
+
+          // CAS-004: Route non-CREATE_NEW actions BEFORE creating a new session.
+          // This prevents "I wan see my order" from entering an ordering CREATE_NEW flow.
+          if (earlyRequestedAction && earlyRequestedAction !== 'create_new' && earlyRequestedAction !== 'navigation') {
+            const phoneP2 = from.startsWith('+') ? from : `+${from}`;
+            const phoneN2 = from.startsWith('+') ? from.slice(1) : from;
+            const { data: earlyProfile } = await this.supabase.from('profiles').select('id')
+              .or(`phone.eq.${sanitizeFilterValue(phoneP2)},phone.eq.${sanitizeFilterValue(phoneN2)}`)
+              .limit(1).maybeSingle();
+
+            if (earlyRequestedAction === 'read_history' || earlyRequestedAction === 'manage_existing') {
+              if (earlyProfile?.id) {
+                let actionHandled = false;
+                const tempSessionData = { business_id: businessId, business_name: business.name, business_category: business.category, capabilities };
+                if (earlySemanticFamily === 'ordering') {
+                  const { data: tempSess } = await this.supabase.from('bot_sessions').insert({
+                    whatsapp_number: from, user_id: earlyProfile.id, business_id: businessId,
+                    current_step: 'my_orders', session_data: tempSessionData,
+                    is_active: true, expires_at: new Date(Date.now() + 86400000).toISOString(),
+                  }).select().single();
+                  if (tempSess) { await this.handleMyOrders(tempSess as BotSession, from, ''); actionHandled = true; }
+                } else if (earlySemanticFamily === 'service_time_booking' || earlySemanticFamily === 'property_reservation' || earlySemanticFamily === 'table_reservation') {
+                  const { data: tempSess } = await this.supabase.from('bot_sessions').insert({
+                    whatsapp_number: from, user_id: earlyProfile.id, business_id: businessId,
+                    current_step: 'my_bookings', session_data: tempSessionData,
+                    is_active: true, expires_at: new Date(Date.now() + 86400000).toISOString(),
+                  }).select().single();
+                  if (tempSess) { await this.handleMyBookings(tempSess as BotSession, from, ''); actionHandled = true; }
+                }
+                if (actionHandled) return;
+              }
+              // No profile — send recoverable message instead of falling into CREATE_NEW
+              await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+              return;
+            }
+
+            if (earlyRequestedAction === 'informational') {
+              try {
+                const { answerTemporaryQuestion } = await import('./business-knowledge');
+                const bizName = business.name || 'this business';
+                const answer = await answerTemporaryQuestion(this.supabase, businessId!, { type: 'general', query: text }, bizName);
+                if (answer) { await this.sendText(from, answer); return; }
+              } catch (_) { /* fall through to normal flow if knowledge can't answer */ }
+            }
+          }
         } catch (err) { logger.warn('[BOT] Early semantic parse error (non-fatal):', err); }
       }
 
@@ -1055,15 +1101,21 @@ export class BotService {
           : 'greeting';
 
         // CAS-004: Check semantic family mismatch for sole-capability auto-skip.
-        // If customer's first message has a CREATE_NEW semantic family that doesn't
-        // match the sole capability, force the capability menu instead.
         if (business && firstStep !== 'select_capability' && firstStep !== 'greeting'
             && earlySemanticFamily && earlyRequestedAction === 'create_new') {
           const { resolveSemanticCapability } = await import('./semantic-resolver');
+          // Validate against the AUTO-SELECTED target, not the full effective set.
+          // getFirstStepFromCapabilities may hide payment when scheduling exists.
+          const nonUF = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'class_booking', 'multi_location']);
+          if (capabilities.includes('scheduling' as CapabilityId) || capabilities.includes('table_reservation' as CapabilityId)) {
+            nonUF.add('payment'); nonUF.add('invoice');
+          }
+          const userFacingCaps = capabilities.filter((c: string) => !nonUF.has(c));
+
           const resolution = resolveSemanticCapability(
             earlySemanticFamily as import('./semantic-types').SemanticFamily,
             'create_new',
-            capabilities,
+            userFacingCaps,
           );
           if (!resolution.canRoute) {
             firstStep = 'select_capability';

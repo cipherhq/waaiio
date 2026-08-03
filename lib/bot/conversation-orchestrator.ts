@@ -115,15 +115,17 @@ export class ConversationOrchestrator {
       ? intentMap[smartResult.intent]
       : 'unknown';
 
-    // Derive confidence:
-    //   - regex match with service keywords = high confidence (0.90)
-    //   - LLM match = use LLM's own confidence (mapped from the `understood` flag + intent presence)
-    //   - no match = low confidence (0.30)
-    const confidence = (smartResult.intent && smartResult.serviceKeywords.length > 0 && !('llmUsed' in smartResult && smartResult.llmUsed))
-      ? 0.90
-      : smartResult.intent
-        ? 0.70
-        : 0.30;
+    // CAS-004: Preserve real classification confidence.
+    // Regex with specific keywords = high. LLM result = actual LLM confidence. Unknown = low.
+    const isLLM = 'llmUsed' in smartResult && (smartResult as { llmUsed?: boolean }).llmUsed;
+    const llmConfidence = 'confidence' in smartResult ? (smartResult as { confidence?: number }).confidence : undefined;
+    const confidence = (smartResult.intent && smartResult.serviceKeywords.length > 0 && !isLLM)
+      ? 0.90 // deterministic regex with service match
+      : (isLLM && typeof llmConfidence === 'number')
+        ? llmConfidence // real LLM confidence
+        : smartResult.intent
+          ? 0.70 // regex intent without keywords
+          : 0.30; // no match
 
     const understanding: ConversationUnderstanding = {
       mode: businessId ? 'business' : 'marketplace',
@@ -133,6 +135,11 @@ export class ConversationOrchestrator {
       missingFields: this.computeMissingFields(intent, entities),
       ambiguities: [],
       recommendedAction: 'fallback_menu', // Will be set by confidence policy
+      // CAS-004: Propagate canonical semantic fields
+      semanticFamily: smartResult.semanticFamily || undefined,
+      requestedAction: smartResult.requestedAction || undefined,
+      detectedLanguage: ('language' in smartResult) ? (smartResult as { language?: string }).language : undefined,
+      classificationConfidence: confidence,
     };
 
     // 5. Apply confidence policy

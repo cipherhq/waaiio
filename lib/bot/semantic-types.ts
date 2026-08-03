@@ -61,3 +61,14 @@ export function validateRequestedAction(value: unknown): RequestedAction {
   }
   return null;
 }
+
+/** Valid language codes */
+const VALID_LANGUAGE_CODES = ['en', 'pcm', 'yo', 'ig', 'ha', 'tw', 'fr', 'es'];
+
+/** Validate LLM language output against canonical supported codes */
+export function validateLanguage(value: unknown): string {
+  if (typeof value === 'string' && VALID_LANGUAGE_CODES.includes(value)) {
+    return value;
+  }
+  return 'en'; // default to English for invalid/unknown
+}
