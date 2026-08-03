@@ -34,6 +34,8 @@ export interface BotCapabilityGuardDenied {
   reason: string;
   /** Human-readable message suitable for the customer */
   customerMessage: string;
+  /** CAS-005: Recovery status — caller must obey 'stale' by not responding */
+  recoveryStatus?: 'persisted' | 'stale' | 'not_attempted';
 }
 
 export type BotCapabilityGuardResult = BotCapabilityGuardAllowed | BotCapabilityGuardDenied;
@@ -55,6 +57,8 @@ export async function requireCurrentCapability(
     businessId: string;
     capability: CapabilityId;
     action: CapabilityAction;
+    /** CAS-005: Session context for recovery on denial */
+    session?: { id: string; version: number; session_data: Record<string, unknown> };
   },
 ): Promise<BotCapabilityGuardResult> {
   const { businessId, capability, action } = params;
@@ -151,10 +155,41 @@ export async function requireCurrentCapability(
     const detail = blockedEntry?.reason || 'capability_not_effective';
     logger.warn(`[BOT-GUARD] ${action} denied: capability=${capability} reason=${detail} business=${businessId}`);
 
+    // CAS-005: Build recovery message + recover session if available
+    const { buildCapabilityRecoveryMessage, recoverFromRevokedCapability, replaceSessionDataContents } = await import('@/lib/bot/capability-recovery');
+    const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
+    const ufCaps = getUserFacingCapabilities(resolution.effective);
+    const customerMessage = buildCapabilityRecoveryMessage(
+      capability, ufCaps, business.category || 'other',
+    );
+
+    // CAS-005: If session context provided, attempt CAS recovery
+    let recoveryStatus: 'persisted' | 'stale' | 'not_attempted' = 'not_attempted';
+    if (params.session && action === 'create_new') {
+      // Clone session data — do NOT mutate caller's in-memory state before CAS success
+      const clonedData = JSON.parse(JSON.stringify(params.session.session_data));
+      const recoveryResult = await recoverFromRevokedCapability({
+        supabase, sessionId: params.session.id, sessionVersion: params.session.version,
+        sessionData: clonedData, // operates on clone
+        revokedCapability: capability,
+        effectiveCapabilities: resolution.effective,
+        businessCategory: business.category || 'other',
+      });
+      if (recoveryResult.success) {
+        // CAS succeeded — replace caller's in-memory state (deletes removed keys)
+        replaceSessionDataContents(params.session.session_data, clonedData);
+        recoveryStatus = 'persisted';
+      } else {
+        // CAS failed (conflict or error) — caller must NOT respond
+        recoveryStatus = 'stale';
+      }
+    }
+
     return {
       allowed: false,
       reason: detail,
-      customerMessage: 'This service is currently unavailable. Please contact the business owner or try again later.',
+      customerMessage,
+      recoveryStatus,
     };
   }
 

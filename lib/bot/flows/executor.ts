@@ -427,21 +427,38 @@ export class FlowExecutor {
     const result = await step.validate(input, ctx);
 
     if (!result.valid) {
+      // CAS-005: Stale worker must exit silently — no messages, no persistence
+      if (result.abortSilently) return;
+
+      // CAS-005: Build complete conversation_log BEFORE CAS persistence
+      let errText = '';
       if (result.errorMessage) {
         const translatedError = await this.maybeTranslate(result.errorMessage, session);
         const cancelHint = await this.maybeTranslate('Type *back* to go back, *menu* to restart, or *exit* to leave.', session);
-        const errText = `${translatedError}\n\n_${cancelHint}_`;
+        errText = `${translatedError}\n\n_${cancelHint}_`;
         session.conversation_log.push({ role: 'bot', content: errText, timestamp: new Date().toISOString() });
-        await this.sendText(from, errText);
       }
-      // Re-send interactive prompts (buttons/list) so user gets fresh clickable options
-      // WhatsApp buttons are single-use — once tapped, they gray out
       const retryMessages = await step.prompt(ctx);
-      if (retryMessages.some(m => m.type === 'buttons' || m.type === 'list')) {
+      const hasInteractive = retryMessages.some(m => m.type === 'buttons' || m.type === 'list');
+      if (hasInteractive) {
         this.logPromptMessages(session, retryMessages);
-        await this.sendMessages(from, retryMessages);
       }
-      await this.persistConversationLog(session.id, session.conversation_log);
+
+      if (result.persistSessionDataOnFailure) {
+        // CAS-005: ONE atomic persistence with complete conversation_log
+        const casSaved = await this.casUpdateSession(session, {
+          current_step: session.current_step,
+          session_data: session.session_data,
+          conversation_log: session.conversation_log,
+        });
+        if (!casSaved) return; // Stale worker — send nothing
+      } else {
+        await this.persistConversationLog(session.id, session.conversation_log);
+      }
+
+      // Send responses AFTER successful persistence
+      if (errText) await this.sendText(from, errText);
+      if (hasInteractive) await this.sendMessages(from, retryMessages);
       return;
     }
 

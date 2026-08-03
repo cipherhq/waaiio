@@ -1716,14 +1716,14 @@ export class BotService {
       const rebookCap = isGivingRebook ? 'giving' : 'scheduling';
       const currentCaps = (session.session_data.capabilities as CapabilityId[]) || [];
       if (!currentCaps.includes(rebookCap as CapabilityId)) {
-        // Capability no longer effective — clean up rebook state
-        delete session.session_data._quick_rebook_service_id;
-        delete session.session_data._quick_rebook_service_name;
-        delete session.session_data._rebook_flow_type;
-        delete session.session_data._rebook_is_giving;
-        delete session.session_data._quick_rebook_sent;
+        // CAS-005: Capability unavailable — use shared recovery
+        const { clearRejectedTransactionalState, buildCapabilityRecoveryMessage } = await import('./capability-recovery');
+        const { getUserFacingCapabilities } = await import('./handlers/flow-routing');
+        clearRejectedTransactionalState(session.session_data);
+        const ufCaps = getUserFacingCapabilities(currentCaps);
+        const recoveryMsg = buildCapabilityRecoveryMessage(rebookCap, ufCaps, (session.session_data.business_category as string) || 'other');
         await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
-        await this.sendText(from, 'This service is currently unavailable. Send *Hi* to see what\'s available.');
+        await this.sendText(from, recoveryMsg);
         return;
       }
 

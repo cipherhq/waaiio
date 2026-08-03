@@ -293,7 +293,24 @@ const selectCapabilityStep: FlowStepConfig = {
     }
 
     if (!capId || !capabilities.includes(capId)) {
-      return { valid: false, errorMessage: 'I didn\'t understand that. Try typing *book*, *order*, *tickets*, or tap *View Options* to see the menu.' };
+      // CAS-005: Build a helpful recovery message showing valid alternatives
+      const { buildRecoveryMessage, clearRejectedTransactionalState } = await import('@/lib/bot/capability-recovery');
+      const { getUserFacingCapabilities: getUF } = await import('@/lib/bot/handlers/flow-routing');
+      const ufCaps = getUF(capabilities);
+
+      // Clear any transactional state from the rejected request
+      clearRejectedTransactionalState(ctx.session.session_data);
+
+      // Determine the requested semantic family for the message
+      const requestedFamily = ctx.currentCanonical?.semanticFamily || null;
+
+      const recoveryMsg = buildRecoveryMessage({
+        requestedFamily,
+        effectiveUserFacing: ufCaps,
+        businessCategory: category,
+      });
+
+      return { valid: false, errorMessage: recoveryMsg, persistSessionDataOnFailure: true };
     }
 
     // Entity extraction: use ctx.currentCanonical if available, otherwise ONE fresh parse

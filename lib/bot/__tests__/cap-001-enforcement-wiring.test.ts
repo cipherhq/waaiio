@@ -208,8 +208,8 @@ describe('CAP-001 quick_rebook via BotService.handleMessage', () => {
     const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
     await bot.handleMessage(TEST_PHONE, 'quick_rebook', 'text');
 
-    // Assert: recoverable unavailable message sent
-    expect(sender.hasMessageContaining('unavailable')).toBe(true);
+    // Assert: recoverable message sent (CAS-005 says "not available")
+    expect(sender.hasMessageContaining('not available')).toBe(true);
 
     // Assert: rebook state cleaned in session update
     const sessionUpdates = updateTracker.filter(u => u.table === 'bot_sessions');

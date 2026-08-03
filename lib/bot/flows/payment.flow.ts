@@ -319,11 +319,12 @@ export const paymentFlow: FlowDefinition = {
           const { requireCurrentCapability } = await import('./shared/capability-guard');
           const activeCap = (d.active_capability as string) || 'payment';
           const capGuard = await requireCurrentCapability(ctx.supabase, {
+            session: { id: ctx.session.id, version: ctx.session.version, session_data: ctx.session.session_data },
             businessId: ctx.business.id,
             capability: activeCap as import('@/lib/capabilities/types').CapabilityId,
             action: 'create_new',
           });
-          if (!capGuard.allowed) {
+          if (!capGuard.allowed) { if (capGuard.recoveryStatus === 'stale') return [];
             return [{ type: 'text' as const, text: await ctx.t(capGuard.customerMessage) }];
           }
         }

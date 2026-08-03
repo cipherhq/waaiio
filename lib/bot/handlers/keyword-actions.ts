@@ -240,7 +240,37 @@ export async function executeKeywordAction(
           // CAP-001 Point B: Verify capability is currently effective before starting
           const currentCaps = (session.session_data?.capabilities as string[]) || [];
           if (!currentCaps.includes(capability)) {
-            await sendText(from, 'This service is currently unavailable. Send *Hi* to see what\'s available.');
+            // CAS-005: Clean, persist via CAS, then send recovery
+            const { cleanupByMode, buildCapabilityRecoveryMessage } = await import('@/lib/bot/capability-recovery');
+            const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
+
+            // Clone and clean — don't mutate before CAS success
+            const cleanedData = JSON.parse(JSON.stringify(session.session_data));
+            cleanupByMode(cleanedData, 'selection_rejection');
+            cleanedData.capabilities = currentCaps;
+
+            const ufCaps = getUserFacingCapabilities(currentCaps as import('@/lib/capabilities/types').CapabilityId[]);
+
+            // CAS persist: move to select_capability
+            const { data: casResult } = await supabase.rpc('update_session_cas', {
+              p_session_id: session.id,
+              p_expected_version: (session as { version?: number }).version || 0,
+              p_current_step: 'select_capability',
+              p_session_data: cleanedData,
+            });
+
+            if (!casResult?.success) {
+              // Stale worker — send nothing
+              return true;
+            }
+
+            // CAS succeeded — replace in-memory state (deletes removed keys)
+            const { replaceSessionDataContents } = await import('@/lib/bot/capability-recovery');
+            replaceSessionDataContents(session.session_data, cleanedData);
+            session.current_step = 'select_capability';
+
+            const msg = buildCapabilityRecoveryMessage(capability, ufCaps, (session.session_data?.business_category as string) || 'other');
+            await sendText(from, msg);
             return true;
           }
           session.session_data.active_capability = capability;
