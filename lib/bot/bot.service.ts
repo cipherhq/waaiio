@@ -1168,8 +1168,9 @@ export class BotService {
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
             ...(canonicalActivatedLanguage ? { _detected_language: canonicalActivatedLanguage } : {}),
-            // CAS-004: Store ONE canonical result object — consumed once by capability-selection
-            ...(canonicalResult ? { _canonical_result: {
+            // CAS-004: Store canonical result ONLY when select_capability will consume it.
+            // Direct routes (directCanonicalCap) apply entities via prefill block above.
+            ...(!directCanonicalCap && !deepLinkCapability && canonicalResult ? { _canonical_result: {
               semanticFamily: canonicalResult.semanticFamily,
               requestedAction: canonicalResult.requestedAction,
               confidence: canonicalResult.confidence,
@@ -1416,97 +1417,66 @@ export class BotService {
           logger.error('[BOT] Welcome buttons error (non-fatal):', err);
         }
 
-        // ── Smart Intent: parse first message for entities ──
-        // If user said something rich like "I wan barb tomorrow morning",
-        // extract service, date, time, quantity and pre-fill session data
-        // so the flow can skip already-answered steps.
-        if (text && text.length > 2 && !isRestart) {
+        // ── CAS-004: Entity prefill from canonical result (NO second classification) ──
+        // Uses canonicalResult.entities from understandCanonicalMessage().
+        // Does NOT call parseSmartIntentHybrid again.
+        if (canonicalResult && business) {
           try {
-            const bizTimezone = (waConfig?.business_hours as BusinessHours | undefined)?.timezone;
-            const parsed = await parseSmartIntentHybrid(text, business?.category || null, this.supabase, business?.id || null, bizTimezone, business?.subscription_tier);
+            const ents = canonicalResult.entities;
 
-            // CAS-004: Store semantic family for downstream routing check
-            if (parsed.semanticFamily) {
-              session.session_data._parsed_semantic_family = parsed.semanticFamily;
-            }
-            if (parsed.requestedAction) {
-              session.session_data._parsed_requested_action = parsed.requestedAction;
+            // Match service keywords against business services
+            if (ents.serviceKeywords.length > 0) {
+              const matched = await matchServiceFromKeywords(this.supabase, business.id, ents.serviceKeywords);
+              if (matched) {
+                session.session_data.service_id = matched.id;
+                session.session_data.service_name = matched.name;
+                session.session_data.service_price = matched.price;
+                session.session_data.service_duration = matched.duration_minutes;
+                session.session_data.service_deposit = matched.deposit_amount || 0;
+                session.session_data.service_billing_type = matched.billing_type || 'one_time';
+                session.session_data.service_recurring_interval = matched.recurring_interval || null;
+                session.session_data.skip_service = true;
+              }
             }
 
-            // Store detected language as pending — confirmation already sent during session creation
-            if ('language' in parsed && parsed.language && parsed.language !== 'en' && !session.session_data._detected_language) {
-              session.session_data._pending_language = parsed.language;
+            // Pre-fill date (validate: future, max 90 days)
+            if (ents.date) {
+              const selected = new Date(ents.date + 'T00:00');
+              const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()); tomorrow.setHours(0, 0, 0, 0);
+              const maxDate = new Date(); maxDate.setDate(maxDate.getDate() + 90);
+              if (selected >= tomorrow && selected <= maxDate) {
+                session.session_data.date = ents.date;
+              }
+            }
+            if (ents.specificTime) session.session_data.time = ents.specificTime;
+            if (ents.timePreference) session.session_data._time_preference = ents.timePreference;
+            if (ents.quantity && ents.quantity >= 1 && ents.quantity <= 20) {
+              session.session_data.party_size = ents.quantity;
             }
 
-            if (parsed.understood && business) {
-              // Match service keywords against business services
-              if (parsed.serviceKeywords.length > 0) {
-                const matched = await matchServiceFromKeywords(this.supabase, business.id, parsed.serviceKeywords);
-                if (matched) {
-                  session.session_data.service_id = matched.id;
-                  session.session_data.service_name = matched.name;
-                  session.session_data.service_price = matched.price;
-                  session.session_data.service_duration = matched.duration_minutes;
-                  session.session_data.service_deposit = matched.deposit_amount || 0;
-                  session.session_data.service_billing_type = matched.billing_type || 'one_time';
-                  session.session_data.service_recurring_interval = matched.recurring_interval || null;
-                  session.session_data.skip_service = true;
+            // Favorite service suggestion
+            if (!session.session_data.service_id) {
+              const hist = session.session_data._customer_history as { favoriteServiceId?: string; favoriteServiceName?: string } | undefined;
+              if (hist?.favoriteServiceId) {
+                const { data: favService } = await this.supabase
+                  .from('services')
+                  .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval')
+                  .eq('id', hist.favoriteServiceId).eq('is_active', true).maybeSingle();
+                if (favService) {
+                  session.session_data._suggested_service_id = favService.id;
+                  session.session_data._suggested_service_name = favService.name;
                 }
               }
+            }
 
-              // Pre-fill date
-              if (parsed.date) {
-                // Validate: must be future, max 90 days
-                const selected = new Date(parsed.date + 'T00:00');
-                const tomorrow = new Date();
-                tomorrow.setDate(tomorrow.getDate());
-                tomorrow.setHours(0, 0, 0, 0);
-                const maxDate = new Date();
-                maxDate.setDate(maxDate.getDate() + 90);
-                if (selected >= tomorrow && selected <= maxDate) {
-                  session.session_data.date = parsed.date;
-                }
-              }
+            // Persist pre-filled data
+            await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
 
-              // Pre-fill time
-              if (parsed.specificTime) {
-                session.session_data.time = parsed.specificTime;
-              }
-              if (parsed.timePreference) {
-                session.session_data._time_preference = parsed.timePreference;
-              }
-
-              // Pre-fill quantity
-              if (parsed.quantity && parsed.quantity >= 1 && parsed.quantity <= 20) {
-                session.session_data.party_size = parsed.quantity;
-              }
-
-              // If no service matched but customer has a favorite, suggest it
-              if (!session.session_data.service_id) {
-                const hist = session.session_data._customer_history as { favoriteServiceId?: string; favoriteServiceName?: string } | undefined;
-                if (hist?.favoriteServiceId) {
-                  const { data: favService } = await this.supabase
-                    .from('services')
-                    .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval')
-                    .eq('id', hist.favoriteServiceId)
-                    .eq('is_active', true)
-                    .maybeSingle();
-                  if (favService) {
-                    session.session_data._suggested_service_id = favService.id;
-                    session.session_data._suggested_service_name = favService.name;
-                  }
-                }
-              }
-
-              // Persist pre-filled data
-              await this.supabase.from('bot_sessions').update({
-                session_data: session.session_data,
-              }).eq('id', session.id);
-
-              // Send smart acknowledgment
+            // Send smart acknowledgment using canonical entities
+            if (canonicalResult.broadIntent || ents.serviceKeywords.length > 0 || ents.date) {
               const locale = getLocale((business.country_code || 'NG') as CountryCode);
               const ack = buildAcknowledgment(
-                parsed,
+                { understood: true, intent: canonicalResult.broadIntent as any, serviceKeywords: ents.serviceKeywords, date: ents.date, specificTime: ents.specificTime, timePreference: ents.timePreference as any, quantity: ents.quantity, amount: ents.amount, variantKeywords: ents.variantKeywords },
                 session.session_data.service_name as string | null,
                 locale,
               );
@@ -1517,7 +1487,7 @@ export class BotService {
               }
             }
           } catch (err) {
-            logger.error('[BOT] Smart intent parse error (non-fatal):', err);
+            logger.error('[BOT] Entity prefill error (non-fatal):', err);
           }
         }
 

@@ -35,10 +35,10 @@ const DEFAULTS: AIConfig = {
 };
 
 // Only production-certified languages are selectable.
+// Must match CERTIFIED_LANGUAGES in lib/bot/language-policy.ts.
 // Expand after controlled language-quality acceptance testing.
 const CERTIFIED_LANGUAGE_OPTIONS: Array<{ code: string; name: string }> = [
   { code: 'en', name: 'English' },
-  { code: 'pcm', name: 'Nigerian Pidgin' },
 ];
 
 export default function AISettingsPage() {
