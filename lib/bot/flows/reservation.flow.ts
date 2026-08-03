@@ -790,6 +790,7 @@ export const reservationFlow: FlowDefinition = {
           guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
           guest_email: (d.email as string) || null,
           channel: 'whatsapp',
+          bot_session_id: ctx.session.id,
         };
 
         // If reservation already exists (e.g. retry_payment), skip INSERT and reuse existing
@@ -819,10 +820,22 @@ export const reservationFlow: FlowDefinition = {
           .single();
 
         if (insertError || !resData) {
-          logger.withContext({ op: 'reservation.create', ...safeLogErrorContext(insertError) }).error('[RESERVATION] Failed to create reservation');
-          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+          // Check if this is a duplicate from the same session (UNIQUE constraint on bot_session_id)
+          const { data: existing } = await ctx.supabase
+            .from('reservations')
+            .select('id, reference_code')
+            .eq('bot_session_id', ctx.session.id)
+            .in('status', ['pending', 'confirmed'])
+            .single();
+          if (existing) {
+            reservation = existing;
+          } else {
+            logger.withContext({ op: 'reservation.create', ...safeLogErrorContext(insertError) }).error('[RESERVATION] Failed to create reservation');
+            return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+          }
+        } else {
+          reservation = resData;
         }
-        reservation = resData;
 
         d.reservation_id = reservation.id;
         d.reference_code = reservation.reference_code;

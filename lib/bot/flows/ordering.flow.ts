@@ -2513,6 +2513,7 @@ export const orderingFlow: FlowDefinition = {
           promo_code_id: (d.promo_code_id as string) || null,
           channel: 'whatsapp',
           notes: d.delivery_type === 'pickup' ? 'Pickup order' : null,
+          bot_session_id: ctx.session.id,
         };
 
         // Add new ordering building block fields
@@ -2541,31 +2542,46 @@ export const orderingFlow: FlowDefinition = {
             .single();
 
           if (error || !orderData) {
-            return [{ type: 'text', text: 'Something went wrong on our end creating your order. Send *Hi* to start over.' }];
-          }
-          order = orderData;
-
-          // Create order items (with addons) and decrement stock
-          for (const item of cart) {
-            const itemPayload: Record<string, unknown> = {
-              order_id: order.id,
-              product_id: item.product_id,
-              quantity: item.quantity,
-              unit_price: item.price,
-              variant_id: item.variant_id || null,
-              variant_label: item.variant_label || null,
-            };
-            if (item.addons && item.addons.length > 0) {
-              itemPayload.addons = item.addons;
+            // Check if this is a duplicate from the same session (UNIQUE constraint on bot_session_id)
+            const { data: existing } = await ctx.supabase
+              .from('orders')
+              .select('id, reference_code')
+              .eq('bot_session_id', ctx.session.id)
+              .in('status', ['pending', 'confirmed'])
+              .single();
+            if (existing) {
+              order = existing;
+              d.order_id = order.id;
+              d.reference_code = order.reference_code;
+              // Skip item creation — already done on first attempt
+            } else {
+              return [{ type: 'text', text: 'Something went wrong on our end creating your order. Send *Hi* to start over.' }];
             }
-            await ctx.supabase.from('order_items').insert(itemPayload);
+          } else {
+            order = orderData;
 
-            // Stock is decremented AFTER payment verification in await_order_payment.validate()
-            // For free orders, it's decremented below before confirmation.
+            // Create order items (with addons) and decrement stock
+            for (const item of cart) {
+              const itemPayload: Record<string, unknown> = {
+                order_id: order.id,
+                product_id: item.product_id,
+                quantity: item.quantity,
+                unit_price: item.price,
+                variant_id: item.variant_id || null,
+                variant_label: item.variant_label || null,
+              };
+              if (item.addons && item.addons.length > 0) {
+                itemPayload.addons = item.addons;
+              }
+              await ctx.supabase.from('order_items').insert(itemPayload);
+
+              // Stock is decremented AFTER payment verification in await_order_payment.validate()
+              // For free orders, it's decremented below before confirmation.
+            }
+
+            d.order_id = order.id;
+            d.reference_code = order.reference_code;
           }
-
-          d.order_id = order.id;
-          d.reference_code = order.reference_code;
         }
         d.total_amount = total;
         d.shipping_cost = shippingCost;

@@ -550,14 +550,27 @@ export const ticketingFlow: FlowDefinition = {
               guest_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
               guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
               notes: `Tickets for: ${d.event_name}`,
+              bot_session_id: ctx.session.id,
             })
             .select('id, reference_code')
             .single();
 
           if (error || !bookingData) {
-            return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+            // Check if this is a duplicate from the same session (UNIQUE constraint on bot_session_id)
+            const { data: existing } = await ctx.supabase
+              .from('bookings')
+              .select('id, reference_code')
+              .eq('bot_session_id', ctx.session.id)
+              .in('status', ['pending', 'confirmed'])
+              .single();
+            if (existing) {
+              booking = existing;
+            } else {
+              return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+            }
+          } else {
+            booking = bookingData;
           }
-          booking = bookingData;
 
           // tickets_sold is incremented AFTER payment verification in await_ticket_payment.validate()
           // For free events, it's incremented below before confirmation.

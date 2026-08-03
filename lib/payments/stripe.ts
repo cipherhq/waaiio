@@ -41,7 +41,9 @@ export class StripeGateway implements PaymentGateway {
   name = 'stripe' as const;
 
   async initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null> {
-    const idempotencyKey = randomUUID();
+    // Stable idempotency key derived from the authoritative referenceCode.
+    // Same logical payment retry → same Stripe key. Different payment → different key.
+    const idempotencyKey = `checkout_${opts.referenceCode}`;
 
     try {
       const stripeSecretKey = getStripeKey();
@@ -49,7 +51,7 @@ export class StripeGateway implements PaymentGateway {
         if (process.env.NODE_ENV === 'production') {
           throw new Error('Payment gateway not configured: missing Stripe secret key');
         }
-        const mockRef = `mock_stripe_${idempotencyKey}`;
+        const mockRef = `mock_stripe_${opts.referenceCode}`;
         await opts.supabase.from('payments').insert({
           booking_id: opts.bookingId || null,
           invoice_id: opts.invoiceId || null,
@@ -118,7 +120,9 @@ export class StripeGateway implements PaymentGateway {
 
       const stripeRef = sessionData.id as string;
 
-      const { data: payment } = await opts.supabase.from('payments').insert({
+      // Insert payment record — if gateway_reference already exists (idempotent retry),
+      // the UNIQUE constraint prevents a duplicate; look up the existing row instead.
+      let { data: payment } = await opts.supabase.from('payments').insert({
         booking_id: opts.bookingId || null,
         invoice_id: opts.invoiceId || null,
         campaign_id: opts.campaignId || null,
@@ -138,6 +142,16 @@ export class StripeGateway implements PaymentGateway {
           order_id: opts.orderId || null,
         },
       }).select().single();
+
+      if (!payment) {
+        // Likely UNIQUE constraint on gateway_reference — reuse existing payment
+        const { data: existing } = await opts.supabase
+          .from('payments')
+          .select()
+          .eq('gateway_reference', stripeRef)
+          .single();
+        payment = existing;
+      }
 
       if (payment && opts.bookingId) {
         await opts.supabase.from('bookings').update({ payment_id: payment.id }).eq('id', opts.bookingId);
