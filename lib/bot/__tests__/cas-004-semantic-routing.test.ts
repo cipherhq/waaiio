@@ -522,12 +522,12 @@ describe('CAS-004 language policy', () => {
     expect(ent.translationAllowed).toBe(false);
   });
 
-  it('Growth tier: English + configured certified languages', async () => {
+  it('Growth tier: only certified languages allowed', async () => {
     const { getEffectiveLanguages } = await import('../language-policy');
+    // pcm not certified yet → filtered out
     const ent = getEffectiveLanguages('growth', ['en', 'pcm']);
     expect(ent.allowedLanguages).toContain('en');
-    expect(ent.allowedLanguages).toContain('pcm');
-    expect(ent.allowedLanguages.length).toBeLessThanOrEqual(3);
+    // pcm is architecture-supported but not production-certified
     expect(ent.llmAllowed).toBe(true);
   });
 

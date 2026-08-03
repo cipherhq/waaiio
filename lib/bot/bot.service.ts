@@ -1034,6 +1034,8 @@ export class BotService {
       // ═══════════════════════════════════════════════════════════
       let canonicalResult: import('./canonical-understanding').CanonicalUnderstanding | null = null;
       let directCanonicalCap: string | null = null; // High-confidence direct routing target
+      let canonicalActivatedLanguage: string | null = null; // Seamlessly activated language
+      let forceCapabilityMenu = false; // CAS-004: confidence/semantic forces menu
       if (business && text && text.length > 2 && !isRestart) {
         try {
           const { understandCanonicalMessage } = await import('./canonical-understanding');
@@ -1054,11 +1056,11 @@ export class BotService {
           const { loadConversationConfig } = await import('./confidence-policy');
           const convConfig = await loadConversationConfig(this.supabase, business.id);
           if (canonicalResult.confidence > 0 && canonicalResult.confidence < convConfig.clarificationThreshold) {
-            // Below clarification threshold → configured fallback (menu/clarification)
-            // Let normal flow handle it (select_capability menu)
+            // Below clarification threshold → force menu, no auto-route
+            forceCapabilityMenu = true;
           } else if (canonicalResult.confidence >= convConfig.clarificationThreshold && canonicalResult.confidence < convConfig.autoRouteThreshold) {
-            // Clarification band → show menu, don't auto-route
-            // Continue to normal flow (select_capability will show menu)
+            // Clarification band → force menu, no auto-route
+            forceCapabilityMenu = true;
           } else if (canonicalResult.confidence >= convConfig.autoRouteThreshold) {
             // High confidence — eligible for action/capability routing
 
@@ -1093,27 +1095,37 @@ export class BotService {
               if (routeFamily) {
                 const resolution = resolveSemanticCapability(routeFamily, 'create_new', ufCaps);
                 if (resolution.canRoute && resolution.matchedCapability) {
-                  // Direct canonical routing — skip capability menu
                   directCanonicalCap = resolution.matchedCapability;
+                } else {
+                  // Family unavailable — force menu regardless of confidence
+                  forceCapabilityMenu = true;
                 }
-                // If family doesn't match → forceCapabilityMenu set below
+              } else if (canonicalResult.broadIntent === 'booking') {
+                // Generic booking, category disambiguation returned null (unavailable)
+                // → force menu regardless of confidence (zero silent substitution)
+                forceCapabilityMenu = true;
               }
             }
           }
 
-          // Seamless language activation: if high confidence + entitled language
+          // Seamless language activation: high confidence + entitled + certified → auto-activate
+          const { CERTIFIED_LANGUAGES } = await import('./language-policy');
           if (canonicalResult.language && canonicalResult.language !== 'en'
               && canonicalResult.confidence >= convConfig.autoRouteThreshold
-              && canonicalResult.languageEntitlement.allowedLanguages.includes(canonicalResult.language)) {
-            // Will be stored in session_data for auto-activation (no confirmation needed)
+              && canonicalResult.languageEntitlement.allowedLanguages.includes(canonicalResult.language)
+              && CERTIFIED_LANGUAGES.includes(canonicalResult.language)) {
+            // Store for auto-activation — legacy detector will see this and skip confirmation
+            canonicalActivatedLanguage = canonicalResult.language;
           }
         } catch (err) { logger.warn('[BOT] CAS-004 canonical understanding error (non-fatal):', err); }
       }
 
-      // Deep-link
+      // Deep-link / firstStep determination
       let firstStep: string;
-      let forceCapabilityMenu = false;
-      if (business && deepLinkCapability && capabilities.includes(deepLinkCapability as CapabilityId)) {
+      if (forceCapabilityMenu) {
+        // CAS-004: Confidence/semantic forced menu — override all auto-selection
+        firstStep = business ? 'select_capability' : 'greeting';
+      } else if (business && deepLinkCapability && capabilities.includes(deepLinkCapability as CapabilityId)) {
         firstStep = this.capabilityToFirstStep(deepLinkCapability as CapabilityId);
       } else if (directCanonicalCap) {
         // CAS-004: High-confidence direct canonical routing
@@ -1155,7 +1167,14 @@ export class BotService {
             ...(deepLinkCapability ? { _deep_link_capability: deepLinkCapability } : {}),
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
+            ...(canonicalActivatedLanguage ? { _detected_language: canonicalActivatedLanguage } : {}),
             ...(canonicalResult?.semanticFamily ? { _parsed_semantic_family: canonicalResult.semanticFamily } : {}),
+            // CAS-004: Preserve canonical entities for flow prefill
+            ...(canonicalResult?.entities?.date ? { date: canonicalResult.entities.date } : {}),
+            ...(canonicalResult?.entities?.specificTime ? { time: canonicalResult.entities.specificTime } : {}),
+            ...(canonicalResult?.entities?.timePreference ? { _time_preference: canonicalResult.entities.timePreference } : {}),
+            ...(canonicalResult?.entities?.quantity ? { party_size: canonicalResult.entities.quantity } : {}),
+            ...(canonicalResult?.entities?.amount ? { amount: canonicalResult.entities.amount } : {}),
             ...(canonicalResult?.requestedAction ? { _parsed_requested_action: canonicalResult.requestedAction } : {}),
           }
         : { ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}) };
@@ -2027,9 +2046,10 @@ export class BotService {
           supabase: this.supabase,
         });
 
-        // Language blocked
+        // Language blocked — use actual allowed language names
         if (resumedUnderstanding.languageBlocked) {
-          await this.sendText(from, 'This business currently supports English only. Please send your message in English.');
+          const rLangNames = resumedUnderstanding.allowedLanguageNames || ['English'];
+          await this.sendText(from, `This business currently supports ${rLangNames.join(' and ')}. Please send your message in ${rLangNames.length === 1 ? rLangNames[0] : 'one of those languages'}.`);
           return;
         }
 

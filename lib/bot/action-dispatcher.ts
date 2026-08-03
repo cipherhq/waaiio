@@ -32,7 +32,7 @@ export interface ActionDispatchParams {
 
 export interface ActionDispatchResult {
   handled: boolean;
-  reason?: 'unsupported_action' | 'no_profile' | 'no_handler';
+  reason?: 'unsupported_action' | 'no_profile' | 'no_handler' | 'session_create_failed' | 'handler_failed';
 }
 
 export async function dispatchAction(
@@ -67,7 +67,7 @@ export async function dispatchAction(
       handler = async () => {
         const { handleMyOrders } = await import('./handlers/my-orders');
         const routeToMenu = async (_s: BotSession, _f: string) => {};
-        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!);
+        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!, existingSessionId);
         if (!sess) throw new Error('session_create_failed');
         await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess as BotSession, from, '');
       };
@@ -75,7 +75,7 @@ export async function dispatchAction(
       targetStep = 'my_bookings';
       handler = async () => {
         const { handleMyBookings } = await import('./handlers/my-bookings');
-        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!);
+        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!, existingSessionId);
         if (!sess) throw new Error('session_create_failed');
         await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess as BotSession, from, '');
       };
@@ -93,7 +93,7 @@ export async function dispatchAction(
       targetStep = 'my_bookings';
       handler = async () => {
         const { handleMyBookings } = await import('./handlers/my-bookings');
-        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!);
+        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!, existingSessionId);
         if (!sess) throw new Error("session_create_failed");
         await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess as BotSession, from, '');
       };
@@ -102,7 +102,7 @@ export async function dispatchAction(
       handler = async () => {
         const { handleMyOrders } = await import('./handlers/my-orders');
         const routeToMenu = async (_s: BotSession, _f: string) => {};
-        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!);
+        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!, existingSessionId);
         if (!sess) throw new Error("session_create_failed");
         await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess as BotSession, from, '');
       };
@@ -136,22 +136,18 @@ export async function dispatchAction(
   // INFORMATIONAL preserves the existing session (customer may be mid-flow)
   const preserveSession = requestedAction === 'informational';
 
-  if (!preserveSession) {
-    // Deactivate existing session (handler confirmed available)
-    if (existingSessionId) {
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', existingSessionId);
-    }
-    // Clean up old inactive sessions
-    await supabase.from('bot_sessions').delete()
-      .eq('whatsapp_number', from).eq('is_active', false).eq('business_id', businessId);
-  }
+  // Session transition is handled INSIDE the handler (after destination session
+  // is successfully created). The handler throws on failure, preserving the
+  // original session.
 
   try {
     await handler();
     return { handled: true };
   } catch (err) {
-    logger.error('[ACTION-DISPATCH] Handler execution failed:', err);
-    return { handled: false, reason: 'no_handler' };
+    const errMsg = err instanceof Error ? err.message : String(err);
+    logger.error('[ACTION-DISPATCH] Handler execution failed:', errMsg);
+    const reason = errMsg === 'session_create_failed' ? 'session_create_failed' as const : 'handler_failed' as const;
+    return { handled: false, reason };
   }
 }
 
@@ -162,8 +158,14 @@ async function createActionSession(
   businessId: string,
   sessionData: Record<string, unknown>,
   currentStep: string,
+  /** Deactivate AFTER new session is created (failure-safe) */
+  existingSessionToDeactivate?: string,
 ) {
-  return supabase.from('bot_sessions').insert({
+  // Clean up old inactive sessions first
+  await supabase.from('bot_sessions').delete()
+    .eq('whatsapp_number', from).eq('is_active', false).eq('business_id', businessId);
+
+  const result = await supabase.from('bot_sessions').insert({
     whatsapp_number: from,
     user_id: userId,
     business_id: businessId,
@@ -172,6 +174,13 @@ async function createActionSession(
     is_active: true,
     expires_at: new Date(Date.now() + 86400000).toISOString(),
   }).select().single();
+
+  // Only deactivate old session AFTER new one is successfully created
+  if (result.data && existingSessionToDeactivate) {
+    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', existingSessionToDeactivate);
+  }
+
+  return result;
 }
 
 /**

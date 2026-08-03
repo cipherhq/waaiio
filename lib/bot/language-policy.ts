@@ -18,11 +18,28 @@ export const SUPPORTED_LANGUAGES = ['en', 'pcm', 'yo', 'ig', 'ha', 'tw', 'fr', '
  * selectable in UI and activatable in production.
  * Expand after controlled language-quality acceptance testing.
  */
-export const CERTIFIED_LANGUAGES: readonly string[] = ['en', 'pcm'];
+/**
+ * Production-certified = English only until separate linguistic certification.
+ * Architecture supports more codes (en, pcm, yo, ig, ha, tw, fr, es) but
+ * only certified languages are selectable in UI and activatable in production.
+ */
+export const CERTIFIED_LANGUAGES: readonly string[] = ['en'];
 export type SupportedLanguage = typeof SUPPORTED_LANGUAGES[number];
 
 /** Maximum additional languages for Growth tier (beyond English) */
 const GROWTH_MAX_ADDITIONAL = 2;
+
+/** Tiers explicitly recognized as eligible for paid LLM fallback */
+const RECOGNIZED_LLM_TIERS = ['growth', 'business'];
+
+/**
+ * ONE authority for LLM eligibility by subscription tier.
+ * Unknown/null/undefined → not eligible (Free behavior).
+ * Feature flags are additional kill switches, not entitlement.
+ */
+export function isTierLLMEligible(tier: string | null | undefined): boolean {
+  return !!tier && RECOGNIZED_LLM_TIERS.includes(tier);
+}
 
 export interface LanguageEntitlement {
   /** Languages the business is entitled to use */
