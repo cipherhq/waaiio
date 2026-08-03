@@ -2531,6 +2531,7 @@ export const orderingFlow: FlowDefinition = {
         // If order already exists (e.g. retry after crash), reuse existing — prevent duplicate INSERT
         const isNewOrder = !(d.order_id && d.reference_code);
         let order: { id: string; reference_code: string };
+        let freshlyCreated = false; // true only when this invocation performed the INSERT
 
         if (!isNewOrder) {
           order = { id: d.order_id as string, reference_code: d.reference_code as string };
@@ -2553,12 +2554,28 @@ export const orderingFlow: FlowDefinition = {
               order = existing;
               d.order_id = order.id;
               d.reference_code = order.reference_code;
-              // Skip item creation — already done on first attempt
+              // Reconcile items: delete any partial items and re-insert all
+              await ctx.supabase.from('order_items').delete().eq('order_id', order.id);
+              for (const item of cart) {
+                const itemPayload: Record<string, unknown> = {
+                  order_id: order.id,
+                  product_id: item.product_id,
+                  quantity: item.quantity,
+                  unit_price: item.price,
+                  variant_id: item.variant_id || null,
+                  variant_label: item.variant_label || null,
+                };
+                if (item.addons && item.addons.length > 0) {
+                  itemPayload.addons = item.addons;
+                }
+                await ctx.supabase.from('order_items').insert(itemPayload);
+              }
             } else {
               return [{ type: 'text', text: 'Something went wrong on our end creating your order. Send *Hi* to start over.' }];
             }
           } else {
             order = orderData;
+            freshlyCreated = true;
 
             // Create order items (with addons) and decrement stock
             for (const item of cart) {
@@ -2586,8 +2603,8 @@ export const orderingFlow: FlowDefinition = {
         d.total_amount = total;
         d.shipping_cost = shippingCost;
 
-        // Convert referral if applied
-        if (d.referral_id) {
+        // Convert referral if applied — only on fresh order
+        if (d.referral_id && freshlyCreated) {
           const refPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
           await ctx.supabase
             .from('referrals')
@@ -2636,8 +2653,8 @@ export const orderingFlow: FlowDefinition = {
           }).catch(err => logger.error('[ORDERING] Owner notification error:', err));
         }
 
-        // Increment promo code usage
-        if (d.promo_code_id) {
+        // Increment promo code usage — only on fresh order, not recovery
+        if (d.promo_code_id && freshlyCreated) {
           await ctx.supabase.rpc('increment_promo_usage', { p_code_id: d.promo_code_id as string });
         }
 

@@ -143,6 +143,20 @@ BEGIN
     END IF;
   END IF;
 
+  -- Check for existing booking from the same bot session (idempotent retry)
+  IF p_bot_session_id IS NOT NULL THEN
+    SELECT id, bookings.reference_code INTO v_booking_id, v_ref
+    FROM bookings
+    WHERE bot_session_id = p_bot_session_id
+      AND status IN ('pending', 'confirmed')
+    LIMIT 1;
+    IF FOUND THEN
+      -- Reuse existing booking from same session
+      RETURN QUERY SELECT v_booking_id, v_ref, true;
+      RETURN;
+    END IF;
+  END IF;
+
   -- Insert the booking (with optional bot_session_id for idempotency)
   INSERT INTO bookings (
     business_id, user_id, service_id, appointment_id, staff_id, staff_name,

@@ -527,6 +527,7 @@ export const ticketingFlow: FlowDefinition = {
         // If booking already exists (e.g. retry after crash), reuse existing — prevent duplicate INSERT
         const isNewBooking = !(d.booking_id && d.reference_code);
         let booking: { id: string; reference_code: string };
+        let freshlyCreated = false;
 
         if (!isNewBooking) {
           booking = { id: d.booking_id as string, reference_code: d.reference_code as string };
@@ -570,6 +571,7 @@ export const ticketingFlow: FlowDefinition = {
             }
           } else {
             booking = bookingData;
+            freshlyCreated = true;
           }
 
           // tickets_sold is incremented AFTER payment verification in await_ticket_payment.validate()
@@ -734,6 +736,11 @@ export const ticketingFlow: FlowDefinition = {
         }
 
         // Free event — increment tickets_sold immediately (no payment needed)
+        // Only on fresh booking — recovery must not double-count
+        if (!freshlyCreated) {
+          // Recovered booking: tickets_sold was already incremented on first attempt
+          // Skip counter increment, proceed to confirmation
+        } else {
         const { error: rpcError } = await ctx.supabase.rpc('increment_tickets_sold', {
           event_id: d.event_id as string,
           qty,
@@ -764,6 +771,7 @@ export const ticketingFlow: FlowDefinition = {
               .eq('id', d.ticket_type_id as string);
           }
         }
+        } // end freshlyCreated counter increment
 
         // Free event — send tickets before marking complete
         try {
