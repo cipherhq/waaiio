@@ -1211,8 +1211,9 @@ export class BotService {
       }
 
       // Auto-detect language from first message — tier-gated (Growth+ only)
+      // CAS-004: Skip if canonical understanding already activated a language
       const bizTier = business?.subscription_tier || 'free';
-      if (text.length >= 3 && isLanguageAllowed(bizTier, 'non-en')) {
+      if (text.length >= 3 && !canonicalActivatedLanguage && isLanguageAllowed(bizTier, 'non-en')) {
         try {
           const lang = await detectLanguage(text);
           if (lang !== 'en') {
@@ -2032,8 +2033,11 @@ export class BotService {
     }
 
     // ── CAS-004: Canonical action dispatcher for resumed sessions ──
-    // Uses the SAME canonical understanding as new-session path
-    if (session.business_id && text && (step === 'select_capability' || step === 'greeting')) {
+    // Works from ANY step (not just greeting/select_capability) for high-confidence
+    // non-CREATE_NEW actions. "Where is my order?" while booking → order history.
+    // Exclude free-text input steps where text should go to the flow validator.
+    const isCasExcluded = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin'].includes(step);
+    if (session.business_id && text && !isCasExcluded) {
       try {
         const { understandCanonicalMessage } = await import('./canonical-understanding');
         // Load business tier for language entitlement
@@ -2053,8 +2057,11 @@ export class BotService {
           return;
         }
 
-        // Non-CREATE_NEW action → dispatch
-        if (resumedUnderstanding.requestedAction && resumedUnderstanding.requestedAction !== 'create_new' && resumedUnderstanding.requestedAction !== 'navigation') {
+        // Non-CREATE_NEW action → dispatch ONLY with high confidence
+        const { loadConversationConfig: loadResumedConf } = await import('./confidence-policy');
+        const resumedConvConfig = await loadResumedConf(this.supabase, session.business_id);
+        if (resumedUnderstanding.requestedAction && resumedUnderstanding.requestedAction !== 'create_new' && resumedUnderstanding.requestedAction !== 'navigation'
+            && resumedUnderstanding.confidence >= resumedConvConfig.autoRouteThreshold) {
           const { dispatchAction, sendActionRecovery } = await import('./action-dispatcher');
           const actionResult = await dispatchAction({
             supabase: this.supabase, messageSender: this.messageSender,

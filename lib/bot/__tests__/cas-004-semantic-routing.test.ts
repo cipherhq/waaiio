@@ -570,10 +570,118 @@ describe('CAS-004 language policy', () => {
   });
 
   it('R: relative date preserved in LLM prompt', async () => {
-    // Verify the LLM prompt includes date resolution instruction
     const { default: fs } = await import('fs');
     const llmSource = fs.readFileSync('lib/bot/llm-intent.ts', 'utf8');
     expect(llmSource).toContain('resolve "tomorrow"');
     expect(llmSource).toContain('next monday');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// ROUND 6A CLOSURE TESTS
+// ═══════════════════════════════════════════════════════
+
+describe('CAS-004 routeByConfidence requestedAction override', () => {
+  it('I: READ_HISTORY + high confidence → NOT start_flow', async () => {
+    const { routeByConfidence } = await import('../confidence-policy');
+    const result = routeByConfidence(
+      { intent: 'booking', confidence: 0.95, requestedAction: 'read_history', entities: {}, missingFields: [], ambiguities: [], mode: 'business', recommendedAction: 'fallback_menu' } as any,
+      { autoRouteThreshold: 0.85, clarificationThreshold: 0.60, fallbackBehavior: 'menu' } as any,
+    );
+    expect(result).not.toBe('start_flow');
+    expect(result).toBe('continue_active_flow');
+  });
+
+  it('J: MANAGE_EXISTING + high confidence → NOT start_flow', async () => {
+    const { routeByConfidence } = await import('../confidence-policy');
+    const result = routeByConfidence(
+      { intent: 'ordering', confidence: 0.90, requestedAction: 'manage_existing', entities: {}, missingFields: [], ambiguities: [], mode: 'business', recommendedAction: 'fallback_menu' } as any,
+      { autoRouteThreshold: 0.85, clarificationThreshold: 0.60, fallbackBehavior: 'menu' } as any,
+    );
+    expect(result).not.toBe('start_flow');
+  });
+
+  it('INFORMATIONAL + high confidence → NOT start_flow', async () => {
+    const { routeByConfidence } = await import('../confidence-policy');
+    const result = routeByConfidence(
+      { intent: 'booking', confidence: 0.92, requestedAction: 'informational', entities: {}, missingFields: [], ambiguities: [], mode: 'business', recommendedAction: 'fallback_menu' } as any,
+      { autoRouteThreshold: 0.85, clarificationThreshold: 0.60, fallbackBehavior: 'menu' } as any,
+    );
+    expect(result).not.toBe('start_flow');
+  });
+
+  it('CREATE_NEW + high confidence → start_flow allowed', async () => {
+    const { routeByConfidence } = await import('../confidence-policy');
+    const result = routeByConfidence(
+      { intent: 'booking', confidence: 0.92, requestedAction: 'create_new', entities: {}, missingFields: [], ambiguities: [], mode: 'business', recommendedAction: 'fallback_menu' } as any,
+      { autoRouteThreshold: 0.85, clarificationThreshold: 0.60, fallbackBehavior: 'menu' } as any,
+    );
+    expect(result).toBe('start_flow');
+  });
+
+  it('READ_HISTORY + medium confidence → NOT start_flow', async () => {
+    const { routeByConfidence } = await import('../confidence-policy');
+    const result = routeByConfidence(
+      { intent: 'ordering', confidence: 0.75, requestedAction: 'read_history', entities: {}, missingFields: [], ambiguities: [], mode: 'business', recommendedAction: 'fallback_menu' } as any,
+      { autoRouteThreshold: 0.85, clarificationThreshold: 0.60, fallbackBehavior: 'menu' } as any,
+    );
+    expect(result).toBe('show_clarification');
+  });
+});
+
+describe('CAS-004 capability-selection canonical consumption', () => {
+  it('G: stored canonical family used — no reparse', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
+    const { createMockContext } = await import('../flows/__tests__/helpers');
+
+    const ctx = createMockContext({
+      session: {
+        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
+        session_data: {
+          capabilities: ['reservation', 'scheduling'],
+          _parsed_semantic_family: 'property_reservation', // Canonical result stored
+        },
+      },
+      business: { id: 'b1', name: 'Hotel', slug: 'hotel', category: 'hotel' as any, flow_type: 'reservation' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
+    });
+
+    const result = await step.validate!('Je veux réserver une chambre', ctx);
+    // Should use stored canonical family → reservation
+    expect(result.valid).toBe(true);
+    expect(result.data?.active_capability).toBe('reservation');
+    // Stored family should be cleared after use
+    expect(ctx.session.session_data._parsed_semantic_family).toBeUndefined();
+  });
+
+  it('H: getUserFacingCapabilities used for selection', async () => {
+    const { getUserFacingCapabilities } = await import('../handlers/flow-routing');
+    const caps = getUserFacingCapabilities(['scheduling', 'payment', 'feedback', 'staff'] as any[]);
+    // scheduling hides payment; feedback and staff are non-UF
+    expect(caps).toContain('scheduling');
+    expect(caps).not.toContain('payment');
+    expect(caps).not.toContain('feedback');
+    expect(caps).not.toContain('staff');
+  });
+});
+
+describe('CAS-004 LLM tier authority', () => {
+  it('P: unknown tier → isTierLLMEligible false', async () => {
+    const { isTierLLMEligible } = await import('../language-policy');
+    expect(isTierLLMEligible(null)).toBe(false);
+    expect(isTierLLMEligible(undefined)).toBe(false);
+    expect(isTierLLMEligible('platinum')).toBe(false);
+    expect(isTierLLMEligible('free')).toBe(false);
+    expect(isTierLLMEligible('growth')).toBe(true);
+    expect(isTierLLMEligible('business')).toBe(true);
+  });
+
+  it('Q: uncertified language cannot activate', async () => {
+    const { CERTIFIED_LANGUAGES, getEffectiveLanguages } = await import('../language-policy');
+    // Only English is certified
+    expect(CERTIFIED_LANGUAGES).toEqual(['en']);
+    // Business tier only gets certified languages
+    const ent = getEffectiveLanguages('business');
+    expect(ent.allowedLanguages).toEqual(['en']);
   });
 });

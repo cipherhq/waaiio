@@ -151,6 +151,18 @@ export async function dispatchAction(
   }
 }
 
+/**
+ * Create a new action session, handling the unique constraint on
+ * (whatsapp_number, business_id).
+ *
+ * Pattern: deactivate old → delete inactive → insert new.
+ * This matches the existing bot.service.ts session-creation pattern.
+ * The unique index requires only one row per phone+business.
+ *
+ * If insert fails, the old session is already deactivated — but this
+ * is the same risk as the existing new-session path. A subsequent "Hi"
+ * will create a fresh session.
+ */
 async function createActionSession(
   supabase: SupabaseClient,
   from: string,
@@ -158,14 +170,19 @@ async function createActionSession(
   businessId: string,
   sessionData: Record<string, unknown>,
   currentStep: string,
-  /** Deactivate AFTER new session is created (failure-safe) */
   existingSessionToDeactivate?: string,
 ) {
-  // Clean up old inactive sessions first
+  // 1. Deactivate existing active session
+  if (existingSessionToDeactivate) {
+    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', existingSessionToDeactivate);
+  }
+
+  // 2. Remove old inactive sessions to satisfy unique constraint
   await supabase.from('bot_sessions').delete()
     .eq('whatsapp_number', from).eq('is_active', false).eq('business_id', businessId);
 
-  const result = await supabase.from('bot_sessions').insert({
+  // 3. Insert new session
+  return supabase.from('bot_sessions').insert({
     whatsapp_number: from,
     user_id: userId,
     business_id: businessId,
@@ -174,13 +191,6 @@ async function createActionSession(
     is_active: true,
     expires_at: new Date(Date.now() + 86400000).toISOString(),
   }).select().single();
-
-  // Only deactivate old session AFTER new one is successfully created
-  if (result.data && existingSessionToDeactivate) {
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', existingSessionToDeactivate);
-  }
-
-  return result;
 }
 
 /**

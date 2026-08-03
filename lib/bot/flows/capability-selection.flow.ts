@@ -213,9 +213,9 @@ const selectCapabilityStep: FlowStepConfig = {
   async validate(input: string, ctx: FlowContext) {
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
     const category = ctx.business?.category || 'other';
-    const nonUF = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'class_booking', 'multi_location']);
-    if (capabilities.includes('scheduling')) { nonUF.add('payment'); nonUF.add('invoice'); }
-    const userFacing = capabilities.filter(c => !nonUF.has(c));
+    // CAS-004: Use shared user-facing capability filter — single source of truth
+    const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
+    const userFacing = getUserFacingCapabilities(capabilities);
 
     let capId: CapabilityId | null = null;
 
@@ -246,33 +246,48 @@ const selectCapabilityStep: FlowStepConfig = {
             return lower.includes(label) || label.includes(lower);
           }) || null;
         }
-        // CAS-004: Use canonical semantic family from smart-intent to route.
-        // Single source of truth — no duplicated regex patterns here.
+        // CAS-004: Use canonical semantic understanding — do NOT reparse.
         if (!capId) {
-          const { parseSmartIntent } = await import('@/lib/bot/smart-intent');
           const { resolveSemanticCapability, disambiguateByCategory } = await import('@/lib/bot/semantic-resolver');
-          const parsed = parseSmartIntent(input);
+          const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
+          const ufCaps = getUserFacingCapabilities(capabilities);
 
-          let family = parsed.semanticFamily;
+          // Check if canonical understanding exists in session (from first-message pipeline)
+          const storedFamily = ctx.session.session_data._parsed_semantic_family as string | undefined;
 
-          // For genuinely ambiguous/generic text (null family), use business context
-          if (!family && parsed.intent) {
-            family = disambiguateByCategory(category, userFacing);
+          let family: import('@/lib/bot/semantic-types').SemanticFamily = (storedFamily || null) as import('@/lib/bot/semantic-types').SemanticFamily;
+
+          if (!family) {
+            // No stored canonical result — this is a NEW message at select_capability.
+            // Use the canonical understanding pipeline (one parse, no LLM duplicate).
+            const { parseSmartIntent } = await import('@/lib/bot/smart-intent');
+            const parsed = parseSmartIntent(input);
+            family = parsed.semanticFamily || null;
+
+            // Generic booking disambiguation
+            if (!family && parsed.intent === 'booking') {
+              family = disambiguateByCategory(category, ufCaps);
+            }
+
+            // Chat/waiver fallback
+            if (!family && !parsed.intent) {
+              if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
+                capId = ufCaps.find(c => c === 'chat') || null;
+              } else if (/\b(waiver|sign|release\s*form|liability)\b/i.test(input)) {
+                capId = ufCaps.find(c => c === 'waiver') || null;
+              }
+            }
           }
 
-          if (family) {
-            const resolution = resolveSemanticCapability(family, 'create_new', userFacing);
+          // Clear the stored family so it's not reused for a different message
+          if (storedFamily) delete ctx.session.session_data._parsed_semantic_family;
+
+          if (family && !capId) {
+            const resolution = resolveSemanticCapability(family, 'create_new', ufCaps);
             if (resolution.canRoute && resolution.matchedCapability) {
               capId = resolution.matchedCapability as CapabilityId;
             }
-            // If family is specific but unavailable, capId stays null → reject at L266
-          } else {
-            // No semantic family detected — try simple keyword fallback for chat/waiver
-            if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
-              capId = userFacing.find(c => c === 'chat') || null;
-            } else if (/\b(waiver|sign|release\s*form|liability)\b/i.test(input)) {
-              capId = userFacing.find(c => c === 'waiver') || null;
-            }
+            // If family specific but unavailable → capId stays null → reject
           }
         }
       }
