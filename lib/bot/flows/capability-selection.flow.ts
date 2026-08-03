@@ -219,22 +219,16 @@ const selectCapabilityStep: FlowStepConfig = {
 
     let capId: CapabilityId | null = null;
 
-    // Handle "My Account" selection — explicit user choice supersedes canonical
+    // Handle "My Account" selection
     if (input === 'cap_my_account' || /^(my account|manage|my stuff)$/i.test(input.trim())) {
-      delete ctx.session.session_data._canonical_result; // Discard stale canonical
       ctx.session.session_data.active_capability = 'my_account';
       return { valid: true, data: { active_capability: 'my_account' } };
     }
 
-    // CAS-004: Read and clear canonical result ONCE — before any routing.
-    // Hoisted here so both capability selection and entity extraction can use it.
-    const canonicalR = ctx.session.session_data._canonical_result as {
-      semanticFamily?: string; requestedAction?: string; confidence?: number;
-      serviceKeywords?: string[]; variantKeywords?: string[];
-      date?: string; specificTime?: string; timePreference?: string;
-      quantity?: number; amount?: number;
-    } | undefined;
-    if (canonicalR) delete ctx.session.session_data._canonical_result;
+    // CAS-004: No cross-turn _canonical_result. Each message gets fresh understanding.
+    // The variable canonicalR is always null here — understanding happens below for
+    // the current message only.
+    const canonicalR: undefined = undefined;
 
     if (input.startsWith('cap_')) {
       capId = input.replace('cap_', '') as CapabilityId;
@@ -257,33 +251,26 @@ const selectCapabilityStep: FlowStepConfig = {
             return lower.includes(label) || label.includes(lower);
           }) || null;
         }
-        // Use canonical result for capability selection (canonicalR hoisted above)
+        // CAS-004: ONE parse for the CURRENT message — used for both
+        // capability selection AND entity extraction. No cross-turn state.
         if (!capId) {
           const { resolveSemanticCapability, disambiguateByCategory } = await import('@/lib/bot/semantic-resolver');
           const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
+          const { parseSmartIntent } = await import('@/lib/bot/smart-intent');
           const ufCaps = getUserFacingCapabilities(capabilities);
 
-          let family: import('@/lib/bot/semantic-types').SemanticFamily = null;
+          const currentParsed = parseSmartIntent(input);
+          let family = currentParsed.semanticFamily || null;
 
-          if (canonicalR) {
-            // Use stored canonical family — no reparse
-            family = (canonicalR.semanticFamily || null) as import('@/lib/bot/semantic-types').SemanticFamily;
-          } else {
-            // No stored canonical result — genuinely NEW message at select_capability
-            const { parseSmartIntent } = await import('@/lib/bot/smart-intent');
-            const parsed = parseSmartIntent(input);
-            family = parsed.semanticFamily || null;
+          if (!family && currentParsed.intent === 'booking') {
+            family = disambiguateByCategory(category, ufCaps);
+          }
 
-            if (!family && parsed.intent === 'booking') {
-              family = disambiguateByCategory(category, ufCaps);
-            }
-
-            if (!family && !parsed.intent) {
-              if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
-                capId = ufCaps.find(c => c === 'chat') || null;
-              } else if (/\b(waiver|sign|release\s*form|liability)\b/i.test(input)) {
-                capId = ufCaps.find(c => c === 'waiver') || null;
-              }
+          if (!family && !currentParsed.intent) {
+            if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
+              capId = ufCaps.find(c => c === 'chat') || null;
+            } else if (/\b(waiver|sign|release\s*form|liability)\b/i.test(input)) {
+              capId = ufCaps.find(c => c === 'waiver') || null;
             }
           }
 
@@ -301,27 +288,13 @@ const selectCapabilityStep: FlowStepConfig = {
       return { valid: false, errorMessage: 'I didn\'t understand that. Try typing *book*, *order*, *tickets*, or tap *View Options* to see the menu.' };
     }
 
-    // Entity extraction: use canonical entities if present, otherwise parse new text
+    // Entity extraction from the SAME current-message parse
     if ((capId === 'scheduling' || capId === 'reservation' || capId === 'payment' || capId === 'giving' || capId === 'ticketing' || capId === 'ordering') && ctx.business) {
       try {
         const sd = ctx.session.session_data;
-        // canonicalR was already read and cleared above — reuse the same reference
+        // Parse the current message for entities (same message, one LLM call if needed)
         let parsed: import('@/lib/bot/smart-intent').SmartParseResult;
-        if (canonicalR) {
-          // Reuse stored canonical entities — NO second LLM call
-          parsed = {
-            understood: true,
-            intent: null,
-            serviceKeywords: canonicalR.serviceKeywords || [],
-            date: canonicalR.date || null,
-            specificTime: canonicalR.specificTime || null,
-            timePreference: (canonicalR.timePreference as 'morning' | 'afternoon' | 'evening' | null) || null,
-            quantity: canonicalR.quantity || null,
-            amount: canonicalR.amount || null,
-            variantKeywords: canonicalR.variantKeywords || [],
-          };
-        } else {
-          // Genuinely new message — classify once
+        {
           const { parseSmartIntentHybrid } = await import('@/lib/bot/smart-intent');
           const bizTz = (sd.business_timezone as string) || undefined;
           const hybridResult = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null, bizTz, ctx.business.subscription_tier);

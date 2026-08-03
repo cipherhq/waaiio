@@ -9,42 +9,36 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // CANONICAL LIFECYCLE UNIT TESTS
 // ═══════════════════════════════════════════════════════
 
-describe('CAS-004 canonical lifecycle', () => {
-  it('1. _canonical_result stored iff firstStep === select_capability', async () => {
-    // When directCanonicalCap is set, firstStep is NOT select_capability
-    // → _canonical_result should NOT be stored
-    // This test verifies the storage condition uses firstStep directly
-
-    // Read the actual source to verify the condition
+describe('CAS-004 canonical lifecycle — no cross-turn state', () => {
+  it('1. no _canonical_result in persisted session data', async () => {
+    // Verify the source does NOT store _canonical_result across turns
     const fs = await import('fs');
     const source = fs.readFileSync('lib/bot/bot.service.ts', 'utf8');
-    expect(source).toContain("firstStep === 'select_capability' && canonicalResult");
-    expect(source).not.toContain('!directCanonicalCap && !deepLinkCapability && canonicalResult');
+    expect(source).toContain('No _canonical_result in persisted session data');
+    expect(source).not.toContain("{ _canonical_result:");
   });
 
-  it('2. My Account clears _canonical_result', async () => {
+  it('2. each select_capability free text gets fresh classification', async () => {
     const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
     const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
     const { createMockContext } = await import('../flows/__tests__/helpers');
 
+    // No _canonical_result stored — session is clean
     const ctx = createMockContext({
       session: {
         id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
-        session_data: {
-          capabilities: ['scheduling'],
-          _canonical_result: { semanticFamily: 'property_reservation' },
-        },
+        session_data: { capabilities: ['scheduling', 'ordering'] },
       },
+      business: { id: 'b1', name: 'Test', slug: 'test', category: 'salon' as any, flow_type: 'scheduling' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
     });
 
-    const result = await step.validate!('cap_my_account', ctx);
+    // Message: "I want to order food" — should be freshly parsed
+    const result = await step.validate!('I want to order food', ctx);
     expect(result.valid).toBe(true);
-    expect(result.data?.active_capability).toBe('my_account');
-    // Canonical state must be cleared by explicit user choice
-    expect(ctx.session.session_data._canonical_result).toBeUndefined();
+    expect(result.data?.active_capability).toBe('ordering');
   });
 
-  it('2b. cap_ button selection discards canonical state', async () => {
+  it('3. explicit cap_ selection works without canonical state', async () => {
     const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
     const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
     const { createMockContext } = await import('../flows/__tests__/helpers');
@@ -52,18 +46,13 @@ describe('CAS-004 canonical lifecycle', () => {
     const ctx = createMockContext({
       session: {
         id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
-        session_data: {
-          capabilities: ['scheduling', 'ordering'],
-          _canonical_result: { semanticFamily: 'property_reservation' },
-        },
+        session_data: { capabilities: ['scheduling', 'ordering'] },
       },
     });
 
-    // Explicit button press — canonical is read+cleared at L231
     const result = await step.validate!('cap_scheduling', ctx);
     expect(result.valid).toBe(true);
     expect(result.data?.active_capability).toBe('scheduling');
-    expect(ctx.session.session_data._canonical_result).toBeUndefined();
   });
 });
 

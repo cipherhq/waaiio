@@ -1168,21 +1168,9 @@ export class BotService {
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
             ...(canonicalActivatedLanguage ? { _detected_language: canonicalActivatedLanguage } : {}),
-            // CAS-004: Store canonical result ONLY when firstStep is select_capability.
-            // Direct routes apply entities via the prefill block below.
-            ...(firstStep === 'select_capability' && canonicalResult ? { _canonical_result: {
-              semanticFamily: canonicalResult.semanticFamily,
-              requestedAction: canonicalResult.requestedAction,
-              confidence: canonicalResult.confidence,
-              language: canonicalResult.language,
-              serviceKeywords: canonicalResult.entities.serviceKeywords,
-              variantKeywords: canonicalResult.entities.variantKeywords,
-              date: canonicalResult.entities.date,
-              specificTime: canonicalResult.entities.specificTime,
-              timePreference: canonicalResult.entities.timePreference,
-              quantity: canonicalResult.entities.quantity,
-              amount: canonicalResult.entities.amount,
-            } } : {}),
+            // CAS-004: No _canonical_result in persisted session data.
+            // Semantic meaning must NOT cross inbound message boundaries.
+            // Each new message gets its own canonical understanding.
           }
         : { ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}) };
 
@@ -1456,6 +1444,21 @@ export class BotService {
             }
             if (ents.amount && ents.amount >= 1) {
               session.session_data.amount = ents.amount;
+            }
+
+            // Ordering-specific: product matching with cart
+            if (directCanonicalCap === 'ordering' && ents.serviceKeywords.length > 0) {
+              const { matchProductsFromKeywords } = await import('./smart-intent');
+              const productMatches = await matchProductsFromKeywords(this.supabase, business.id, ents.serviceKeywords);
+              if (productMatches.length === 1) {
+                const p = productMatches[0];
+                const qty = ents.quantity || 1;
+                session.session_data.cart = [{ product_id: p.id, name: p.name, price: p.price, quantity: qty, variant: null, variant_label: null }];
+                session.session_data._auto_added_to_cart = true;
+                session.session_data._skip_browse = true;
+              } else if (productMatches.length > 1) {
+                session.session_data._matched_product_ids = productMatches.map(m => m.id);
+              }
             }
 
             // Favorite service suggestion
@@ -2021,13 +2024,14 @@ export class BotService {
     // non-CREATE_NEW actions. "Where is my order?" while booking → order history.
     // Exclude free-text input steps where text should go to the flow validator.
     const isCasExcluded = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin'].includes(step);
+    let resumedCanonical: import('./canonical-understanding').CanonicalUnderstanding | null = null;
     if (session.business_id && text && !isCasExcluded) {
       try {
         const { understandCanonicalMessage } = await import('./canonical-understanding');
         // Load business tier for language entitlement
         const { data: bizForCas } = await this.supabase.from('businesses')
           .select('subscription_tier, category').eq('id', session.business_id).single();
-        const resumedUnderstanding = await understandCanonicalMessage({
+        resumedCanonical = await understandCanonicalMessage({
           text, businessId: session.business_id,
           businessCategory: bizForCas?.category || (session.session_data?.business_category as string) || null,
           subscriptionTier: bizForCas?.subscription_tier || 'free',
@@ -2035,8 +2039,8 @@ export class BotService {
         });
 
         // Language blocked — use actual allowed language names
-        if (resumedUnderstanding.languageBlocked) {
-          const rLangNames = resumedUnderstanding.allowedLanguageNames || ['English'];
+        if (resumedCanonical.languageBlocked) {
+          const rLangNames = resumedCanonical.allowedLanguageNames || ['English'];
           await this.sendText(from, `This business currently supports ${rLangNames.join(' and ')}. Please send your message in ${rLangNames.length === 1 ? rLangNames[0] : 'one of those languages'}.`);
           return;
         }
@@ -2044,21 +2048,21 @@ export class BotService {
         // Non-CREATE_NEW action → dispatch ONLY with high confidence
         const { loadConversationConfig: loadResumedConf } = await import('./confidence-policy');
         const resumedConvConfig = await loadResumedConf(this.supabase, session.business_id);
-        if (resumedUnderstanding.requestedAction && resumedUnderstanding.requestedAction !== 'create_new' && resumedUnderstanding.requestedAction !== 'navigation'
-            && resumedUnderstanding.confidence >= resumedConvConfig.autoRouteThreshold) {
+        if (resumedCanonical.requestedAction && resumedCanonical.requestedAction !== 'create_new' && resumedCanonical.requestedAction !== 'navigation'
+            && resumedCanonical.confidence >= resumedConvConfig.autoRouteThreshold) {
           const { dispatchAction, sendActionRecovery } = await import('./action-dispatcher');
           const actionResult = await dispatchAction({
             supabase: this.supabase, messageSender: this.messageSender,
             flowExecutor: this.flowExecutor, from, businessId: session.business_id,
             businessName: (session.session_data?.business_name as string) || '',
             sessionData: session.session_data || {},
-            semanticFamily: resumedUnderstanding.semanticFamily,
-            requestedAction: resumedUnderstanding.requestedAction,
+            semanticFamily: resumedCanonical.semanticFamily,
+            requestedAction: resumedCanonical.requestedAction,
             originalText: text,
             existingSession: { id: session.id, version: session.version || 0 },
           });
           if (actionResult.handled) return;
-          await sendActionRecovery(this.messageSender, from, resumedUnderstanding.requestedAction, actionResult.reason || 'no_handler');
+          await sendActionRecovery(this.messageSender, from, resumedCanonical.requestedAction, actionResult.reason || 'no_handler');
           return;
         }
       } catch (err) {
@@ -2088,8 +2092,9 @@ export class BotService {
             (session.session_data?.business_category as string) || null,
             session as BotSession,
             from,
-            undefined, // timezone — not available here; orchestrator handles fallback
+            undefined,
             sessionTier,
+            resumedCanonical || undefined, // CAS-004: avoid second LLM call
           );
 
           // Handle temporary questions (mid-flow "what are your hours?" etc.)

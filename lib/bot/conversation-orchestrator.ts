@@ -44,6 +44,8 @@ export class ConversationOrchestrator {
     _customerPhone: string,
     timezone?: string,
     subscriptionTier?: string,
+    /** CAS-004: Pre-computed canonical result — skips parseSmartIntentHybrid */
+    preComputedCanonical?: import('./canonical-understanding').CanonicalUnderstanding,
   ): Promise<ConversationUnderstanding> {
     const normalizedText = text.trim();
 
@@ -84,15 +86,30 @@ export class ConversationOrchestrator {
       }
     }
 
-    // 3. Run smart intent (regex first, LLM fallback — handled inside parseSmartIntentHybrid)
-    const smartResult = await parseSmartIntentHybrid(
-      normalizedText,
-      businessCategory,
-      this.supabase,
-      businessId,
-      timezone,
-      subscriptionTier,
-    );
+    // 3. CAS-004: Use pre-computed canonical result if available — no second LLM call
+    let smartResult: Awaited<ReturnType<typeof parseSmartIntentHybrid>>;
+    if (preComputedCanonical) {
+      // Build SmartParseResult-like from canonical understanding
+      smartResult = {
+        understood: !!preComputedCanonical.broadIntent,
+        intent: preComputedCanonical.broadIntent as 'booking' | 'ordering' | 'payment' | 'ticketing' | null,
+        serviceKeywords: preComputedCanonical.entities.serviceKeywords,
+        date: preComputedCanonical.entities.date,
+        specificTime: preComputedCanonical.entities.specificTime,
+        timePreference: preComputedCanonical.entities.timePreference as 'morning' | 'afternoon' | 'evening' | null,
+        quantity: preComputedCanonical.entities.quantity,
+        amount: preComputedCanonical.entities.amount,
+        variantKeywords: preComputedCanonical.entities.variantKeywords,
+        semanticFamily: preComputedCanonical.semanticFamily,
+        requestedAction: preComputedCanonical.requestedAction,
+        language: preComputedCanonical.language || undefined,
+        confidence: preComputedCanonical.confidence,
+      };
+    } else {
+      smartResult = await parseSmartIntentHybrid(
+        normalizedText, businessCategory, this.supabase, businessId, timezone, subscriptionTier,
+      );
+    }
 
     // 4. Build entities from smart intent result
     const entities: ExtractedEntities = {};

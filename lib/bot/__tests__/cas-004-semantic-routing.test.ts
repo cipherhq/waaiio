@@ -630,36 +630,27 @@ describe('CAS-004 routeByConfidence requestedAction override', () => {
 });
 
 describe('CAS-004 capability-selection canonical consumption', () => {
-  it('G: stored canonical result used — no reparse', async () => {
+  it('G: current-message free text at select_capability gets fresh classification', async () => {
     const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
     const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
     const { createMockContext } = await import('../flows/__tests__/helpers');
 
+    // No stored _canonical_result — each message is freshly parsed
     const ctx = createMockContext({
       session: {
         id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
-        session_data: {
-          capabilities: ['reservation', 'scheduling'],
-          // ONE canonical result object — consumed once
-          _canonical_result: {
-            semanticFamily: 'property_reservation',
-            requestedAction: 'create_new',
-            serviceKeywords: [],
-            date: null,
-          },
-        },
+        session_data: { capabilities: ['reservation', 'scheduling'] },
       },
       business: { id: 'b1', name: 'Hotel', slug: 'hotel', category: 'hotel' as any, flow_type: 'reservation' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
     });
 
-    const result = await step.validate!('Je veux réserver une chambre', ctx);
+    // "reserve a room" → property_reservation → reservation
+    const result = await step.validate!('I want to reserve a room', ctx);
     expect(result.valid).toBe(true);
     expect(result.data?.active_capability).toBe('reservation');
-    // Canonical result consumed and cleared
-    expect(ctx.session.session_data._canonical_result).toBeUndefined();
   });
 
-  it('G2: canonical with serviceKeywords + date — no second LLM', async () => {
+  it('G2: second message at select_capability is independent', async () => {
     const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
     const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
     const { createMockContext } = await import('../flows/__tests__/helpers');
@@ -667,91 +658,19 @@ describe('CAS-004 capability-selection canonical consumption', () => {
     const ctx = createMockContext({
       session: {
         id: 's2', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
-        session_data: {
-          capabilities: ['scheduling'],
-          _canonical_result: {
-            semanticFamily: 'service_time_booking',
-            serviceKeywords: ['haircut'],
-            date: '2026-09-15',
-            specificTime: '14:00',
-          },
-        },
+        session_data: { capabilities: ['ordering', 'scheduling'] },
       },
-      business: { id: 'b1', name: 'Salon', slug: 'salon', category: 'salon' as any, flow_type: 'scheduling' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
+      business: { id: 'b1', name: 'Test', slug: 'test', category: 'restaurant' as any, flow_type: 'ordering' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
     });
 
-    const result = await step.validate!('Book me a haircut tomorrow at 2pm', ctx);
-    expect(result.valid).toBe(true);
-    expect(result.data?.active_capability).toBe('scheduling');
-    // Entities should be prefilled from canonical result
-    expect(ctx.session.session_data.date).toBe('2026-09-15');
-    expect(ctx.session.session_data.time).toBe('14:00');
-    // Canonical result consumed
-    expect(ctx.session.session_data._canonical_result).toBeUndefined();
-  });
-
-  it('stale canonical result cleared on rejection — second message gets fresh parse', async () => {
-    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
-    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
-    const { createMockContext } = await import('../flows/__tests__/helpers');
-
-    const ctx = createMockContext({
-      session: {
-        id: 's3', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
-        session_data: {
-          capabilities: ['ordering'], // reservation NOT available
-          _canonical_result: { semanticFamily: 'property_reservation' },
-        },
-      },
-      business: { id: 'b1', name: 'Restaurant', slug: 'rest', category: 'restaurant' as any, flow_type: 'ordering' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
-    });
-
-    // Message 1: "I want a hotel room" — canonical says property_reservation, unavailable → rejected
+    // Message 1: hotel room — unavailable → rejected
     const result1 = await step.validate!('I want a hotel room', ctx);
     expect(result1.valid).toBe(false);
-    // Canonical result MUST be cleared even after rejection
-    expect(ctx.session.session_data._canonical_result).toBeUndefined();
 
-    // Message 2: "I want to order food" — must NOT see stale property_reservation
+    // Message 2: completely different → freshly parsed, no stale state
     const result2 = await step.validate!('I want to order food', ctx);
     expect(result2.valid).toBe(true);
     expect(result2.data?.active_capability).toBe('ordering');
-  });
-
-  it('parseSmartIntentHybrid NOT called when canonical result exists (spy)', async () => {
-    vi.resetModules();
-    const hybridSpy = vi.fn();
-    vi.doMock('@/lib/bot/smart-intent', () => ({
-      parseSmartIntent: vi.fn(() => ({ understood: false, intent: null, serviceKeywords: [], date: null, specificTime: null, timePreference: null, quantity: null, amount: null, variantKeywords: [] })),
-      parseSmartIntentHybrid: hybridSpy,
-      matchServiceFromKeywords: vi.fn().mockResolvedValue(null),
-      matchServicesFromKeywords: vi.fn().mockResolvedValue([]),
-      matchProductsFromKeywords: vi.fn().mockResolvedValue([]),
-      buildAcknowledgment: vi.fn(() => null),
-    }));
-
-    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
-    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
-    const { createMockContext } = await import('../flows/__tests__/helpers');
-
-    const ctx = createMockContext({
-      session: {
-        id: 's-spy', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
-        session_data: {
-          capabilities: ['reservation', 'scheduling'],
-          _canonical_result: { semanticFamily: 'property_reservation' },
-        },
-      },
-      business: { id: 'b1', name: 'Hotel', slug: 'hotel', category: 'hotel' as any, flow_type: 'reservation' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
-    });
-
-    const result = await step.validate!('Je veux réserver', ctx);
-    expect(result.valid).toBe(true);
-    expect(result.data?.active_capability).toBe('reservation');
-    // The key assertion: parseSmartIntentHybrid was NEVER called
-    expect(hybridSpy).not.toHaveBeenCalled();
-
-    vi.doUnmock('@/lib/bot/smart-intent');
   });
 
   it('H: getUserFacingCapabilities used for selection', async () => {
