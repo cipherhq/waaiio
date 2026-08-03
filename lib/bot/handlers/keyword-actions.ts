@@ -240,10 +240,34 @@ export async function executeKeywordAction(
           // CAP-001 Point B: Verify capability is currently effective before starting
           const currentCaps = (session.session_data?.capabilities as string[]) || [];
           if (!currentCaps.includes(capability)) {
-            // CAS-005: Use shared recovery with valid alternatives
-            const { buildCapabilityRecoveryMessage } = await import('@/lib/bot/capability-recovery');
+            // CAS-005: Clean, persist via CAS, then send recovery
+            const { cleanupByMode, buildCapabilityRecoveryMessage } = await import('@/lib/bot/capability-recovery');
             const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
+
+            // Clone and clean — don't mutate before CAS success
+            const cleanedData = JSON.parse(JSON.stringify(session.session_data));
+            cleanupByMode(cleanedData, 'selection_rejection');
+            cleanedData.capabilities = currentCaps;
+
             const ufCaps = getUserFacingCapabilities(currentCaps as import('@/lib/capabilities/types').CapabilityId[]);
+
+            // CAS persist: move to select_capability
+            const { data: casResult } = await supabase.rpc('update_session_cas', {
+              p_session_id: session.id,
+              p_expected_version: (session as { version?: number }).version || 0,
+              p_current_step: 'select_capability',
+              p_session_data: cleanedData,
+            });
+
+            if (!casResult?.success) {
+              // Stale worker — send nothing
+              return true;
+            }
+
+            // CAS succeeded — update in-memory state and send recovery
+            Object.assign(session.session_data, cleanedData);
+            session.current_step = 'select_capability';
+
             const msg = buildCapabilityRecoveryMessage(capability, ufCaps, (session.session_data?.business_category as string) || 'other');
             await sendText(from, msg);
             return true;

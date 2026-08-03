@@ -801,7 +801,7 @@ export const reservationFlow: FlowDefinition = {
             capability: 'reservation',
             action: 'create_new',
           });
-          if (!capGuard.allowed) {
+          if (!capGuard.allowed) { if (capGuard.recoveryStatus === 'stale') return [];
             return [{ type: 'text' as const, text: await ctx.t(capGuard.customerMessage) }];
           }
         }

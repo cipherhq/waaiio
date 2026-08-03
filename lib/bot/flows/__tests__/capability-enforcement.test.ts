@@ -230,7 +230,10 @@ describe('Flow-start bypass wiring (Point B)', () => {
     } as any;
     const kw = { keyword: 'book', action_type: 'start_capability' as const, payload: 'scheduling', priority: 0 };
     const ctx = {
-      supabase: { from: vi.fn(() => ({ update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: null, error: null }) })) } as any,
+      supabase: {
+        from: vi.fn(() => ({ update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: null, error: null }) })),
+        rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1, current_step: 'select_capability' }, error: null }),
+      } as any,
       messageSender: { sendText: sendTextSpy, sendButtons: vi.fn() } as any,
       standaloneService: {} as any,
       intelligence: {} as any,
@@ -240,7 +243,7 @@ describe('Flow-start bypass wiring (Point B)', () => {
     const handled = await executeKeywordAction(ctx, '+1234567890', session, kw, vi.fn());
 
     expect(handled).toBe(true);
-    // Verify recoverable message was sent via messageSender
+    // CAS recovery must succeed, then recovery message sent
     expect(sendTextSpy).toHaveBeenCalled();
     const sentText = sendTextSpy.mock.calls[0]?.[0]?.text;
     expect(sentText).toContain('not available');
@@ -353,7 +356,7 @@ describe('CREATE_NEW commit wiring (Point C)', () => {
     });
 
     const ctx = createMockContext({
-      supabase: { from: fromMock, rpc: vi.fn().mockResolvedValue({ data: null, error: null }) } as any,
+      supabase: { from: fromMock, rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }) } as any,
       session: {
         id: 's1', user_id: 'u1', business_id: 'biz-8',
         current_step: 'create_reservation', version: 0,
@@ -701,7 +704,7 @@ describe('Provider denial — crowdfunding initializePayment wiring', () => {
     });
 
     const ctx = createCtx({
-      supabase: { from: fromMock, rpc: vi.fn().mockResolvedValue({ data: null, error: null }) } as any,
+      supabase: { from: fromMock, rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }) } as any,
       session: {
         id: 's-cf', user_id: 'u1', business_id: 'biz-cf',
         current_step: 'donation_payment', version: 0,
