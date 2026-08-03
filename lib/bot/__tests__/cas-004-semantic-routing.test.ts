@@ -690,6 +690,34 @@ describe('CAS-004 capability-selection canonical consumption', () => {
     expect(ctx.session.session_data._canonical_result).toBeUndefined();
   });
 
+  it('stale canonical result cleared on rejection — second message gets fresh parse', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
+    const { createMockContext } = await import('../flows/__tests__/helpers');
+
+    const ctx = createMockContext({
+      session: {
+        id: 's3', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
+        session_data: {
+          capabilities: ['ordering'], // reservation NOT available
+          _canonical_result: { semanticFamily: 'property_reservation' },
+        },
+      },
+      business: { id: 'b1', name: 'Restaurant', slug: 'rest', category: 'restaurant' as any, flow_type: 'ordering' as any, subscription_tier: 'growth', trial_ends_at: null, metadata: {} },
+    });
+
+    // Message 1: "I want a hotel room" — canonical says property_reservation, unavailable → rejected
+    const result1 = await step.validate!('I want a hotel room', ctx);
+    expect(result1.valid).toBe(false);
+    // Canonical result MUST be cleared even after rejection
+    expect(ctx.session.session_data._canonical_result).toBeUndefined();
+
+    // Message 2: "I want to order food" — must NOT see stale property_reservation
+    const result2 = await step.validate!('I want to order food', ctx);
+    expect(result2.valid).toBe(true);
+    expect(result2.data?.active_capability).toBe('ordering');
+  });
+
   it('H: getUserFacingCapabilities used for selection', async () => {
     const { getUserFacingCapabilities } = await import('../handlers/flow-routing');
     const caps = getUserFacingCapabilities(['scheduling', 'payment', 'feedback', 'staff'] as any[]);

@@ -225,6 +225,16 @@ const selectCapabilityStep: FlowStepConfig = {
       return { valid: true, data: { active_capability: 'my_account' } };
     }
 
+    // CAS-004: Read and clear canonical result ONCE — before any routing.
+    // Hoisted here so both capability selection and entity extraction can use it.
+    const canonicalR = ctx.session.session_data._canonical_result as {
+      semanticFamily?: string; requestedAction?: string; confidence?: number;
+      serviceKeywords?: string[]; variantKeywords?: string[];
+      date?: string; specificTime?: string; timePreference?: string;
+      quantity?: number; amount?: number;
+    } | undefined;
+    if (canonicalR) delete ctx.session.session_data._canonical_result;
+
     if (input.startsWith('cap_')) {
       capId = input.replace('cap_', '') as CapabilityId;
     } else {
@@ -246,19 +256,11 @@ const selectCapabilityStep: FlowStepConfig = {
             return lower.includes(label) || label.includes(lower);
           }) || null;
         }
-        // CAS-004: Use canonical result if present — ONE message, ONE classification.
+        // Use canonical result for capability selection (canonicalR hoisted above)
         if (!capId) {
           const { resolveSemanticCapability, disambiguateByCategory } = await import('@/lib/bot/semantic-resolver');
           const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
           const ufCaps = getUserFacingCapabilities(capabilities);
-
-          // Check for stored canonical result (from first-message pipeline)
-          const canonicalR = ctx.session.session_data._canonical_result as {
-            semanticFamily?: string; requestedAction?: string; confidence?: number;
-            serviceKeywords?: string[]; variantKeywords?: string[];
-            date?: string; specificTime?: string; timePreference?: string;
-            quantity?: number; amount?: number;
-          } | undefined;
 
           let family: import('@/lib/bot/semantic-types').SemanticFamily = null;
 
@@ -302,12 +304,7 @@ const selectCapabilityStep: FlowStepConfig = {
     if ((capId === 'scheduling' || capId === 'reservation' || capId === 'payment' || capId === 'giving' || capId === 'ticketing' || capId === 'ordering') && ctx.business) {
       try {
         const sd = ctx.session.session_data;
-        const canonicalR = sd._canonical_result as {
-          serviceKeywords?: string[]; variantKeywords?: string[];
-          date?: string; specificTime?: string; timePreference?: string;
-          quantity?: number; amount?: number;
-        } | undefined;
-
+        // canonicalR was already read and cleared above — reuse the same reference
         let parsed: import('@/lib/bot/smart-intent').SmartParseResult;
         if (canonicalR) {
           // Reuse stored canonical entities — NO second LLM call
@@ -322,8 +319,6 @@ const selectCapabilityStep: FlowStepConfig = {
             amount: canonicalR.amount || null,
             variantKeywords: canonicalR.variantKeywords || [],
           };
-          // Consume the canonical result — clear so a NEW message can be classified
-          delete sd._canonical_result;
         } else {
           // Genuinely new message — classify once
           const { parseSmartIntentHybrid } = await import('@/lib/bot/smart-intent');
