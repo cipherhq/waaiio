@@ -2513,6 +2513,7 @@ export const orderingFlow: FlowDefinition = {
           promo_code_id: (d.promo_code_id as string) || null,
           channel: 'whatsapp',
           notes: d.delivery_type === 'pickup' ? 'Pickup order' : null,
+          bot_session_id: ctx.session.id,
         };
 
         // Add new ordering building block fields
@@ -2527,42 +2528,61 @@ export const orderingFlow: FlowDefinition = {
         if (d.package_description) orderPayload.package_description = d.package_description;
         if (d.package_photo_url) orderPayload.package_photo_url = d.package_photo_url;
 
-        const { data: order, error } = await ctx.supabase
-          .from('orders')
-          .insert(orderPayload)
-          .select('id, reference_code')
-          .single();
+        // If order already exists in session (e.g. retry_payment), reuse
+        let order: { id: string; reference_code: string };
+        let freshlyCreated = false;
 
-        if (error || !order) {
-          return [{ type: 'text', text: 'Something went wrong on our end creating your order. Send *Hi* to start over.' }];
-        }
-
-        // Create order items (with addons) and decrement stock
-        for (const item of cart) {
-          const itemPayload: Record<string, unknown> = {
-            order_id: order.id,
+        if (d.order_id && d.reference_code) {
+          order = { id: d.order_id as string, reference_code: d.reference_code as string };
+        } else {
+          // Atomic order + items creation via RPC (idempotent by bot_session_id)
+          const itemsJson = cart.map((item: any) => ({
             product_id: item.product_id,
             quantity: item.quantity,
             unit_price: item.price,
-            variant_id: item.variant_id || null,
-            variant_label: item.variant_label || null,
-          };
-          if (item.addons && item.addons.length > 0) {
-            itemPayload.addons = item.addons;
+            variant_id: item.variant_id || '',
+            variant_label: item.variant_label || '',
+            addons: item.addons && item.addons.length > 0 ? item.addons : null,
+          }));
+
+          const { data: rpcResult, error: rpcError } = await ctx.supabase.rpc('create_order_atomic', {
+            p_bot_session_id: ctx.session.id,
+            p_business_id: ctx.business!.id,
+            p_user_id: userId,
+            p_status: total > 0 ? 'pending' : 'confirmed',
+            p_delivery_address: (d.delivery_address as string) || null,
+            p_delivery_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+            p_total_amount: total,
+            p_discount_amount: discount,
+            p_shipping_cost: shippingCost,
+            p_promo_code_id: (d.promo_code_id as string) || null,
+            p_channel: 'whatsapp',
+            p_notes: d.delivery_type === 'pickup' ? 'Pickup order' : null,
+            p_delivery_zone_id: (d.delivery_zone_id as string) || null,
+            p_delivery_zone_name: zoneName || null,
+            p_addons_total: addonsTotal || 0,
+            p_volume_discount_amount: volumeDiscountTotal || 0,
+            p_pickup_address: (d.pickup_address as string) || null,
+            p_dropoff_address: (d.dropoff_address as string) || null,
+            p_package_description: (d.package_description as string) || null,
+            p_package_photo_url: (d.package_photo_url as string) || null,
+            p_items: itemsJson,
+          });
+
+          if (rpcError || !rpcResult) {
+            return [{ type: 'text', text: 'Something went wrong on our end creating your order. Send *Hi* to start over.' }];
           }
-          await ctx.supabase.from('order_items').insert(itemPayload);
 
-          // Stock is decremented AFTER payment verification in await_order_payment.validate()
-          // For free orders, it's decremented below before confirmation.
+          order = { id: rpcResult.order_id, reference_code: rpcResult.reference_code };
+          freshlyCreated = rpcResult.created === true;
+          d.order_id = order.id;
+          d.reference_code = order.reference_code;
         }
-
-        d.order_id = order.id;
-        d.reference_code = order.reference_code;
         d.total_amount = total;
         d.shipping_cost = shippingCost;
 
-        // Convert referral if applied
-        if (d.referral_id) {
+        // Convert referral if applied — only on fresh order (idempotent: update is safe)
+        if (d.referral_id && freshlyCreated) {
           const refPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
           await ctx.supabase
             .from('referrals')
@@ -2611,10 +2631,8 @@ export const orderingFlow: FlowDefinition = {
           }).catch(err => logger.error('[ORDERING] Owner notification error:', err));
         }
 
-        // Increment promo code usage
-        if (d.promo_code_id) {
-          await ctx.supabase.rpc('increment_promo_usage', { p_code_id: d.promo_code_id as string });
-        }
+        // Promo usage is incremented inside create_order_atomic RPC transaction.
+        // No separate app-level call needed — ensures atomicity with order creation.
 
         // Upsert customer profile
         await ctx.supabase.rpc('upsert_customer_profile', {

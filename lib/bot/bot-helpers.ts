@@ -35,12 +35,10 @@ export async function getActiveSession(supabase: SupabaseClient, phone: string):
 
 /**
  * Deactivate a bot session by ID.
+ * Uses atomic RPC that bumps version, invalidating any pending CAS writes.
  */
 export async function deactivateSession(supabase: SupabaseClient, sessionId: string): Promise<void> {
-  await supabase
-    .from('bot_sessions')
-    .update({ is_active: false })
-    .eq('id', sessionId);
+  await supabase.rpc('deactivate_session_atomic', { p_session_id: sessionId });
 }
 
 /**

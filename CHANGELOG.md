@@ -7,6 +7,17 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-03
 
+### fix(bot): Session resilience hardening
+
+- **Atomic session deactivation** — `deactivateSession()` now uses `deactivate_session_atomic` RPC that bumps version, invalidating any pending CAS writes. Prevents stale workers from overwriting state after exit/menu/start-over. Migration: `304_session_resilience.sql`. Affects: `bot-helpers.ts`, `executor.ts`, all handlers that deactivate sessions (~30 call sites across `keyword-actions.ts`, `escape-hatches.ts`, `my-bookings.ts`, `my-orders.ts`, `refund-request.ts`, `global-queries.ts`, `capability-selection.flow.ts`, `bot.service.ts`).
+- **Escape hatch CAS** — Booking management "back" and free-text step "back" now use `update_session_cas` instead of direct `.update()`. Stale worker silently exits on conflict. File: `escape-hatches.ts`.
+- **start_capability CAS** — `start_capability` happy path in `keyword-actions.ts` now uses CAS. Stale worker silently exits.
+- **checkin navigate CAS** — Queue check-in navigation uses CAS. File: `keyword-actions.ts`.
+- **Duplicate CREATE_NEW guards** — Added `isNewReservation` guard to `reservation.flow.ts`, `isNewOrder` guard to `ordering.flow.ts`, `isNewBooking` guard to `ticketing.flow.ts` (scheduling already had this). Prevents duplicate INSERT on retry/concurrent processing.
+- **Payment provider idempotency** — Paystack now sends `reference: opts.referenceCode` (Paystack uses this as idempotency key). Stripe now sends `Idempotency-Key` header on checkout session creation and refunds. Files: `paystack.ts`, `stripe.ts`.
+- **33 session resilience tests** — `session-resilience.test.ts`: atomic deactivation, CAS composition, duplicate guards, escape hatch CAS, stale worker suppression, webhook deduplication, persist-then-send ordering, regression safety.
+- Could break: Any code that relies on `deactivateSession()` NOT bumping version (none known). Payment retries where the same `referenceCode` was used to create a new Paystack transaction (now rejected as duplicate — by design).
+
 ### fix(bot): CAS-005 — Unavailable-capability recovery
 - **Root cause:** When a customer requested an unavailable capability, responses were generic ("I didn't understand that") or silently substituted another capability. No state cleanup, no valid alternatives shown, no consistent recovery behavior.
 - **Fix:** Shared recovery helper (`capability-recovery.ts`). One `buildRecoveryMessage` function produces consistent customer-facing messages showing what's unavailable, valid alternatives, and recovery actions. One `clearRejectedTransactionalState` function removes all transactional fields from rejected requests (idempotent).

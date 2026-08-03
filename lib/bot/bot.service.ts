@@ -613,7 +613,7 @@ export class BotService {
     if (switchMatch) {
       const keyword = switchMatch[1].trim().toLowerCase();
       if (session) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.deactivateSession(session.id);
       }
 
       // Use the full fuzzy matching engine (same as bot code detection)
@@ -759,9 +759,7 @@ export class BotService {
       if (text === 'restart_yes') {
         // Confirmed restart — deactivate current session and restart fresh
         delete session.session_data._restart_pending;
-        await this.supabase.from('bot_sessions')
-          .update({ is_active: false })
-          .eq('id', session.id);
+        await this.deactivateSession(session.id);
         // Restart with the same business context
         const restartBizId = session.business_id || null;
         if (restartBizId) {
@@ -800,7 +798,7 @@ export class BotService {
       // filter from dropping it (e.g. NG business accessed via US shared number)
       const restartBusinessId = isRestart && session?.business_id ? session.business_id : null;
       if (session) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.deactivateSession(session.id);
       }
 
       // Determine standalone business
@@ -1608,7 +1606,7 @@ export class BotService {
 
     // Check session expiry — clean up and let user start fresh with context
     if (session.expires_at && new Date(session.expires_at) < new Date()) {
-      await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await this.deactivateSession(session.id);
       // Personalize the expired message with business name if available
       let expiredMsg = 'Your session has expired.';
       if (session.business_id) {
@@ -1861,7 +1859,7 @@ export class BotService {
 
       // Handle navigation commands at suggestion step (no business_id, so escape hatch guard skips these)
       if (/^(menu|back|exit|home|cancel|quit|stop|restart|start\s*over|hi|hello|hey)$/i.test(text)) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.deactivateSession(session.id);
         await this.handleMessage(from, 'Hi', messageType, destinationPhone);
         return;
       }
@@ -1869,7 +1867,7 @@ export class BotService {
       // Check for "No" / rejection
       const isNo = /^(biz_no|no|nah|nope|wrong|not)$/i.test(text);
       if (isNo) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.deactivateSession(session.id);
         await this.sendText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_');
         return;
       }
@@ -1906,7 +1904,7 @@ export class BotService {
 
       if (selectedBiz) {
         // Deactivate the suggestion session, re-process as if they sent the bot code
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.deactivateSession(session.id);
         return this.handleMessage(from, selectedBiz.bot_code, messageType, destinationPhone);
       } else {
         await this.sendText(from, 'Please select one of the options above, or send a *business code* to connect.');

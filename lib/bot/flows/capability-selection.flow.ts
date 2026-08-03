@@ -550,9 +550,7 @@ const myAccountMenuStep: FlowStepConfig = {
     // Handle switch business
     if (action === 'acct_switch' || action === 'switch' || action === 'switch business') {
       // Deactivate current session so user can start fresh
-      await ctx.supabase.from('bot_sessions')
-        .update({ is_active: false })
-        .eq('id', ctx.session.id);
+      await ctx.supabase.rpc('deactivate_session_atomic', { p_session_id: ctx.session.id });
       await ctx.sender.sendText({
         to: ctx.from,
         text: await ctx.t('To switch to a different business:\n\n• Type *switch* followed by the business name\n  _e.g. switch FacesByKoph_\n\n• Or send *Hi* to see your recent businesses'),

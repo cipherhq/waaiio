@@ -524,39 +524,62 @@ export const ticketingFlow: FlowDefinition = {
           }
         }
 
-        // Create booking for ticket
-        const { data: booking, error } = await ctx.supabase
-          .from('bookings')
-          .insert({
-            business_id: ctx.business!.id,
-            user_id: userId,
-            event_id: d.event_id as string,
-            date: d.event_date as string,
-            time: (d.event_time as string) || '00:00',
-            party_size: qty,
-            flow_type: 'ticketing',
-            channel: 'whatsapp',
-            deposit_amount: total,
-            deposit_status: total > 0 ? 'pending' : 'none',
-            status: total > 0 ? 'pending' : 'confirmed',
-            total_amount: total,
-            quantity: qty,
-            guest_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-            guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-            notes: `Tickets for: ${d.event_name}`,
-          })
-          .select('id, reference_code')
-          .single();
+        // If booking already exists (e.g. retry after crash), reuse existing — prevent duplicate INSERT
+        const isNewBooking = !(d.booking_id && d.reference_code);
+        let booking: { id: string; reference_code: string };
+        let freshlyCreated = false;
 
-        if (error || !booking) {
-          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+        if (!isNewBooking) {
+          booking = { id: d.booking_id as string, reference_code: d.reference_code as string };
+        } else {
+          const { data: bookingData, error } = await ctx.supabase
+            .from('bookings')
+            .insert({
+              business_id: ctx.business!.id,
+              user_id: userId,
+              event_id: d.event_id as string,
+              date: d.event_date as string,
+              time: (d.event_time as string) || '00:00',
+              party_size: qty,
+              flow_type: 'ticketing',
+              channel: 'whatsapp',
+              deposit_amount: total,
+              deposit_status: total > 0 ? 'pending' : 'none',
+              status: total > 0 ? 'pending' : 'confirmed',
+              total_amount: total,
+              quantity: qty,
+              guest_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+              guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+              notes: `Tickets for: ${d.event_name}`,
+              bot_session_id: ctx.session.id,
+            })
+            .select('id, reference_code')
+            .single();
+
+          if (error || !bookingData) {
+            // Check if this is a duplicate from the same session (UNIQUE constraint on bot_session_id)
+            const { data: existing } = await ctx.supabase
+              .from('bookings')
+              .select('id, reference_code')
+              .eq('bot_session_id', ctx.session.id)
+              .in('status', ['pending', 'confirmed'])
+              .single();
+            if (existing) {
+              booking = existing;
+            } else {
+              return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+            }
+          } else {
+            booking = bookingData;
+            freshlyCreated = true;
+          }
+
+          // tickets_sold is incremented AFTER payment verification in await_ticket_payment.validate()
+          // For free events, it's incremented below before confirmation.
+
+          d.booking_id = booking.id;
+          d.reference_code = booking.reference_code;
         }
-
-        // tickets_sold is incremented AFTER payment verification in await_ticket_payment.validate()
-        // For free events, it's incremented below before confirmation.
-
-        d.booking_id = booking.id;
-        d.reference_code = booking.reference_code;
         // Platform fee is recorded after payment is verified in await_ticket_payment
 
         const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
@@ -712,36 +735,17 @@ export const ticketingFlow: FlowDefinition = {
           ];
         }
 
-        // Free event — increment tickets_sold immediately (no payment needed)
-        const { error: rpcError } = await ctx.supabase.rpc('increment_tickets_sold', {
-          event_id: d.event_id as string,
-          qty,
+        // Free event — finalize ticket counters via atomic idempotent RPC.
+        // Uses booking identity: same booking finalized twice → counters increment once.
+        const { data: finResult, error: finError } = await ctx.supabase.rpc('finalize_free_ticket_booking', {
+          p_booking_id: booking.id,
+          p_event_id: d.event_id as string,
+          p_ticket_type_id: (d.ticket_type_id as string) || null,
+          p_quantity: qty,
         });
-        if (rpcError) {
-          const { data: ev } = await ctx.supabase
-            .from('events')
-            .select('tickets_sold')
-            .eq('id', d.event_id as string)
-            .single();
-          if (ev) {
-            await ctx.supabase
-              .from('events')
-              .update({ tickets_sold: ev.tickets_sold + qty })
-              .eq('id', d.event_id as string);
-          }
-        }
-        if (d.ticket_type_id) {
-          const { data: tt } = await ctx.supabase
-            .from('event_ticket_types')
-            .select('tickets_sold')
-            .eq('id', d.ticket_type_id as string)
-            .single();
-          if (tt) {
-            await ctx.supabase
-              .from('event_ticket_types')
-              .update({ tickets_sold: (tt.tickets_sold || 0) + qty })
-              .eq('id', d.ticket_type_id as string);
-          }
+        if (finError || !finResult?.success) {
+          logger.withContext({ op: 'ticketing.finalize', bookingId: booking.id, error: finError?.message || finResult?.reason }).error('[TICKETING] Free ticket finalization failed');
+          return [{ type: 'text', text: 'Something went wrong finalizing your tickets. Send *Hi* to try again.' }];
         }
 
         // Free event — send tickets before marking complete

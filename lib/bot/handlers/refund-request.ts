@@ -62,7 +62,7 @@ async function handleRefundSelect(
 
     if (!payments || payments.length === 0) {
       await sendText(from, "You don't have any recent payments eligible for refund.");
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
       return;
     }
 
@@ -94,7 +94,7 @@ async function handleRefundSelect(
 
     if (eligible.length === 0) {
       await sendText(from, "You don't have any recent payments eligible for refund.");
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
       return;
     }
 
@@ -205,7 +205,7 @@ async function handleRefundReason(
 
   if (!selected) {
     await sendText(from, 'Something went wrong. Please type *refund* to start over.');
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+    await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
 
@@ -246,7 +246,7 @@ async function handleRefundReason(
 
   if (existing) {
     await sendText(from, 'You already have a pending refund request for this payment. The business will review it shortly.');
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+    await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
 
@@ -265,7 +265,7 @@ async function handleRefundReason(
   if (insertError) {
     logger.error('[REFUND-REQUEST] Failed to insert refund request:', insertError);
     await sendText(from, 'Something went wrong on our end. Please try again later.');
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+    await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
 
@@ -295,5 +295,5 @@ async function handleRefundReason(
   await sendText(from, 'Your refund request has been submitted. The business will review it shortly.');
 
   // Deactivate session
-  await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+  await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
 }

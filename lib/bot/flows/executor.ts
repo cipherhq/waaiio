@@ -102,7 +102,7 @@ export class FlowExecutor {
       errMsg = await this.maybeTranslate(errMsg, session);
       if (!session.conversation_log) session.conversation_log = [];
       session.conversation_log.push({ role: 'bot', content: errMsg, timestamp: new Date().toISOString() });
-      await this.persistConversationLog(session.id, session.conversation_log);
+      if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.sendText(from, errMsg);
       await this.deactivateSession(session.id);
       logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'error' });
@@ -153,7 +153,7 @@ export class FlowExecutor {
       if (override?.action === 'custom' && override.customPrompt) {
         this.trackStepHistory(session, stepId);
         session.conversation_log.push({ role: 'bot', content: override.customPrompt, timestamp: new Date().toISOString() });
-        await this.persistConversationLog(session.id, session.conversation_log);
+        if (!await this.persistConversationLog(session, session.conversation_log)) return;
         await this.sendText(from, override.customPrompt);
       } else {
         const messages = await step.prompt(ctx);
@@ -205,14 +205,14 @@ export class FlowExecutor {
         if (prevStepDef) {
           const prevMessages = await prevStepDef.prompt(ctx);
           this.logPromptMessages(session, prevMessages);
-          await this.persistConversationLog(session.id, session.conversation_log);
+          if (!await this.persistConversationLog(session, session.conversation_log)) return;
           await this.sendMessages(from, prevMessages, session);
         }
         return;
       } else {
         const noBackMsg = await this.maybeTranslate('You\'re at the beginning. Type *menu* to see the main menu.', session);
         session.conversation_log.push({ role: 'bot', content: noBackMsg, timestamp: new Date().toISOString() });
-        await this.persistConversationLog(session.id, session.conversation_log);
+        if (!await this.persistConversationLog(session, session.conversation_log)) return;
         await this.sendText(from, noBackMsg);
         return;
       }
@@ -235,7 +235,7 @@ export class FlowExecutor {
       }
       const cancelMsg = await this.maybeTranslate('Cancelled. Send *Hi* to start over.', session);
       session.conversation_log.push({ role: 'bot', content: cancelMsg, timestamp: new Date().toISOString() });
-      await this.persistConversationLog(session.id, session.conversation_log);
+      if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.deactivateSession(session.id);
       await this.sendText(from, cancelMsg);
       logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'cancelled', capability: session.session_data?.active_capability as string });
@@ -253,7 +253,7 @@ export class FlowExecutor {
       }
       const restartMsg = await this.maybeTranslate('No problem! Send *Hi* to start over.', session);
       session.conversation_log.push({ role: 'bot', content: restartMsg, timestamp: new Date().toISOString() });
-      await this.persistConversationLog(session.id, session.conversation_log);
+      if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.deactivateSession(session.id);
       await this.sendText(from, restartMsg);
       logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'restarted', capability: session.session_data?.active_capability as string });
@@ -335,9 +335,11 @@ export class FlowExecutor {
             session,
           );
           session.conversation_log.push({ role: 'bot', content: failMsg, timestamp: new Date().toISOString() });
+          if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
           await this.sendText(from, failMsg);
+        } else {
+          if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
         }
-        await this.persistConversationLog(session.id, session.conversation_log || []);
         return;
       } else {
         // CAS-008: Chat capability not enabled — tell the customer clearly
@@ -346,8 +348,8 @@ export class FlowExecutor {
           session,
         );
         session.conversation_log.push({ role: 'bot', content: unavailableMsg, timestamp: new Date().toISOString() });
+        if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
         await this.sendText(from, unavailableMsg);
-        await this.persistConversationLog(session.id, session.conversation_log || []);
         return;
       }
     }
@@ -366,14 +368,16 @@ export class FlowExecutor {
       const cancelHint = await this.maybeTranslate('Type *back* to go back, *menu* to restart, or *exit* to leave.', session);
       const errText = `${mediaHint}\n\n_${cancelHint}_`;
       session.conversation_log.push({ role: 'bot', content: errText, timestamp: new Date().toISOString() });
-      await this.sendText(from, errText);
       // Re-send interactive prompts so user gets fresh clickable options
       const retryMessages = await step.prompt(ctx);
       if (retryMessages.some(m => m.type === 'buttons' || m.type === 'list')) {
         this.logPromptMessages(session, retryMessages);
+      }
+      if (!await this.persistConversationLog(session, session.conversation_log)) return;
+      await this.sendText(from, errText);
+      if (retryMessages.some(m => m.type === 'buttons' || m.type === 'list')) {
         await this.sendMessages(from, retryMessages);
       }
-      await this.persistConversationLog(session.id, session.conversation_log);
       return;
     }
 
@@ -453,7 +457,7 @@ export class FlowExecutor {
         });
         if (!casSaved) return; // Stale worker — send nothing
       } else {
-        await this.persistConversationLog(session.id, session.conversation_log);
+        if (!await this.persistConversationLog(session, session.conversation_log)) return;
       }
 
       // Send responses AFTER successful persistence
@@ -491,7 +495,7 @@ export class FlowExecutor {
       await this.advanceToStep(session, nextStepId, from, ctx);
     } else {
       // Flow complete — persist log before deactivating
-      await this.persistConversationLog(session.id, session.conversation_log || []);
+      if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
 
       // Check if successful completion (not cancellation) — show "What's next?" menu
       const sd = session.session_data;
@@ -569,7 +573,7 @@ export class FlowExecutor {
       this.trackStepHistory(session, nextStepId);
       const translatedCustom = await this.maybeTranslate(nextOverride.customPrompt, session);
       session.conversation_log.push({ role: 'bot', content: translatedCustom, timestamp: new Date().toISOString() });
-      await this.persistConversationLog(session.id, session.conversation_log);
+      if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.sendText(from, translatedCustom);
     } else {
       const messages = await nextStep.prompt(ctx);
@@ -577,7 +581,7 @@ export class FlowExecutor {
         this.trackStepHistory(session, nextStepId);
       }
       this.logPromptMessages(session, messages);
-      await this.persistConversationLog(session.id, session.conversation_log || []);
+      if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
       await this.sendMessages(from, messages);
     }
   }
@@ -727,22 +731,27 @@ export class FlowExecutor {
     }
   }
 
-  /** Persist conversation_log to the database */
+  /**
+   * Persist conversation_log via CAS. Returns true if the caller owns the
+   * session (version matched), false if stale. On success, bumps
+   * session.version locally so subsequent CAS calls use the new version.
+   *
+   * Uses update_session_cas with unchanged current_step/session_data to
+   * atomically write the log and increment the version.
+   */
   private async persistConversationLog(
-    sessionId: string,
+    session: { id: string; version: number; current_step: string; session_data: Record<string, unknown> },
     log: Array<{ role: 'bot' | 'user'; content: string; timestamp: string }>,
-  ): Promise<void> {
-    await this.supabase
-      .from('bot_sessions')
-      .update({ conversation_log: log })
-      .eq('id', sessionId);
+  ): Promise<boolean> {
+    return this.casUpdateSession(session, {
+      current_step: session.current_step,
+      session_data: session.session_data,
+      conversation_log: log,
+    });
   }
 
   private async deactivateSession(sessionId: string): Promise<void> {
-    await this.supabase
-      .from('bot_sessions')
-      .update({ is_active: false })
-      .eq('id', sessionId);
+    await this.supabase.rpc('deactivate_session_atomic', { p_session_id: sessionId });
   }
 
   /**
@@ -799,10 +808,11 @@ export class FlowExecutor {
       : 'What would you like to do next?';
 
     // Keep session alive on post_completion step so buttons work
-    await this.casUpdateSession(session, {
+    const saved = await this.casUpdateSession(session, {
       current_step: 'post_completion',
       session_data: { ...session.session_data, _post_completion_cap: cap },
     });
+    if (!saved) return; // stale — another worker owns this session
 
     await this.sender.sendButtons({ to: from, body, buttons });
   }
