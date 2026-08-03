@@ -240,7 +240,12 @@ export async function executeKeywordAction(
           // CAP-001 Point B: Verify capability is currently effective before starting
           const currentCaps = (session.session_data?.capabilities as string[]) || [];
           if (!currentCaps.includes(capability)) {
-            await sendText(from, 'This service is currently unavailable. Send *Hi* to see what\'s available.');
+            // CAS-005: Use shared recovery with valid alternatives
+            const { buildCapabilityRecoveryMessage } = await import('@/lib/bot/capability-recovery');
+            const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
+            const ufCaps = getUserFacingCapabilities(currentCaps as import('@/lib/capabilities/types').CapabilityId[]);
+            const msg = buildCapabilityRecoveryMessage(capability, ufCaps, (session.session_data?.business_category as string) || 'other');
+            await sendText(from, msg);
             return true;
           }
           session.session_data.active_capability = capability;

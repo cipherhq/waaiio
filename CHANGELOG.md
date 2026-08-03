@@ -5,6 +5,15 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-03
+
+### fix(bot): CAS-005 — Unavailable-capability recovery
+- **Root cause:** When a customer requested an unavailable capability, responses were generic ("I didn't understand that") or silently substituted another capability. No state cleanup, no valid alternatives shown, no consistent recovery behavior.
+- **Fix:** Shared recovery helper (`capability-recovery.ts`). One `buildRecoveryMessage` function produces consistent customer-facing messages showing what's unavailable, valid alternatives, and recovery actions. One `clearRejectedTransactionalState` function removes all transactional fields from rejected requests (idempotent).
+- **Wired into:** capability-selection validate (free text + cap_ button), start_capability keyword, quick_rebook, requireCurrentCapability commit guard.
+- **Files:** `lib/bot/capability-recovery.ts` (NEW), `lib/bot/flows/capability-selection.flow.ts`, `lib/bot/bot.service.ts`, `lib/bot/handlers/keyword-actions.ts`, `lib/bot/flows/shared/capability-guard.ts`, `lib/bot/__tests__/cas-005-recovery.test.ts` (NEW), `CHANGELOG.md`
+- **12 focused tests** covering: recovery messages with/without alternatives, no internal IDs, state cleanup (idempotent), capability-selection validate recovery, commit-guard recovery, positive controls.
+
 ## 2026-08-02
 
 ### fix(bot): CAS-004 — Semantic-family-aware free-text routing

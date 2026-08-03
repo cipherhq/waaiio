@@ -243,7 +243,7 @@ describe('Flow-start bypass wiring (Point B)', () => {
     // Verify recoverable message was sent via messageSender
     expect(sendTextSpy).toHaveBeenCalled();
     const sentText = sendTextSpy.mock.calls[0]?.[0]?.text;
-    expect(sentText).toContain('unavailable');
+    expect(sentText).toContain('not available');
     // active_capability must NOT have been set
     expect(session.session_data.active_capability).toBeUndefined();
     // flow executor must NOT have been called
@@ -375,7 +375,7 @@ describe('CREATE_NEW commit wiring (Point C)', () => {
     // Customer receives recoverable message
     expect(messages).toHaveLength(1);
     expect(messages[0].type).toBe('text');
-    expect((messages[0] as any).text).toContain('unavailable');
+    expect((messages[0] as any).text).toContain('not available');
   });
 
   // Test F2: scheduling create_booking — capability disabled means guard denies BEFORE RPC
@@ -390,7 +390,7 @@ describe('CREATE_NEW commit wiring (Point C)', () => {
       businessId: 'biz-1', capability: 'scheduling', action: 'create_new',
     });
     expect(result.allowed).toBe(false);
-    if (!result.allowed) expect(result.customerMessage).toContain('unavailable');
+    if (!result.allowed) expect(result.customerMessage).toContain('not available');
 
     // Also verify: if we called book_slot_atomic after this denial, it would NOT proceed
     // (the flow code returns early on !capGuard.allowed before reaching the RPC)
@@ -533,7 +533,9 @@ describe('CREATE_NEW commit wiring (Point C)', () => {
 
     expect(insertSpy).not.toHaveBeenCalled();
     expect(messages).toHaveLength(1);
-    expect((messages[0] as any).text).toContain('unavailable');
+    // Suspended business uses "unavailable" not "not available"
+    const msgText = (messages[0] as any).text;
+    expect(msgText).toMatch(/not available|unavailable/);
   });
 });
 
@@ -644,7 +646,7 @@ describe('Scheduling F2 — create_booking wiring with RPC spy', () => {
     // Must return a recoverable message (not crash)
     expect(messages.length).toBeGreaterThanOrEqual(1);
     const msgText = (messages[0] as any).text || (messages[0] as any).body || '';
-    expect(msgText).toContain('unavailable');
+    expect(msgText).toContain('not available');
   });
 });
 
@@ -709,7 +711,7 @@ describe('Provider denial — crowdfunding initializePayment wiring', () => {
     // NEGATIVE: initializePayment must NOT have been called
     expect(initPaymentSpy).not.toHaveBeenCalled();
     expect(messages.length).toBeGreaterThanOrEqual(1);
-    expect((messages[0] as any).text).toContain('unavailable');
+    expect((messages[0] as any).text).toContain('not available');
 
     vi.doUnmock('../shared/payment');
   });
@@ -768,7 +770,7 @@ describe('Provider denial — crowdfunding initializePayment wiring', () => {
     expect(initPaymentSpy).toHaveBeenCalled();
     // Should NOT contain 'unavailable'
     const allText = messages.map(m => (m as any).text || (m as any).body || '').join(' ');
-    expect(allText).not.toContain('unavailable');
+    expect(allText).not.toContain('not available');
 
     vi.doUnmock('../shared/payment');
   });
@@ -831,7 +833,7 @@ describe('MANAGE_EXISTING payment continuation — scheduling', () => {
 
     // No capability guard denial message
     const allText = messages.map(m => (m as any).text || (m as any).body || '').join(' ');
-    expect(allText).not.toContain('unavailable');
+    expect(allText).not.toContain('not available');
 
     // CRITICAL: initializePayment WAS called — proving MANAGE_EXISTING payment continuation
     expect(initPaymentSpy).toHaveBeenCalled();

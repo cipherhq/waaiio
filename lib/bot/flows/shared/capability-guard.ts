@@ -151,10 +151,18 @@ export async function requireCurrentCapability(
     const detail = blockedEntry?.reason || 'capability_not_effective';
     logger.warn(`[BOT-GUARD] ${action} denied: capability=${capability} reason=${detail} business=${businessId}`);
 
+    // CAS-005: Build a helpful customer message
+    const { buildCapabilityRecoveryMessage } = await import('@/lib/bot/capability-recovery');
+    const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
+    const ufCaps = getUserFacingCapabilities(resolution.effective);
+    const customerMessage = buildCapabilityRecoveryMessage(
+      capability, ufCaps, business.category || 'other',
+    );
+
     return {
       allowed: false,
       reason: detail,
-      customerMessage: 'This service is currently unavailable. Please contact the business owner or try again later.',
+      customerMessage,
     };
   }
 
