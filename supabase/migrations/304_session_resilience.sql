@@ -108,10 +108,12 @@ DECLARE v_count int; v_buffer_count int; v_booking_id uuid; v_ref text;
   v_lock_key bigint;
 BEGIN
   -- ── Advisory lock on logical slot: serializes ALL concurrent operations ──
-  -- Hash business_id + date + time + staff into a single bigint lock key.
-  -- pg_advisory_xact_lock is transaction-scoped: auto-released on commit/rollback.
+  -- Lock on business + date + time (WITHOUT staff) because the capacity
+  -- predicate with p_staff_id IS NULL counts ALL staff bookings. Locking
+  -- per-staff would leave a gap where a NULL-staff request and a specific-
+  -- staff request race without serialization.
   v_lock_key := abs(hashtext(
-    p_business_id::text || '|' || p_date::text || '|' || p_time || '|' || COALESCE(p_staff_id::text, '_')
+    p_business_id::text || '|' || p_date::text || '|' || p_time
   ));
   PERFORM pg_advisory_xact_lock(v_lock_key);
 

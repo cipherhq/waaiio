@@ -272,79 +272,129 @@ describe.skipIf(!dbUrl)('Session Resilience: Real PostgreSQL contention tests', 
   // ═══════════════════════════════════════════════════════
 
   describe('book_slot_atomic concurrency', () => {
-    it('A: same bot_session_id concurrent retry → exactly one booking, both succeed', async () => {
+    const STAFF_A = '22aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+
+    it('A: same bot_session_id concurrent retry → one booking, both succeed', async () => {
       psql(`DELETE FROM bookings;`);
 
-      // Both sessions use the SAME bot_session_id, run concurrently.
-      // Session A holds advisory lock (with pg_sleep), session B waits.
-      const sql = (delay: string) => `
+      // Worker A: BEGIN → RPC (acquires advisory lock) → pg_sleep (holds lock) → COMMIT
+      // Worker B: RPC (blocks on advisory lock until A commits) → gets idempotent reuse
+      const sqlA = `
+        BEGIN;
         SELECT * FROM book_slot_atomic(
           '${BIZ_ID}'::uuid, '${USER_ID}'::uuid, NULL, NULL,
           '2026-12-01'::date, '10:00', 1, 1,
           'scheduling', 0, 'none', 'pending',
-          'Test', '+1234', NULL,
-          NULL, NULL, NULL,
-          NULL, NULL, 0, NULL,
-          NULL, NULL, 0, 30,
+          'Test', '+1234', NULL, NULL, NULL, NULL,
+          NULL, NULL, 0, NULL, NULL, NULL, 0, 30,
           '${SESSION_A}'::uuid
         );
-        ${delay}
+        SELECT pg_sleep(1);
+        COMMIT;
+      `;
+      const sqlB = `
+        SELECT * FROM book_slot_atomic(
+          '${BIZ_ID}'::uuid, '${USER_ID}'::uuid, NULL, NULL,
+          '2026-12-01'::date, '10:00', 1, 1,
+          'scheduling', 0, 'none', 'pending',
+          'Test', '+1234', NULL, NULL, NULL, NULL,
+          NULL, NULL, 0, NULL, NULL, NULL, 0, 30,
+          '${SESSION_A}'::uuid
+        );
       `;
 
-      const { a, b } = await runTwoSessions(
-        sql('SELECT pg_sleep(1);'), // A holds lock via sleep inside same session
-        sql(''),                     // B arrives while A holds advisory lock
-      );
+      const { a, b } = await runTwoSessions(sqlA, sqlB);
 
-      // Both must succeed (slot_available = true)
-      expect(a.stdout).toContain('t'); // slot_available = true
-      expect(b.stdout).toContain('t');
+      // Both must succeed (slot_available = t)
+      expect(a.stdout).toContain('|t');
+      expect(b.stdout).toContain('|t');
 
-      // Extract booking IDs — must be identical
-      const bookingIdA = a.stdout.split('|')[0];
-      const bookingIdB = b.stdout.split('|')[0];
-      expect(bookingIdA).toBe(bookingIdB);
+      // Same booking ID
+      const idA = a.stdout.split('\n').find(l => l.includes('|t'))!.split('|')[0];
+      const idB = b.stdout.split('\n').find(l => l.includes('|t'))!.split('|')[0];
+      expect(idA).toBe(idB);
 
-      // Exactly one booking in DB
       const count = psql(`SELECT COUNT(*) FROM bookings WHERE bot_session_id = '${SESSION_A}';`);
       expect(count).toBe('1');
     });
 
-    it('B: two different sessions, capacity=1 → one succeeds, one fails', async () => {
+    it('B: two different sessions, capacity=1 → one succeeds, one rejected', async () => {
       psql(`DELETE FROM bookings;`);
 
-      const sqlForSession = (sessId: string, delay: string) => `
+      const sqlA = `
+        BEGIN;
         SELECT * FROM book_slot_atomic(
           '${BIZ_ID}'::uuid, '${USER_ID}'::uuid, NULL, NULL,
           '2026-12-02'::date, '14:00', 1, 1,
           'scheduling', 0, 'none', 'pending',
-          'Test', '+1234', NULL,
-          NULL, NULL, NULL,
-          NULL, NULL, 0, NULL,
-          NULL, NULL, 0, 30,
-          '${sessId}'::uuid
+          'Test', '+1234', NULL, NULL, NULL, NULL,
+          NULL, NULL, 0, NULL, NULL, NULL, 0, 30,
+          '${SESSION_A}'::uuid
         );
-        ${delay}
+        SELECT pg_sleep(1);
+        COMMIT;
+      `;
+      const sqlB = `
+        SELECT * FROM book_slot_atomic(
+          '${BIZ_ID}'::uuid, '${USER_ID}'::uuid, NULL, NULL,
+          '2026-12-02'::date, '14:00', 1, 1,
+          'scheduling', 0, 'none', 'pending',
+          'Test', '+1234', NULL, NULL, NULL, NULL,
+          NULL, NULL, 0, NULL, NULL, NULL, 0, 30,
+          '${SESSION_B}'::uuid
+        );
       `;
 
-      const { a, b } = await runTwoSessions(
-        sqlForSession(SESSION_A, 'SELECT pg_sleep(1);'),
-        sqlForSession(SESSION_B, ''),
-      );
+      const { a, b } = await runTwoSessions(sqlA, sqlB);
 
-      // One must have slot_available=true, the other false
-      const aAvail = a.stdout.includes('|t');
-      const bAvail = b.stdout.includes('|t');
-      expect(aAvail || bAvail).toBe(true); // at least one succeeded
-      // Cannot both succeed for capacity=1
-      if (aAvail && bAvail) {
-        // Both can't create — check DB
-        const count = psql(`SELECT COUNT(*) FROM bookings WHERE date = '2026-12-02' AND time = '14:00:00';`);
-        expect(parseInt(count)).toBe(1);
-      }
+      // A succeeds (first to lock)
+      expect(a.stdout).toContain('|t');
+      // B must see the booking A created → capacity full → slot_available=false
+      expect(b.stdout).toContain('|f');
 
-      // Exactly one booking
       const count = psql(`SELECT COUNT(*) FROM bookings WHERE date = '2026-12-02' AND time = '14:00:00';`);
+      expect(parseInt(count)).toBe(1);
+    });
+
+    it('C: NULL staff vs specific staff share capacity lock → one wins', async () => {
+      psql(`DELETE FROM bookings;`);
+
+      // Worker A books with p_staff_id = NULL (counts ALL staff bookings)
+      // Worker B books with p_staff_id = specific UUID
+      // Both target the same business/date/time, capacity=1
+      // Since NULL-staff capacity spans all staff, they MUST serialize
+      const sqlA = `
+        BEGIN;
+        SELECT * FROM book_slot_atomic(
+          '${BIZ_ID}'::uuid, '${USER_ID}'::uuid, NULL, NULL,
+          '2026-12-03'::date, '09:00', 1, 1,
+          'scheduling', 0, 'none', 'pending',
+          'Test', '+1234', NULL, NULL, NULL, NULL,
+          NULL, NULL, 0, NULL, NULL, NULL, 0, 30,
+          '${SESSION_A}'::uuid
+        );
+        SELECT pg_sleep(1);
+        COMMIT;
+      `;
+      const sqlB = `
+        SELECT * FROM book_slot_atomic(
+          '${BIZ_ID}'::uuid, '${USER_ID}'::uuid, NULL, '${STAFF_A}'::uuid,
+          '2026-12-03'::date, '09:00', 1, 1,
+          'scheduling', 0, 'none', 'pending',
+          'Test', '+5678', NULL, NULL, NULL, NULL,
+          NULL, NULL, 0, NULL, NULL, NULL, 0, 30,
+          '${SESSION_B}'::uuid
+        );
+      `;
+
+      const { a, b } = await runTwoSessions(sqlA, sqlB);
+
+      // A succeeds (NULL staff, first to lock)
+      expect(a.stdout).toContain('|t');
+      // B must be rejected (capacity exhausted — NULL staff counts all)
+      expect(b.stdout).toContain('|f');
+
+      const count = psql(`SELECT COUNT(*) FROM bookings WHERE date = '2026-12-03' AND time = '09:00:00';`);
       expect(parseInt(count)).toBe(1);
     });
   });
@@ -355,14 +405,14 @@ describe.skipIf(!dbUrl)('Session Resilience: Real PostgreSQL contention tests', 
 
   describe('create_order_atomic concurrency', () => {
     it('A: two simultaneous first-time calls → one order, complete items', async () => {
-      psql(`DELETE FROM order_items; DELETE FROM orders;`);
-      psql(`INSERT INTO promo_codes (id, code) VALUES ('${PRODUCT_ID}', 'TEST10');`);
+      psql(`DELETE FROM order_items; DELETE FROM orders; DELETE FROM promo_codes;`);
 
       const items = JSON.stringify([
         { product_id: PRODUCT_ID, quantity: 2, unit_price: 500, variant_id: '', variant_label: '' },
       ]);
 
-      const sql = (delay: string) => `
+      const sqlA = `
+        BEGIN;
         SELECT create_order_atomic(
           '${SESSION_A}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
           'pending', NULL, '+1234', 1000,
@@ -370,35 +420,36 @@ describe.skipIf(!dbUrl)('Session Resilience: Real PostgreSQL contention tests', 
           NULL, NULL, 0, 0, NULL, NULL, NULL, NULL,
           '${items}'::jsonb
         );
-        ${delay}
+        SELECT pg_sleep(1);
+        COMMIT;
+      `;
+      const sqlB = `
+        SELECT create_order_atomic(
+          '${SESSION_A}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
+          'pending', NULL, '+1234', 1000,
+          0, 0, NULL, 'whatsapp', NULL,
+          NULL, NULL, 0, 0, NULL, NULL, NULL, NULL,
+          '${items}'::jsonb
+        );
       `;
 
-      const { a, b } = await runTwoSessions(
-        sql('SELECT pg_sleep(1);'),
-        sql(''),
-      );
+      const { a, b } = await runTwoSessions(sqlA, sqlB);
 
-      // Both must return valid result
-      const resultA = JSON.parse(a.stdout);
+      const resultA = JSON.parse(a.stdout.split('\n').find(l => l.startsWith('{'))!);
       const resultB = JSON.parse(b.stdout);
       expect(resultA.order_id).toBeDefined();
       expect(resultB.order_id).toBeDefined();
-      // Same order
       expect(resultA.order_id).toBe(resultB.order_id);
 
-      // Exactly one order
       const orderCount = psql(`SELECT COUNT(*) FROM orders WHERE bot_session_id = '${SESSION_A}';`);
       expect(orderCount).toBe('1');
 
-      // Complete item set (not duplicated)
       const itemCount = psql(`SELECT COUNT(*) FROM order_items WHERE order_id = '${resultA.order_id}';`);
       expect(itemCount).toBe('1');
     });
 
-    it('B: existing order with partial items + concurrent retries', async () => {
+    it('B: existing order with zero items + concurrent retries → complete items', async () => {
       psql(`DELETE FROM order_items; DELETE FROM orders;`);
-
-      // Create order with zero items (simulating crash after parent INSERT)
       psql(`INSERT INTO orders (id, bot_session_id, business_id, user_id, status)
             VALUES (gen_random_uuid(), '${SESSION_B}', '${BIZ_ID}', '${USER_ID}', 'pending');`);
 
@@ -407,7 +458,8 @@ describe.skipIf(!dbUrl)('Session Resilience: Real PostgreSQL contention tests', 
         { product_id: PRODUCT_ID, quantity: 2, unit_price: 500, variant_id: '', variant_label: '' },
       ]);
 
-      const sql = (delay: string) => `
+      const sqlA = `
+        BEGIN;
         SELECT create_order_atomic(
           '${SESSION_B}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
           'pending', NULL, '+5678', 1300,
@@ -415,22 +467,27 @@ describe.skipIf(!dbUrl)('Session Resilience: Real PostgreSQL contention tests', 
           NULL, NULL, 0, 0, NULL, NULL, NULL, NULL,
           '${items}'::jsonb
         );
-        ${delay}
+        SELECT pg_sleep(1);
+        COMMIT;
+      `;
+      const sqlB = `
+        SELECT create_order_atomic(
+          '${SESSION_B}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
+          'pending', NULL, '+5678', 1300,
+          0, 0, NULL, 'whatsapp', NULL,
+          NULL, NULL, 0, 0, NULL, NULL, NULL, NULL,
+          '${items}'::jsonb
+        );
       `;
 
-      const { a, b } = await runTwoSessions(
-        sql('SELECT pg_sleep(1);'),
-        sql(''),
-      );
+      const { a, b } = await runTwoSessions(sqlA, sqlB);
 
-      const resultA = JSON.parse(a.stdout);
+      const resultA = JSON.parse(a.stdout.split('\n').find(l => l.startsWith('{'))!);
       const resultB = JSON.parse(b.stdout);
       expect(resultA.order_id).toBe(resultB.order_id);
-      // Both must return created=false (existing order)
       expect(resultA.created).toBe(false);
       expect(resultB.created).toBe(false);
 
-      // Exactly 2 items (not duplicated)
       const itemCount = psql(`SELECT COUNT(*) FROM order_items WHERE order_id = '${resultA.order_id}';`);
       expect(itemCount).toBe('2');
     });
@@ -472,25 +529,31 @@ describe.skipIf(!dbUrl)('Session Resilience: Real PostgreSQL contention tests', 
       psql(`INSERT INTO event_ticket_types (id, event_id, tickets_sold) VALUES ('${TT_ID}', '${EVENT_ID}', 0);`);
       psql(`INSERT INTO bookings (id, business_id, status, bot_session_id) VALUES ('${SESSION_A}', '${BIZ_ID}', 'confirmed', '${SESSION_A}');`);
 
-      const sql = (delay: string) => `
+      // Worker A: BEGIN → RPC (acquires FOR UPDATE lock on booking) → sleep → COMMIT
+      // Worker B: RPC (blocks on FOR UPDATE until A commits) → sees already_finalized
+      const sqlA = `
+        BEGIN;
         SELECT finalize_free_ticket_booking('${SESSION_A}'::uuid, '${EVENT_ID}'::uuid, '${TT_ID}'::uuid, 2);
-        ${delay}
+        SELECT pg_sleep(1);
+        COMMIT;
+      `;
+      const sqlB = `
+        SELECT finalize_free_ticket_booking('${SESSION_A}'::uuid, '${EVENT_ID}'::uuid, '${TT_ID}'::uuid, 2);
       `;
 
-      const { a, b } = await runTwoSessions(
-        sql('SELECT pg_sleep(1);'),
-        sql(''),
-      );
+      const { a, b } = await runTwoSessions(sqlA, sqlB);
 
-      // Both should succeed (one fresh, one idempotent)
-      const rA = JSON.parse(a.stdout);
+      const rA = JSON.parse(a.stdout.split('\n').find(l => l.startsWith('{'))!);
       const rB = JSON.parse(b.stdout);
       expect(rA.success).toBe(true);
       expect(rB.success).toBe(true);
+      // One must be fresh, one idempotent
+      expect(rA.already_finalized === false || rB.already_finalized === false).toBe(true);
 
-      // Counters incremented exactly once
       const eventSold = psql(`SELECT tickets_sold FROM events WHERE id = '${EVENT_ID}';`);
       expect(eventSold).toBe('2');
+      const ttSold = psql(`SELECT tickets_sold FROM event_ticket_types WHERE id = '${TT_ID}';`);
+      expect(ttSold).toBe('2');
     });
 
     it('missing event → finalization fails, tickets_finalized stays false', () => {

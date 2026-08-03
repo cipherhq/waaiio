@@ -795,6 +795,22 @@ describe('Free ticketing counter — atomic finalization RPC', () => {
   });
 });
 
+describe('Free ticket flow — finalization result check', () => {
+  it('flow checks RPC result and returns error on failure', async () => {
+    const source = readFileSync(resolve(ROOT, 'lib/bot/flows/ticketing.flow.ts'), 'utf-8');
+    // Must destructure the RPC result
+    expect(source).toContain('const { data: finResult, error: finError }');
+    // Must check for failure BEFORE the free-ticket sendTicketsAfterPurchase
+    const checkIdx = source.indexOf('if (finError || !finResult?.success)');
+    // Find the sendTicketsAfterPurchase that comes AFTER the finalization check
+    const sendTicketsIdx = source.indexOf('sendTicketsAfterPurchase', checkIdx);
+    expect(checkIdx).toBeGreaterThan(-1);
+    expect(sendTicketsIdx).toBeGreaterThan(checkIdx);
+    // Must return error message on failure
+    expect(source).toContain('Something went wrong finalizing your tickets');
+  });
+});
+
 describe('Scheduling RPC — advisory lock + idempotent retry', () => {
   it('book_slot_atomic uses advisory lock before idempotency and capacity checks', async () => {
     const migration = readFileSync(resolve(ROOT, 'supabase/migrations/304_session_resilience.sql'), 'utf-8');
