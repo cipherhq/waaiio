@@ -34,15 +34,11 @@ const DEFAULTS: AIConfig = {
   enabled_languages: ['en'],
 };
 
-const SUPPORTED_LANGUAGES: Array<{ code: string; name: string }> = [
+// Only production-certified languages are selectable.
+// Expand after controlled language-quality acceptance testing.
+const CERTIFIED_LANGUAGE_OPTIONS: Array<{ code: string; name: string }> = [
   { code: 'en', name: 'English' },
   { code: 'pcm', name: 'Nigerian Pidgin' },
-  { code: 'yo', name: 'Yoruba' },
-  { code: 'ig', name: 'Igbo' },
-  { code: 'ha', name: 'Hausa' },
-  { code: 'tw', name: 'Twi' },
-  { code: 'fr', name: 'French' },
-  { code: 'es', name: 'Spanish' },
 ];
 
 export default function AISettingsPage() {
@@ -304,7 +300,7 @@ export default function AISettingsPage() {
                 : 'Select which languages your bot should support.'}
           </p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {SUPPORTED_LANGUAGES.map(lang => {
+            {CERTIFIED_LANGUAGE_OPTIONS.map(lang => {
               const isEnglish = lang.code === 'en';
               const isSelected = config.enabled_languages.includes(lang.code);
               const isFree = business.subscription_tier === 'free';

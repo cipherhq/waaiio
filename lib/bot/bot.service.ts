@@ -1030,9 +1030,10 @@ export class BotService {
       // ═══════════════════════════════════════════════════════════
       // CAS-004: Canonical first-message understanding pipeline.
       // language entitlement → canonical understanding (hybrid for paid tiers)
-      // → action routing → capability resolution → confidence → execute/clarify
+      // → confidence check → action routing → capability resolution → execute/clarify
       // ═══════════════════════════════════════════════════════════
       let canonicalResult: import('./canonical-understanding').CanonicalUnderstanding | null = null;
+      let directCanonicalCap: string | null = null; // High-confidence direct routing target
       if (business && text && text.length > 2 && !isRestart) {
         try {
           const { understandCanonicalMessage } = await import('./canonical-understanding');
@@ -1042,28 +1043,69 @@ export class BotService {
             timezone: (waConfig?.business_hours as BusinessHours | undefined)?.timezone,
           });
 
-          // Language blocked → recovery and return
+          // Language blocked → accurate recovery and return
           if (canonicalResult.languageBlocked) {
             const langNames = canonicalResult.allowedLanguageNames || ['English'];
             await this.sendText(from, `This business currently supports ${langNames.join(' and ')}. Please send your message in ${langNames.length === 1 ? langNames[0] : 'one of those languages'}.`);
             return;
           }
 
-          // Non-CREATE_NEW action → dispatch to existing handlers
-          if (canonicalResult.requestedAction && canonicalResult.requestedAction !== 'create_new' && canonicalResult.requestedAction !== 'navigation') {
-            const { dispatchAction, sendActionRecovery } = await import('./action-dispatcher');
-            const actionResult = await dispatchAction({
-              supabase: this.supabase, messageSender: this.messageSender,
-              flowExecutor: this.flowExecutor, from, businessId: business.id,
-              businessName: business.name,
-              sessionData: { business_id: businessId, business_name: business.name, business_category: business.category, capabilities },
-              semanticFamily: canonicalResult.semanticFamily,
-              requestedAction: canonicalResult.requestedAction,
-              originalText: text,
-            });
-            if (actionResult.handled) return;
-            await sendActionRecovery(this.messageSender, from, canonicalResult.requestedAction, actionResult.reason || 'no_handler');
-            return;
+          // Confidence check BEFORE any semantic action
+          const { loadConversationConfig } = await import('./confidence-policy');
+          const convConfig = await loadConversationConfig(this.supabase, business.id);
+          if (canonicalResult.confidence > 0 && canonicalResult.confidence < convConfig.clarificationThreshold) {
+            // Below clarification threshold → configured fallback (menu/clarification)
+            // Let normal flow handle it (select_capability menu)
+          } else if (canonicalResult.confidence >= convConfig.clarificationThreshold && canonicalResult.confidence < convConfig.autoRouteThreshold) {
+            // Clarification band → show menu, don't auto-route
+            // Continue to normal flow (select_capability will show menu)
+          } else if (canonicalResult.confidence >= convConfig.autoRouteThreshold) {
+            // High confidence — eligible for action/capability routing
+
+            // Non-CREATE_NEW action → dispatch to existing handlers
+            if (canonicalResult.requestedAction && canonicalResult.requestedAction !== 'create_new' && canonicalResult.requestedAction !== 'navigation') {
+              const { dispatchAction, sendActionRecovery } = await import('./action-dispatcher');
+              const actionResult = await dispatchAction({
+                supabase: this.supabase, messageSender: this.messageSender,
+                flowExecutor: this.flowExecutor, from, businessId: business.id,
+                businessName: business.name,
+                sessionData: { business_id: businessId, business_name: business.name, business_category: business.category, capabilities },
+                semanticFamily: canonicalResult.semanticFamily,
+                requestedAction: canonicalResult.requestedAction,
+                originalText: text,
+              });
+              if (actionResult.handled) return;
+              await sendActionRecovery(this.messageSender, from, canonicalResult.requestedAction, actionResult.reason || 'no_handler');
+              return;
+            }
+
+            // High-confidence CREATE_NEW → try direct canonical routing
+            if (canonicalResult.requestedAction === 'create_new') {
+              const { getUserFacingCapabilities } = await import('./handlers/flow-routing');
+              const { resolveSemanticCapability, disambiguateByCategory } = await import('./semantic-resolver');
+              const ufCaps = getUserFacingCapabilities(capabilities);
+
+              let routeFamily = canonicalResult.semanticFamily;
+              if (!routeFamily && canonicalResult.broadIntent === 'booking') {
+                routeFamily = disambiguateByCategory(business.category, ufCaps);
+              }
+
+              if (routeFamily) {
+                const resolution = resolveSemanticCapability(routeFamily, 'create_new', ufCaps);
+                if (resolution.canRoute && resolution.matchedCapability) {
+                  // Direct canonical routing — skip capability menu
+                  directCanonicalCap = resolution.matchedCapability;
+                }
+                // If family doesn't match → forceCapabilityMenu set below
+              }
+            }
+          }
+
+          // Seamless language activation: if high confidence + entitled language
+          if (canonicalResult.language && canonicalResult.language !== 'en'
+              && canonicalResult.confidence >= convConfig.autoRouteThreshold
+              && canonicalResult.languageEntitlement.allowedLanguages.includes(canonicalResult.language)) {
+            // Will be stored in session_data for auto-activation (no confirmation needed)
           }
         } catch (err) { logger.warn('[BOT] CAS-004 canonical understanding error (non-fatal):', err); }
       }
@@ -1073,39 +1115,35 @@ export class BotService {
       let forceCapabilityMenu = false;
       if (business && deepLinkCapability && capabilities.includes(deepLinkCapability as CapabilityId)) {
         firstStep = this.capabilityToFirstStep(deepLinkCapability as CapabilityId);
+      } else if (directCanonicalCap) {
+        // CAS-004: High-confidence direct canonical routing
+        firstStep = this.capabilityToFirstStep(directCanonicalCap as CapabilityId);
       } else {
         firstStep = business
           ? this.getFirstStepFromCapabilities(capabilities, business.flow_type)
           : 'greeting';
 
-        // CAS-004: Semantic mismatch + confidence check for sole-capability auto-skip
+        // CAS-004: Semantic mismatch for auto-skip (when not directly routed)
         if (business && firstStep !== 'select_capability' && firstStep !== 'greeting' && canonicalResult) {
           const { getUserFacingCapabilities } = await import('./handlers/flow-routing');
           const { resolveSemanticCapability, disambiguateByCategory } = await import('./semantic-resolver');
           const ufCaps = getUserFacingCapabilities(capabilities);
 
           let routeFamily = canonicalResult.semanticFamily;
-
-          // Generic booking disambiguation using business category
           if (!routeFamily && canonicalResult.broadIntent === 'booking') {
             routeFamily = disambiguateByCategory(business.category, ufCaps);
           }
 
-          if (canonicalResult.requestedAction === 'create_new') {
-            // Confidence check: below auto-route threshold → force menu
-            const { loadConversationConfig } = await import('./confidence-policy');
-            const convConfig = await loadConversationConfig(this.supabase, business.id);
-            if (canonicalResult.confidence < convConfig.autoRouteThreshold) {
+          if (routeFamily && canonicalResult.requestedAction === 'create_new') {
+            const resolution = resolveSemanticCapability(routeFamily, 'create_new', ufCaps);
+            if (!resolution.canRoute) {
               firstStep = 'select_capability';
               forceCapabilityMenu = true;
-            } else if (routeFamily) {
-              // Family mismatch check
-              const resolution = resolveSemanticCapability(routeFamily, 'create_new', ufCaps);
-              if (!resolution.canRoute) {
-                firstStep = 'select_capability';
-                forceCapabilityMenu = true;
-              }
             }
+          } else if (!routeFamily && canonicalResult.broadIntent === 'booking' && canonicalResult.confidence < 0.85) {
+            // Generic booking, no category match, low confidence → menu
+            firstStep = 'select_capability';
+            forceCapabilityMenu = true;
           }
         }
       }
@@ -1113,6 +1151,7 @@ export class BotService {
       const sessionData: Record<string, unknown> = businessId && business
         ? {
             business_id: businessId, business_name: business.name, business_category: business.category, capabilities,
+            ...(directCanonicalCap ? { active_capability: directCanonicalCap } : {}),
             ...(deepLinkCapability ? { _deep_link_capability: deepLinkCapability } : {}),
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),

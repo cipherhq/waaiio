@@ -624,8 +624,10 @@ export async function parseSmartIntentHybrid(
     ? await isFeatureEnabledServer(FLAGS.LLM_INTENT_ENABLED, businessId).catch(err => { logger.warn('[SMART-INTENT] Feature flag check failed (defaulting to enabled):', err); return true; })
     : true;
 
-  // CAS-004: Enforce tier-based LLM access — free tier must not invoke paid LLM
-  const tierAllowsLLM = !subscriptionTier || subscriptionTier !== 'free';
+  // CAS-004: Enforce tier-based LLM access. Only recognized paid tiers allowed.
+  // Unknown/undefined/null → Free behavior (no LLM).
+  const RECOGNIZED_LLM_TIERS = ['growth', 'business'];
+  const tierAllowsLLM = !!subscriptionTier && RECOGNIZED_LLM_TIERS.includes(subscriptionTier);
 
   // Step 2: If regex found a confident intent with service keywords, use it
   if (regexResult.intent && regexResult.serviceKeywords.length > 0) {

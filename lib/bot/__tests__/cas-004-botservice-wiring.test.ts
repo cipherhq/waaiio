@@ -222,9 +222,9 @@ describe('CAS-004 language policy', () => {
     expect(detectLanguageDeterministic('こんにちは')).toBe(null);
   });
 
-  it('English text detected as English', async () => {
+  it('English/uncertain text → null (not assumed English)', async () => {
     const { detectLanguageDeterministic } = await import('../language-policy');
-    expect(detectLanguageDeterministic('I want to book a haircut')).toBe('en');
+    expect(detectLanguageDeterministic('I want to book a haircut')).toBe(null);
   });
 
   it('Pidgin detected deterministically', async () => {

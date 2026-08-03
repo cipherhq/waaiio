@@ -522,26 +522,26 @@ describe('CAS-004 language policy', () => {
     expect(ent.translationAllowed).toBe(false);
   });
 
-  it('Growth tier: English + configured languages', async () => {
+  it('Growth tier: English + configured certified languages', async () => {
     const { getEffectiveLanguages } = await import('../language-policy');
-    const ent = getEffectiveLanguages('growth', ['en', 'pcm', 'yo']);
+    const ent = getEffectiveLanguages('growth', ['en', 'pcm']);
     expect(ent.allowedLanguages).toContain('en');
     expect(ent.allowedLanguages).toContain('pcm');
-    expect(ent.allowedLanguages).toContain('yo');
     expect(ent.allowedLanguages.length).toBeLessThanOrEqual(3);
     expect(ent.llmAllowed).toBe(true);
   });
 
   it('Growth tier: max 3 languages enforced', async () => {
     const { getEffectiveLanguages } = await import('../language-policy');
+    // Even if more are configured, only en + 2 certified allowed
     const ent = getEffectiveLanguages('growth', ['en', 'pcm', 'yo', 'ha', 'ig']);
-    expect(ent.allowedLanguages.length).toBe(3); // en + 2
+    expect(ent.allowedLanguages.length).toBeLessThanOrEqual(3);
   });
 
-  it('Business tier: all supported languages', async () => {
-    const { getEffectiveLanguages } = await import('../language-policy');
+  it('Business tier: all certified languages', async () => {
+    const { getEffectiveLanguages, CERTIFIED_LANGUAGES } = await import('../language-policy');
     const ent = getEffectiveLanguages('business');
-    expect(ent.allowedLanguages.length).toBe(8);
+    expect(ent.allowedLanguages.length).toBe(CERTIFIED_LANGUAGES.length);
     expect(ent.llmAllowed).toBe(true);
   });
 
@@ -551,9 +551,10 @@ describe('CAS-004 language policy', () => {
     expect(detectLanguageDeterministic('abeg help me')).toBe('pcm');
   });
 
-  it('Deterministic language detection: English', async () => {
+  it('Deterministic language detection: English/uncertain → null', async () => {
     const { detectLanguageDeterministic } = await import('../language-policy');
-    expect(detectLanguageDeterministic('I want to book a haircut')).toBe('en');
+    // Plain English without Pidgin/other markers → null (uncertain, not assumed English)
+    expect(detectLanguageDeterministic('I want to book a haircut')).toBe(null);
   });
 
   it('Deterministic language detection: French', async () => {

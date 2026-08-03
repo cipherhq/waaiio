@@ -9,8 +9,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 
-/** All Waaiio production-certified supported languages */
+/** All Waaiio architecture-supported language codes */
 export const SUPPORTED_LANGUAGES = ['en', 'pcm', 'yo', 'ig', 'ha', 'tw', 'fr', 'es'] as const;
+
+/**
+ * Production-certified languages — passed linguistic quality certification.
+ * Architecture may support more codes, but only certified languages are
+ * selectable in UI and activatable in production.
+ * Expand after controlled language-quality acceptance testing.
+ */
+export const CERTIFIED_LANGUAGES: readonly string[] = ['en', 'pcm'];
 export type SupportedLanguage = typeof SUPPORTED_LANGUAGES[number];
 
 /** Maximum additional languages for Growth tier (beyond English) */
@@ -44,9 +52,9 @@ export function getEffectiveLanguages(
   }
 
   if (tier === 'growth') {
-    // Growth: English + up to 2 configured languages
+    // Growth: English + up to 2 configured CERTIFIED languages
     const configured = (configuredLanguages || ['en']).filter(
-      l => SUPPORTED_LANGUAGES.includes(l as SupportedLanguage)
+      l => CERTIFIED_LANGUAGES.includes(l)
     );
     // Always include English
     const langs = new Set(['en', ...configured]);
@@ -64,11 +72,11 @@ export function getEffectiveLanguages(
     };
   }
 
-  // Only explicitly recognized Business tier gets all languages.
+  // Only explicitly recognized Business tier gets all certified languages.
   // Unknown/malformed tiers fail closed to Free.
   if (tier === 'business') {
     return {
-      allowedLanguages: [...SUPPORTED_LANGUAGES],
+      allowedLanguages: [...CERTIFIED_LANGUAGES],
       llmAllowed: true,
       translationAllowed: true,
     };
@@ -135,10 +143,8 @@ export function detectLanguageDeterministic(text: string): string | null {
   for (const [lang, patterns] of Object.entries(LANGUAGE_MARKERS)) {
     if (patterns.some(p => p.test(text))) return lang;
   }
-  // No non-English markers found — could be English or unrecognized language
-  // Only classify as English if text contains clear English markers
-  if (/^[a-zA-Z0-9\s.,!?'"@#$%&*()\-_+=;:<>/\\[\]{}|~`]+$/.test(text) && text.length >= 3) {
-    return 'en';
-  }
-  return null; // uncertain
+  // No non-English markers found. Could be English or unrecognized.
+  // Do NOT assume ASCII = English. Return null for uncertain.
+  // Callers handle uncertainty per tier policy.
+  return null;
 }
