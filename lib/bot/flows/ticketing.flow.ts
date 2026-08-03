@@ -735,43 +735,14 @@ export const ticketingFlow: FlowDefinition = {
           ];
         }
 
-        // Free event — increment tickets_sold immediately (no payment needed)
-        // Only on fresh booking — recovery must not double-count
-        if (!freshlyCreated) {
-          // Recovered booking: tickets_sold was already incremented on first attempt
-          // Skip counter increment, proceed to confirmation
-        } else {
-        const { error: rpcError } = await ctx.supabase.rpc('increment_tickets_sold', {
-          event_id: d.event_id as string,
-          qty,
+        // Free event — finalize ticket counters via atomic idempotent RPC.
+        // Uses booking identity: same booking finalized twice → counters increment once.
+        await ctx.supabase.rpc('finalize_free_ticket_booking', {
+          p_booking_id: booking.id,
+          p_event_id: d.event_id as string,
+          p_ticket_type_id: (d.ticket_type_id as string) || null,
+          p_quantity: qty,
         });
-        if (rpcError) {
-          const { data: ev } = await ctx.supabase
-            .from('events')
-            .select('tickets_sold')
-            .eq('id', d.event_id as string)
-            .single();
-          if (ev) {
-            await ctx.supabase
-              .from('events')
-              .update({ tickets_sold: ev.tickets_sold + qty })
-              .eq('id', d.event_id as string);
-          }
-        }
-        if (d.ticket_type_id) {
-          const { data: tt } = await ctx.supabase
-            .from('event_ticket_types')
-            .select('tickets_sold')
-            .eq('id', d.ticket_type_id as string)
-            .single();
-          if (tt) {
-            await ctx.supabase
-              .from('event_ticket_types')
-              .update({ tickets_sold: (tt.tickets_sold || 0) + qty })
-              .eq('id', d.ticket_type_id as string);
-          }
-        }
-        } // end freshlyCreated counter increment
 
         // Free event — send tickets before marking complete
         try {

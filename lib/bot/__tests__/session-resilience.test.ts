@@ -572,16 +572,15 @@ describe('deactivate_session_atomic migration', () => {
     expect(migration).toContain('idx_waitlist_entries_customer_active');
   });
 
-  it('book_slot_atomic includes bot_session_id parameter and idempotent reuse', async () => {
+  it('book_slot_atomic includes bot_session_id and idempotent retry before capacity', async () => {
     const migration = readFileSync(
       resolve(ROOT, 'supabase/migrations/304_session_resilience.sql'), 'utf-8',
     );
     expect(migration).toContain('p_bot_session_id uuid DEFAULT NULL');
     expect(migration).toContain('location_id, bot_session_id');
-    expect(migration).toContain('p_location_id, p_bot_session_id');
-    // Idempotent retry: check for existing booking before INSERT
+    // Idempotent check comes BEFORE capacity
+    expect(migration).toContain('FIRST: idempotent retry check');
     expect(migration).toContain('WHERE bot_session_id = p_bot_session_id');
-    expect(migration).toContain('Reuse existing booking from same session');
   });
 });
 
@@ -619,7 +618,7 @@ describe('CREATE_NEW duplicate guard matrix', () => {
   const flows = [
     { name: 'scheduling', file: 'scheduling.flow.ts', guard: 'isNewBooking', step: 'create_booking' },
     { name: 'reservation', file: 'reservation.flow.ts', guard: 'isNewReservation', step: 'create_reservation' },
-    { name: 'ordering', file: 'ordering.flow.ts', guard: 'isNewOrder', step: 'process_order' },
+    { name: 'ordering', file: 'ordering.flow.ts', guard: 'create_order_atomic', step: 'process_order' },
     { name: 'ticketing', file: 'ticketing.flow.ts', guard: 'isNewBooking', step: 'process_tickets' },
   ];
 
@@ -668,10 +667,10 @@ describe('DB-level CREATE_NEW idempotency', () => {
     expect(source).toContain("eq('bot_session_id', ctx.session.id)");
   });
 
-  it('order INSERT includes bot_session_id', async () => {
+  it('order uses atomic RPC with bot_session_id', async () => {
     const source = readFileSync(resolve(ROOT, 'lib/bot/flows/ordering.flow.ts'), 'utf-8');
-    expect(source).toContain('bot_session_id: ctx.session.id');
-    expect(source).toContain("eq('bot_session_id', ctx.session.id)");
+    expect(source).toContain("rpc('create_order_atomic'");
+    expect(source).toContain('p_bot_session_id: ctx.session.id');
   });
 
   it('ticketing INSERT includes bot_session_id', async () => {
@@ -698,18 +697,14 @@ describe('DB-level CREATE_NEW idempotency', () => {
     expect(source).toContain("in('status', ['pending', 'confirmed'])");
   });
 
-  it('order duplicate attempt reuses existing via bot_session_id lookup', async () => {
+  it('order uses atomic RPC for idempotent creation', async () => {
     const source = readFileSync(resolve(ROOT, 'lib/bot/flows/ordering.flow.ts'), 'utf-8');
-    expect(source).toContain("from('orders')");
-    expect(source).toContain("eq('bot_session_id'");
-    expect(source).toContain("in('status', ['pending', 'confirmed'])");
+    expect(source).toContain("rpc('create_order_atomic'");
   });
 
-  it('ticketing duplicate attempt reuses existing via bot_session_id lookup', async () => {
+  it('ticketing uses finalize_free_ticket_booking RPC', async () => {
     const source = readFileSync(resolve(ROOT, 'lib/bot/flows/ticketing.flow.ts'), 'utf-8');
-    expect(source).toContain("from('bookings')");
-    expect(source).toContain("eq('bot_session_id'");
-    expect(source).toContain("in('status', ['pending', 'confirmed'])");
+    expect(source).toContain("rpc('finalize_free_ticket_booking'");
   });
 });
 
@@ -743,11 +738,24 @@ describe('Queue and waitlist DB uniqueness', () => {
 // 17. ORDERING CRASH RECOVERY — ITEMS RECONCILIATION
 // ═══════════════════════════════════════════════════════
 
-describe('Ordering crash recovery', () => {
-  it('recovered order reconciles items (delete + re-insert)', async () => {
+describe('Ordering crash recovery — atomic RPC', () => {
+  it('ordering uses create_order_atomic RPC', async () => {
     const source = readFileSync(resolve(ROOT, 'lib/bot/flows/ordering.flow.ts'), 'utf-8');
-    expect(source).toContain("from('order_items').delete().eq('order_id', order.id)");
-    expect(source).toContain("from('order_items').insert(itemPayload)");
+    expect(source).toContain("rpc('create_order_atomic'");
+    expect(source).toContain('p_bot_session_id: ctx.session.id');
+    expect(source).toContain('p_items: itemsJson');
+  });
+
+  it('create_order_atomic RPC handles idempotent retry', async () => {
+    const migration = readFileSync(resolve(ROOT, 'supabase/migrations/304_session_resilience.sql'), 'utf-8');
+    expect(migration).toContain('CREATE OR REPLACE FUNCTION public.create_order_atomic');
+    // Checks for existing order
+    expect(migration).toContain('WHERE bot_session_id = p_bot_session_id');
+    // Reconciles items atomically
+    expect(migration).toContain('DELETE FROM order_items WHERE order_id = v_existing_id');
+    // Returns created flag
+    expect(migration).toContain("'created', true");
+    expect(migration).toContain("'created', false");
   });
 
   it('promo increment only on freshlyCreated order', async () => {
@@ -755,27 +763,60 @@ describe('Ordering crash recovery', () => {
     expect(source).toContain('freshlyCreated');
     expect(source).toContain("d.promo_code_id && freshlyCreated");
   });
-
-  it('referral conversion only on freshlyCreated order', async () => {
-    const source = readFileSync(resolve(ROOT, 'lib/bot/flows/ordering.flow.ts'), 'utf-8');
-    expect(source).toContain("d.referral_id && freshlyCreated");
-  });
 });
 
-describe('Free ticketing counter idempotency', () => {
-  it('tickets_sold increment gated on freshlyCreated', async () => {
+describe('Free ticketing counter — atomic finalization RPC', () => {
+  it('uses finalize_free_ticket_booking RPC', async () => {
     const source = readFileSync(resolve(ROOT, 'lib/bot/flows/ticketing.flow.ts'), 'utf-8');
-    expect(source).toContain('freshlyCreated');
-    expect(source).toContain('if (!freshlyCreated)');
+    expect(source).toContain("rpc('finalize_free_ticket_booking'");
+    expect(source).toContain('p_booking_id: booking.id');
+    expect(source).toContain('p_event_id: d.event_id');
+  });
+
+  it('finalize_free_ticket_booking RPC is transactionally idempotent', async () => {
+    const migration = readFileSync(resolve(ROOT, 'supabase/migrations/304_session_resilience.sql'), 'utf-8');
+    expect(migration).toContain('CREATE OR REPLACE FUNCTION public.finalize_free_ticket_booking');
+    // Locks booking row
+    expect(migration).toContain('FOR UPDATE');
+    // Checks finalization flag
+    expect(migration).toContain('tickets_finalized');
+    // Idempotent return
+    expect(migration).toContain("'already_finalized', true");
+    // Updates both counters in one transaction
+    expect(migration).toContain('UPDATE events');
+    expect(migration).toContain('UPDATE event_ticket_types');
+    // Marks booking as finalized
+    expect(migration).toContain('SET tickets_finalized = true');
   });
 });
 
-describe('Scheduling RPC idempotent retry', () => {
-  it('book_slot_atomic checks for existing booking by bot_session_id before INSERT', async () => {
+describe('Scheduling RPC idempotent retry — correct order', () => {
+  it('book_slot_atomic checks bot_session_id BEFORE capacity check', async () => {
     const migration = readFileSync(resolve(ROOT, 'supabase/migrations/304_session_resilience.sql'), 'utf-8');
-    expect(migration).toContain('IF p_bot_session_id IS NOT NULL THEN');
-    expect(migration).toContain('WHERE bot_session_id = p_bot_session_id');
-    expect(migration).toContain('IF FOUND THEN');
+    // Idempotency check must come before capacity check
+    const idempotencyIdx = migration.indexOf('FIRST: idempotent retry check');
+    const capacityIdx = migration.indexOf('Capacity check');
+    expect(idempotencyIdx).toBeGreaterThan(-1);
+    expect(capacityIdx).toBeGreaterThan(-1);
+    expect(idempotencyIdx).toBeLessThan(capacityIdx);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 20. POST-COMPLETION CAS CHECK
+// ═══════════════════════════════════════════════════════
+
+describe('Post-completion stale worker suppression', () => {
+  it('showPostCompletionMenu checks CAS result before sending', async () => {
+    const source = readFileSync(resolve(ROOT, 'lib/bot/flows/executor.ts'), 'utf-8');
+    // Must check CAS return value
+    expect(source).toContain('const saved = await this.casUpdateSession(session,');
+    expect(source).toContain("if (!saved) return; // stale — another worker owns this session");
+    // sendButtons must come AFTER the CAS check
+    const savedIdx = source.indexOf('if (!saved) return; // stale — another worker owns this session');
+    const sendBtnIdx = source.indexOf('await this.sender.sendButtons({ to: from, body, buttons })', savedIdx);
+    expect(savedIdx).toBeGreaterThan(-1);
+    expect(sendBtnIdx).toBeGreaterThan(savedIdx);
   });
 });
 

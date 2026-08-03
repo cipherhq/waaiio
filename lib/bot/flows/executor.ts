@@ -808,10 +808,11 @@ export class FlowExecutor {
       : 'What would you like to do next?';
 
     // Keep session alive on post_completion step so buttons work
-    await this.casUpdateSession(session, {
+    const saved = await this.casUpdateSession(session, {
       current_step: 'post_completion',
       session_data: { ...session.session_data, _post_completion_cap: cap },
     });
+    if (!saved) return; // stale — another worker owns this session
 
     await this.sender.sendButtons({ to: from, body, buttons });
   }
