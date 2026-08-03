@@ -10,6 +10,10 @@
  * 6. Stale worker suppression
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { resolve } from 'path';
+import { readFileSync } from 'fs';
+
+const ROOT = resolve(__dirname, '../../..');
 
 // ═══════════════════════════════════════════════════════
 // 1. ATOMIC SESSION DEACTIVATION
@@ -231,19 +235,13 @@ describe('Escape hatch CAS protection', () => {
 describe('Payment provider idempotency keys', () => {
   it('Paystack sends reference as idempotency key', async () => {
     // Read the actual Paystack gateway source to verify reference is sent
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/payments/paystack.ts', 'utf-8',
-    );
+    const source = readFileSync(resolve(ROOT, 'lib/payments/paystack.ts'), 'utf-8');
     // The Paystack API body must include `reference: opts.referenceCode`
     expect(source).toContain('reference: opts.referenceCode');
   });
 
   it('Stripe sends Idempotency-Key header', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/payments/stripe.ts', 'utf-8',
-    );
+    const source = readFileSync(resolve(ROOT, 'lib/payments/stripe.ts'), 'utf-8');
     expect(source).toContain("'Idempotency-Key'");
     expect(source).toContain('idempotencyKey');
   });
@@ -256,19 +254,13 @@ describe('Payment provider idempotency keys', () => {
 describe('Webhook deduplication', () => {
   it('processed_webhook_events table prevents duplicate processing', async () => {
     // Verify the migration creates the state machine
-    const fs = await import('fs');
-    const migration = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/supabase/migrations/232_webhook_event_state_machine.sql', 'utf-8',
-    );
+    const migration = readFileSync(resolve(ROOT, 'supabase/migrations/232_webhook_event_state_machine.sql'), 'utf-8');
     expect(migration).toContain('processed_webhook_events');
     expect(migration).toContain('status');
   });
 
   it('webhook handler checks event status before processing', async () => {
-    const fs = await import('fs');
-    const webhookSource = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/app/api/webhook/meta-cloud/route.ts', 'utf-8',
-    );
+    const webhookSource = readFileSync(resolve(ROOT, 'app/api/webhook/meta-cloud/route.ts'), 'utf-8');
     // Must check for 'completed' status to skip duplicates
     expect(webhookSource).toContain("status === 'completed'");
     // Must INSERT new events with status='processing'
@@ -283,9 +275,9 @@ describe('Webhook deduplication', () => {
 describe('Stale worker suppression', () => {
   it('FlowExecutor CAS failure prevents message send', async () => {
     // Verify executor returns silently on CAS failure
-    const fs = await import('fs');
-    const executorSource = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/bot/flows/executor.ts', 'utf-8',
+
+    const executorSource = readFileSync(
+      resolve(ROOT, 'lib/bot/flows/executor.ts'), 'utf-8',
     );
     // After CAS failure, executor must return without sending messages
     expect(executorSource).toContain('if (!casResult?.success)');
@@ -293,18 +285,18 @@ describe('Stale worker suppression', () => {
   });
 
   it('abortSilently flag prevents any response (CAS-005)', async () => {
-    const fs = await import('fs');
-    const executorSource = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/bot/flows/executor.ts', 'utf-8',
+
+    const executorSource = readFileSync(
+      resolve(ROOT, 'lib/bot/flows/executor.ts'), 'utf-8',
     );
     expect(executorSource).toContain('abortSilently');
     expect(executorSource).toContain('if (result.abortSilently) return');
   });
 
   it('start_capability uses CAS, stale worker silently exits', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/bot/handlers/keyword-actions.ts', 'utf-8',
+
+    const source = readFileSync(
+      resolve(ROOT, 'lib/bot/handlers/keyword-actions.ts'), 'utf-8',
     );
     // start_capability happy path must use CAS
     expect(source).toContain("p_current_step: capFirstStep");
@@ -369,9 +361,9 @@ describe('CAS and deactivation compose correctly', () => {
 
 describe('Persist-then-send ordering', () => {
   it('executor sends messages only after CAS success', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/bot/flows/executor.ts', 'utf-8',
+
+    const source = readFileSync(
+      resolve(ROOT, 'lib/bot/flows/executor.ts'), 'utf-8',
     );
     // Verify: CAS is called before sendMessages in advanceToStep
     const casIdx = source.indexOf('casUpdateSession(session,');
@@ -392,9 +384,9 @@ describe('Persist-then-send ordering', () => {
 describe('Session creation duplicate prevention', () => {
   it('partial unique index prevents duplicate active sessions per phone+business', async () => {
     // Verify migration 136 creates the partial unique index
-    const fs = await import('fs');
-    const migration = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/supabase/migrations/136_fix_session_race_and_booking_race.sql', 'utf-8',
+
+    const migration = readFileSync(
+      resolve(ROOT, 'supabase/migrations/136_fix_session_race_and_booking_race.sql'), 'utf-8',
     );
     expect(migration).toContain('idx_bot_sessions_unique_active');
     expect(migration).toContain('WHERE is_active = true');
@@ -407,15 +399,15 @@ describe('Session creation duplicate prevention', () => {
 
 describe('Conversation log consistency', () => {
   it('CAS path includes conversation_log in atomic update', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/bot/flows/executor.ts', 'utf-8',
+
+    const source = readFileSync(
+      resolve(ROOT, 'lib/bot/flows/executor.ts'), 'utf-8',
     );
     // update_session_cas accepts p_conversation_log
     expect(source).toContain('p_conversation_log');
     // CAS RPC uses COALESCE to preserve existing log when not provided
-    const migration = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/supabase/migrations/236_session_versioning.sql', 'utf-8',
+    const migration = readFileSync(
+      resolve(ROOT, 'supabase/migrations/236_session_versioning.sql'), 'utf-8',
     );
     expect(migration).toContain('COALESCE(p_conversation_log, conversation_log)');
   });
@@ -427,9 +419,9 @@ describe('Conversation log consistency', () => {
 
 describe('deactivate_session_atomic migration', () => {
   it('migration creates the RPC with correct structure', async () => {
-    const fs = await import('fs');
-    const migration = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/supabase/migrations/304_session_resilience.sql', 'utf-8',
+
+    const migration = readFileSync(
+      resolve(ROOT, 'supabase/migrations/304_session_resilience.sql'), 'utf-8',
     );
     expect(migration).toContain('CREATE OR REPLACE FUNCTION deactivate_session_atomic');
     expect(migration).toContain('is_active = false');
@@ -441,9 +433,9 @@ describe('deactivate_session_atomic migration', () => {
   });
 
   it('idempotent — deactivating already-inactive returns success', async () => {
-    const fs = await import('fs');
-    const migration = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/supabase/migrations/304_session_resilience.sql', 'utf-8',
+
+    const migration = readFileSync(
+      resolve(ROOT, 'supabase/migrations/304_session_resilience.sql'), 'utf-8',
     );
     expect(migration).toContain("'already_inactive', true");
   });
@@ -455,9 +447,9 @@ describe('deactivate_session_atomic migration', () => {
 
 describe('Keyword action CAS protection', () => {
   it('checkin navigate uses CAS', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/bot/handlers/keyword-actions.ts', 'utf-8',
+
+    const source = readFileSync(
+      resolve(ROOT, 'lib/bot/handlers/keyword-actions.ts'), 'utf-8',
     );
     // checkin must use update_session_cas, not direct update
     expect(source).toContain("if (!checkinCas?.success) return true");
@@ -465,9 +457,9 @@ describe('Keyword action CAS protection', () => {
   });
 
   it('deactivateSession in keyword-actions uses atomic RPC', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/bot/handlers/keyword-actions.ts', 'utf-8',
+
+    const source = readFileSync(
+      resolve(ROOT, 'lib/bot/handlers/keyword-actions.ts'), 'utf-8',
     );
     expect(source).toContain("rpc('deactivate_session_atomic'");
     // Must NOT have direct .update({ is_active: false })
@@ -489,27 +481,27 @@ describe('CREATE_NEW duplicate guard matrix', () => {
 
   for (const flow of flows) {
     it(`${flow.name} flow has ${flow.guard} duplicate guard`, async () => {
-      const fs = await import('fs');
-      const source = fs.readFileSync(
-        `/Users/bajideace/Desktop/waaiio/lib/bot/flows/${flow.file}`, 'utf-8',
+  
+      const source = readFileSync(
+        resolve(ROOT, `lib/bot/flows/${flow.file}`), 'utf-8',
       );
       expect(source).toContain(flow.guard);
     });
   }
 
   it('queue flow has duplicate-entry check', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/bot/flows/queue-checkin.flow.ts', 'utf-8',
+
+    const source = readFileSync(
+      resolve(ROOT, 'lib/bot/flows/queue-checkin.flow.ts'), 'utf-8',
     );
     // Queue checks for existing entry before INSERT
     expect(source).toContain("'waiting', 'serving'");
   });
 
   it('waitlist flow has duplicate-entry check', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/bot/flows/waitlist.flow.ts', 'utf-8',
+
+    const source = readFileSync(
+      resolve(ROOT, 'lib/bot/flows/waitlist.flow.ts'), 'utf-8',
     );
     // Waitlist checks for existing entry before INSERT
     expect(source).toContain("status: 'waiting'");
@@ -522,35 +514,35 @@ describe('CREATE_NEW duplicate guard matrix', () => {
 
 describe('Regression safety', () => {
   it('CAP-001: capability guard still exists in scheduling flow', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/bot/flows/scheduling.flow.ts', 'utf-8',
+
+    const source = readFileSync(
+      resolve(ROOT, 'lib/bot/flows/scheduling.flow.ts'), 'utf-8',
     );
     expect(source).toContain('requireCurrentCapability');
     expect(source).toContain("action: 'create_new'");
   });
 
   it('CAS-004: canonical understanding still exists', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/bot/canonical-understanding.ts', 'utf-8',
+
+    const source = readFileSync(
+      resolve(ROOT, 'lib/bot/canonical-understanding.ts'), 'utf-8',
     );
     expect(source).toContain('understandCanonicalMessage');
   });
 
   it('CAS-005: capability recovery still exists', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/bot/capability-recovery.ts', 'utf-8',
+
+    const source = readFileSync(
+      resolve(ROOT, 'lib/bot/capability-recovery.ts'), 'utf-8',
     );
     expect(source).toContain('buildRecoveryMessage');
     expect(source).toContain('clearRejectedTransactionalState');
   });
 
   it('CAS-008: atomic handoff RPC still exists', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      '/Users/bajideace/Desktop/waaiio/lib/bot/handoff.service.ts', 'utf-8',
+
+    const source = readFileSync(
+      resolve(ROOT, 'lib/bot/handoff.service.ts'), 'utf-8',
     );
     expect(source).toContain('atomic_escalate_to_human');
   });
