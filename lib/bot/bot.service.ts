@@ -1168,9 +1168,9 @@ export class BotService {
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
             ...(canonicalActivatedLanguage ? { _detected_language: canonicalActivatedLanguage } : {}),
-            // CAS-004: Store canonical result ONLY when select_capability will consume it.
-            // Direct routes (directCanonicalCap) apply entities via prefill block above.
-            ...(!directCanonicalCap && !deepLinkCapability && canonicalResult ? { _canonical_result: {
+            // CAS-004: Store canonical result ONLY when firstStep is select_capability.
+            // Direct routes apply entities via the prefill block below.
+            ...(firstStep === 'select_capability' && canonicalResult ? { _canonical_result: {
               semanticFamily: canonicalResult.semanticFamily,
               requestedAction: canonicalResult.requestedAction,
               confidence: canonicalResult.confidence,
@@ -1452,6 +1452,10 @@ export class BotService {
             if (ents.timePreference) session.session_data._time_preference = ents.timePreference;
             if (ents.quantity && ents.quantity >= 1 && ents.quantity <= 20) {
               session.session_data.party_size = ents.quantity;
+              session.session_data.ticket_quantity = ents.quantity; // ticketing also uses this
+            }
+            if (ents.amount && ents.amount >= 1) {
+              session.session_data.amount = ents.amount;
             }
 
             // Favorite service suggestion

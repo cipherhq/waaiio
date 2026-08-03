@@ -219,8 +219,9 @@ const selectCapabilityStep: FlowStepConfig = {
 
     let capId: CapabilityId | null = null;
 
-    // Handle "My Account" selection
+    // Handle "My Account" selection — explicit user choice supersedes canonical
     if (input === 'cap_my_account' || /^(my account|manage|my stuff)$/i.test(input.trim())) {
+      delete ctx.session.session_data._canonical_result; // Discard stale canonical
       ctx.session.session_data.active_capability = 'my_account';
       return { valid: true, data: { active_capability: 'my_account' } };
     }
