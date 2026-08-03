@@ -55,6 +55,8 @@ export class FlowExecutor {
     } | null,
     mediaUrl?: string,
     mediaType?: string,
+    /** CAS-004: Ephemeral current-message canonical understanding */
+    currentCanonical?: import('@/lib/bot/canonical-understanding').CanonicalUnderstanding,
   ): Promise<void> {
     // Determine which flow to use: active_capability takes priority
     const activeCap = session.session_data.active_capability as CapabilityId | undefined;
@@ -119,6 +121,7 @@ export class FlowExecutor {
       mediaUrl,
       mediaType,
       t: (text: string) => translateBotResponse(text, lang),
+      currentCanonical, // CAS-004: ephemeral, not persisted
     };
 
     // ── Step overrides: load business-level overrides ──

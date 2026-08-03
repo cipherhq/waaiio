@@ -1408,7 +1408,9 @@ export class BotService {
         // ── CAS-004: Entity prefill from canonical result (NO second classification) ──
         // Uses canonicalResult.entities from understandCanonicalMessage().
         // Does NOT call parseSmartIntentHybrid again.
-        if (canonicalResult && business) {
+        // IMPORTANT: Do NOT prefill if forced to menu (rejected request) — stale
+        // entities from a rejected semantic request must not leak into a later choice.
+        if (canonicalResult && business && !forceCapabilityMenu) {
           try {
             const ents = canonicalResult.entities;
 
@@ -1499,7 +1501,8 @@ export class BotService {
         }
 
         // Delegate to flow executor for the first step prompt
-        await this.flowExecutor.execute(from, '', session as unknown as BotSession, business);
+        // CAS-004: pass canonical result ephemerally — NOT persisted to session
+        await this.flowExecutor.execute(from, '', session as unknown as BotSession, business, undefined, undefined, canonicalResult || undefined);
         return;
       }
 
@@ -2274,7 +2277,7 @@ export class BotService {
     // Set translation context for AI usage tracking
     setTranslationContext(session.business_id || null, this.supabase);
 
-    await this.flowExecutor.execute(from, text, session as unknown as BotSession, business, mediaUrl, messageType);
+    await this.flowExecutor.execute(from, text, session as unknown as BotSession, business, mediaUrl, messageType, resumedCanonical || undefined);
     } catch (err) {
       const errMsg = err instanceof Error ? `${err.message}\n${err.stack?.slice(0, 300)}` : String(err);
       logger.error('[BOT] handleMessage CRASH:', errMsg);

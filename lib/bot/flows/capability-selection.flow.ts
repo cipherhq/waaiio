@@ -251,26 +251,34 @@ const selectCapabilityStep: FlowStepConfig = {
             return lower.includes(label) || label.includes(lower);
           }) || null;
         }
-        // CAS-004: ONE parse for the CURRENT message — used for both
-        // capability selection AND entity extraction. No cross-turn state.
+        // CAS-004: Use ctx.currentCanonical if available (ephemeral, same request).
+        // Otherwise classify the current message ONCE.
         if (!capId) {
           const { resolveSemanticCapability, disambiguateByCategory } = await import('@/lib/bot/semantic-resolver');
           const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
-          const { parseSmartIntent } = await import('@/lib/bot/smart-intent');
           const ufCaps = getUserFacingCapabilities(capabilities);
 
-          const currentParsed = parseSmartIntent(input);
-          let family = currentParsed.semanticFamily || null;
+          let family: import('@/lib/bot/semantic-types').SemanticFamily = null;
 
-          if (!family && currentParsed.intent === 'booking') {
-            family = disambiguateByCategory(category, ufCaps);
-          }
+          if (ctx.currentCanonical) {
+            // Already classified — use ephemeral canonical result
+            family = ctx.currentCanonical.semanticFamily;
+          } else {
+            // Fresh classification for this current message
+            const { parseSmartIntent } = await import('@/lib/bot/smart-intent');
+            const currentParsed = parseSmartIntent(input);
+            family = currentParsed.semanticFamily || null;
 
-          if (!family && !currentParsed.intent) {
-            if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
-              capId = ufCaps.find(c => c === 'chat') || null;
-            } else if (/\b(waiver|sign|release\s*form|liability)\b/i.test(input)) {
-              capId = ufCaps.find(c => c === 'waiver') || null;
+            if (!family && currentParsed.intent === 'booking') {
+              family = disambiguateByCategory(category, ufCaps);
+            }
+
+            if (!family && !currentParsed.intent) {
+              if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
+                capId = ufCaps.find(c => c === 'chat') || null;
+              } else if (/\b(waiver|sign|release\s*form|liability)\b/i.test(input)) {
+                capId = ufCaps.find(c => c === 'waiver') || null;
+              }
             }
           }
 
@@ -288,17 +296,28 @@ const selectCapabilityStep: FlowStepConfig = {
       return { valid: false, errorMessage: 'I didn\'t understand that. Try typing *book*, *order*, *tickets*, or tap *View Options* to see the menu.' };
     }
 
-    // Entity extraction from the SAME current-message parse
+    // Entity extraction: use ctx.currentCanonical if available, otherwise ONE fresh parse
     if ((capId === 'scheduling' || capId === 'reservation' || capId === 'payment' || capId === 'giving' || capId === 'ticketing' || capId === 'ordering') && ctx.business) {
       try {
         const sd = ctx.session.session_data;
-        // Parse the current message for entities (same message, one LLM call if needed)
         let parsed: import('@/lib/bot/smart-intent').SmartParseResult;
-        {
+        if (ctx.currentCanonical) {
+          // Build SmartParseResult from canonical entities — NO second LLM call
+          const ents = ctx.currentCanonical.entities;
+          parsed = {
+            understood: true,
+            intent: ctx.currentCanonical.broadIntent as any,
+            serviceKeywords: ents.serviceKeywords,
+            date: ents.date, specificTime: ents.specificTime,
+            timePreference: ents.timePreference as any,
+            quantity: ents.quantity, amount: ents.amount,
+            variantKeywords: ents.variantKeywords,
+          };
+        } else {
+          // Fresh classification for entity extraction
           const { parseSmartIntentHybrid } = await import('@/lib/bot/smart-intent');
           const bizTz = (sd.business_timezone as string) || undefined;
-          const hybridResult = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null, bizTz, ctx.business.subscription_tier);
-          parsed = hybridResult;
+          parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null, bizTz, ctx.business.subscription_tier);
         }
 
         if (parsed.understood) {

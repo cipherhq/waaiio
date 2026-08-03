@@ -132,17 +132,22 @@ export class ConversationOrchestrator {
       ? intentMap[smartResult.intent]
       : 'unknown';
 
-    // CAS-004: Preserve real classification confidence.
-    // Regex with specific keywords = high. LLM result = actual LLM confidence. Unknown = low.
-    const isLLM = 'llmUsed' in smartResult && (smartResult as { llmUsed?: boolean }).llmUsed;
-    const llmConfidence = 'confidence' in smartResult ? (smartResult as { confidence?: number }).confidence : undefined;
-    const confidence = (smartResult.intent && smartResult.serviceKeywords.length > 0 && !isLLM)
-      ? 0.90 // deterministic regex with service match
-      : (isLLM && typeof llmConfidence === 'number')
-        ? llmConfidence // real LLM confidence
-        : smartResult.intent
-          ? 0.70 // regex intent without keywords
-          : 0.30; // no match
+    // CAS-004: Preserve EXACT canonical confidence when pre-computed.
+    // Only derive confidence when no pre-computed result was supplied.
+    let confidence: number;
+    if (preComputedCanonical) {
+      confidence = preComputedCanonical.confidence; // EXACT — do not recalculate
+    } else {
+      const isLLM = 'llmUsed' in smartResult && (smartResult as { llmUsed?: boolean }).llmUsed;
+      const llmConf = 'confidence' in smartResult ? (smartResult as { confidence?: number }).confidence : undefined;
+      confidence = (smartResult.intent && smartResult.serviceKeywords.length > 0 && !isLLM)
+        ? 0.90
+        : (isLLM && typeof llmConf === 'number')
+          ? llmConf
+          : smartResult.intent
+            ? 0.70
+            : 0.30;
+    }
 
     const understanding: ConversationUnderstanding = {
       mode: businessId ? 'business' : 'marketplace',
