@@ -35,6 +35,11 @@ const selectCapabilityStep: FlowStepConfig = {
 
   async skipIf(ctx: FlowContext) {
     if (!ctx.business) return false;
+    // CAS-004: If semantic mismatch forced the menu, do NOT auto-skip
+    if (ctx.session.session_data._force_capability_menu) {
+      delete ctx.session.session_data._force_capability_menu;
+      return false;
+    }
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
     const businessId = ctx.business.id;
 
@@ -208,9 +213,9 @@ const selectCapabilityStep: FlowStepConfig = {
   async validate(input: string, ctx: FlowContext) {
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
     const category = ctx.business?.category || 'other';
-    const nonUF = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'class_booking', 'multi_location']);
-    if (capabilities.includes('scheduling')) { nonUF.add('payment'); nonUF.add('invoice'); }
-    const userFacing = capabilities.filter(c => !nonUF.has(c));
+    // CAS-004: Use shared user-facing capability filter — single source of truth
+    const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
+    const userFacing = getUserFacingCapabilities(capabilities);
 
     let capId: CapabilityId | null = null;
 
@@ -219,6 +224,11 @@ const selectCapabilityStep: FlowStepConfig = {
       ctx.session.session_data.active_capability = 'my_account';
       return { valid: true, data: { active_capability: 'my_account' } };
     }
+
+    // CAS-004: No cross-turn _canonical_result. Each message gets fresh understanding.
+    // The variable canonicalR is always null here — understanding happens below for
+    // the current message only.
+    const canonicalR: undefined = undefined;
 
     if (input.startsWith('cap_')) {
       capId = input.replace('cap_', '') as CapabilityId;
@@ -241,23 +251,42 @@ const selectCapabilityStep: FlowStepConfig = {
             return lower.includes(label) || label.includes(lower);
           }) || null;
         }
-        // Keyword-based intent matching
+        // CAS-004: Use ctx.currentCanonical if available (ephemeral, same request).
+        // Otherwise classify the current message ONCE.
         if (!capId) {
-          if (/\b(book|appoint|schedule|reserv|table\s*for|dinner|lunch|brunch|seat|dine)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'table_reservation') || userFacing.find(c => c === 'scheduling' || c === 'appointment' || c === 'reservation') || null;
-          } else if (/\b(give|tithe?|offer|donat|sadaqah|zakat|pay\s*tithe?|pay\s*offer|pay\s*seed)\b/i.test(input)) {
-            // Prioritize giving over payment — "pay tithe" should go to giving, not payment
-            capId = userFacing.find(c => c === 'giving') || userFacing.find(c => c === 'payment') || null;
-          } else if (/\b(pay|fee|bill|dues|levy)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'payment') || null;
-          } else if (/\b(order|buy|shop|menu|food)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'ordering') || null;
-          } else if (/\b(ticket|event|show|concert)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'ticketing') || null;
-          } else if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'chat') || null;
-          } else if (/\b(waiver|sign|release\s*form|liability)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'waiver') || null;
+          const { resolveSemanticCapability, disambiguateByCategory } = await import('@/lib/bot/semantic-resolver');
+          const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
+          const ufCaps = getUserFacingCapabilities(capabilities);
+
+          let family: import('@/lib/bot/semantic-types').SemanticFamily = null;
+
+          if (ctx.currentCanonical) {
+            // Already classified — use ephemeral canonical result
+            family = ctx.currentCanonical.semanticFamily;
+          } else {
+            // Fresh classification for this current message
+            const { parseSmartIntent } = await import('@/lib/bot/smart-intent');
+            const currentParsed = parseSmartIntent(input);
+            family = currentParsed.semanticFamily || null;
+
+            if (!family && currentParsed.intent === 'booking') {
+              family = disambiguateByCategory(category, ufCaps);
+            }
+
+            if (!family && !currentParsed.intent) {
+              if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
+                capId = ufCaps.find(c => c === 'chat') || null;
+              } else if (/\b(waiver|sign|release\s*form|liability)\b/i.test(input)) {
+                capId = ufCaps.find(c => c === 'waiver') || null;
+              }
+            }
+          }
+
+          if (family && !capId) {
+            const resolution = resolveSemanticCapability(family, 'create_new', ufCaps);
+            if (resolution.canRoute && resolution.matchedCapability) {
+              capId = resolution.matchedCapability as CapabilityId;
+            }
           }
         }
       }
@@ -267,19 +296,36 @@ const selectCapabilityStep: FlowStepConfig = {
       return { valid: false, errorMessage: 'I didn\'t understand that. Try typing *book*, *order*, *tickets*, or tap *View Options* to see the menu.' };
     }
 
-    // Smart intent: extract date/time/service from natural language input
-    // so the scheduling flow can fast-track (skip already-answered steps)
+    // Entity extraction: use ctx.currentCanonical if available, otherwise ONE fresh parse
     if ((capId === 'scheduling' || capId === 'reservation' || capId === 'payment' || capId === 'giving' || capId === 'ticketing' || capId === 'ordering') && ctx.business) {
       try {
-        const { parseSmartIntentHybrid, matchServiceFromKeywords } = await import('@/lib/bot/smart-intent');
-        const bizTz = (ctx.session.session_data as Record<string, unknown>).business_timezone as string | undefined;
-        const parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null, bizTz);
+        const sd = ctx.session.session_data;
+        let parsed: import('@/lib/bot/smart-intent').SmartParseResult;
+        if (ctx.currentCanonical) {
+          // Build SmartParseResult from canonical entities — NO second LLM call
+          const ents = ctx.currentCanonical.entities;
+          parsed = {
+            understood: true,
+            intent: ctx.currentCanonical.broadIntent as any,
+            serviceKeywords: ents.serviceKeywords,
+            date: ents.date, specificTime: ents.specificTime,
+            timePreference: ents.timePreference as any,
+            quantity: ents.quantity, amount: ents.amount,
+            variantKeywords: ents.variantKeywords,
+          };
+        } else {
+          // Fresh classification for entity extraction
+          const { parseSmartIntentHybrid } = await import('@/lib/bot/smart-intent');
+          const bizTz = (sd.business_timezone as string) || undefined;
+          parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null, bizTz, ctx.business.subscription_tier);
+        }
 
         if (parsed.understood) {
           // Match service keywords — single match skips, multiple shows picker
-          if (parsed.serviceKeywords.length > 0) {
+          const serviceKw = parsed.serviceKeywords.length > 0 ? parsed.serviceKeywords : [];
+          if (serviceKw.length > 0) {
             const { matchServicesFromKeywords } = await import('@/lib/bot/smart-intent');
-            const matches = await matchServicesFromKeywords(ctx.supabase, ctx.business.id, parsed.serviceKeywords);
+            const matches = await matchServicesFromKeywords(ctx.supabase, ctx.business.id, serviceKw);
             if (matches.length === 1) {
               // Unambiguous — skip service picker
               ctx.session.session_data.service_id = matches[0].id;
@@ -305,9 +351,9 @@ const selectCapabilityStep: FlowStepConfig = {
           }
 
           // Match products for ordering flow
-          if (capId === 'ordering' && parsed.serviceKeywords.length > 0) {
+          if (capId === 'ordering' && serviceKw.length > 0) {
             const { matchProductsFromKeywords } = await import('@/lib/bot/smart-intent');
-            const productMatches = await matchProductsFromKeywords(ctx.supabase, ctx.business.id, parsed.serviceKeywords);
+            const productMatches = await matchProductsFromKeywords(ctx.supabase, ctx.business.id, serviceKw);
             if (productMatches.length === 1) {
               // Single match — pre-add to cart
               const p = productMatches[0];

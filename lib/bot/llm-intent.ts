@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { validateSemanticFamily, validateRequestedAction, validateLanguage, type SemanticFamily, type RequestedAction } from './semantic-types';
 
 export interface LLMIntentResult {
   flow: 'booking' | 'ordering' | 'payment' | 'ticketing' | null;
@@ -11,14 +12,20 @@ export interface LLMIntentResult {
     quantity: number | null;
   };
   confidence: number;
-  language: string;
+  language: string | null;
+  /** CAS-004: Fine-grained semantic family */
+  semanticFamily: SemanticFamily;
+  /** CAS-004: Requested action */
+  requestedAction: RequestedAction;
 }
 
 const EMPTY_RESULT: LLMIntentResult = {
   flow: null,
   entities: { serviceKeywords: [], date: null, timePreference: null, quantity: null },
   confidence: 0,
-  language: 'en',
+  language: null,
+  semanticFamily: null,
+  requestedAction: null,
 };
 
 // In-memory cache with TTL
@@ -34,19 +41,32 @@ function getClient(): Anthropic {
 const SYSTEM_PROMPT = `You classify WhatsApp messages for businesses in Nigeria and West Africa.
 
 Given a user message and business category, return JSON only:
-{"intent":"booking"|"ordering"|"payment"|"ticketing"|null,"entities":{"serviceKeywords":[],"date":null,"timePreference":null,"quantity":null},"confidence":0.0-1.0,"language":"en"|"pcm"|"yo"|"ig"|"ha"|"tw"|"fr"|"es"}
+{"intent":"booking"|"ordering"|"payment"|"ticketing"|null,"semanticFamily":"service_time_booking"|"property_reservation"|"table_reservation"|"ordering"|"ticketing"|"giving"|"payment"|"queue"|"waitlist"|null,"requestedAction":"create_new"|"manage_existing"|"read_history"|"informational"|"navigation"|null,"entities":{"serviceKeywords":[],"date":null,"timePreference":null,"quantity":null},"confidence":0.0-1.0,"language":"en"|"pcm"|"yo"|"ig"|"ha"|"tw"|"fr"|"es"}
 
 Rules:
-- "booking" = appointments, reservations, check-ins, services
-- "ordering" = buying products, food orders, delivery
-- "payment" = paying bills, tithes, fees, donations, subscriptions
-- "ticketing" = event tickets, movie tickets, transport tickets
+- intent (broad): "booking" = appointments/reservations/services, "ordering" = products/food, "payment" = bills/fees/donations, "ticketing" = event tickets
+- semanticFamily (specific):
+  - "service_time_booking" = haircut, doctor appointment, consultation, class, service booking
+  - "property_reservation" = hotel room, lodge, apartment, shortlet, Airbnb stay
+  - "table_reservation" = restaurant table, dinner reservation, seat booking
+  - "ordering" = buying products, food delivery
+  - "ticketing" = event/concert/movie tickets
+  - "giving" = tithe, offering, donation, sadaqah, zakat, sow seed, charity
+  - "payment" = bill, fee, levy, school fee, utility, generic payment
+  - "queue" = join queue, check in to queue
+  - "waitlist" = join waitlist
+- requestedAction:
+  - "create_new" = wants to create/start something new (book, order, pay, buy)
+  - "manage_existing" = change, cancel, reschedule, pay balance of existing booking/order
+  - "read_history" = view my bookings, my orders, my receipt, transaction history
+  - "informational" = asking about availability, prices, whether service exists
+  - "navigation" = menu, help, start over, back
 - serviceKeywords: extract service/product names mentioned
 - date: extract as YYYY-MM-DD if mentioned (resolve "tomorrow", "next monday" etc relative to today)
 - timePreference: "morning"|"afternoon"|"evening" if mentioned
 - quantity: number of people/items if mentioned
 - confidence: how sure you are (0.0 to 1.0)
-- language: detect the primary language (en=English, pcm=Pidgin, yo=Yoruba, ig=Igbo, ha=Hausa, tw=Twi, fr=French, es=Spanish)
+- language: detect the primary language
 - Return ONLY valid JSON, no explanation`;
 
 export async function classifyWithLLM(
@@ -74,7 +94,7 @@ export async function classifyWithLLM(
 
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 200,
+      max_tokens: 250,
       system: SYSTEM_PROMPT,
       messages: [{
         role: 'user',
@@ -100,7 +120,10 @@ export async function classifyWithLLM(
         quantity: typeof parsed.entities?.quantity === 'number' ? parsed.entities.quantity : null,
       },
       confidence: typeof parsed.confidence === 'number' ? Math.min(1, Math.max(0, parsed.confidence)) : 0,
-      language: parsed.language || 'en',
+      language: validateLanguage(parsed.language), // null if invalid — caller decides recovery
+      // CAS-004: validate structured semantic output against allowed enums
+      semanticFamily: validateSemanticFamily(parsed.semanticFamily),
+      requestedAction: validateRequestedAction(parsed.requestedAction),
     };
 
     // Cache result

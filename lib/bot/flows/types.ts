@@ -94,6 +94,9 @@ export interface FlowContext {
   mediaType?: string;
   /** Translate text using session language. No-op if English or no language set. */
   t(text: string): Promise<string>;
+  /** CAS-004: Ephemeral current-message canonical understanding. NOT persisted.
+   *  Used by capability-selection to avoid re-classifying the same message. */
+  currentCanonical?: import('@/lib/bot/canonical-understanding').CanonicalUnderstanding;
 }
 
 // ── Flow step config ──

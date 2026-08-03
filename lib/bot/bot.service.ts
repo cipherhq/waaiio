@@ -1027,24 +1027,150 @@ export class BotService {
         }
       }
 
-      // Deep-link: if QR code had a capability suffix (e.g. "SALON-LOLA:payment"),
-      // skip the capability menu and go straight to that flow — but only if the
-      // business actually has that capability enabled
+      // ═══════════════════════════════════════════════════════════
+      // CAS-004: Canonical first-message understanding pipeline.
+      // language entitlement → canonical understanding (hybrid for paid tiers)
+      // → confidence check → action routing → capability resolution → execute/clarify
+      // ═══════════════════════════════════════════════════════════
+      let canonicalResult: import('./canonical-understanding').CanonicalUnderstanding | null = null;
+      let directCanonicalCap: string | null = null; // High-confidence direct routing target
+      let canonicalActivatedLanguage: string | null = null; // Seamlessly activated language
+      let forceCapabilityMenu = false; // CAS-004: confidence/semantic forces menu
+      if (business && text && text.length > 2 && !isRestart) {
+        try {
+          const { understandCanonicalMessage } = await import('./canonical-understanding');
+          canonicalResult = await understandCanonicalMessage({
+            text, businessId: business.id, businessCategory: business.category,
+            subscriptionTier: business.subscription_tier, supabase: this.supabase,
+            timezone: (waConfig?.business_hours as BusinessHours | undefined)?.timezone,
+          });
+
+          // Language blocked → accurate recovery and return
+          if (canonicalResult.languageBlocked) {
+            const langNames = canonicalResult.allowedLanguageNames || ['English'];
+            await this.sendText(from, `This business currently supports ${langNames.join(' and ')}. Please send your message in ${langNames.length === 1 ? langNames[0] : 'one of those languages'}.`);
+            return;
+          }
+
+          // Confidence check BEFORE any semantic action
+          const { loadConversationConfig } = await import('./confidence-policy');
+          const convConfig = await loadConversationConfig(this.supabase, business.id);
+          if (canonicalResult.confidence > 0 && canonicalResult.confidence < convConfig.clarificationThreshold) {
+            // Below clarification threshold → force menu, no auto-route
+            forceCapabilityMenu = true;
+          } else if (canonicalResult.confidence >= convConfig.clarificationThreshold && canonicalResult.confidence < convConfig.autoRouteThreshold) {
+            // Clarification band → force menu, no auto-route
+            forceCapabilityMenu = true;
+          } else if (canonicalResult.confidence >= convConfig.autoRouteThreshold) {
+            // High confidence — eligible for action/capability routing
+
+            // Non-CREATE_NEW action → dispatch to existing handlers
+            if (canonicalResult.requestedAction && canonicalResult.requestedAction !== 'create_new' && canonicalResult.requestedAction !== 'navigation') {
+              const { dispatchAction, sendActionRecovery } = await import('./action-dispatcher');
+              const actionResult = await dispatchAction({
+                supabase: this.supabase, messageSender: this.messageSender,
+                flowExecutor: this.flowExecutor, from, businessId: business.id,
+                businessName: business.name,
+                sessionData: { business_id: businessId, business_name: business.name, business_category: business.category, capabilities },
+                semanticFamily: canonicalResult.semanticFamily,
+                requestedAction: canonicalResult.requestedAction,
+                originalText: text,
+              });
+              if (actionResult.handled) return;
+              await sendActionRecovery(this.messageSender, from, canonicalResult.requestedAction, actionResult.reason || 'no_handler');
+              return;
+            }
+
+            // High-confidence CREATE_NEW → try direct canonical routing
+            if (canonicalResult.requestedAction === 'create_new') {
+              const { getUserFacingCapabilities } = await import('./handlers/flow-routing');
+              const { resolveSemanticCapability, disambiguateByCategory } = await import('./semantic-resolver');
+              const ufCaps = getUserFacingCapabilities(capabilities);
+
+              let routeFamily = canonicalResult.semanticFamily;
+              if (!routeFamily && canonicalResult.broadIntent === 'booking') {
+                routeFamily = disambiguateByCategory(business.category, ufCaps);
+              }
+
+              if (routeFamily) {
+                const resolution = resolveSemanticCapability(routeFamily, 'create_new', ufCaps);
+                if (resolution.canRoute && resolution.matchedCapability) {
+                  directCanonicalCap = resolution.matchedCapability;
+                } else {
+                  // Family unavailable — force menu regardless of confidence
+                  forceCapabilityMenu = true;
+                }
+              } else if (canonicalResult.broadIntent === 'booking') {
+                // Generic booking, category disambiguation returned null (unavailable)
+                // → force menu regardless of confidence (zero silent substitution)
+                forceCapabilityMenu = true;
+              }
+            }
+          }
+
+          // Seamless language activation: high confidence + entitled + certified → auto-activate
+          const { CERTIFIED_LANGUAGES } = await import('./language-policy');
+          if (canonicalResult.language && canonicalResult.language !== 'en'
+              && canonicalResult.confidence >= convConfig.autoRouteThreshold
+              && canonicalResult.languageEntitlement.allowedLanguages.includes(canonicalResult.language)
+              && CERTIFIED_LANGUAGES.includes(canonicalResult.language)) {
+            // Store for auto-activation — legacy detector will see this and skip confirmation
+            canonicalActivatedLanguage = canonicalResult.language;
+          }
+        } catch (err) { logger.warn('[BOT] CAS-004 canonical understanding error (non-fatal):', err); }
+      }
+
+      // Deep-link / firstStep determination
       let firstStep: string;
-      if (business && deepLinkCapability && capabilities.includes(deepLinkCapability as CapabilityId)) {
+      if (forceCapabilityMenu) {
+        // CAS-004: Confidence/semantic forced menu — override all auto-selection
+        firstStep = business ? 'select_capability' : 'greeting';
+      } else if (business && deepLinkCapability && capabilities.includes(deepLinkCapability as CapabilityId)) {
         firstStep = this.capabilityToFirstStep(deepLinkCapability as CapabilityId);
-        logger.debug('[BOT] Deep-link → skipping menu, starting at:', firstStep);
+      } else if (directCanonicalCap) {
+        // CAS-004: High-confidence direct canonical routing
+        firstStep = this.capabilityToFirstStep(directCanonicalCap as CapabilityId);
       } else {
         firstStep = business
           ? this.getFirstStepFromCapabilities(capabilities, business.flow_type)
           : 'greeting';
+
+        // CAS-004: Semantic mismatch for auto-skip (when not directly routed)
+        if (business && firstStep !== 'select_capability' && firstStep !== 'greeting' && canonicalResult) {
+          const { getUserFacingCapabilities } = await import('./handlers/flow-routing');
+          const { resolveSemanticCapability, disambiguateByCategory } = await import('./semantic-resolver');
+          const ufCaps = getUserFacingCapabilities(capabilities);
+
+          let routeFamily = canonicalResult.semanticFamily;
+          if (!routeFamily && canonicalResult.broadIntent === 'booking') {
+            routeFamily = disambiguateByCategory(business.category, ufCaps);
+          }
+
+          if (routeFamily && canonicalResult.requestedAction === 'create_new') {
+            const resolution = resolveSemanticCapability(routeFamily, 'create_new', ufCaps);
+            if (!resolution.canRoute) {
+              firstStep = 'select_capability';
+              forceCapabilityMenu = true;
+            }
+          } else if (!routeFamily && canonicalResult.broadIntent === 'booking' && canonicalResult.confidence < 0.85) {
+            // Generic booking, no category match, low confidence → menu
+            firstStep = 'select_capability';
+            forceCapabilityMenu = true;
+          }
+        }
       }
 
       const sessionData: Record<string, unknown> = businessId && business
         ? {
             business_id: businessId, business_name: business.name, business_category: business.category, capabilities,
+            ...(directCanonicalCap ? { active_capability: directCanonicalCap } : {}),
             ...(deepLinkCapability ? { _deep_link_capability: deepLinkCapability } : {}),
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
+            ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
+            ...(canonicalActivatedLanguage ? { _detected_language: canonicalActivatedLanguage } : {}),
+            // CAS-004: No _canonical_result in persisted session data.
+            // Semantic meaning must NOT cross inbound message boundaries.
+            // Each new message gets its own canonical understanding.
           }
         : { ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}) };
 
@@ -1079,33 +1205,38 @@ export class BotService {
         return;
       }
 
-      // Auto-detect language from first message — tier-gated (Growth+ only)
-      const bizTier = business?.subscription_tier || 'free';
-      if (text.length >= 3 && isLanguageAllowed(bizTier, 'non-en')) {
-        try {
-          const lang = await detectLanguage(text);
-          if (lang !== 'en') {
-            // Store as pending — don't activate until user confirms
-            await this.supabase.from('bot_sessions')
-              .update({ session_data: { ...sessionData, _pending_language: lang } })
-              .eq('id', newSession.id);
-            logger.debug('[BOT] Detected language:', lang, 'for', from, '— asking confirmation');
+      // CAS-004: Language activation uses canonical policy only.
+      // If canonical understanding detected + activated a language, it's already
+      // stored in sessionData._detected_language. No separate detection needed.
+      // For uncertain language where canonical result was null:
+      // only prompt confirmation if canonical language policy allows it AND
+      // the language is production-certified.
+      if (text.length >= 3 && !canonicalActivatedLanguage && canonicalResult?.language
+          && canonicalResult.language !== 'en'
+          && canonicalResult.languageEntitlement.allowedLanguages.includes(canonicalResult.language)) {
+        // Language was detected but not high-confidence-activated.
+        // Check if it's certified before offering confirmation.
+        const { CERTIFIED_LANGUAGES: certLangs } = await import('./language-policy');
+        if (certLangs.includes(canonicalResult.language)) {
+          const updatedSd = { ...sessionData, _pending_language: canonicalResult.language };
+          await this.supabase.from('bot_sessions')
+            .update({ session_data: updatedSd })
+            .eq('id', newSession.id);
 
-            const langName = getLanguageName(lang);
-            try {
-              await this.messageSender.sendButtons({
-                to: from,
-                body: `I noticed you might prefer ${langName}. Would you like me to respond in ${langName}?`,
-                buttons: [
-                  { id: 'lang_yes', title: `Yes, ${langName}` },
-                  { id: 'lang_no', title: 'English is fine' },
-                ],
-              });
-            } catch (err) {
-              logger.error('[BOT] Language confirm send error:', err);
-            }
+          const langName = getLanguageName(canonicalResult.language);
+          try {
+            await this.messageSender.sendButtons({
+              to: from,
+              body: `I noticed you might prefer ${langName}. Would you like me to respond in ${langName}?`,
+              buttons: [
+                { id: 'lang_yes', title: `Yes, ${langName}` },
+                { id: 'lang_no', title: 'English is fine' },
+              ],
+            });
+          } catch (err) {
+            logger.error('[BOT] Language confirm send error:', err);
           }
-        } catch (err) { logger.warn('[BOT] Language detection failed (continuing in English):', err); }
+        }
       }
 
       session = newSession as BotSession;
@@ -1274,89 +1405,87 @@ export class BotService {
           logger.error('[BOT] Welcome buttons error (non-fatal):', err);
         }
 
-        // ── Smart Intent: parse first message for entities ──
-        // If user said something rich like "I wan barb tomorrow morning",
-        // extract service, date, time, quantity and pre-fill session data
-        // so the flow can skip already-answered steps.
-        if (text && text.length > 2 && !isRestart) {
+        // ── CAS-004: Entity prefill from canonical result (NO second classification) ──
+        // Uses canonicalResult.entities from understandCanonicalMessage().
+        // Does NOT call parseSmartIntentHybrid again.
+        // IMPORTANT: Do NOT prefill if forced to menu (rejected request) — stale
+        // entities from a rejected semantic request must not leak into a later choice.
+        if (canonicalResult && business && !forceCapabilityMenu) {
           try {
-            const bizTimezone = (waConfig?.business_hours as BusinessHours | undefined)?.timezone;
-            const parsed = await parseSmartIntentHybrid(text, business?.category || null, this.supabase, business?.id || null, bizTimezone);
+            const ents = canonicalResult.entities;
 
-            // Store detected language as pending — confirmation already sent during session creation
-            if ('language' in parsed && parsed.language && parsed.language !== 'en' && !session.session_data._detected_language) {
-              session.session_data._pending_language = parsed.language;
+            // Match service keywords against business services
+            if (ents.serviceKeywords.length > 0) {
+              const matched = await matchServiceFromKeywords(this.supabase, business.id, ents.serviceKeywords);
+              if (matched) {
+                session.session_data.service_id = matched.id;
+                session.session_data.service_name = matched.name;
+                session.session_data.service_price = matched.price;
+                session.session_data.service_duration = matched.duration_minutes;
+                session.session_data.service_deposit = matched.deposit_amount || 0;
+                session.session_data.service_billing_type = matched.billing_type || 'one_time';
+                session.session_data.service_recurring_interval = matched.recurring_interval || null;
+                session.session_data.skip_service = true;
+              }
             }
 
-            if (parsed.understood && business) {
-              // Match service keywords against business services
-              if (parsed.serviceKeywords.length > 0) {
-                const matched = await matchServiceFromKeywords(this.supabase, business.id, parsed.serviceKeywords);
-                if (matched) {
-                  session.session_data.service_id = matched.id;
-                  session.session_data.service_name = matched.name;
-                  session.session_data.service_price = matched.price;
-                  session.session_data.service_duration = matched.duration_minutes;
-                  session.session_data.service_deposit = matched.deposit_amount || 0;
-                  session.session_data.service_billing_type = matched.billing_type || 'one_time';
-                  session.session_data.service_recurring_interval = matched.recurring_interval || null;
-                  session.session_data.skip_service = true;
+            // Pre-fill date (validate: future, max 90 days)
+            if (ents.date) {
+              const selected = new Date(ents.date + 'T00:00');
+              const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()); tomorrow.setHours(0, 0, 0, 0);
+              const maxDate = new Date(); maxDate.setDate(maxDate.getDate() + 90);
+              if (selected >= tomorrow && selected <= maxDate) {
+                session.session_data.date = ents.date;
+              }
+            }
+            if (ents.specificTime) session.session_data.time = ents.specificTime;
+            if (ents.timePreference) session.session_data._time_preference = ents.timePreference;
+            if (ents.quantity && ents.quantity >= 1 && ents.quantity <= 20) {
+              session.session_data.party_size = ents.quantity;
+              session.session_data.ticket_quantity = ents.quantity; // ticketing also uses this
+            }
+            if (ents.amount && ents.amount >= 1) {
+              session.session_data.amount = ents.amount;
+            }
+
+            // Ordering-specific: product matching with cart
+            if (directCanonicalCap === 'ordering' && ents.serviceKeywords.length > 0) {
+              const { matchProductsFromKeywords } = await import('./smart-intent');
+              const productMatches = await matchProductsFromKeywords(this.supabase, business.id, ents.serviceKeywords);
+              if (productMatches.length === 1) {
+                const p = productMatches[0];
+                const qty = ents.quantity || 1;
+                session.session_data.cart = [{ product_id: p.id, name: p.name, price: p.price, quantity: qty, variant: null, variant_label: null }];
+                session.session_data._auto_added_to_cart = true;
+                session.session_data._skip_browse = true;
+              } else if (productMatches.length > 1) {
+                session.session_data._matched_product_ids = productMatches.map(m => m.id);
+              }
+            }
+
+            // Favorite service suggestion
+            if (!session.session_data.service_id) {
+              const hist = session.session_data._customer_history as { favoriteServiceId?: string; favoriteServiceName?: string } | undefined;
+              if (hist?.favoriteServiceId) {
+                const { data: favService } = await this.supabase
+                  .from('services')
+                  .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval')
+                  .eq('id', hist.favoriteServiceId).eq('is_active', true).maybeSingle();
+                if (favService) {
+                  session.session_data._suggested_service_id = favService.id;
+                  session.session_data._suggested_service_name = favService.name;
                 }
               }
+            }
 
-              // Pre-fill date
-              if (parsed.date) {
-                // Validate: must be future, max 90 days
-                const selected = new Date(parsed.date + 'T00:00');
-                const tomorrow = new Date();
-                tomorrow.setDate(tomorrow.getDate());
-                tomorrow.setHours(0, 0, 0, 0);
-                const maxDate = new Date();
-                maxDate.setDate(maxDate.getDate() + 90);
-                if (selected >= tomorrow && selected <= maxDate) {
-                  session.session_data.date = parsed.date;
-                }
-              }
+            // Persist pre-filled data
+            await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
 
-              // Pre-fill time
-              if (parsed.specificTime) {
-                session.session_data.time = parsed.specificTime;
-              }
-              if (parsed.timePreference) {
-                session.session_data._time_preference = parsed.timePreference;
-              }
-
-              // Pre-fill quantity
-              if (parsed.quantity && parsed.quantity >= 1 && parsed.quantity <= 20) {
-                session.session_data.party_size = parsed.quantity;
-              }
-
-              // If no service matched but customer has a favorite, suggest it
-              if (!session.session_data.service_id) {
-                const hist = session.session_data._customer_history as { favoriteServiceId?: string; favoriteServiceName?: string } | undefined;
-                if (hist?.favoriteServiceId) {
-                  const { data: favService } = await this.supabase
-                    .from('services')
-                    .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval')
-                    .eq('id', hist.favoriteServiceId)
-                    .eq('is_active', true)
-                    .maybeSingle();
-                  if (favService) {
-                    session.session_data._suggested_service_id = favService.id;
-                    session.session_data._suggested_service_name = favService.name;
-                  }
-                }
-              }
-
-              // Persist pre-filled data
-              await this.supabase.from('bot_sessions').update({
-                session_data: session.session_data,
-              }).eq('id', session.id);
-
-              // Send smart acknowledgment
+            // Send smart acknowledgment using canonical entities
+            if (canonicalResult.broadIntent || ents.serviceKeywords.length > 0 || ents.date) {
               const locale = getLocale((business.country_code || 'NG') as CountryCode);
               const ack = buildAcknowledgment(
-                parsed,
+                { understood: true, intent: canonicalResult.broadIntent as any, serviceKeywords: ents.serviceKeywords, date: ents.date, specificTime: ents.specificTime, timePreference: ents.timePreference as any, quantity: ents.quantity, amount: ents.amount, variantKeywords: ents.variantKeywords },
                 session.session_data.service_name as string | null,
                 locale,
               );
@@ -1367,12 +1496,13 @@ export class BotService {
               }
             }
           } catch (err) {
-            logger.error('[BOT] Smart intent parse error (non-fatal):', err);
+            logger.error('[BOT] Entity prefill error (non-fatal):', err);
           }
         }
 
         // Delegate to flow executor for the first step prompt
-        await this.flowExecutor.execute(from, '', session as unknown as BotSession, business);
+        // CAS-004: pass canonical result ephemerally — NOT persisted to session
+        await this.flowExecutor.execute(from, '', session as unknown as BotSession, business, undefined, undefined, canonicalResult || undefined);
         return;
       }
 
@@ -1892,6 +2022,57 @@ export class BotService {
       }
     }
 
+    // ── CAS-004: Canonical action dispatcher for resumed sessions ──
+    // Works from ANY step (not just greeting/select_capability) for high-confidence
+    // non-CREATE_NEW actions. "Where is my order?" while booking → order history.
+    // Exclude free-text input steps where text should go to the flow validator.
+    const isCasExcluded = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin'].includes(step);
+    let resumedCanonical: import('./canonical-understanding').CanonicalUnderstanding | null = null;
+    if (session.business_id && text && !isCasExcluded) {
+      try {
+        const { understandCanonicalMessage } = await import('./canonical-understanding');
+        // Load business tier for language entitlement
+        const { data: bizForCas } = await this.supabase.from('businesses')
+          .select('subscription_tier, category').eq('id', session.business_id).single();
+        resumedCanonical = await understandCanonicalMessage({
+          text, businessId: session.business_id,
+          businessCategory: bizForCas?.category || (session.session_data?.business_category as string) || null,
+          subscriptionTier: bizForCas?.subscription_tier || 'free',
+          supabase: this.supabase,
+        });
+
+        // Language blocked — use actual allowed language names
+        if (resumedCanonical.languageBlocked) {
+          const rLangNames = resumedCanonical.allowedLanguageNames || ['English'];
+          await this.sendText(from, `This business currently supports ${rLangNames.join(' and ')}. Please send your message in ${rLangNames.length === 1 ? rLangNames[0] : 'one of those languages'}.`);
+          return;
+        }
+
+        // Non-CREATE_NEW action → dispatch ONLY with high confidence
+        const { loadConversationConfig: loadResumedConf } = await import('./confidence-policy');
+        const resumedConvConfig = await loadResumedConf(this.supabase, session.business_id);
+        if (resumedCanonical.requestedAction && resumedCanonical.requestedAction !== 'create_new' && resumedCanonical.requestedAction !== 'navigation'
+            && resumedCanonical.confidence >= resumedConvConfig.autoRouteThreshold) {
+          const { dispatchAction, sendActionRecovery } = await import('./action-dispatcher');
+          const actionResult = await dispatchAction({
+            supabase: this.supabase, messageSender: this.messageSender,
+            flowExecutor: this.flowExecutor, from, businessId: session.business_id,
+            businessName: (session.session_data?.business_name as string) || '',
+            sessionData: session.session_data || {},
+            semanticFamily: resumedCanonical.semanticFamily,
+            requestedAction: resumedCanonical.requestedAction,
+            originalText: text,
+            existingSession: { id: session.id, version: session.version || 0 },
+          });
+          if (actionResult.handled) return;
+          await sendActionRecovery(this.messageSender, from, resumedCanonical.requestedAction, actionResult.reason || 'no_handler');
+          return;
+        }
+      } catch (err) {
+        logger.warn('[BOT] CAS-004 action routing error (non-fatal):', err);
+      }
+    }
+
     // ── Conversational AI Layer (feature-flagged) ──
     // Runs AFTER specialized handlers / keywords / escape hatches, BEFORE the
     // fallback flow executor path.  Only fires when the business has AI enabled
@@ -1901,13 +2082,22 @@ export class BotService {
         const convConfig = await loadConversationConfig(this.supabase, session.business_id);
         if (convConfig.aiEnabled) {
           const orchestrator = new ConversationOrchestrator(this.supabase, convConfig);
+          // Load subscription tier from session or DB for LLM tier gating
+          let sessionTier: string | undefined;
+          if (session.business_id) {
+            const { data: bizTierData } = await this.supabase
+              .from('businesses').select('subscription_tier').eq('id', session.business_id).single();
+            sessionTier = bizTierData?.subscription_tier || 'free';
+          }
           const understanding = await orchestrator.understand(
             text,
             session.business_id,
             (session.session_data?.business_category as string) || null,
             session as BotSession,
             from,
-            undefined, // timezone — not available here; orchestrator handles fallback
+            undefined,
+            sessionTier,
+            resumedCanonical || undefined, // CAS-004: avoid second LLM call
           );
 
           // Handle temporary questions (mid-flow "what are your hours?" etc.)
@@ -2087,7 +2277,7 @@ export class BotService {
     // Set translation context for AI usage tracking
     setTranslationContext(session.business_id || null, this.supabase);
 
-    await this.flowExecutor.execute(from, text, session as unknown as BotSession, business, mediaUrl, messageType);
+    await this.flowExecutor.execute(from, text, session as unknown as BotSession, business, mediaUrl, messageType, resumedCanonical || undefined);
     } catch (err) {
       const errMsg = err instanceof Error ? `${err.message}\n${err.stack?.slice(0, 300)}` : String(err);
       logger.error('[BOT] handleMessage CRASH:', errMsg);

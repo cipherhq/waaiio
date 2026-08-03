@@ -23,6 +23,10 @@ export interface SmartParseResult {
   quantity: number | null;
   amount: number | null;        // Extracted amount (e.g., 5000 from "pay tithe 5000")
   variantKeywords: string[];    // Size/variant hints (e.g., "large", "medium", "small")
+  /** CAS-004: Fine-grained semantic family (backward-compatible extension) */
+  semanticFamily?: import('./semantic-types').SemanticFamily;
+  /** CAS-004: Requested action (create_new, manage_existing, read_history, etc.) */
+  requestedAction?: import('./semantic-types').RequestedAction;
 }
 
 // ── Intent patterns ──────────────────────────────────────
@@ -471,6 +475,87 @@ export function extractEntitiesOnly(text: string, timezone?: string): {
   };
 }
 
+// ── CAS-004: Semantic family detection ──────────────────
+
+// Specific property/accommodation words — NOT generic booking
+const PROPERTY_RESERVATION_PATTERNS = [
+  /\b(room|lodge|hotel|stay|apartment|flat|shortlet|airbnb|property|accommodation|check[\s-]*in\s+.*\b(hotel|room|lodge))\b/i,
+  /\b(i\s*wan|abeg)\b.*\b(lodge|sleep|stay|rest)\b/i, // Pidgin
+];
+
+// Specific table/restaurant reservation words
+const TABLE_RESERVATION_PATTERNS = [
+  /\b(table\s*for|dinner\s*reserv|brunch\s*reserv|lunch\s*reserv|reserv.*table|seat\s*for|dine\s*in)\b/i,
+];
+
+// Specific giving/donation/religious words — NOT generic payment
+const GIVING_PATTERNS = [
+  /\b(tithe?|offering|donat(?:e|ion)?|sadaqah|sadaka|zakat|fitrah|fidyah|kaffara|waqf|lillah|infaq)\b/i,
+  /\b(sow\s*(?:a\s*)?seed|first\s*fruit|thanksgiving\s*offering|building\s*fund|project\s*fund|welfare|harvest\s*seed|covenant\s*seed)\b/i,
+  /\b(give|donat(?:e|ion)?)\b(?!.*\b(number|info|detail|address|contact|card)\b)/i,
+];
+
+// MANAGE_EXISTING / READ_HISTORY action patterns
+const MANAGE_EXISTING_PATTERNS = [
+  /\b(change|reschedule|modify|update|cancel|move|postpone)\b.*\b(my\s+)?(booking|appointment|reservation|order|subscription)\b/i,
+  /\b(pay|settle)\b.*\b(remaining|balance|outstanding|rest)\b/i,
+  /\b(where\s+(is|dey)|track|status)\b.*\b(my\s+)?(order|delivery|package|booking)\b/i,
+  // Pidgin: manage existing
+  /\b(abeg|i\s*wan)\b.*\b(change|cancel|move)\b.*\b(booking|order|appointment)\b/i,
+];
+
+const READ_HISTORY_PATTERNS = [
+  /^(my\s+)?(bookings?|reservations?|appointments?|orders?|receipts?|history|transactions?|giving|donations?|invoices?|subscriptions?|points?|loyalty|contracts?)\s*$/i,
+  /^(check|view|show|list|see|get)\s+(my\s+)?(bookings?|orders?|receipts?|history|transactions?|appointments?)\s*$/i,
+  // Pidgin equivalents
+  /\b(wetin\s+be|show\s+me|where\s+dey)\b.*\b(my\s+)?(booking|order|receipt|appointment)\b/i,
+  /\b(i\s*wan|abeg)\b.*\b(see|check|view)\b.*\b(my\s+)?(booking|order|receipt|appointment|history)\b/i,
+];
+
+const INFORMATIONAL_PATTERNS = [
+  /\b(do\s+you|can\s+i|una\s+dey|you\s+dey)\b.*\b(offer|have|provide|do|sell|accept|support)\b/i,
+  /\b(what|which|how\s+much|how\s+many)\b.*\b(service|appointment|booking|product|ticket|event|room|table)\b/i,
+  /\b(is\s+there|are\s+there|any)\b.*\b(available|open|slot|table|room|ticket)\b/i,
+];
+
+function detectSemanticFamily(text: string, broadIntent: SmartParseResult['intent']): import('./semantic-types').SemanticFamily {
+  // Specific family patterns take priority over broad intent.
+  // Order matters: check more specific families first.
+  if (PROPERTY_RESERVATION_PATTERNS.some(p => p.test(text))) return 'property_reservation';
+  if (TABLE_RESERVATION_PATTERNS.some(p => p.test(text))) return 'table_reservation';
+  if (GIVING_PATTERNS.some(p => p.test(text))) return 'giving';
+
+  // Check specific patterns that may override the broad intent classification.
+  // Order: ticketing before ordering (since "buy tickets" has both "buy" and "ticket")
+  if (TICKETING_PATTERNS.some(p => p.test(text))) return 'ticketing';
+  if (ORDERING_PATTERNS.some(p => p.test(text))) return 'ordering';
+
+  // Map remaining broad intents to families
+  switch (broadIntent) {
+    case 'booking': {
+      // Check if the text has specific service/appointment keywords vs purely generic "book"
+      const hasServiceKeywords = /\b(barb|haircut|trim|shave|massage|facial|consult|checkup|doctor|appointment|vet|tattoo|photo|lesson|class|gym|cowork|wash|clean)\b/i.test(text);
+      // If specific service words → service_time_booking
+      // If purely generic "book" / "reserve" → null (ambiguous, use business context)
+      return hasServiceKeywords ? 'service_time_booking' : null;
+    }
+    case 'ordering': return 'ordering';
+    case 'payment': return 'payment'; // generic payment (not giving)
+    case 'ticketing': return 'ticketing';
+    default: return null;
+  }
+}
+
+function detectRequestedAction(text: string): import('./semantic-types').RequestedAction {
+  // Check specific action patterns (order matters)
+  if (READ_HISTORY_PATTERNS.some(p => p.test(text))) return 'read_history';
+  if (MANAGE_EXISTING_PATTERNS.some(p => p.test(text))) return 'manage_existing';
+  if (INFORMATIONAL_PATTERNS.some(p => p.test(text))) return 'informational';
+
+  // Default for transactional intent: create_new
+  return 'create_new';
+}
+
 // ── Main parser ──────────────────────────────────────────
 
 export function parseSmartIntent(text: string, timezone?: string): SmartParseResult {
@@ -491,6 +576,10 @@ export function parseSmartIntent(text: string, timezone?: string): SmartParseRes
   else if (ORDERING_PATTERNS.some(p => p.test(text))) result.intent = 'ordering';
   else if (PAYMENT_PATTERNS.some(p => p.test(text))) result.intent = 'payment';
   else if (TICKETING_PATTERNS.some(p => p.test(text))) result.intent = 'ticketing';
+
+  // CAS-004: Determine fine-grained semantic family from sub-patterns
+  result.semanticFamily = detectSemanticFamily(text, result.intent);
+  result.requestedAction = detectRequestedAction(text);
 
   // Extract entities
   result.serviceKeywords = extractServiceKeywords(text);
@@ -524,7 +613,9 @@ export async function parseSmartIntentHybrid(
   supabase: SupabaseClient,
   businessId: string | null,
   timezone?: string,
-): Promise<SmartParseResult & { language?: string; llmUsed?: boolean }> {
+  /** CAS-004: Business subscription tier — gates LLM fallback (free = no LLM) */
+  subscriptionTier?: string,
+): Promise<SmartParseResult & { language?: string | null; llmUsed?: boolean; confidence?: number }> {
   // Step 1: Try regex
   const regexResult = parseSmartIntent(text, timezone);
 
@@ -532,6 +623,10 @@ export async function parseSmartIntentHybrid(
   const llmEnabled = businessId
     ? await isFeatureEnabledServer(FLAGS.LLM_INTENT_ENABLED, businessId).catch(err => { logger.warn('[SMART-INTENT] Feature flag check failed (defaulting to enabled):', err); return true; })
     : true;
+
+  // CAS-004: ONE shared tier authority for LLM eligibility
+  const { isTierLLMEligible } = await import('./language-policy');
+  const tierAllowsLLM = isTierLLMEligible(subscriptionTier);
 
   // Step 2: If regex found a confident intent with service keywords, use it
   if (regexResult.intent && regexResult.serviceKeywords.length > 0) {
@@ -553,8 +648,8 @@ export async function parseSmartIntentHybrid(
     return regexResult;
   }
 
-  // Step 3: Fall back to LLM (if enabled)
-  if (!llmEnabled) return regexResult;
+  // Step 3: Fall back to LLM (if enabled AND tier allows)
+  if (!llmEnabled || !tierAllowsLLM) return regexResult;
 
   try {
     const start = Date.now();
@@ -599,6 +694,9 @@ export async function parseSmartIntentHybrid(
       quantity: llmResult.entities.quantity || regexResult.quantity,
       amount: regexResult.amount,
       variantKeywords: regexResult.variantKeywords,
+      // CAS-004: LLM semantic family takes precedence; fall back to regex detection
+      semanticFamily: llmResult.semanticFamily || regexResult.semanticFamily,
+      requestedAction: llmResult.requestedAction || regexResult.requestedAction,
     };
 
     logClassification(supabase, {
@@ -617,7 +715,7 @@ export async function parseSmartIntentHybrid(
       model: 'claude-haiku-4-5-20251001',
     });
 
-    return { ...merged, language: llmResult.language, llmUsed: true };
+    return { ...merged, language: llmResult.language, llmUsed: true, confidence: llmResult.confidence };
   } catch (err) {
     logger.warn('[SMART-INTENT] LLM classification failed, using regex result:', err);
     return regexResult;

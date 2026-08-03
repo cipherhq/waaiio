@@ -90,7 +90,23 @@ export function routeByConfidence(
     return 'apply_correction';
   }
 
-  // Transactional intents — apply confidence thresholds
+  // CAS-004: requestedAction overrides broad intent.
+  // Non-CREATE_NEW actions must NEVER become start_flow.
+  const canonicalAction = understanding.requestedAction;
+  if (canonicalAction && canonicalAction !== 'create_new') {
+    // Non-transactional actions are handled by the canonical action dispatcher,
+    // not by flow routing. Return continue_active_flow to let the dispatcher handle it.
+    if (confidence >= config.autoRouteThreshold) {
+      return 'continue_active_flow'; // Dispatcher handles non-CREATE_NEW
+    }
+    // Low confidence non-CREATE_NEW → clarification/fallback
+    if (confidence >= config.clarificationThreshold) {
+      return 'show_clarification';
+    }
+    return 'fallback_menu';
+  }
+
+  // Transactional CREATE_NEW intents — apply confidence thresholds
   if (confidence >= config.autoRouteThreshold) {
     return 'start_flow';
   }

@@ -43,6 +43,9 @@ export class ConversationOrchestrator {
     session: BotSession | null,
     _customerPhone: string,
     timezone?: string,
+    subscriptionTier?: string,
+    /** CAS-004: Pre-computed canonical result — skips parseSmartIntentHybrid */
+    preComputedCanonical?: import('./canonical-understanding').CanonicalUnderstanding,
   ): Promise<ConversationUnderstanding> {
     const normalizedText = text.trim();
 
@@ -83,14 +86,30 @@ export class ConversationOrchestrator {
       }
     }
 
-    // 3. Run smart intent (regex first, LLM fallback — handled inside parseSmartIntentHybrid)
-    const smartResult = await parseSmartIntentHybrid(
-      normalizedText,
-      businessCategory,
-      this.supabase,
-      businessId,
-      timezone,
-    );
+    // 3. CAS-004: Use pre-computed canonical result if available — no second LLM call
+    let smartResult: Awaited<ReturnType<typeof parseSmartIntentHybrid>>;
+    if (preComputedCanonical) {
+      // Build SmartParseResult-like from canonical understanding
+      smartResult = {
+        understood: !!preComputedCanonical.broadIntent,
+        intent: preComputedCanonical.broadIntent as 'booking' | 'ordering' | 'payment' | 'ticketing' | null,
+        serviceKeywords: preComputedCanonical.entities.serviceKeywords,
+        date: preComputedCanonical.entities.date,
+        specificTime: preComputedCanonical.entities.specificTime,
+        timePreference: preComputedCanonical.entities.timePreference as 'morning' | 'afternoon' | 'evening' | null,
+        quantity: preComputedCanonical.entities.quantity,
+        amount: preComputedCanonical.entities.amount,
+        variantKeywords: preComputedCanonical.entities.variantKeywords,
+        semanticFamily: preComputedCanonical.semanticFamily,
+        requestedAction: preComputedCanonical.requestedAction,
+        language: preComputedCanonical.language || undefined,
+        confidence: preComputedCanonical.confidence,
+      };
+    } else {
+      smartResult = await parseSmartIntentHybrid(
+        normalizedText, businessCategory, this.supabase, businessId, timezone, subscriptionTier,
+      );
+    }
 
     // 4. Build entities from smart intent result
     const entities: ExtractedEntities = {};
@@ -113,15 +132,22 @@ export class ConversationOrchestrator {
       ? intentMap[smartResult.intent]
       : 'unknown';
 
-    // Derive confidence:
-    //   - regex match with service keywords = high confidence (0.90)
-    //   - LLM match = use LLM's own confidence (mapped from the `understood` flag + intent presence)
-    //   - no match = low confidence (0.30)
-    const confidence = (smartResult.intent && smartResult.serviceKeywords.length > 0 && !('llmUsed' in smartResult && smartResult.llmUsed))
-      ? 0.90
-      : smartResult.intent
-        ? 0.70
-        : 0.30;
+    // CAS-004: Preserve EXACT canonical confidence when pre-computed.
+    // Only derive confidence when no pre-computed result was supplied.
+    let confidence: number;
+    if (preComputedCanonical) {
+      confidence = preComputedCanonical.confidence; // EXACT — do not recalculate
+    } else {
+      const isLLM = 'llmUsed' in smartResult && (smartResult as { llmUsed?: boolean }).llmUsed;
+      const llmConf = 'confidence' in smartResult ? (smartResult as { confidence?: number }).confidence : undefined;
+      confidence = (smartResult.intent && smartResult.serviceKeywords.length > 0 && !isLLM)
+        ? 0.90
+        : (isLLM && typeof llmConf === 'number')
+          ? llmConf
+          : smartResult.intent
+            ? 0.70
+            : 0.30;
+    }
 
     const understanding: ConversationUnderstanding = {
       mode: businessId ? 'business' : 'marketplace',
@@ -131,6 +157,11 @@ export class ConversationOrchestrator {
       missingFields: this.computeMissingFields(intent, entities),
       ambiguities: [],
       recommendedAction: 'fallback_menu', // Will be set by confidence policy
+      // CAS-004: Propagate canonical semantic fields
+      semanticFamily: smartResult.semanticFamily || undefined,
+      requestedAction: smartResult.requestedAction || undefined,
+      detectedLanguage: ('language' in smartResult) ? (smartResult as { language?: string }).language : undefined,
+      classificationConfidence: confidence,
     };
 
     // 5. Apply confidence policy
