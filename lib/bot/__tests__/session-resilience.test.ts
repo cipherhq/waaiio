@@ -579,7 +579,7 @@ describe('deactivate_session_atomic migration', () => {
     expect(migration).toContain('p_bot_session_id uuid DEFAULT NULL');
     expect(migration).toContain('location_id, bot_session_id');
     // Idempotent check comes BEFORE capacity
-    expect(migration).toContain('FIRST: idempotent retry check');
+    expect(migration).toContain('Idempotent retry check');
     expect(migration).toContain('WHERE bot_session_id = p_bot_session_id');
   });
 });
@@ -758,10 +758,15 @@ describe('Ordering crash recovery — atomic RPC', () => {
     expect(migration).toContain("'created', false");
   });
 
-  it('promo increment only on freshlyCreated order', async () => {
+  it('promo increment is inside create_order_atomic transaction', async () => {
+    const migration = readFileSync(resolve(ROOT, 'supabase/migrations/304_session_resilience.sql'), 'utf-8');
+    // Promo usage is incremented inside the RPC, same transaction as order creation
+    expect(migration).toContain('UPDATE promo_codes');
+    expect(migration).toContain('current_uses = current_uses + 1');
+    expect(migration).toContain('p_promo_code_id');
+    // App-level code should NOT call increment_promo_usage separately
     const source = readFileSync(resolve(ROOT, 'lib/bot/flows/ordering.flow.ts'), 'utf-8');
-    expect(source).toContain('freshlyCreated');
-    expect(source).toContain("d.promo_code_id && freshlyCreated");
+    expect(source).not.toContain("rpc('increment_promo_usage'");
   });
 });
 
@@ -790,15 +795,47 @@ describe('Free ticketing counter — atomic finalization RPC', () => {
   });
 });
 
-describe('Scheduling RPC idempotent retry — correct order', () => {
-  it('book_slot_atomic checks bot_session_id BEFORE capacity check', async () => {
+describe('Scheduling RPC — advisory lock + idempotent retry', () => {
+  it('book_slot_atomic uses advisory lock before idempotency and capacity checks', async () => {
     const migration = readFileSync(resolve(ROOT, 'supabase/migrations/304_session_resilience.sql'), 'utf-8');
-    // Idempotency check must come before capacity check
-    const idempotencyIdx = migration.indexOf('FIRST: idempotent retry check');
+    // Advisory lock must come first
+    const lockIdx = migration.indexOf('pg_advisory_xact_lock(v_lock_key)');
+    const idempotencyIdx = migration.indexOf('Idempotent retry check');
     const capacityIdx = migration.indexOf('Capacity check');
+    expect(lockIdx).toBeGreaterThan(-1);
     expect(idempotencyIdx).toBeGreaterThan(-1);
     expect(capacityIdx).toBeGreaterThan(-1);
+    expect(lockIdx).toBeLessThan(idempotencyIdx);
     expect(idempotencyIdx).toBeLessThan(capacityIdx);
+  });
+});
+
+describe('Order RPC — advisory lock serialization', () => {
+  it('create_order_atomic uses advisory lock on bot_session_id', async () => {
+    const migration = readFileSync(resolve(ROOT, 'supabase/migrations/304_session_resilience.sql'), 'utf-8');
+    // Must lock on bot_session_id before checking/creating
+    expect(migration).toContain("pg_advisory_xact_lock(abs(hashtext(p_bot_session_id::text)))");
+  });
+});
+
+describe('Free ticket finalization result check', () => {
+  it('ticketing flow checks finalization RPC result before sending tickets', async () => {
+    const source = readFileSync(resolve(ROOT, 'lib/bot/flows/ticketing.flow.ts'), 'utf-8');
+    // Must destructure result
+    expect(source).toContain('const { data: finResult, error: finError }');
+    // Must check for failure
+    expect(source).toContain('if (finError || !finResult?.success)');
+    // Must return error message on failure
+    expect(source).toContain('finalization failed');
+  });
+
+  it('finalize_free_ticket_booking verifies counter targets exist', async () => {
+    const migration = readFileSync(resolve(ROOT, 'supabase/migrations/304_session_resilience.sql'), 'utf-8');
+    // Must check event update affected rows
+    expect(migration).toContain('GET DIAGNOSTICS v_event_rows = ROW_COUNT');
+    expect(migration).toContain("'reason', 'event_not_found'");
+    // Must check ticket type update
+    expect(migration).toContain("RAISE EXCEPTION 'ticket_type_not_found");
   });
 });
 

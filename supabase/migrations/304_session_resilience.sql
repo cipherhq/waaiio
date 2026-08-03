@@ -3,8 +3,8 @@
 -- 1. deactivate_session_atomic: bumps version so pending CAS workers fail
 -- 2. CREATE_NEW idempotency: bot_session_id + partial unique indexes on durable tables
 -- 3. Queue/waitlist atomic uniqueness: partial unique indexes for active entries
--- 4. book_slot_atomic: idempotent retry by bot_session_id (checked BEFORE capacity)
--- 5. create_order_atomic: atomic order + order_items creation with idempotent retry
+-- 4. book_slot_atomic: advisory-locked idempotent retry
+-- 5. create_order_atomic: advisory-locked order + items + promo in one transaction
 -- 6. finalize_free_ticket_booking: idempotent ticket counter finalization
 
 -- ═══════════════════════════════════════════════════════
@@ -82,7 +82,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_entries_customer_active
   WHERE status = 'waiting';
 
 -- ═══════════════════════════════════════════════════════
--- 4. book_slot_atomic: idempotent retry BEFORE capacity check
+-- 4. book_slot_atomic: advisory-locked, idempotent retry
+--
+-- Uses pg_advisory_xact_lock to serialize ALL operations on the
+-- same logical slot (business+date+time+staff). This prevents the
+-- empty-slot race where SELECT FOR UPDATE locks zero rows.
+-- Also serializes same-bot_session_id retries.
 -- ═══════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION public.book_slot_atomic(
@@ -100,10 +105,17 @@ CREATE OR REPLACE FUNCTION public.book_slot_atomic(
 ) RETURNS TABLE(booking_id uuid, reference_code text, slot_available boolean)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_count int; v_buffer_count int; v_booking_id uuid; v_ref text;
+  v_lock_key bigint;
 BEGIN
-  -- ── FIRST: idempotent retry check (before capacity) ──
-  -- If a booking already exists for this bot session, return it immediately.
-  -- This prevents the original booking from blocking its own retry via capacity.
+  -- ── Advisory lock on logical slot: serializes ALL concurrent operations ──
+  -- Hash business_id + date + time + staff into a single bigint lock key.
+  -- pg_advisory_xact_lock is transaction-scoped: auto-released on commit/rollback.
+  v_lock_key := abs(hashtext(
+    p_business_id::text || '|' || p_date::text || '|' || p_time || '|' || COALESCE(p_staff_id::text, '_')
+  ));
+  PERFORM pg_advisory_xact_lock(v_lock_key);
+
+  -- ── Idempotent retry check (after lock, so only one concurrent caller sees the state) ──
   IF p_bot_session_id IS NOT NULL THEN
     SELECT id, bookings.reference_code INTO v_booking_id, v_ref
     FROM bookings
@@ -116,14 +128,7 @@ BEGIN
     END IF;
   END IF;
 
-  -- Lock rows for this slot to prevent concurrent inserts
-  PERFORM id FROM bookings
-  WHERE business_id = p_business_id AND date = p_date AND time = p_time::time
-    AND status IN ('confirmed', 'pending', 'in_progress')
-    AND (p_staff_id IS NULL OR staff_id = p_staff_id)
-  FOR UPDATE;
-
-  -- Capacity check
+  -- Capacity check (no longer needs FOR UPDATE — advisory lock serializes)
   SELECT COUNT(*) INTO v_count FROM bookings
   WHERE business_id = p_business_id AND date = p_date AND time = p_time::time
     AND status IN ('confirmed', 'pending', 'in_progress')
@@ -199,7 +204,11 @@ GRANT EXECUTE ON FUNCTION public.book_slot_atomic(
 ) TO service_role;
 
 -- ═══════════════════════════════════════════════════════
--- 5. create_order_atomic: atomic order + items in one transaction
+-- 5. create_order_atomic: advisory-locked order + items + promo
+--
+-- Uses pg_advisory_xact_lock on bot_session_id to serialize
+-- concurrent retries. Promo usage is incremented inside the
+-- same transaction so it cannot be skipped by crash.
 -- ═══════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION public.create_order_atomic(
@@ -236,6 +245,9 @@ DECLARE
   v_existing_id uuid;
   v_existing_ref text;
 BEGIN
+  -- ── Advisory lock on bot_session_id: serializes concurrent retries ──
+  PERFORM pg_advisory_xact_lock(abs(hashtext(p_bot_session_id::text)));
+
   -- Idempotent: check for existing order from same bot session
   SELECT id, reference_code INTO v_existing_id, v_existing_ref
   FROM orders
@@ -262,6 +274,7 @@ BEGIN
       );
     END LOOP;
 
+    -- Promo NOT incremented on recovery (already done in original creation)
     RETURN jsonb_build_object(
       'order_id', v_existing_id,
       'reference_code', v_existing_ref,
@@ -301,6 +314,15 @@ BEGIN
     );
   END LOOP;
 
+  -- Increment promo usage inside the SAME transaction as order creation.
+  -- If this transaction rolls back, the promo increment rolls back too.
+  -- On retry (recovery path above), promo is NOT incremented again.
+  IF p_promo_code_id IS NOT NULL THEN
+    UPDATE promo_codes
+    SET current_uses = current_uses + 1
+    WHERE id = p_promo_code_id;
+  END IF;
+
   RETURN jsonb_build_object(
     'order_id', v_order_id,
     'reference_code', v_ref,
@@ -328,6 +350,10 @@ GRANT EXECUTE ON FUNCTION public.create_order_atomic(
 
 -- ═══════════════════════════════════════════════════════
 -- 6. finalize_free_ticket_booking: idempotent counter finalization
+--
+-- Locks booking row, checks tickets_finalized flag, atomically
+-- increments event + ticket-type counters, marks finalized.
+-- Verifies counter targets exist before marking finalized.
 -- ═══════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION public.finalize_free_ticket_booking(
@@ -342,6 +368,8 @@ SET search_path = public
 AS $$
 DECLARE
   v_already boolean;
+  v_event_rows int;
+  v_tt_rows int;
 BEGIN
   -- Lock the booking row to prevent concurrent finalization
   SELECT tickets_finalized INTO v_already
@@ -354,23 +382,36 @@ BEGIN
   END IF;
 
   IF v_already THEN
-    -- Already finalized — idempotent success
     RETURN jsonb_build_object('success', true, 'already_finalized', true);
   END IF;
 
-  -- Increment event tickets_sold
+  -- Increment event tickets_sold — verify event exists
   UPDATE events
   SET tickets_sold = tickets_sold + p_quantity
   WHERE id = p_event_id;
+  GET DIAGNOSTICS v_event_rows = ROW_COUNT;
+
+  IF v_event_rows = 0 THEN
+    -- Event not found — do NOT mark finalized
+    RETURN jsonb_build_object('success', false, 'reason', 'event_not_found');
+  END IF;
 
   -- Increment ticket type tickets_sold if applicable
   IF p_ticket_type_id IS NOT NULL THEN
     UPDATE event_ticket_types
     SET tickets_sold = COALESCE(tickets_sold, 0) + p_quantity
     WHERE id = p_ticket_type_id;
+    GET DIAGNOSTICS v_tt_rows = ROW_COUNT;
+
+    IF v_tt_rows = 0 THEN
+      -- Ticket type not found — roll back event counter, do NOT mark finalized
+      -- (this will be rolled back by the transaction abort anyway,
+      --  but explicit RAISE ensures nothing partial commits)
+      RAISE EXCEPTION 'ticket_type_not_found: %', p_ticket_type_id;
+    END IF;
   END IF;
 
-  -- Mark booking as finalized
+  -- Mark booking as finalized (both counters succeeded)
   UPDATE bookings
   SET tickets_finalized = true
   WHERE id = p_booking_id;

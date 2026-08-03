@@ -2631,10 +2631,8 @@ export const orderingFlow: FlowDefinition = {
           }).catch(err => logger.error('[ORDERING] Owner notification error:', err));
         }
 
-        // Increment promo code usage — only on fresh order, not recovery
-        if (d.promo_code_id && freshlyCreated) {
-          await ctx.supabase.rpc('increment_promo_usage', { p_code_id: d.promo_code_id as string });
-        }
+        // Promo usage is incremented inside create_order_atomic RPC transaction.
+        // No separate app-level call needed — ensures atomicity with order creation.
 
         // Upsert customer profile
         await ctx.supabase.rpc('upsert_customer_profile', {

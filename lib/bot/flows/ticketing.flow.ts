@@ -737,12 +737,16 @@ export const ticketingFlow: FlowDefinition = {
 
         // Free event — finalize ticket counters via atomic idempotent RPC.
         // Uses booking identity: same booking finalized twice → counters increment once.
-        await ctx.supabase.rpc('finalize_free_ticket_booking', {
+        const { data: finResult, error: finError } = await ctx.supabase.rpc('finalize_free_ticket_booking', {
           p_booking_id: booking.id,
           p_event_id: d.event_id as string,
           p_ticket_type_id: (d.ticket_type_id as string) || null,
           p_quantity: qty,
         });
+        if (finError || !finResult?.success) {
+          logger.withContext({ op: 'ticketing.finalize', bookingId: booking.id, error: finError?.message || finResult?.reason }).error('[TICKETING] Free ticket finalization failed');
+          return [{ type: 'text', text: 'Something went wrong finalizing your tickets. Send *Hi* to try again.' }];
+        }
 
         // Free event — send tickets before marking complete
         try {
