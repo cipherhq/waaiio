@@ -376,7 +376,14 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
       .single();
 
     const profile = await getProfile();
-    const caps = await getEnabledCapabilities(supabase, session.business_id);
+    // CAS-007: Use session's effective capabilities (tier-aware from Point A), not tier-blind getEnabledCapabilities
+    const caps = (session.session_data?.capabilities as string[]) || [];
+
+    // CAS-007: Verify ordering is still an effective capability before routing
+    if (!caps.includes('ordering')) {
+      await sendText(from, 'Ordering is not currently available for this business. Send *Hi* to see what else you can do.');
+      return { handled: true, session };
+    }
 
     const { data: newSession } = await supabase.from('bot_sessions').insert({
       whatsapp_number: from, user_id: profile?.id || null, business_id: session.business_id,
@@ -816,7 +823,8 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
 
   // ── Queue check-in — global shortcut ──
   if (isQueueQuery(text) && session?.business_id) {
-    const caps = await getEnabledCapabilities(supabase, session.business_id);
+    // CAS-007: Use session's effective capabilities (tier-aware), not tier-blind getEnabledCapabilities
+    const caps = (session.session_data?.capabilities as string[]) || [];
     if (caps.includes('queue')) {
       await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
       const profile = await getProfile();

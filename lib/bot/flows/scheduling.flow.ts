@@ -2789,6 +2789,11 @@ export const schedulingFlow: FlowDefinition = {
         }
         // Chat with business — hand off to chat flow
         if (d._chat_with_biz) {
+          // CAS-007: Verify chat capability before routing
+          const chatCaps = (d.capabilities as string[]) || [];
+          if (!chatCaps.includes('chat')) {
+            return null; // chat not available — end flow normally
+          }
           await ctx.supabase.from('bot_sessions')
             .update({ current_step: 'chat_start', session_data: { ...d, active_capability: 'chat' } })
             .eq('id', ctx.session.id);

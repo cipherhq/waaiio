@@ -2341,6 +2341,20 @@ export const orderingFlow: FlowDefinition = {
           deadline: (d.custom_deadline as string) || null,
         } : null;
 
+        // CAS-007: Verify ordering capability before CREATE_NEW quote request
+        if (ctx.business) {
+          const { requireCurrentCapability } = await import('./shared/capability-guard');
+          const capGuard = await requireCurrentCapability(ctx.supabase, {
+            session: { id: ctx.session.id, version: ctx.session.version, session_data: ctx.session.session_data },
+            businessId: ctx.business.id,
+            capability: 'ordering',
+            action: 'create_new',
+          });
+          if (!capGuard.allowed) { if (capGuard.recoveryStatus === 'stale') return [];
+            return [{ type: 'text' as const, text: await ctx.t(capGuard.customerMessage) }];
+          }
+        }
+
         // Create quote request
         const { data: quote, error } = await ctx.supabase
           .from('quote_requests')
@@ -2937,6 +2951,11 @@ export const orderingFlow: FlowDefinition = {
           return 'process_order';
         }
         if (d._chat_with_biz) {
+          // CAS-007: Verify chat capability before routing
+          const chatCaps = (d.capabilities as string[]) || [];
+          if (!chatCaps.includes('chat')) {
+            return null; // chat not available — end flow normally
+          }
           await ctx.supabase.from('bot_sessions')
             .update({ current_step: 'chat_start', session_data: { ...d, active_capability: 'chat' } })
             .eq('id', ctx.session.id);

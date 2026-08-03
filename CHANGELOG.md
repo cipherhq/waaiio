@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-03
 
+### fix(bot): CAS-007 — Runtime surface closure
+
+- **Re-order shortcut** — `global-queries.ts` now checks `caps.includes('ordering')` before routing into ordering flow. Previously hardcoded `active_capability: 'ordering'` without verifying ordering was effective.
+- **Chat handoff** — `ordering.flow.ts` and `scheduling.flow.ts` now check `chatCaps.includes('chat')` before setting `active_capability: 'chat'`. Previously bypassed capability policy.
+- **Quote request CREATE_NEW boundary** — `ordering.flow.ts` `submit_quote_request` step now calls `requireCurrentCapability` with `action: 'create_new'` before `quote_requests` INSERT. Previously had no commit-point guard.
+- **31 CAS-007 tests** — `cas-007-runtime-surface.test.ts`: capability selection, start_capability rejection, quick rebook, re-order shortcut, chat handoff, quote request boundary, all 8 CREATE_NEW boundaries, session resume revalidation, CAS-005 recovery, regression safety.
+- Could break: Re-order shortcut returns error if ordering is disabled (correct behavior). Chat handoff silently skips if chat is disabled (falls through to flow completion).
+
 ### fix(bot): Session resilience hardening
 
 - **Atomic session deactivation** — `deactivateSession()` now uses `deactivate_session_atomic` RPC that bumps version, invalidating any pending CAS writes. Prevents stale workers from overwriting state after exit/menu/start-over. Migration: `304_session_resilience.sql`. Affects: `bot-helpers.ts`, `executor.ts`, all handlers that deactivate sessions (~30 call sites across `keyword-actions.ts`, `escape-hatches.ts`, `my-bookings.ts`, `my-orders.ts`, `refund-request.ts`, `global-queries.ts`, `capability-selection.flow.ts`, `bot.service.ts`).
