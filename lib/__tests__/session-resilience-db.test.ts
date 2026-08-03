@@ -102,6 +102,27 @@ describe.skipIf(!dbUrl)('Session Resilience: Real PostgreSQL contention tests', 
       DO $$ BEGIN CREATE TYPE deposit_status AS ENUM ('none','pending','paid','refunded'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE TYPE order_status AS ENUM ('draft','pending','confirmed','processing','shipped','delivered','cancelled','completed'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+      -- bot_sessions stub (needed by deactivate_session_atomic)
+      CREATE TABLE IF NOT EXISTS bot_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        whatsapp_number VARCHAR(20) NOT NULL,
+        business_id UUID,
+        current_step VARCHAR(50),
+        session_data JSONB DEFAULT '{}',
+        conversation_log JSONB DEFAULT '[]',
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        version BIGINT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- reservations stub (needed by migration)
+      CREATE TABLE IF NOT EXISTS reservations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        reference_code VARCHAR(12) UNIQUE,
+        business_id UUID NOT NULL,
+        status reservation_status DEFAULT 'pending'
+      );
+
       CREATE TABLE IF NOT EXISTS bookings (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         reference_code VARCHAR(12) UNIQUE,
@@ -264,6 +285,8 @@ describe.skipIf(!dbUrl)('Session Resilience: Real PostgreSQL contention tests', 
       DROP TABLE IF EXISTS promo_codes CASCADE;
       DROP TABLE IF EXISTS queue_entries CASCADE;
       DROP TABLE IF EXISTS waitlist_entries CASCADE;
+      DROP TABLE IF EXISTS reservations CASCADE;
+      DROP TABLE IF EXISTS bot_sessions CASCADE;
     `);
   });
 
