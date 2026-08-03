@@ -68,14 +68,16 @@ export async function dispatchAction(
         const { handleMyOrders } = await import('./handlers/my-orders');
         const routeToMenu = async (_s: BotSession, _f: string) => {};
         const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!);
-        if (sess) await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess as BotSession, from, '');
+        if (!sess) throw new Error('session_create_failed');
+        await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess as BotSession, from, '');
       };
     } else if (semanticFamily === 'service_time_booking' || semanticFamily === 'property_reservation' || semanticFamily === 'table_reservation') {
       targetStep = 'my_bookings';
       handler = async () => {
         const { handleMyBookings } = await import('./handlers/my-bookings');
         const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!);
-        if (sess) await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess as BotSession, from, '');
+        if (!sess) throw new Error('session_create_failed');
+        await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess as BotSession, from, '');
       };
     } else if (semanticFamily === 'giving' || semanticFamily === 'payment') {
       handler = async () => {
@@ -92,7 +94,8 @@ export async function dispatchAction(
       handler = async () => {
         const { handleMyBookings } = await import('./handlers/my-bookings');
         const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!);
-        if (sess) await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess as BotSession, from, '');
+        if (!sess) throw new Error("session_create_failed");
+        await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess as BotSession, from, '');
       };
     } else if (semanticFamily === 'ordering') {
       targetStep = 'my_orders';
@@ -100,7 +103,8 @@ export async function dispatchAction(
         const { handleMyOrders } = await import('./handlers/my-orders');
         const routeToMenu = async (_s: BotSession, _f: string) => {};
         const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!);
-        if (sess) await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess as BotSession, from, '');
+        if (!sess) throw new Error("session_create_failed");
+        await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess as BotSession, from, '');
       };
     }
     // giving/payment MANAGE_EXISTING: no substitution to history
@@ -129,17 +133,26 @@ export async function dispatchAction(
     return { handled: false, reason: 'no_handler' };
   }
 
-  // NOW deactivate the existing session (handler confirmed available)
-  if (existingSessionId) {
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', existingSessionId);
+  // INFORMATIONAL preserves the existing session (customer may be mid-flow)
+  const preserveSession = requestedAction === 'informational';
+
+  if (!preserveSession) {
+    // Deactivate existing session (handler confirmed available)
+    if (existingSessionId) {
+      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', existingSessionId);
+    }
+    // Clean up old inactive sessions
+    await supabase.from('bot_sessions').delete()
+      .eq('whatsapp_number', from).eq('is_active', false).eq('business_id', businessId);
   }
 
-  // Clean up old inactive sessions
-  await supabase.from('bot_sessions').delete()
-    .eq('whatsapp_number', from).eq('is_active', false).eq('business_id', businessId);
-
-  await handler();
-  return { handled: true };
+  try {
+    await handler();
+    return { handled: true };
+  } catch (err) {
+    logger.error('[ACTION-DISPATCH] Handler execution failed:', err);
+    return { handled: false, reason: 'no_handler' };
+  }
 }
 
 async function createActionSession(

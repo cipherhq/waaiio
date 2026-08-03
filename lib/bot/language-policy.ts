@@ -128,11 +128,17 @@ const LANGUAGE_MARKERS: Record<string, RegExp[]> = {
 
 /**
  * Fast deterministic language detection — no LLM cost.
- * Returns detected language code or 'en' for ambiguous/English text.
+ * Returns detected language code, or null if uncertain.
+ * Does NOT default to 'en' — caller must handle uncertainty.
  */
-export function detectLanguageDeterministic(text: string): string {
+export function detectLanguageDeterministic(text: string): string | null {
   for (const [lang, patterns] of Object.entries(LANGUAGE_MARKERS)) {
     if (patterns.some(p => p.test(text))) return lang;
   }
-  return 'en';
+  // No non-English markers found — could be English or unrecognized language
+  // Only classify as English if text contains clear English markers
+  if (/^[a-zA-Z0-9\s.,!?'"@#$%&*()\-_+=;:<>/\\[\]{}|~`]+$/.test(text) && text.length >= 3) {
+    return 'en';
+  }
+  return null; // uncertain
 }

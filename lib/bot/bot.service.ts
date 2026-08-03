@@ -1044,7 +1044,8 @@ export class BotService {
 
           // Language blocked → recovery and return
           if (canonicalResult.languageBlocked) {
-            await this.sendText(from, 'This business currently supports English only. Please send your message in English.');
+            const langNames = canonicalResult.allowedLanguageNames || ['English'];
+            await this.sendText(from, `This business currently supports ${langNames.join(' and ')}. Please send your message in ${langNames.length === 1 ? langNames[0] : 'one of those languages'}.`);
             return;
           }
 
