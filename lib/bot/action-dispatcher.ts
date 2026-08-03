@@ -4,6 +4,8 @@
  * actions to existing Waaiio handlers. Never falls through into CREATE_NEW.
  *
  * Used by BOTH new-session and existing-session paths.
+ *
+ * Session deactivation happens ONLY after confirming the handler can work.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -25,22 +27,14 @@ export interface ActionDispatchParams {
   semanticFamily: SemanticFamily;
   requestedAction: RequestedAction;
   originalText: string;
-  /** Existing session to deactivate if routing to a new handler */
   existingSessionId?: string;
 }
 
 export interface ActionDispatchResult {
   handled: boolean;
-  /** Why it was not handled, if applicable */
   reason?: 'unsupported_action' | 'no_profile' | 'no_handler';
 }
 
-/**
- * Dispatch a non-CREATE_NEW action to existing handlers.
- * Returns { handled: true } if the action was fulfilled.
- * Returns { handled: false } if the action could not be fulfilled — caller
- * must send safe recovery, NEVER fall through into CREATE_NEW.
- */
 export async function dispatchAction(
   params: ActionDispatchParams,
 ): Promise<ActionDispatchResult> {
@@ -50,7 +44,7 @@ export async function dispatchAction(
     await messageSender.sendText({ to, text });
   };
 
-  // Resolve customer profile
+  // Resolve customer profile FIRST — needed for all handlers
   const phoneP = from.startsWith('+') ? from : `+${from}`;
   const phoneN = from.startsWith('+') ? from.slice(1) : from;
   const { data: profile } = await supabase.from('profiles').select('id')
@@ -61,117 +55,114 @@ export async function dispatchAction(
     return { handled: false, reason: 'no_profile' };
   }
 
-  // Deactivate existing session if provided
-  if (existingSessionId) {
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', existingSessionId);
-  }
-
-  // Clean up old inactive sessions for this phone+business
-  await supabase.from('bot_sessions').delete()
-    .eq('whatsapp_number', from).eq('is_active', false).eq('business_id', businessId);
+  // Determine which handler to use BEFORE modifying any session state
+  type HandlerFn = () => Promise<void>;
+  let handler: HandlerFn | null = null;
+  let targetStep: string | null = null;
 
   // READ_HISTORY
   if (requestedAction === 'read_history') {
     if (semanticFamily === 'ordering') {
-      const { data: sess } = await supabase.from('bot_sessions').insert({
-        whatsapp_number: from, user_id: profile.id, business_id: businessId,
-        current_step: 'my_orders', session_data: sessionData,
-        is_active: true, expires_at: new Date(Date.now() + 86400000).toISOString(),
-      }).select().single();
-      if (sess) {
+      targetStep = 'my_orders';
+      handler = async () => {
         const { handleMyOrders } = await import('./handlers/my-orders');
         const routeToMenu = async (_s: BotSession, _f: string) => {};
-        await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess as BotSession, from, '');
-        return { handled: true };
-      }
-    }
-
-    if (semanticFamily === 'service_time_booking' || semanticFamily === 'property_reservation' || semanticFamily === 'table_reservation') {
-      const { data: sess } = await supabase.from('bot_sessions').insert({
-        whatsapp_number: from, user_id: profile.id, business_id: businessId,
-        current_step: 'my_bookings', session_data: sessionData,
-        is_active: true, expires_at: new Date(Date.now() + 86400000).toISOString(),
-      }).select().single();
-      if (sess) {
+        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!);
+        if (sess) await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess as BotSession, from, '');
+      };
+    } else if (semanticFamily === 'service_time_booking' || semanticFamily === 'property_reservation' || semanticFamily === 'table_reservation') {
+      targetStep = 'my_bookings';
+      handler = async () => {
         const { handleMyBookings } = await import('./handlers/my-bookings');
-        await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess as BotSession, from, '');
-        return { handled: true };
-      }
+        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!);
+        if (sess) await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess as BotSession, from, '');
+      };
+    } else if (semanticFamily === 'giving' || semanticFamily === 'payment') {
+      handler = async () => {
+        const { handleTransactionDocument } = await import('./handlers/transaction-docs');
+        await handleTransactionDocument(supabase, messageSender, sendText, from, profile.id, 'history');
+      };
     }
-
-    if (semanticFamily === 'giving' || semanticFamily === 'payment') {
-      // Transaction history
-      const { handleTransactionDocument } = await import('./handlers/transaction-docs');
-      await handleTransactionDocument(supabase, messageSender, sendText, from, profile.id, 'history');
-      return { handled: true };
-    }
-
-    // Unsupported family for READ_HISTORY
-    return { handled: false, reason: 'no_handler' };
   }
 
-  // MANAGE_EXISTING
+  // MANAGE_EXISTING — route to management handlers, NOT to read_history
   if (requestedAction === 'manage_existing') {
     if (semanticFamily === 'service_time_booking' || semanticFamily === 'property_reservation' || semanticFamily === 'table_reservation') {
-      const { data: sess } = await supabase.from('bot_sessions').insert({
-        whatsapp_number: from, user_id: profile.id, business_id: businessId,
-        current_step: 'my_bookings', session_data: sessionData,
-        is_active: true, expires_at: new Date(Date.now() + 86400000).toISOString(),
-      }).select().single();
-      if (sess) {
+      targetStep = 'my_bookings';
+      handler = async () => {
         const { handleMyBookings } = await import('./handlers/my-bookings');
-        await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess as BotSession, from, '');
-        return { handled: true };
-      }
-    }
-
-    if (semanticFamily === 'ordering') {
-      const { data: sess } = await supabase.from('bot_sessions').insert({
-        whatsapp_number: from, user_id: profile.id, business_id: businessId,
-        current_step: 'my_orders', session_data: sessionData,
-        is_active: true, expires_at: new Date(Date.now() + 86400000).toISOString(),
-      }).select().single();
-      if (sess) {
+        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!);
+        if (sess) await handleMyBookings(supabase, messageSender, sendText, flowExecutor, sess as BotSession, from, '');
+      };
+    } else if (semanticFamily === 'ordering') {
+      targetStep = 'my_orders';
+      handler = async () => {
         const { handleMyOrders } = await import('./handlers/my-orders');
         const routeToMenu = async (_s: BotSession, _f: string) => {};
-        await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess as BotSession, from, '');
-        return { handled: true };
-      }
+        const { data: sess } = await createActionSession(supabase, from, profile.id, businessId, sessionData, targetStep!);
+        if (sess) await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess as BotSession, from, '');
+      };
     }
-
-    if (semanticFamily === 'giving' || semanticFamily === 'payment') {
-      // Show transaction history as closest MANAGE_EXISTING behavior
-      const { handleTransactionDocument } = await import('./handlers/transaction-docs');
-      await handleTransactionDocument(supabase, messageSender, sendText, from, profile.id, 'history');
-      return { handled: true };
-    }
-
-    return { handled: false, reason: 'no_handler' };
+    // giving/payment MANAGE_EXISTING: no substitution to history
+    // Return as unsupported if no direct management handler exists
   }
 
   // INFORMATIONAL
   if (requestedAction === 'informational') {
-    try {
-      const { answerTemporaryQuestion } = await import('./business-knowledge');
-      const answer = await answerTemporaryQuestion(supabase, businessId, { type: 'general', query: params.originalText }, businessName);
-      if (answer) {
-        await sendText(from, answer);
-        return { handled: true };
+    handler = async () => {
+      try {
+        const { answerTemporaryQuestion } = await import('./business-knowledge');
+        const answer = await answerTemporaryQuestion(supabase, businessId, { type: 'general', query: params.originalText }, businessName);
+        if (answer) {
+          await sendText(from, answer);
+          return;
+        }
+      } catch (err) {
+        logger.warn('[ACTION-DISPATCH] Knowledge answer failed:', err);
       }
-    } catch (err) {
-      logger.warn('[ACTION-DISPATCH] Knowledge answer failed:', err);
-    }
-    // No knowledge answer available
+      // No knowledge answer — send informational recovery
+      await sendText(from, "I'm not sure about that. Type *menu* to see what's available, or type *Hi* to start over.");
+    };
+  }
+
+  if (!handler) {
     return { handled: false, reason: 'no_handler' };
   }
 
-  // NAVIGATION handled by escape hatches/keywords — should not reach here
-  return { handled: false, reason: 'unsupported_action' };
+  // NOW deactivate the existing session (handler confirmed available)
+  if (existingSessionId) {
+    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', existingSessionId);
+  }
+
+  // Clean up old inactive sessions
+  await supabase.from('bot_sessions').delete()
+    .eq('whatsapp_number', from).eq('is_active', false).eq('business_id', businessId);
+
+  await handler();
+  return { handled: true };
+}
+
+async function createActionSession(
+  supabase: SupabaseClient,
+  from: string,
+  userId: string,
+  businessId: string,
+  sessionData: Record<string, unknown>,
+  currentStep: string,
+) {
+  return supabase.from('bot_sessions').insert({
+    whatsapp_number: from,
+    user_id: userId,
+    business_id: businessId,
+    current_step: currentStep,
+    session_data: sessionData,
+    is_active: true,
+    expires_at: new Date(Date.now() + 86400000).toISOString(),
+  }).select().single();
 }
 
 /**
- * Send a safe recovery message when an action cannot be fulfilled.
- * Never falls through into CREATE_NEW.
+ * Send safe recovery for unfulfilled actions. NEVER falls into CREATE_NEW.
  */
 export async function sendActionRecovery(
   messageSender: MessageSender,
@@ -184,6 +175,8 @@ export async function sendActionRecovery(
     msg = "I don't have an account for this number yet. Send *Hi* to get started!";
   } else if (requestedAction === 'informational') {
     msg = "I'm not sure about that. Type *menu* to see what's available, or type *Hi* to start over.";
+  } else if (requestedAction === 'manage_existing') {
+    msg = "I couldn't find a way to manage that right now. Type *my account* to see your options, or *Hi* to start over.";
   } else {
     msg = "I couldn't find what you're looking for. Type *my account* to view your history, or *Hi* to start over.";
   }

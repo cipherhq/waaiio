@@ -12,7 +12,7 @@ export interface LLMIntentResult {
     quantity: number | null;
   };
   confidence: number;
-  language: string;
+  language: string | null;
   /** CAS-004: Fine-grained semantic family */
   semanticFamily: SemanticFamily;
   /** CAS-004: Requested action */
@@ -23,7 +23,7 @@ const EMPTY_RESULT: LLMIntentResult = {
   flow: null,
   entities: { serviceKeywords: [], date: null, timePreference: null, quantity: null },
   confidence: 0,
-  language: 'en',
+  language: null,
   semanticFamily: null,
   requestedAction: null,
 };
@@ -120,7 +120,7 @@ export async function classifyWithLLM(
         quantity: typeof parsed.entities?.quantity === 'number' ? parsed.entities.quantity : null,
       },
       confidence: typeof parsed.confidence === 'number' ? Math.min(1, Math.max(0, parsed.confidence)) : 0,
-      language: validateLanguage(parsed.language) || 'en', // null → 'en' only for backward compat of LLMIntentResult.language (string, not null)
+      language: validateLanguage(parsed.language), // null if invalid — caller decides recovery
       // CAS-004: validate structured semantic output against allowed enums
       semanticFamily: validateSemanticFamily(parsed.semanticFamily),
       requestedAction: validateRequestedAction(parsed.requestedAction),

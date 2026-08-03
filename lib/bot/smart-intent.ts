@@ -615,7 +615,7 @@ export async function parseSmartIntentHybrid(
   timezone?: string,
   /** CAS-004: Business subscription tier — gates LLM fallback (free = no LLM) */
   subscriptionTier?: string,
-): Promise<SmartParseResult & { language?: string; llmUsed?: boolean; confidence?: number }> {
+): Promise<SmartParseResult & { language?: string | null; llmUsed?: boolean; confidence?: number }> {
   // Step 1: Try regex
   const regexResult = parseSmartIntent(text, timezone);
 

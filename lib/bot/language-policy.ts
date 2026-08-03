@@ -64,11 +64,21 @@ export function getEffectiveLanguages(
     };
   }
 
-  // Business tier: all supported languages
+  // Only explicitly recognized Business tier gets all languages.
+  // Unknown/malformed tiers fail closed to Free.
+  if (tier === 'business') {
+    return {
+      allowedLanguages: [...SUPPORTED_LANGUAGES],
+      llmAllowed: true,
+      translationAllowed: true,
+    };
+  }
+
+  // Unknown tier → fail closed to Free
   return {
-    allowedLanguages: [...SUPPORTED_LANGUAGES],
-    llmAllowed: true,
-    translationAllowed: true,
+    allowedLanguages: ['en'],
+    llmAllowed: false,
+    translationAllowed: false,
   };
 }
 

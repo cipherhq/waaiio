@@ -1029,92 +1029,81 @@ export class BotService {
 
       // ═══════════════════════════════════════════════════════════
       // CAS-004: Canonical first-message understanding pipeline.
-      // Order: language entitlement → semantic understanding → action routing
-      // → capability resolution → confidence → execute/clarify/recover
+      // language entitlement → canonical understanding (hybrid for paid tiers)
+      // → action routing → capability resolution → confidence → execute/clarify
       // ═══════════════════════════════════════════════════════════
-      let earlySemanticFamily: string | null = null;
-      let earlyRequestedAction: string | null = null;
+      let canonicalResult: import('./canonical-understanding').CanonicalUnderstanding | null = null;
       if (business && text && text.length > 2 && !isRestart) {
         try {
-          // 1. Language entitlement
-          const { getEffectiveLanguages, detectLanguageDeterministic, loadBusinessLanguages } = await import('./language-policy');
-          const configuredLangs = await loadBusinessLanguages(this.supabase, business.id);
-          const langEntitlement = getEffectiveLanguages(business.subscription_tier, configuredLangs);
-          const detectedLang = detectLanguageDeterministic(text);
+          const { understandCanonicalMessage } = await import('./canonical-understanding');
+          canonicalResult = await understandCanonicalMessage({
+            text, businessId: business.id, businessCategory: business.category,
+            subscriptionTier: business.subscription_tier, supabase: this.supabase,
+            timezone: (waConfig?.business_hours as BusinessHours | undefined)?.timezone,
+          });
 
-          // Free tier + clearly non-English → English-only recovery
-          if (detectedLang !== 'en' && !langEntitlement.allowedLanguages.includes(detectedLang)) {
+          // Language blocked → recovery and return
+          if (canonicalResult.languageBlocked) {
             await this.sendText(from, 'This business currently supports English only. Please send your message in English.');
             return;
           }
 
-          // 2. Canonical semantic understanding (one parse, reused later)
-          const { parseSmartIntent: earlyParse } = await import('./smart-intent');
-          const earlyResult = earlyParse(text);
-          earlySemanticFamily = earlyResult.semanticFamily || null;
-          earlyRequestedAction = earlyResult.requestedAction || null;
-
-          // 2b. Generic booking disambiguation using business category
-          if (!earlySemanticFamily && earlyResult.intent === 'booking') {
-            const { disambiguateByCategory } = await import('./semantic-resolver');
-            const { getUserFacingCapabilities } = await import('./handlers/flow-routing');
-            const ufCaps = getUserFacingCapabilities(capabilities);
-            earlySemanticFamily = disambiguateByCategory(business.category, ufCaps);
-          }
-
-          // 3. Route non-CREATE_NEW actions BEFORE creating a session.
-          if (earlyRequestedAction && earlyRequestedAction !== 'create_new' && earlyRequestedAction !== 'navigation') {
+          // Non-CREATE_NEW action → dispatch to existing handlers
+          if (canonicalResult.requestedAction && canonicalResult.requestedAction !== 'create_new' && canonicalResult.requestedAction !== 'navigation') {
             const { dispatchAction, sendActionRecovery } = await import('./action-dispatcher');
             const actionResult = await dispatchAction({
               supabase: this.supabase, messageSender: this.messageSender,
               flowExecutor: this.flowExecutor, from, businessId: business.id,
-              businessName: business.name, sessionData: { business_id: businessId, business_name: business.name, business_category: business.category, capabilities },
-              semanticFamily: (earlySemanticFamily || null) as import('./semantic-types').SemanticFamily,
-              requestedAction: earlyRequestedAction as import('./semantic-types').RequestedAction,
+              businessName: business.name,
+              sessionData: { business_id: businessId, business_name: business.name, business_category: business.category, capabilities },
+              semanticFamily: canonicalResult.semanticFamily,
+              requestedAction: canonicalResult.requestedAction,
               originalText: text,
             });
             if (actionResult.handled) return;
-            // Safe recovery — NEVER fall through into CREATE_NEW
-            await sendActionRecovery(this.messageSender, from, earlyRequestedAction as import('./semantic-types').RequestedAction, actionResult.reason || 'no_handler');
+            await sendActionRecovery(this.messageSender, from, canonicalResult.requestedAction, actionResult.reason || 'no_handler');
             return;
           }
-        } catch (err) { logger.warn('[BOT] CAS-004 early understanding error (non-fatal):', err); }
+        } catch (err) { logger.warn('[BOT] CAS-004 canonical understanding error (non-fatal):', err); }
       }
 
-      // Deep-link: if QR code had a capability suffix
+      // Deep-link
       let firstStep: string;
       let forceCapabilityMenu = false;
       if (business && deepLinkCapability && capabilities.includes(deepLinkCapability as CapabilityId)) {
         firstStep = this.capabilityToFirstStep(deepLinkCapability as CapabilityId);
-        logger.debug('[BOT] Deep-link → skipping menu, starting at:', firstStep);
       } else {
         firstStep = business
           ? this.getFirstStepFromCapabilities(capabilities, business.flow_type)
           : 'greeting';
 
-        // CAS-004: Semantic mismatch for sole-capability auto-skip.
-        if (business && firstStep !== 'select_capability' && firstStep !== 'greeting') {
+        // CAS-004: Semantic mismatch + confidence check for sole-capability auto-skip
+        if (business && firstStep !== 'select_capability' && firstStep !== 'greeting' && canonicalResult) {
           const { getUserFacingCapabilities } = await import('./handlers/flow-routing');
-          const { resolveSemanticCapability } = await import('./semantic-resolver');
+          const { resolveSemanticCapability, disambiguateByCategory } = await import('./semantic-resolver');
           const ufCaps = getUserFacingCapabilities(capabilities);
 
-          let mismatchFamily = earlySemanticFamily;
+          let routeFamily = canonicalResult.semanticFamily;
 
-          // Generic booking with null family — use category disambiguation
-          if (!mismatchFamily && text && /\b(book|reserve|schedule|appoint)\b/i.test(text)) {
-            const { disambiguateByCategory } = await import('./semantic-resolver');
-            mismatchFamily = disambiguateByCategory(business.category, ufCaps);
+          // Generic booking disambiguation using business category
+          if (!routeFamily && canonicalResult.broadIntent === 'booking') {
+            routeFamily = disambiguateByCategory(business.category, ufCaps);
           }
 
-          if (mismatchFamily && earlyRequestedAction === 'create_new') {
-            const resolution = resolveSemanticCapability(
-              mismatchFamily as import('./semantic-types').SemanticFamily,
-              'create_new', ufCaps,
-            );
-            if (!resolution.canRoute) {
+          if (canonicalResult.requestedAction === 'create_new') {
+            // Confidence check: below auto-route threshold → force menu
+            const { loadConversationConfig } = await import('./confidence-policy');
+            const convConfig = await loadConversationConfig(this.supabase, business.id);
+            if (canonicalResult.confidence < convConfig.autoRouteThreshold) {
               firstStep = 'select_capability';
               forceCapabilityMenu = true;
-              logger.debug('[BOT] CAS-004: semantic mismatch — forcing capability menu');
+            } else if (routeFamily) {
+              // Family mismatch check
+              const resolution = resolveSemanticCapability(routeFamily, 'create_new', ufCaps);
+              if (!resolution.canRoute) {
+                firstStep = 'select_capability';
+                forceCapabilityMenu = true;
+              }
             }
           }
         }
@@ -1126,8 +1115,8 @@ export class BotService {
             ...(deepLinkCapability ? { _deep_link_capability: deepLinkCapability } : {}),
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
-            ...(earlySemanticFamily ? { _parsed_semantic_family: earlySemanticFamily } : {}),
-            ...(earlyRequestedAction ? { _parsed_requested_action: earlyRequestedAction } : {}),
+            ...(canonicalResult?.semanticFamily ? { _parsed_semantic_family: canonicalResult.semanticFamily } : {}),
+            ...(canonicalResult?.requestedAction ? { _parsed_requested_action: canonicalResult.requestedAction } : {}),
           }
         : { ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}) };
 
@@ -1983,26 +1972,42 @@ export class BotService {
       }
     }
 
-    // ── CAS-004: Canonical action dispatcher (same as new-session path) ──
+    // ── CAS-004: Canonical action dispatcher for resumed sessions ──
+    // Uses the SAME canonical understanding as new-session path
     if (session.business_id && text && (step === 'select_capability' || step === 'greeting')) {
       try {
-        const { parseSmartIntent: quickParse } = await import('./smart-intent');
-        const quickResult = quickParse(text);
+        const { understandCanonicalMessage } = await import('./canonical-understanding');
+        // Load business tier for language entitlement
+        const { data: bizForCas } = await this.supabase.from('businesses')
+          .select('subscription_tier, category').eq('id', session.business_id).single();
+        const resumedUnderstanding = await understandCanonicalMessage({
+          text, businessId: session.business_id,
+          businessCategory: bizForCas?.category || (session.session_data?.business_category as string) || null,
+          subscriptionTier: bizForCas?.subscription_tier || 'free',
+          supabase: this.supabase,
+        });
 
-        if (quickResult.requestedAction && quickResult.requestedAction !== 'create_new' && quickResult.requestedAction !== 'navigation') {
+        // Language blocked
+        if (resumedUnderstanding.languageBlocked) {
+          await this.sendText(from, 'This business currently supports English only. Please send your message in English.');
+          return;
+        }
+
+        // Non-CREATE_NEW action → dispatch
+        if (resumedUnderstanding.requestedAction && resumedUnderstanding.requestedAction !== 'create_new' && resumedUnderstanding.requestedAction !== 'navigation') {
           const { dispatchAction, sendActionRecovery } = await import('./action-dispatcher');
           const actionResult = await dispatchAction({
             supabase: this.supabase, messageSender: this.messageSender,
             flowExecutor: this.flowExecutor, from, businessId: session.business_id,
             businessName: (session.session_data?.business_name as string) || '',
             sessionData: session.session_data || {},
-            semanticFamily: (quickResult.semanticFamily || null) as import('./semantic-types').SemanticFamily,
-            requestedAction: quickResult.requestedAction as import('./semantic-types').RequestedAction,
+            semanticFamily: resumedUnderstanding.semanticFamily,
+            requestedAction: resumedUnderstanding.requestedAction,
             originalText: text,
             existingSessionId: session.id,
           });
           if (actionResult.handled) return;
-          await sendActionRecovery(this.messageSender, from, quickResult.requestedAction as import('./semantic-types').RequestedAction, actionResult.reason || 'no_handler');
+          await sendActionRecovery(this.messageSender, from, resumedUnderstanding.requestedAction, actionResult.reason || 'no_handler');
           return;
         }
       } catch (err) {
