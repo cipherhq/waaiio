@@ -22,19 +22,26 @@ export function getFirstStep(flowType: FlowType): string {
  * - Multiple capabilities → show capability selection menu
  * - Fallback to flow_type if no capabilities loaded
  */
+/**
+ * CAS-004: Extract the user-facing capability subset.
+ * Single source of truth — used by getFirstStepFromCapabilities,
+ * capability-selection, and semantic mismatch detection.
+ */
+export function getUserFacingCapabilities(capabilities: CapabilityId[]): CapabilityId[] {
+  const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'class_booking', 'multi_location']);
+  if (capabilities.includes('scheduling') || capabilities.includes('table_reservation')) {
+    nonUserFacing.add('payment');
+    nonUserFacing.add('invoice');
+  }
+  return capabilities.filter(c => !nonUserFacing.has(c));
+}
+
 export function getFirstStepFromCapabilities(capabilities: CapabilityId[], flowType: FlowType): string {
   if (capabilities.length === 0) {
     return getFirstStep(flowType);
   }
 
-  // Filter to user-facing capabilities only (same filter as select_capability prompt)
-  const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'class_booking', 'multi_location']);
-  // If scheduling is present, payment/invoice happen within the booking flow — don't show as separate options
-  if (capabilities.includes('scheduling') || capabilities.includes('table_reservation')) {
-    nonUserFacing.add('payment');
-    nonUserFacing.add('invoice');
-  }
-  const userFacing = capabilities.filter(c => !nonUserFacing.has(c));
+  const userFacing = getUserFacingCapabilities(capabilities);
 
   if (userFacing.length <= 1) {
     return capabilityToFirstStep(userFacing[0] || capabilities[0]);

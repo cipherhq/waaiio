@@ -17,6 +17,7 @@ interface AIConfig {
   auto_route_threshold: number;
   clarification_threshold: number;
   fallback_behavior: string;
+  enabled_languages: string[];
 }
 
 const DEFAULTS: AIConfig = {
@@ -30,7 +31,19 @@ const DEFAULTS: AIConfig = {
   auto_route_threshold: 0.85,
   clarification_threshold: 0.60,
   fallback_behavior: 'menu',
+  enabled_languages: ['en'],
 };
+
+const SUPPORTED_LANGUAGES: Array<{ code: string; name: string }> = [
+  { code: 'en', name: 'English' },
+  { code: 'pcm', name: 'Nigerian Pidgin' },
+  { code: 'yo', name: 'Yoruba' },
+  { code: 'ig', name: 'Igbo' },
+  { code: 'ha', name: 'Hausa' },
+  { code: 'tw', name: 'Twi' },
+  { code: 'fr', name: 'French' },
+  { code: 'es', name: 'Spanish' },
+];
 
 export default function AISettingsPage() {
   const business = useBusiness();
@@ -64,6 +77,7 @@ export default function AISettingsPage() {
         auto_route_threshold: Number(row.auto_route_threshold ?? DEFAULTS.auto_route_threshold),
         clarification_threshold: Number(row.clarification_threshold ?? DEFAULTS.clarification_threshold),
         fallback_behavior: row.fallback_behavior ?? DEFAULTS.fallback_behavior,
+        enabled_languages: Array.isArray(row.enabled_languages) ? row.enabled_languages : DEFAULTS.enabled_languages,
       });
     }
     setLoading(false);
@@ -91,6 +105,7 @@ export default function AISettingsPage() {
       auto_route_threshold: config.auto_route_threshold,
       clarification_threshold: config.clarification_threshold,
       fallback_behavior: config.fallback_behavior,
+      enabled_languages: config.enabled_languages,
       updated_at: new Date().toISOString(),
     };
 
@@ -275,6 +290,56 @@ export default function AISettingsPage() {
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
               What the bot does when it cannot match the customer&apos;s intent
             </p>
+          </div>
+        </div>
+
+        {/* Languages */}
+        <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
+          <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Languages</h2>
+          <p className="mb-3 text-sm text-gray-500 dark:text-gray-400">
+            {business.subscription_tier === 'free'
+              ? 'Your bot responds in English only. Upgrade to support additional languages.'
+              : business.subscription_tier === 'growth'
+                ? 'Select up to 2 additional languages for your bot (English is always included).'
+                : 'Select which languages your bot should support.'}
+          </p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {SUPPORTED_LANGUAGES.map(lang => {
+              const isEnglish = lang.code === 'en';
+              const isSelected = config.enabled_languages.includes(lang.code);
+              const isFree = business.subscription_tier === 'free';
+              const isGrowth = business.subscription_tier === 'growth';
+              const additionalCount = config.enabled_languages.filter(l => l !== 'en').length;
+              const canSelect = isEnglish || (!isFree && (!isGrowth || isSelected || additionalCount < 2));
+
+              return (
+                <label
+                  key={lang.code}
+                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                    isSelected
+                      ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/20 text-brand-700 dark:text-brand-300'
+                      : canSelect
+                        ? 'border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-brand-300'
+                        : 'border-gray-100 dark:border-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    disabled={isEnglish || !canSelect}
+                    onChange={() => {
+                      if (isEnglish) return;
+                      const newLangs = isSelected
+                        ? config.enabled_languages.filter(l => l !== lang.code)
+                        : [...config.enabled_languages, lang.code];
+                      update('enabled_languages', newLangs);
+                    }}
+                    className="rounded border-gray-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
+                  />
+                  {lang.name}
+                </label>
+              );
+            })}
           </div>
         </div>
 

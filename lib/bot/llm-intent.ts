@@ -120,7 +120,7 @@ export async function classifyWithLLM(
         quantity: typeof parsed.entities?.quantity === 'number' ? parsed.entities.quantity : null,
       },
       confidence: typeof parsed.confidence === 'number' ? Math.min(1, Math.max(0, parsed.confidence)) : 0,
-      language: validateLanguage(parsed.language),
+      language: validateLanguage(parsed.language) || 'en', // null → 'en' only for backward compat of LLMIntentResult.language (string, not null)
       // CAS-004: validate structured semantic output against allowed enums
       semanticFamily: validateSemanticFamily(parsed.semanticFamily),
       requestedAction: validateRequestedAction(parsed.requestedAction),

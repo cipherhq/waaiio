@@ -66,9 +66,9 @@ export function validateRequestedAction(value: unknown): RequestedAction {
 const VALID_LANGUAGE_CODES = ['en', 'pcm', 'yo', 'ig', 'ha', 'tw', 'fr', 'es'];
 
 /** Validate LLM language output against canonical supported codes */
-export function validateLanguage(value: unknown): string {
+export function validateLanguage(value: unknown): string | null {
   if (typeof value === 'string' && VALID_LANGUAGE_CODES.includes(value)) {
     return value;
   }
-  return 'en'; // default to English for invalid/unknown
+  return null; // invalid/unknown — do not silently treat as English
 }
