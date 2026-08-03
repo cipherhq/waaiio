@@ -524,39 +524,47 @@ export const ticketingFlow: FlowDefinition = {
           }
         }
 
-        // Create booking for ticket
-        const { data: booking, error } = await ctx.supabase
-          .from('bookings')
-          .insert({
-            business_id: ctx.business!.id,
-            user_id: userId,
-            event_id: d.event_id as string,
-            date: d.event_date as string,
-            time: (d.event_time as string) || '00:00',
-            party_size: qty,
-            flow_type: 'ticketing',
-            channel: 'whatsapp',
-            deposit_amount: total,
-            deposit_status: total > 0 ? 'pending' : 'none',
-            status: total > 0 ? 'pending' : 'confirmed',
-            total_amount: total,
-            quantity: qty,
-            guest_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-            guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-            notes: `Tickets for: ${d.event_name}`,
-          })
-          .select('id, reference_code')
-          .single();
+        // If booking already exists (e.g. retry after crash), reuse existing — prevent duplicate INSERT
+        const isNewBooking = !(d.booking_id && d.reference_code);
+        let booking: { id: string; reference_code: string };
 
-        if (error || !booking) {
-          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+        if (!isNewBooking) {
+          booking = { id: d.booking_id as string, reference_code: d.reference_code as string };
+        } else {
+          const { data: bookingData, error } = await ctx.supabase
+            .from('bookings')
+            .insert({
+              business_id: ctx.business!.id,
+              user_id: userId,
+              event_id: d.event_id as string,
+              date: d.event_date as string,
+              time: (d.event_time as string) || '00:00',
+              party_size: qty,
+              flow_type: 'ticketing',
+              channel: 'whatsapp',
+              deposit_amount: total,
+              deposit_status: total > 0 ? 'pending' : 'none',
+              status: total > 0 ? 'pending' : 'confirmed',
+              total_amount: total,
+              quantity: qty,
+              guest_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+              guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+              notes: `Tickets for: ${d.event_name}`,
+            })
+            .select('id, reference_code')
+            .single();
+
+          if (error || !bookingData) {
+            return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+          }
+          booking = bookingData;
+
+          // tickets_sold is incremented AFTER payment verification in await_ticket_payment.validate()
+          // For free events, it's incremented below before confirmation.
+
+          d.booking_id = booking.id;
+          d.reference_code = booking.reference_code;
         }
-
-        // tickets_sold is incremented AFTER payment verification in await_ticket_payment.validate()
-        // For free events, it's incremented below before confirmation.
-
-        d.booking_id = booking.id;
-        d.reference_code = booking.reference_code;
         // Platform fee is recorded after payment is verified in await_ticket_payment
 
         const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {

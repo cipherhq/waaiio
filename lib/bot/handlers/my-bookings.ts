@@ -219,7 +219,7 @@ export async function handleMyBookings(
         ].join('\n'));
       }
 
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
       return;
     }
   }
@@ -358,7 +358,7 @@ export async function handleModifyBooking(
 
   if (!bookingId) {
     await sendText(from, 'Something went wrong. Send *my bookings* to try again.');
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+    await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
 
@@ -371,7 +371,7 @@ export async function handleModifyBooking(
 
     if (!booking) {
       await sendText(from, 'Booking not found. Send *my bookings* to try again.');
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
       return;
     }
 
@@ -403,7 +403,7 @@ export async function handleModifyBooking(
 
   if (response === 'cancel' || response === 'exit' || response === 'quit') {
     await sendText(from, 'Action cancelled. Send *Hi* to start over. 🙏');
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+    await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
 
@@ -424,7 +424,7 @@ export async function handleModifyBooking(
     // Only allow cancelling bookings that are pending or confirmed
     if (cancelledBooking && !['pending', 'confirmed'].includes(cancelledBooking.status)) {
       await sendText(from, 'This booking can no longer be cancelled.');
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
       return;
     }
 
@@ -455,7 +455,7 @@ export async function handleModifyBooking(
     }
 
     await sendText(from, '❌ Booking cancelled.\n\nSend *Hi* to start over or *my bookings* to manage others.');
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+    await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
 
@@ -469,7 +469,7 @@ export async function handleModifyBooking(
 
     if (!booking || !booking.business_id) {
       await sendText(from, 'Could not load booking details. Send *my bookings* to try again.');
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
       return;
     }
 
@@ -481,7 +481,7 @@ export async function handleModifyBooking(
 
     if (!biz) {
       await sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
       return;
     }
 

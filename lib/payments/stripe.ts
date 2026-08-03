@@ -10,14 +10,18 @@ function getStripeKey(): string {
   return process.env.STRIPE_SECRET_KEY || '';
 }
 
-async function stripeRequest(path: string, body: Record<string, string>): Promise<Record<string, unknown>> {
+async function stripeRequest(path: string, body: Record<string, string>, idempotencyKey?: string): Promise<Record<string, unknown>> {
   const key = getStripeKey();
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${key}`,
+    'Content-Type': 'application/x-www-form-urlencoded',
+  };
+  if (idempotencyKey) {
+    headers['Idempotency-Key'] = idempotencyKey;
+  }
   const response = await fetch(`https://api.stripe.com/v1${path}`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${key}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
+    headers,
     body: new URLSearchParams(body).toString(),
     signal: AbortSignal.timeout(15000),
   });
@@ -99,7 +103,7 @@ export class StripeGateway implements PaymentGateway {
         gateway: 'stripe',
         amount: opts.amount, currency: opts.currency,
         businessId: opts.businessId,
-      }, () => stripeRequest('/checkout/sessions', sessionParams));
+      }, () => stripeRequest('/checkout/sessions', sessionParams, idempotencyKey));
 
       if (!sessionData.id || !sessionData.url) {
         // Store detailed error for debug endpoint
@@ -247,7 +251,8 @@ export class StripeGateway implements PaymentGateway {
         refundParams.reason = 'requested_by_customer';
       }
 
-      const data = await stripeRequest('/refunds', refundParams);
+      const refundIdempotencyKey = `refund_${opts.gatewayReference}_${opts.amount ?? 'full'}`;
+      const data = await stripeRequest('/refunds', refundParams, refundIdempotencyKey);
 
       if (data.id) {
         return {

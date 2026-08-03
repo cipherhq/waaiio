@@ -55,13 +55,18 @@ export async function handleEscapeHatch(
 
   // "back" or "cancel" in booking management → go back to My Account menu
   if (isCancelOrBack && isBookingMgmt && !isChatMode) {
-    // Route back to My Account menu (not restart completely)
+    // Route back to My Account menu (not restart completely) — use CAS to prevent stale overwrite
+    const newData = { ...session.session_data, active_capability: 'my_account' };
+    const { data: casResult } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id,
+      p_expected_version: session.version ?? 0,
+      p_current_step: 'my_account_menu',
+      p_session_data: newData,
+    });
+    if (!casResult?.success) return { handled: true }; // stale — silently exit
     session.current_step = 'my_account_menu';
-    session.session_data = { ...session.session_data, active_capability: 'my_account' };
-    await supabase.from('bot_sessions').update({
-      current_step: 'my_account_menu',
-      session_data: session.session_data,
-    }).eq('id', session.id);
+    session.session_data = newData;
+    session.version = casResult.version;
     // Load business context if available
     let biz = null;
     if (session.business_id) {
@@ -113,12 +118,17 @@ export async function handleEscapeHatch(
         if (history.length >= 2) {
           history.pop();
           const prevStep = history[history.length - 1];
-          session.session_data._step_history = history;
+          const newData = { ...session.session_data, _step_history: history };
+          const { data: casResult } = await supabase.rpc('update_session_cas', {
+            p_session_id: session.id,
+            p_expected_version: session.version ?? 0,
+            p_current_step: prevStep,
+            p_session_data: newData,
+          });
+          if (!casResult?.success) return { handled: true }; // stale — silently exit
+          session.session_data = newData;
           session.current_step = prevStep;
-          await supabase.from('bot_sessions').update({
-            current_step: prevStep,
-            session_data: session.session_data,
-          }).eq('id', session.id);
+          session.version = casResult.version;
           const biz = session.business_id
             ? (await supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
             : null;

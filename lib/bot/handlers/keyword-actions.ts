@@ -44,7 +44,7 @@ export async function executeKeywordAction(
   };
 
   const deactivateSession = async (sessionId: string) => {
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', sessionId);
+    await supabase.rpc('deactivate_session_atomic', { p_session_id: sessionId });
   };
 
   try {
@@ -86,7 +86,7 @@ export async function executeKeywordAction(
 
         if (action === 'show_status' || action === 'show_history') {
           // Bookings / history
-          await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+          await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
           const phoneP = from.startsWith('+') ? from : `+${from}`;
           const phoneN = from.startsWith('+') ? from.slice(1) : from;
           const { data: profile } = await supabase.from('profiles').select('id').or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`).limit(1).maybeSingle();
@@ -110,7 +110,7 @@ export async function executeKeywordAction(
         }
 
         if (action === 'show_receipt') {
-          await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+          await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
           const phoneP = from.startsWith('+') ? from : `+${from}`;
           const phoneN = from.startsWith('+') ? from.slice(1) : from;
           const { data: profile } = await supabase.from('profiles').select('id').or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`).limit(1).maybeSingle();
@@ -173,12 +173,17 @@ export async function executeKeywordAction(
             // CAP-001 Point B: Use session's refreshed effective capabilities (not tier-blind getEnabledCapabilities)
             const caps = (session.session_data?.capabilities as CapabilityId[]) || [];
             if (caps.includes('queue')) {
-              await supabase.from('bot_sessions').update({
-                current_step: 'queue_start',
-                session_data: { ...session.session_data, active_capability: 'queue' },
-              }).eq('id', session.id);
+              const checkinData = { ...session.session_data, active_capability: 'queue' };
+              const { data: checkinCas } = await supabase.rpc('update_session_cas', {
+                p_session_id: session.id,
+                p_expected_version: session.version ?? 0,
+                p_current_step: 'queue_start',
+                p_session_data: checkinData,
+              });
+              if (!checkinCas?.success) return true; // stale — silently exit
               session.current_step = 'queue_start';
-              session.session_data.active_capability = 'queue';
+              session.session_data = checkinData;
+              session.version = checkinCas.version;
               const { data: biz } = await supabase
                 .from('businesses')
                 .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
@@ -193,7 +198,7 @@ export async function executeKeywordAction(
         }
 
         if (action === 'request_refund') {
-          await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+          await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
           const refPhoneP = from.startsWith('+') ? from : `+${from}`;
           const refPhoneN = from.startsWith('+') ? from.slice(1) : from;
           const { data: refProfile } = await supabase.from('profiles').select('id').or(`phone.eq.${sanitizeFilterValue(refPhoneP)},phone.eq.${sanitizeFilterValue(refPhoneN)}`).limit(1).maybeSingle();
@@ -275,11 +280,16 @@ export async function executeKeywordAction(
           }
           session.session_data.active_capability = capability;
           const capFirstStep = capabilityToFirstStep(capability as CapabilityId);
-          await supabase.from('bot_sessions').update({
-            current_step: capFirstStep,
-            session_data: session.session_data,
-          }).eq('id', session.id);
+          // Use CAS to prevent stale worker from overwriting a concurrent transition
+          const { data: startCapCas } = await supabase.rpc('update_session_cas', {
+            p_session_id: session.id,
+            p_expected_version: session.version ?? 0,
+            p_current_step: capFirstStep,
+            p_session_data: session.session_data,
+          });
+          if (!startCapCas?.success) return true; // stale — silently exit
           session.current_step = capFirstStep;
+          session.version = startCapCas.version;
           const { data: biz } = await supabase
             .from('businesses')
             .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')

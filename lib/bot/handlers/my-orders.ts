@@ -183,7 +183,7 @@ export async function handleOrderDetail(
 
   if (!order) {
     await sendText(from, 'Order not found. Type *my orders* to see your orders.');
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+    await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
 
@@ -256,7 +256,7 @@ export async function handleOrderDetailAction(
 
   if (!orderId) {
     await sendText(from, 'Something went wrong. Type *my orders* to try again.');
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+    await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
 
@@ -264,7 +264,7 @@ export async function handleOrderDetailAction(
 
   if (response === 'cancel' || response === 'exit' || response === 'quit') {
     await sendText(from, 'Action cancelled. Send *Hi* to start over. 🙏');
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+    await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
 

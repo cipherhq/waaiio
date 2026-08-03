@@ -2527,37 +2527,46 @@ export const orderingFlow: FlowDefinition = {
         if (d.package_description) orderPayload.package_description = d.package_description;
         if (d.package_photo_url) orderPayload.package_photo_url = d.package_photo_url;
 
-        const { data: order, error } = await ctx.supabase
-          .from('orders')
-          .insert(orderPayload)
-          .select('id, reference_code')
-          .single();
+        // If order already exists (e.g. retry after crash), reuse existing — prevent duplicate INSERT
+        const isNewOrder = !(d.order_id && d.reference_code);
+        let order: { id: string; reference_code: string };
 
-        if (error || !order) {
-          return [{ type: 'text', text: 'Something went wrong on our end creating your order. Send *Hi* to start over.' }];
-        }
+        if (!isNewOrder) {
+          order = { id: d.order_id as string, reference_code: d.reference_code as string };
+        } else {
+          const { data: orderData, error } = await ctx.supabase
+            .from('orders')
+            .insert(orderPayload)
+            .select('id, reference_code')
+            .single();
 
-        // Create order items (with addons) and decrement stock
-        for (const item of cart) {
-          const itemPayload: Record<string, unknown> = {
-            order_id: order.id,
-            product_id: item.product_id,
-            quantity: item.quantity,
-            unit_price: item.price,
-            variant_id: item.variant_id || null,
-            variant_label: item.variant_label || null,
-          };
-          if (item.addons && item.addons.length > 0) {
-            itemPayload.addons = item.addons;
+          if (error || !orderData) {
+            return [{ type: 'text', text: 'Something went wrong on our end creating your order. Send *Hi* to start over.' }];
           }
-          await ctx.supabase.from('order_items').insert(itemPayload);
+          order = orderData;
 
-          // Stock is decremented AFTER payment verification in await_order_payment.validate()
-          // For free orders, it's decremented below before confirmation.
+          // Create order items (with addons) and decrement stock
+          for (const item of cart) {
+            const itemPayload: Record<string, unknown> = {
+              order_id: order.id,
+              product_id: item.product_id,
+              quantity: item.quantity,
+              unit_price: item.price,
+              variant_id: item.variant_id || null,
+              variant_label: item.variant_label || null,
+            };
+            if (item.addons && item.addons.length > 0) {
+              itemPayload.addons = item.addons;
+            }
+            await ctx.supabase.from('order_items').insert(itemPayload);
+
+            // Stock is decremented AFTER payment verification in await_order_payment.validate()
+            // For free orders, it's decremented below before confirmation.
+          }
+
+          d.order_id = order.id;
+          d.reference_code = order.reference_code;
         }
-
-        d.order_id = order.id;
-        d.reference_code = order.reference_code;
         d.total_amount = total;
         d.shipping_cost = shippingCost;
 

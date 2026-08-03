@@ -268,8 +268,9 @@ describe('Flow-start bypass wiring (Point B)', () => {
       c.single = vi.fn().mockResolvedValue({ data: { id: 'biz-1', name: 'Salon', slug: 'salon', category: 'salon', flow_type: 'scheduling', subscription_tier: 'growth', trial_ends_at: null, metadata: {} }, error: null });
       return c;
     });
+    const rpcMock = vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null });
     const ctx = {
-      supabase: { from: mockFrom } as any,
+      supabase: { from: mockFrom, rpc: rpcMock } as any,
       messageSender: { sendText: vi.fn() } as any,
       standaloneService: {} as any,
       intelligence: {} as any,
@@ -281,6 +282,11 @@ describe('Flow-start bypass wiring (Point B)', () => {
     expect(handled).toBe(true);
     expect(session.session_data.active_capability).toBe('scheduling');
     expect(ctx.flowExecutor.execute).toHaveBeenCalled();
+    // Must use CAS for the step transition
+    expect(rpcMock).toHaveBeenCalledWith('update_session_cas', expect.objectContaining({
+      p_session_id: 's1',
+      p_expected_version: 0,
+    }));
   });
 
   // Test M: checkin keyword uses effective set

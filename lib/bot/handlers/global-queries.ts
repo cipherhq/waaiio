@@ -173,7 +173,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
   // ── My Orders / Order Tracking ──
   if (isOrdersQuery(text)) {
     if (session) {
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     }
     const profile = await getProfile();
     if (!profile?.id) {
@@ -211,7 +211,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
         .maybeSingle();
       if (order) {
         if (session) {
-          await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+          await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
         }
         await supabase.from('bot_sessions')
           .delete()
@@ -237,7 +237,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
         .maybeSingle();
       if (booking) {
         if (session) {
-          await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+          await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
         }
         await supabase.from('bot_sessions')
           .delete()
@@ -262,7 +262,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
   // ── My Bookings / Reschedule ──
   if (isBookingsQuery(text) || isRescheduleQuery(text)) {
     if (session) {
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     }
     const profile = await getProfile();
     if (!profile?.id) {
@@ -288,7 +288,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
   // ── History / Receipt ──
   if (isHistoryQuery(text) || isReceiptQuery(text)) {
     if (session) {
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     }
     const profile = await getProfile();
     if (!profile?.id) {
@@ -302,7 +302,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
   // ── Annual Statement ──
   if (isAnnualQuery(text)) {
     if (session) {
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     }
     const profile = await getProfile();
     if (!profile?.id) {
@@ -367,7 +367,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
     const itemList = items.map(i => `• ${i.quantity}x ${i.product_name}${i.variant_label ? ` (${i.variant_label})` : ''}`).join('\n');
 
     // Start ordering flow with pre-filled cart
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+    await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
 
     const { data: biz } = await supabase
       .from('businesses')
@@ -400,7 +400,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
   if (isSubscriptionsQuery(text)) {
     const businessId = session?.business_id || null;
     if (session) {
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     }
 
     const profile = await getProfile();
@@ -455,7 +455,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
   // ── Loyalty ──
   if (isLoyaltyQuery(text)) {
     if (session) {
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     }
     const profile = await getProfile();
     if (!profile?.id) {
@@ -508,7 +508,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
   // ── Invoices ──
   if (isInvoiceQuery(text)) {
     if (session) {
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     }
     const profile = await getProfile();
     if (!profile?.id) {
@@ -778,7 +778,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
   // ── My Account — global shortcut from any step ──
   if (isMyAccountQuery(text)) {
     if (session) {
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     }
     const profile = await getProfile();
     if (!profile?.id) {
@@ -818,7 +818,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
   if (isQueueQuery(text) && session?.business_id) {
     const caps = await getEnabledCapabilities(supabase, session.business_id);
     if (caps.includes('queue')) {
-      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
       const profile = await getProfile();
 
       await supabase.from('bot_sessions').delete()

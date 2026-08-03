@@ -739,10 +739,7 @@ export class FlowExecutor {
   }
 
   private async deactivateSession(sessionId: string): Promise<void> {
-    await this.supabase
-      .from('bot_sessions')
-      .update({ is_active: false })
-      .eq('id', sessionId);
+    await this.supabase.rpc('deactivate_session_atomic', { p_session_id: sessionId });
   }
 
   /**
