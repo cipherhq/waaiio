@@ -167,24 +167,41 @@ BEGIN
   FROM processed_webhook_events WHERE event_id = p_stable_ref;
 
   IF FOUND THEN
-    -- Already completed — skip
     IF v_existing.status = 'completed' THEN
       RETURN jsonb_build_object('claimed', false, 'reason', 'already_completed');
     END IF;
 
-    -- Stale claim recovery: if claimed > 10 min ago, allow re-claim
-    -- (worker died or provider timed out)
+    -- provider_success: provider charged but DB finalize crashed — needs finalize only
+    IF v_existing.status = 'provider_success' THEN
+      RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
+        'stable_ref', p_stable_ref, 'recovered', true, 'provider_verified', true);
+    END IF;
+
+    -- provider_failed: explicit provider failure — retryable
+    IF v_existing.status = 'provider_failed' THEN
+      UPDATE processed_webhook_events
+      SET status = 'claimed', attempts = attempts + 1, last_attempted_at = NOW()
+      WHERE event_id = p_stable_ref;
+      RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
+        'stable_ref', p_stable_ref, 'recovered', true, 'provider_verified', false);
+    END IF;
+
+    -- Active claim not yet stale — skip
     IF v_existing.status = 'claimed' AND v_existing.last_attempted_at > NOW() - INTERVAL '10 minutes' THEN
       RETURN jsonb_build_object('claimed', false, 'reason', 'already_claimed');
     END IF;
 
-    -- Stale/failed claim: re-claim by updating
-    UPDATE processed_webhook_events
-    SET status = 'claimed', attempts = attempts + 1, last_attempted_at = NOW()
-    WHERE event_id = p_stable_ref;
+    -- Stale claim (>10 min): needs reconciliation before any charge
+    IF v_existing.status = 'claimed' THEN
+      UPDATE processed_webhook_events
+      SET status = 'claimed', attempts = attempts + 1, last_attempted_at = NOW()
+      WHERE event_id = p_stable_ref;
+      RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
+        'stable_ref', p_stable_ref, 'recovered', true, 'provider_verified', false);
+    END IF;
 
-    RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
-      'stable_ref', p_stable_ref, 'recovered', true);
+    -- Unknown state — skip
+    RETURN jsonb_build_object('claimed', false, 'reason', 'unknown_state', 'status', v_existing.status);
   END IF;
 
   -- Fresh claim
@@ -192,20 +209,21 @@ BEGIN
   VALUES (p_stable_ref, 'flutterwave', 'token_renewal', 'claimed', 1, NOW(), NOW());
 
   RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
-    'stable_ref', p_stable_ref, 'recovered', false);
+    'stable_ref', p_stable_ref, 'recovered', false, 'provider_verified', false);
 END;
 $$;
 
 CREATE OR REPLACE FUNCTION finalize_token_recurring_charge(
   p_stable_ref       TEXT,
   p_subscription_id  UUID,
-  p_amount           NUMERIC(12,2),
-  p_currency         TEXT DEFAULT 'NGN',
+  p_verified_amount  NUMERIC(12,2),  -- must match provider-verified amount
+  p_verified_currency TEXT DEFAULT 'NGN',
   p_gateway          TEXT DEFAULT 'flutterwave'
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_sub              RECORD;
+  v_claim            RECORD;
   v_now              TIMESTAMPTZ := NOW();
   v_today            DATE := CURRENT_DATE;
   v_time             TEXT;
@@ -220,13 +238,14 @@ DECLARE
   v_is_in_trial      BOOLEAN;
   v_tier             TEXT;
 BEGIN
-  -- Require a valid claim or completed state — reject orphaned finalize calls
-  IF NOT EXISTS (SELECT 1 FROM processed_webhook_events WHERE event_id = p_stable_ref AND status IN ('claimed', 'completed')) THEN
+  -- Require a valid claim — reject orphaned finalize calls
+  SELECT * INTO v_claim FROM processed_webhook_events WHERE event_id = p_stable_ref;
+  IF NOT FOUND OR v_claim.status NOT IN ('claimed', 'completed', 'provider_success') THEN
     RETURN jsonb_build_object('success', false, 'reason', 'no_valid_claim');
   END IF;
 
   -- Check idempotency: if already finalized, return success without duplicating
-  IF EXISTS (SELECT 1 FROM processed_webhook_events WHERE event_id = p_stable_ref AND status = 'completed') THEN
+  IF v_claim.status = 'completed' THEN
     -- Already finalized — return the existing data
     SELECT id INTO v_payment_id FROM payments WHERE gateway_reference = p_stable_ref AND status = 'success' LIMIT 1;
     RETURN jsonb_build_object('success', true, 'already_finalized', true, 'payment_id', v_payment_id);
@@ -239,10 +258,20 @@ BEGIN
     RETURN jsonb_build_object('success', true, 'already_finalized', true, 'payment_id', v_payment_id);
   END IF;
 
-  -- Load subscription
+  -- Load subscription and validate ownership
   SELECT * INTO v_sub FROM customer_subscriptions WHERE id = p_subscription_id;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('success', false, 'reason', 'subscription_not_found');
+  END IF;
+
+  -- Validate amount/currency against authoritative subscription
+  IF ABS(p_verified_amount - v_sub.amount) > 0.01 THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'amount_mismatch',
+      'expected', v_sub.amount, 'received', p_verified_amount);
+  END IF;
+  IF LOWER(p_verified_currency) != LOWER(COALESCE(v_sub.currency, 'NGN')) THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'currency_mismatch',
+      'expected', v_sub.currency, 'received', p_verified_currency);
   END IF;
 
   v_time := TO_CHAR(v_now, 'HH24:MI');

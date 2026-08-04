@@ -256,29 +256,67 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      // Step 3: Charge the token (uses stable ref for Flutterwave idempotency)
+      // Step 3: Reconcile if recovered claim, then charge if needed
       try {
-        const result = await chargeFlutterwaveToken(
-          sub.authorization_code, amountInCurrency,
-          sub.customer_email || '', stableRef,
-          sub.currency || 'NGN', flwSplitParams,
-        );
+        const { verifyTransaction } = await import('@/lib/payments/flutterwave-recurring');
+        let providerSucceeded = false;
 
-        if (result.success) {
+        if (claim.recovered) {
+          // Recovered/stale claim — reconcile with provider BEFORE any charge
+          const reconciliation = await verifyTransaction(stableRef);
+          if (reconciliation?.success) {
+            // Provider already charged — DO NOT charge again
+            providerSucceeded = true;
+            // Mark claim as provider_success for future recovery
+            await supabase.from('processed_webhook_events')
+              .update({ status: 'provider_success' })
+              .eq('event_id', stableRef);
+          } else if (reconciliation === null) {
+            // Ambiguous/timeout — do NOT charge, leave for next cron
+            cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, reason: 'ambiguous_reconciliation' });
+            skipped++;
+            continue;
+          }
+          // else: reconciliation.success === false → provider definitively failed, retry below
+        }
+
+        if (!providerSucceeded) {
+          // Fresh claim or retryable: charge the token
+          const result = await chargeFlutterwaveToken(
+            sub.authorization_code, amountInCurrency,
+            sub.customer_email || '', stableRef,
+            sub.currency || 'NGN', flwSplitParams,
+          );
+
+          if (result.success) {
+            providerSucceeded = true;
+            await supabase.from('processed_webhook_events')
+              .update({ status: 'provider_success' })
+              .eq('event_id', stableRef);
+          } else {
+            // Explicit failure — mark for future retry
+            await supabase.from('processed_webhook_events')
+              .update({ status: 'provider_failed' })
+              .eq('event_id', stableRef);
+          }
+        }
+
+        if (providerSucceeded) {
           // Step 4: Verify provider transaction before finalization
-          const { verifyTransaction } = await import('@/lib/payments/flutterwave-recurring');
           const verification = await verifyTransaction(stableRef);
-          if (!verification?.success || Math.abs((verification.amount || 0) - amountInCurrency) > 0.01) {
+          if (!verification?.success
+            || Math.abs((verification.amount || 0) - amountInCurrency) > 0.01
+            || (verification.currency || '').toUpperCase() !== (sub.currency || 'NGN').toUpperCase()) {
             cron.itemFailed('Provider verification failed', { subscriptionId: sub.id, stableRef, verificationStatus: verification?.status || 'null' });
-            continue; // Do NOT finalize — ambiguous state
+            continue;
           }
 
-          // Step 5: Atomic finalize — creates payment, charge, booking, fee in one transaction
+          // Step 5: Atomic finalize
           const { data: finResult } = await supabase.rpc('finalize_token_recurring_charge', {
             p_stable_ref: stableRef,
             p_subscription_id: sub.id,
-            p_amount: amountInCurrency,
-            p_currency: sub.currency || 'NGN',
+            p_verified_amount: amountInCurrency,
+            p_verified_currency: sub.currency || 'NGN',
             p_gateway: 'flutterwave',
           });
 
