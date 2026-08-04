@@ -283,8 +283,8 @@ BEGIN
     total_amount, quantity, guest_name, guest_phone, confirmed_at, notes
   ) VALUES (
     v_sub.business_id, v_sub.user_id, v_sub.service_id, v_today, v_time, 1,
-    'payment', 'recurring', 'subscription', p_amount, 'paid', 'confirmed',
-    p_amount, 1, COALESCE(v_sub.customer_name, ''), COALESCE(v_sub.customer_phone, ''),
+    'payment', 'recurring', 'subscription', p_verified_amount, 'paid', 'confirmed',
+    p_verified_amount, 1, COALESCE(v_sub.customer_name, ''), COALESCE(v_sub.customer_phone, ''),
     v_now, 'Recurring ' || v_sub.frequency || ' charge'
   ) RETURNING id, reference_code INTO v_booking_id, v_booking_ref;
 
@@ -294,7 +294,7 @@ BEGIN
     gateway_reference, status, gateway_status, payment_method,
     card_last_four, card_brand, paid_at, metadata
   ) VALUES (
-    v_sub.business_id, v_sub.user_id, v_booking_id, p_amount, p_currency, p_gateway,
+    v_sub.business_id, v_sub.user_id, v_booking_id, p_verified_amount, p_verified_currency, p_gateway,
     p_stable_ref, 'success', 'success', 'card',
     v_sub.card_last_four, v_sub.card_brand,
     v_now, jsonb_build_object('recurring', true, 'subscription_id', v_sub.id)
@@ -305,7 +305,7 @@ BEGIN
     subscription_id, business_id, user_id, amount, currency,
     status, gateway, gateway_reference, payment_id, booking_id, charged_at
   ) VALUES (
-    v_sub.id, v_sub.business_id, v_sub.user_id, p_amount, p_currency,
+    v_sub.id, v_sub.business_id, v_sub.user_id, p_verified_amount, p_verified_currency,
     'success', p_gateway, p_stable_ref, v_payment_id, v_booking_id, v_now
   );
 
@@ -320,11 +320,11 @@ BEGIN
              COALESCE((value::jsonb -> v_tier ->> 'feeFlat')::numeric, 0)
       INTO v_fee_pct, v_fee_flat FROM platform_settings WHERE key = 'pricing_tiers' LIMIT 1;
       IF v_fee_pct IS NULL THEN v_fee_pct := CASE v_tier WHEN 'free' THEN 2.5 WHEN 'growth' THEN 1.5 ELSE 1.5 END; v_fee_flat := 0; END IF;
-      IF v_fee_flat > 0 AND p_amount > 0 AND v_fee_flat / p_amount > 0.10 THEN v_fee_flat := 0; END IF;
-      v_fee_total := ROUND(p_amount * v_fee_pct / 100, 2) + v_fee_flat;
+      IF v_fee_flat > 0 AND p_verified_amount > 0 AND v_fee_flat / p_verified_amount > 0.10 THEN v_fee_flat := 0; END IF;
+      v_fee_total := ROUND(p_verified_amount * v_fee_pct / 100, 2) + v_fee_flat;
     END IF;
     INSERT INTO platform_fees (business_id, booking_id, transaction_amount, fee_percentage, fee_flat, fee_total, tier)
-    VALUES (v_sub.business_id, v_booking_id, p_amount, v_fee_pct, v_fee_flat, v_fee_total, v_tier);
+    VALUES (v_sub.business_id, v_booking_id, p_verified_amount, v_fee_pct, v_fee_flat, v_fee_total, v_tier);
   END IF;
 
   -- Update subscription totals atomically (no SELECT → +1 → UPDATE)
@@ -335,7 +335,7 @@ BEGIN
 
   UPDATE customer_subscriptions SET
     charge_count = charge_count + 1,
-    total_charged = total_charged + p_amount,
+    total_charged = total_charged + p_verified_amount,
     last_charged_at = v_now,
     next_charge_at = v_next_charge,
     failure_count = 0
@@ -351,8 +351,8 @@ BEGIN
     'booking_id', v_booking_id,
     'booking_ref', v_booking_ref,
     'payment_id', v_payment_id,
-    'amount', p_amount,
-    'currency', p_currency,
+    'amount', p_verified_amount,
+    'currency', p_verified_currency,
     'business_id', v_sub.business_id,
     'customer_phone', v_sub.customer_phone,
     'customer_name', v_sub.customer_name

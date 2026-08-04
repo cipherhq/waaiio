@@ -201,7 +201,7 @@ describe('STRUCTURAL: Flutterwave Waaiio-managed token billing', () => {
     expect(migration).toContain('already_finalized');
     // Finalize uses atomic counter increment (not SELECT → +1)
     expect(migration).toContain('charge_count = charge_count + 1');
-    expect(migration).toContain('total_charged = total_charged + p_amount');
+    expect(migration).toContain('total_charged = total_charged + p_verified_amount');
     // Platform fee included
     expect(migration).toContain('platform_fees');
     // Booking record included (finance parity with Paystack RPC)
