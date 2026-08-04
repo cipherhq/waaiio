@@ -6,7 +6,7 @@ import type { StandaloneService } from '../standalone.service';
 import type { FlowExecutor } from '../flows/executor';
 import type { BotSession, BotContext, BusinessRecord } from '../bot-types';
 import type { CapabilityId } from '@/lib/capabilities/types';
-import { getEnabledCapabilities } from '@/lib/capabilities/service';
+// CAS-007: getEnabledCapabilities removed — all paths use session's effective capabilities
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
 import type { UnifiedKeyword } from '../keyword-service';
@@ -131,7 +131,8 @@ export async function executeKeywordAction(
 
         if (action === 'escalate') {
           if (session.business_id) {
-            const caps = (session.session_data?.capabilities as CapabilityId[]) || await getEnabledCapabilities(supabase, session.business_id);
+            // CAS-007: Use session's effective capabilities only (no tier-blind fallback)
+            const caps = (session.session_data?.capabilities as CapabilityId[]) || [];
             if (caps.includes('chat')) {
               const escPhoneP = from.startsWith('+') ? from : `+${from}`;
               const escPhoneN = from.startsWith('+') ? from.slice(1) : from;

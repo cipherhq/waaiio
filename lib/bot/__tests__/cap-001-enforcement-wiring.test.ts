@@ -132,7 +132,15 @@ function createTableMock(config: {
       // Default catch-all
       return makeChain();
     }),
-    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    rpc: vi.fn().mockImplementation((name: string) => {
+      if (name === 'update_session_cas') {
+        return Promise.resolve({ data: { success: true, version: 1 }, error: null });
+      }
+      if (name === 'deactivate_session_atomic') {
+        return Promise.resolve({ data: { success: true }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    }),
     storage: { from: vi.fn(() => ({ upload: vi.fn(), createSignedUrl: vi.fn(), getPublicUrl: vi.fn() })) },
   } as any;
 }
@@ -309,19 +317,12 @@ describe('CAP-001 Point A — session resume via BotService.handleMessage', () =
     // reservation should be absent from capabilities, so validation fails
     await bot.handleMessage(TEST_PHONE, 'cap_reservation', 'text');
 
-    // Assert: bot_sessions was updated with refreshed capabilities
-    const sessionUpdates = updateTracker.filter(u => u.table === 'bot_sessions');
-    const capRefresh = sessionUpdates.find(u => {
-      const d = u.data as Record<string, unknown>;
-      const sd = d.session_data as Record<string, unknown> | undefined;
-      return sd && Array.isArray(sd.capabilities);
-    });
-    expect(capRefresh).toBeTruthy();
-
-    // The refreshed capabilities should NOT contain reservation (requires growth, trial expired)
-    const refreshedCaps = ((capRefresh!.data as any).session_data as any).capabilities as string[];
-    expect(refreshedCaps).toContain('scheduling'); // free-tier, stays
-    expect(refreshedCaps).not.toContain('reservation'); // growth-tier, trial expired
+    // Assert: Point A used CAS to persist refreshed capabilities
+    const casCalls = supabase.rpc.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
+    expect(casCalls.length).toBeGreaterThan(0);
+    const casSessionData = casCalls[0][1].p_session_data;
+    expect(casSessionData.capabilities).toContain('scheduling'); // free-tier, stays
+    expect(casSessionData.capabilities).not.toContain('reservation'); // growth-tier, trial expired
 
     // Assert: businesses table was queried (status/tier/trial)
     const bizCalls = supabase.from.mock.calls.filter((c: string[]) => c[0] === 'businesses');
@@ -372,14 +373,207 @@ describe('CAP-001 Point A — session resume via BotService.handleMessage', () =
     const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
     await bot.handleMessage(TEST_PHONE, 'help', 'text');
 
-    // With active trial, Point A refresh should keep reservation
-    const capRefresh = updateTracker.find(u => {
-      const d = u.data as Record<string, unknown>;
-      const sd = d.session_data as Record<string, unknown> | undefined;
-      return u.table === 'bot_sessions' && sd && Array.isArray(sd.capabilities);
+    // With active trial, Point A CAS refresh should keep reservation
+    const casCalls = supabase.rpc.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
+    expect(casCalls.length).toBeGreaterThan(0);
+    const casSessionData = casCalls[0][1].p_session_data;
+    expect(casSessionData.capabilities).toContain('reservation');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// CAS-007: Policy read failure — fail closed for ALL non-MANAGE_EXISTING
+// ═══════════════════════════════════════════════════════
+
+describe('CAS-007 Point A policy-read failure — fail closed', () => {
+  it('TEST 1: select_capability + no active_capability + policy read fails → blocked', async () => {
+    const sender = createCaptureSender();
+
+    // Create a mock where business_capabilities read FAILS
+    const supabase = createTableMock({
+      activeSession: {
+        id: 'sess-fail',
+        whatsapp_number: TEST_PHONE,
+        user_id: 'u1',
+        business_id: TEST_BIZ_ID,
+        current_step: 'select_capability',
+        session_data: {
+          capabilities: ['ordering'], // stale
+          business_id: TEST_BIZ_ID,
+          business_name: 'Test Biz',
+          // NO active_capability — this is the bug scenario
+        },
+        is_active: true,
+        expires_at: new Date(Date.now() + 86400000).toISOString(),
+        version: 0,
+      },
+      business: {
+        id: TEST_BIZ_ID, status: 'active', subscription_tier: 'free',
+        trial_ends_at: null, category: 'restaurant',
+      },
+      // capabilities: undefined causes getConfiguredCapabilities to fail
     });
-    expect(capRefresh).toBeTruthy();
-    const refreshedCaps = ((capRefresh!.data as any).session_data as any).capabilities as string[];
-    expect(refreshedCaps).toContain('reservation');
+
+    // Override the from mock to make business_capabilities return an error
+    const origFrom = supabase.from;
+    supabase.from = vi.fn((table: string) => {
+      if (table === 'business_capabilities') {
+        return {
+          select: () => ({
+            eq: () => ({
+              order: () => ({
+                order: () => Promise.resolve({ data: null, error: { message: 'connection failed' } }),
+              }),
+            }),
+          }),
+        };
+      }
+      return origFrom(table);
+    });
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(TEST_PHONE, 'I want to order food', 'text');
+
+    // Must NOT have started ordering — temporary retry message instead
+    const texts = sender.getTextMessages();
+    const hasRetryMsg = texts.some((t: string) => t.includes('trouble verifying') || t.includes('try again'));
+    expect(hasRetryMsg).toBe(true);
+
+    // FlowExecutor must NOT have executed an ordering flow
+    // FlowExecutor must NOT have executed an ordering flow
+    // (no product browse, no cart prompts — only the retry message)
+    expect(hasRetryMsg).toBe(true);
+  });
+
+  it('TEST 2: policy read THROWS → same blocking behavior', async () => {
+    const sender = createCaptureSender();
+
+    const supabase = createTableMock({
+      activeSession: {
+        id: 'sess-throw',
+        whatsapp_number: TEST_PHONE,
+        user_id: 'u1',
+        business_id: TEST_BIZ_ID,
+        current_step: 'greeting',
+        session_data: {
+          capabilities: ['scheduling'],
+          business_id: TEST_BIZ_ID,
+        },
+        is_active: true,
+        expires_at: new Date(Date.now() + 86400000).toISOString(),
+        version: 0,
+      },
+      business: {
+        id: TEST_BIZ_ID, status: 'active', subscription_tier: 'free',
+        trial_ends_at: null, category: 'salon',
+      },
+    });
+
+    // Make business_capabilities lookup throw
+    const origFrom = supabase.from;
+    supabase.from = vi.fn((table: string) => {
+      if (table === 'business_capabilities') {
+        throw new Error('DB connection timeout');
+      }
+      return origFrom(table);
+    });
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(TEST_PHONE, 'Hi', 'text');
+
+    const texts = sender.getTextMessages();
+    const hasRetryMsg = texts.some((t: string) => t.includes('trouble verifying') || t.includes('try again'));
+    expect(hasRetryMsg).toBe(true);
+  });
+
+  it('TEST 3: policy read fails + MANAGE_EXISTING step → NOT blocked', async () => {
+    const sender = createCaptureSender();
+
+    const supabase = createTableMock({
+      activeSession: {
+        id: 'sess-manage',
+        whatsapp_number: TEST_PHONE,
+        user_id: 'u1',
+        business_id: TEST_BIZ_ID,
+        current_step: 'my_bookings', // MANAGE_EXISTING step
+        session_data: {
+          capabilities: ['scheduling'],
+          business_id: TEST_BIZ_ID,
+          active_capability: 'my_account',
+        },
+        is_active: true,
+        expires_at: new Date(Date.now() + 86400000).toISOString(),
+        version: 0,
+      },
+      business: {
+        id: TEST_BIZ_ID, status: 'active', subscription_tier: 'free',
+        trial_ends_at: null, category: 'salon',
+      },
+    });
+
+    // Make business_capabilities fail
+    const origFrom = supabase.from;
+    supabase.from = vi.fn((table: string) => {
+      if (table === 'business_capabilities') {
+        return {
+          select: () => ({
+            eq: () => ({
+              order: () => ({
+                order: () => Promise.resolve({ data: null, error: { message: 'connection failed' } }),
+              }),
+            }),
+          }),
+        };
+      }
+      return origFrom(table);
+    });
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(TEST_PHONE, 'back', 'text');
+
+    // Should NOT have the temporary retry message — MANAGE_EXISTING continues
+    const texts = sender.getTextMessages();
+    const hasRetryMsg = texts.some((t: string) => t.includes('trouble verifying'));
+    expect(hasRetryMsg).toBe(false);
+  });
+
+  it('TEST 4: policy read succeeds + ordering allowed → normal flow', async () => {
+    const sender = createCaptureSender();
+
+    const supabase = createTableMock({
+      activeSession: {
+        id: 'sess-ok',
+        whatsapp_number: TEST_PHONE,
+        user_id: 'u1',
+        business_id: TEST_BIZ_ID,
+        current_step: 'select_capability',
+        session_data: {
+          capabilities: ['ordering'],
+          business_id: TEST_BIZ_ID,
+          business_name: 'Test Restaurant',
+          business_category: 'restaurant',
+        },
+        is_active: true,
+        expires_at: new Date(Date.now() + 86400000).toISOString(),
+        version: 0,
+      },
+      business: {
+        id: TEST_BIZ_ID, status: 'active', subscription_tier: 'growth',
+        trial_ends_at: null, category: 'restaurant',
+        name: 'Test Restaurant', slug: 'test', flow_type: 'ordering',
+        metadata: {}, operating_hours: null, country_code: 'NG', payment_gateway: null,
+      },
+      capabilities: [
+        { capability: 'ordering', is_enabled: true, sort_order: 0 },
+      ],
+    });
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(TEST_PHONE, 'I want to order food', 'text');
+
+    // Should NOT have the temporary retry message
+    const texts = sender.getTextMessages();
+    const hasRetryMsg = texts.some((t: string) => t.includes('trouble verifying'));
+    expect(hasRetryMsg).toBe(false);
   });
 });

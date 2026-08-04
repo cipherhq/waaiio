@@ -7,6 +7,18 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-03
 
+### fix(bot): CAS-007 — Runtime surface closure
+
+- **Revoked active_capability recovery** — Point A now checks if `active_capability` is still in the effective set. If revoked, clears transactional state via CAS-005 recovery and redirects to `select_capability`. MANAGE_EXISTING steps exempt.
+- **Point A CAS persistence** — Capability refresh now uses `update_session_cas` instead of direct `.update()`. Prevents stale worker from overwriting newer session state.
+- **FlowExecutor authorization** — Executor now verifies `active_capability` is in `session.session_data.capabilities` before entering a flow. Unauthorized capability → recovery message.
+- **Chat escalation effective policy** — All chat entry paths (executor "talk to human", keyword `escalate`, `chat-handoff.ts`) now use session's effective capabilities instead of tier-blind `getEnabledCapabilities`.
+- **Re-order shortcut** — Uses session effective caps (tier-aware from Point A).
+- **Queue shortcut** — Uses session effective caps.
+- **Chat handoff** — `ordering.flow.ts` and `scheduling.flow.ts` check `chatCaps.includes('chat')`.
+- **Quote request CREATE_NEW boundary** — `submit_quote_request` calls `requireCurrentCapability`.
+- Could break: Sessions with revoked active capabilities are redirected to capability menu. Chat escalation denied if chat is not in effective set (was previously allowed if merely enabled in DB).
+
 ### fix(bot): Session resilience hardening
 
 - **Atomic session deactivation** — `deactivateSession()` now uses `deactivate_session_atomic` RPC that bumps version, invalidating any pending CAS writes. Prevents stale workers from overwriting state after exit/menu/start-over. Migration: `304_session_resilience.sql`. Affects: `bot-helpers.ts`, `executor.ts`, all handlers that deactivate sessions (~30 call sites across `keyword-actions.ts`, `escape-hatches.ts`, `my-bookings.ts`, `my-orders.ts`, `refund-request.ts`, `global-queries.ts`, `capability-selection.flow.ts`, `bot.service.ts`).

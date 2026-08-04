@@ -577,14 +577,80 @@ export class BotService {
 
           // Refresh the session's capabilities array with CURRENT effective set
           session.session_data.capabilities = policyResult.effective;
-          await this.supabase.from('bot_sessions')
-            .update({ session_data: session.session_data })
-            .eq('id', session.id);
+
+          // CAS-007: Check if active_capability is still in the effective set.
+          // If revoked, clear transactional state and redirect to capability selection.
+          // Only applies to CREATE_NEW transactional flows, not MANAGE_EXISTING.
+          const activeCap = session.session_data.active_capability as string | undefined;
+          const MANAGE_EXISTING_STEPS = new Set([
+            'my_bookings', 'modify_booking', 'my_orders', 'order_detail',
+            'list_subscriptions', 'loyalty_menu', 'invoice_list', 'my_account_menu',
+            'refund_select', 'refund_confirm', 'chat_handoff',
+            'post_completion',
+          ]);
+          const isManageExisting = !activeCap || MANAGE_EXISTING_STEPS.has(session.current_step);
+
+          if (activeCap && !isManageExisting && !policyResult.effective.includes(activeCap as CapabilityId)) {
+            // Active CREATE_NEW capability revoked — use CAS-005 recovery
+            const { clearRejectedTransactionalState, buildCapabilityRecoveryMessage } = await import('./capability-recovery');
+            const { getUserFacingCapabilities } = await import('./handlers/flow-routing');
+            clearRejectedTransactionalState(session.session_data);
+            session.session_data.capabilities = policyResult.effective;
+            session.current_step = 'select_capability';
+            const ufCaps = getUserFacingCapabilities(policyResult.effective);
+            const recoveryMsg = buildCapabilityRecoveryMessage(activeCap, ufCaps, currentBiz.category || 'other');
+
+            // Persist via CAS (BLOCKER 4: version-gated write)
+            const { data: casResult } = await this.supabase.rpc('update_session_cas', {
+              p_session_id: session.id,
+              p_expected_version: session.version ?? 0,
+              p_current_step: 'select_capability',
+              p_session_data: session.session_data,
+            });
+            if (!casResult?.success) return; // stale — another worker owns this session
+            session.version = casResult.version;
+
+            await this.sendText(from, recoveryMsg);
+            return;
+          }
+
+          // BLOCKER 4: Use CAS for capability refresh persistence (not direct update)
+          const { data: refreshCas } = await this.supabase.rpc('update_session_cas', {
+            p_session_id: session.id,
+            p_expected_version: session.version ?? 0,
+            p_current_step: session.current_step,
+            p_session_data: session.session_data,
+          });
+          if (!refreshCas?.success) return; // stale — another worker owns this session
+          session.version = refreshCas.version;
+        } else {
+          // CAS-007: Capability read failure — fail closed for ALL non-MANAGE_EXISTING.
+          // Cannot verify authorization → block routing. This covers both:
+          // - sessions with active_capability (mid-flow CREATE_NEW)
+          // - sessions without active_capability (select_capability, greeting — where
+          //   a customer could START a capability using stale session caps)
+          const MANAGE_EXISTING_STEPS = new Set([
+            'my_bookings', 'modify_booking', 'my_orders', 'order_detail',
+            'list_subscriptions', 'loyalty_menu', 'invoice_list', 'my_account_menu',
+            'refund_select', 'refund_confirm', 'chat_handoff', 'post_completion',
+          ]);
+          if (!MANAGE_EXISTING_STEPS.has(session.current_step)) {
+            await this.sendText(from, "We're having trouble verifying what's available right now. Please try again in a moment.");
+            return;
+          }
         }
-        // On capability read failure, leave existing capabilities in place (fail-open for
-        // session navigation, but commit guards at Point C will fail closed independently)
       } catch (err) {
-        logger.warn('[BOT] Session resume revalidation error (non-fatal):', err);
+        logger.warn('[BOT] Session resume revalidation error:', err);
+        // CAS-007: On exception, fail closed for ALL non-MANAGE_EXISTING
+        const MANAGE_EXISTING_STEPS = new Set([
+          'my_bookings', 'modify_booking', 'my_orders', 'order_detail',
+          'list_subscriptions', 'loyalty_menu', 'invoice_list', 'my_account_menu',
+          'refund_select', 'refund_confirm', 'chat_handoff', 'post_completion',
+        ]);
+        if (!MANAGE_EXISTING_STEPS.has(session.current_step)) {
+          await this.sendText(from, "We're having trouble verifying what's available right now. Please try again in a moment.");
+          return;
+        }
       }
     }
 

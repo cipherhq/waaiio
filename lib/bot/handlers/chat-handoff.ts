@@ -192,7 +192,8 @@ export async function handleChatStart(
   // This is a chat session — store message and acknowledge
   // Skip if the chat flow validate() already handled this message
   const alreadyHandled = session.session_data?.first_message_handled;
-  const caps = (session.session_data?.capabilities as CapabilityId[]) || await getEnabledCapabilities(supabase, session.business_id);
+  // CAS-007: Use session's effective capabilities only (no tier-blind fallback)
+  const caps = (session.session_data?.capabilities as CapabilityId[]) || [];
   if (caps.includes('chat') && !alreadyHandled) {
     // Get customer name
     const chatPhoneP = from.startsWith('+') ? from : `+${from}`;
@@ -311,7 +312,8 @@ export async function handleChatStart(
   }
 
   // Send acknowledgment on the first message in this chat session
-  if (!session.session_data.chat_ack_sent) {
+  // CAS-007: Only send ack if chat capability is authorized (ack is inside the auth branch)
+  if (!session.session_data.chat_ack_sent && caps.includes('chat')) {
     await sendText(from, "Thanks for your message! A team member will respond shortly.\n\nType *end chat* anytime to return to the menu.");
     await supabase.from('bot_sessions').update({
       session_data: { ...session.session_data, chat_ack_sent: true },
