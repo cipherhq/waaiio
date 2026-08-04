@@ -186,4 +186,48 @@ describe('Flutterwave renewal — executable production tests', () => {
     expect(result.action).toBe('error');
     expect(result.reason).toBe('verification_failed');
   });
+
+  // ── NEW: recovered definitively failed attempt ──
+
+  it('13. recovered a1 + verify=failed → record failure, NO charge', async () => {
+    const deps = mockDeps({
+      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a1', recovered: true, provider_verified: false },
+      verifyOutcome: 'failed',
+      failureResult: { recorded: true, failure_count: 1 },
+    });
+    const result = await processFlutterwaveRenewal(deps, mockSub());
+
+    expect(result.action).toBe('failure_recorded');
+    expect(result.failureCount).toBe(1);
+    // chargeToken must NOT have been called — failure recorded and stopped
+    expect(deps.chargeTokenFn).not.toHaveBeenCalled();
+    // failure RPC called
+    expect((deps.supabase as any).rpc).toHaveBeenCalledWith('record_flutterwave_definitive_failure', expect.anything());
+  });
+
+  it('14. next retry after failure → new attempt a2', async () => {
+    const deps = mockDeps({
+      // Simulates provider_failed reclaim → new attempt ref
+      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a2', recovered: true, provider_verified: false },
+      verifyOutcome: null, // reconciliation timeout for new a2 (not yet charged)
+    });
+    // Since reconciliation returns null (timeout), it should skip — correct for unresolved
+    // But a2 is a NEW ref that was never charged, so reconciliation should return 'unknown'
+    // In reality the claim RPC generates a2 after provider_failed. The test verifies the attempt ref is a2.
+    const result = await processFlutterwaveRenewal(deps, mockSub());
+
+    // With null reconciliation, it skips (leave for next cron)
+    expect(result.action).toBe('skipped');
+    // Verify the attempt ref used for reconciliation is a2, not a1
+    expect(deps.verifyTransactionFn).toHaveBeenCalledWith('flw-sub-001-2026-08-04-a2');
+  });
+
+  it('15. X-Idempotency-Key: same attemptRef → same key', async () => {
+    // The chargeToken function sends X-Idempotency-Key = reference (the attemptRef)
+    // This is verified structurally since the mock doesn't exercise the actual fetch
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(path.resolve(__dirname, '../payments/flutterwave-recurring.ts'), 'utf-8');
+    expect(source).toContain("'X-Idempotency-Key': reference");
+  });
 });

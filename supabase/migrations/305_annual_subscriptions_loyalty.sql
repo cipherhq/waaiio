@@ -206,9 +206,10 @@ BEGIN
     END IF;
 
     -- Stale claim (>10 min): reuse SAME attempt ref (must reconcile, not recharge)
+    -- Do NOT increment attempts — only real provider attempts advance the number
     IF v_existing.status = 'claimed' THEN
       UPDATE processed_webhook_events
-      SET attempts = COALESCE(attempts, 0) + 1, last_attempted_at = NOW()
+      SET last_attempted_at = NOW()
       WHERE event_id = v_stable_ref;
       RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
         'stable_ref', v_stable_ref, 'attempt_ref', v_existing.last_error,

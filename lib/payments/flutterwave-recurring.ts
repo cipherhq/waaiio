@@ -28,12 +28,14 @@ async function flutterwaveRequest(
   path: string,
   method: 'GET' | 'POST' | 'PUT' = 'POST',
   body?: Record<string, unknown>,
+  extraHeaders?: Record<string, string>,
 ): Promise<Record<string, unknown>> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${flutterwaveSecretKey}`,
       'Content-Type': 'application/json',
+      ...(extraHeaders || {}),
     },
     ...(body && { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(15000),
@@ -330,7 +332,7 @@ export async function chargeToken(
       amount,
       tx_ref: reference,
       ...(verifiedSplit || {}),
-    });
+    }, { 'X-Idempotency-Key': reference }); // Deterministic per provider attempt
 
     const chargeData = data.data as Record<string, unknown> | undefined;
     const providerStatus = (chargeData?.status as string) || '';

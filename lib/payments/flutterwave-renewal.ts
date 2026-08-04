@@ -70,8 +70,19 @@ export async function processFlutterwaveRenewal(
           .eq('event_id', stableRef);
       } else if (reconciliation === null || reconciliation.outcome === 'pending' || reconciliation.outcome === 'unknown') {
         return { action: 'skipped', reason: `reconciliation_${reconciliation?.outcome || 'timeout'}` };
+      } else if (reconciliation?.outcome === 'failed') {
+        // Previous attempt definitively failed — record failure and STOP.
+        // Do NOT charge again using the same attemptRef.
+        // Next claim will create a new attemptRef (a2).
+        const { data: failResult } = await supabase.rpc('record_flutterwave_definitive_failure', {
+          p_subscription_id: sub.id,
+          p_stable_ref: stableRef,
+        });
+        if (failResult?.recorded) {
+          return { action: 'failure_recorded', failureCount: failResult.failure_count };
+        }
+        return { action: 'skipped', reason: failResult?.reason || 'reconciled_failure_not_recorded' };
       }
-      // else: failed → retry below
     } else if (claim.recovered && claim.provider_verified) {
       providerSucceeded = true;
     }

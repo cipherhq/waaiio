@@ -165,16 +165,12 @@ describe('STRUCTURAL: Flutterwave Waaiio-managed token billing', () => {
     expect(source).toContain('enablePaystackSub');
   });
 
-  it('renewal uses atomic claim + finalize RPCs', async () => {
+  it('cron uses processFlutterwaveRenewal helper (single implementation)', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../../../app/api/cron/retry-failed-charges/route.ts'), 'utf-8');
-    // Uses claim RPC before charging
-    expect(source).toContain("rpc('claim_recurring_billing_cycle'");
-    // Uses finalize RPC after charge success
-    expect(source).toContain("rpc('finalize_token_recurring_charge'");
-    // Uses database-derived stable_ref from claim result
-    expect(source).toContain('claim.stable_ref');
+    expect(source).toContain('processFlutterwaveRenewal');
+    expect(source).toContain("import('@/lib/payments/flutterwave-renewal')");
   });
 
   it('auto-cancel respects provider-first for Stripe/Paystack', async () => {
