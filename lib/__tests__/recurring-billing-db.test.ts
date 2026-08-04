@@ -84,7 +84,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
         customer_email TEXT, card_last_four TEXT, card_brand TEXT,
         next_charge_at TIMESTAMPTZ, last_charged_at TIMESTAMPTZ,
         charge_count INT DEFAULT 0, total_charged NUMERIC(12,2) DEFAULT 0,
-        failure_count INT DEFAULT 0
+        failure_count INT DEFAULT 0, cancelled_at TIMESTAMPTZ
       );
       CREATE TABLE IF NOT EXISTS bookings (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), reference_code TEXT UNIQUE,
