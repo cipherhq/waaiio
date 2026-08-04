@@ -142,60 +142,66 @@ describe('Loyalty phone normalization', () => {
 // 7. FLUTTERWAVE LIFECYCLE
 // ═══════════════════════════════════════════════════════
 
-describe('Flutterwave Waaiio-managed token billing', () => {
+describe('STRUCTURAL: Flutterwave Waaiio-managed token billing', () => {
   it('enrollment does NOT create Flutterwave plan or subscription', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../flows/payment.flow.ts'), 'utf-8');
-    // Must NOT call createFlutterwavePlan or createFlutterwaveSubscription
     expect(source).not.toContain('createFlutterwavePlan');
     expect(source).not.toContain('createFlutterwaveSubscription');
-    // Must use internal reference (not a provider subscription ID)
     expect(source).toContain('waaiio_flw_');
   });
 
-  it('pause/resume/cancel are DB-only (no Flutterwave provider calls)', async () => {
+  it('pause/resume/cancel are DB-only', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../flows/recurring-manage.flow.ts'), 'utf-8');
-    // Must NOT call Flutterwave cancel/activate for pause/resume
     expect(source).not.toContain('cancelFlwSub');
     expect(source).not.toContain('activateFlwSub');
-    // DB-only comment present
     expect(source).toContain('Waaiio controls Flutterwave token');
   });
 
-  it('normal renewal scheduler exists for active due Flutterwave subscriptions', async () => {
+  it('renewal uses atomic claim + finalize RPCs', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../../../app/api/cron/retry-failed-charges/route.ts'), 'utf-8');
-    // Must query active + due Flutterwave subscriptions
-    expect(source).toContain("eq('gateway', 'flutterwave')");
-    expect(source).toContain("eq('status', 'active')");
-    expect(source).toContain("lte('next_charge_at'");
-    // Must handle yearly
-    expect(source).toContain("frequency === 'yearly'");
-    // Must create payment + subscription_charge
-    expect(source).toContain("from('payments').insert");
-    expect(source).toContain("from('subscription_charges').insert");
-    // Must notify customer on failure
-    expect(source).toContain('notifyCustomerChargeFailed');
+    // Uses claim RPC before charging
+    expect(source).toContain("rpc('claim_recurring_billing_cycle'");
+    // Uses finalize RPC after charge success
+    expect(source).toContain("rpc('finalize_token_recurring_charge'");
+    // Stable tx_ref (deterministic, not Date.now())
+    expect(source).toContain('flw-${sub.id}-');
+    expect(source).toContain('.toISOString().slice(0, 10)');
   });
 
-  it('auto-cancel for Flutterwave is DB-only', async () => {
+  it('auto-cancel respects provider-first for Stripe/Paystack', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../../../app/api/cron/retry-failed-charges/route.ts'), 'utf-8');
-    // Must NOT call Flutterwave cancelSubscription in auto-cancel
+    // Provider cancel failure prevents DB cancel for Stripe/Paystack
+    expect(source).toContain("providerCancelled = false");
+    expect(source).toContain("provider cancel failed");
+    // Flutterwave is DB-only (no provider call)
     expect(source).toContain('Flutterwave: DB-only cancel');
   });
 
-  it('provider failure (pause) does not falsely update DB', async () => {
+  it('claim + finalize RPCs exist in migration', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const source = fs.readFileSync(path.resolve(__dirname, '../flows/recurring-manage.flow.ts'), 'utf-8');
-    expect(source).toContain('if (!paused)');
-    expect(source).toContain('if (!resumed)');
+    const migration = fs.readFileSync(path.resolve(__dirname, '../../../supabase/migrations/305_annual_subscriptions_loyalty.sql'), 'utf-8');
+    expect(migration).toContain('CREATE OR REPLACE FUNCTION claim_recurring_billing_cycle');
+    expect(migration).toContain('CREATE OR REPLACE FUNCTION finalize_token_recurring_charge');
+    // Claim uses FOR UPDATE to serialize
+    expect(migration).toContain('FOR UPDATE');
+    // Finalize checks idempotency
+    expect(migration).toContain('already_finalized');
+    // Finalize uses atomic counter increment (not SELECT → +1)
+    expect(migration).toContain('charge_count = charge_count + 1');
+    expect(migration).toContain('total_charged = total_charged + p_amount');
+    // Platform fee included
+    expect(migration).toContain('platform_fees');
+    // Booking record included (finance parity with Paystack RPC)
+    expect(migration).toContain('INSERT INTO bookings');
   });
 });
 

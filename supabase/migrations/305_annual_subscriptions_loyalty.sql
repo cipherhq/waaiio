@@ -127,3 +127,198 @@ DO $$ BEGIN
   EXECUTE 'GRANT EXECUTE ON FUNCTION process_recurring_charge TO service_role';
 EXCEPTION WHEN undefined_object THEN NULL;
 END $$;
+
+-- ═══════════════════════════════════════════════════════
+-- 4. Claim + finalize RPC for Waaiio-managed token recurring
+--
+-- Atomic claim prevents concurrent double-charges.
+-- Idempotent finalization prevents duplicate financial records.
+-- Uses stable tx_ref derived from subscription_id + billing period.
+-- ═══════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION claim_recurring_billing_cycle(
+  p_subscription_id UUID,
+  p_scheduled_at     TIMESTAMPTZ,
+  p_stable_ref       TEXT
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_sub RECORD;
+BEGIN
+  -- Lock the subscription row to serialize concurrent workers
+  SELECT * INTO v_sub FROM customer_subscriptions
+    WHERE id = p_subscription_id FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('claimed', false, 'reason', 'not_found');
+  END IF;
+
+  IF v_sub.status != 'active' THEN
+    RETURN jsonb_build_object('claimed', false, 'reason', 'not_active', 'status', v_sub.status);
+  END IF;
+
+  IF v_sub.next_charge_at > NOW() THEN
+    RETURN jsonb_build_object('claimed', false, 'reason', 'not_due', 'next_charge_at', v_sub.next_charge_at);
+  END IF;
+
+  -- Check if this billing cycle was already claimed/finalized
+  IF EXISTS (SELECT 1 FROM processed_webhook_events WHERE event_id = p_stable_ref AND status = 'completed') THEN
+    RETURN jsonb_build_object('claimed', false, 'reason', 'already_completed');
+  END IF;
+
+  -- Claim the billing cycle atomically
+  INSERT INTO processed_webhook_events (event_id, gateway, event_type, status, attempts, first_received_at, last_attempted_at)
+  VALUES (p_stable_ref, 'flutterwave', 'token_renewal', 'claimed', 1, NOW(), NOW())
+  ON CONFLICT (event_id) DO UPDATE SET attempts = processed_webhook_events.attempts + 1, last_attempted_at = NOW()
+  RETURNING status INTO v_sub; -- reuse variable
+
+  -- If already claimed by another worker, bail
+  IF v_sub.status != 'claimed' THEN
+    RETURN jsonb_build_object('claimed', false, 'reason', 'already_claimed');
+  END IF;
+
+  RETURN jsonb_build_object(
+    'claimed', true,
+    'subscription_id', p_subscription_id,
+    'stable_ref', p_stable_ref
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION finalize_token_recurring_charge(
+  p_stable_ref       TEXT,
+  p_subscription_id  UUID,
+  p_amount           NUMERIC(12,2),
+  p_currency         TEXT DEFAULT 'NGN',
+  p_gateway          TEXT DEFAULT 'flutterwave'
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_sub              RECORD;
+  v_now              TIMESTAMPTZ := NOW();
+  v_today            DATE := CURRENT_DATE;
+  v_time             TEXT;
+  v_booking_id       UUID;
+  v_booking_ref      TEXT;
+  v_payment_id       UUID;
+  v_next_charge      TIMESTAMPTZ;
+  v_business         RECORD;
+  v_fee_pct          NUMERIC(5,2);
+  v_fee_flat         NUMERIC(12,2);
+  v_fee_total        NUMERIC(12,2);
+  v_is_in_trial      BOOLEAN;
+  v_tier             TEXT;
+BEGIN
+  -- Check idempotency: if already finalized, return success without duplicating
+  IF EXISTS (SELECT 1 FROM processed_webhook_events WHERE event_id = p_stable_ref AND status = 'completed') THEN
+    -- Already finalized — return the existing data
+    SELECT id INTO v_payment_id FROM payments WHERE gateway_reference = p_stable_ref AND status = 'success' LIMIT 1;
+    RETURN jsonb_build_object('success', true, 'already_finalized', true, 'payment_id', v_payment_id);
+  END IF;
+
+  -- Check payment doesn't already exist (belt + suspenders)
+  IF EXISTS (SELECT 1 FROM payments WHERE gateway_reference = p_stable_ref AND status = 'success') THEN
+    UPDATE processed_webhook_events SET status = 'completed', completed_at = v_now WHERE event_id = p_stable_ref;
+    SELECT id INTO v_payment_id FROM payments WHERE gateway_reference = p_stable_ref AND status = 'success' LIMIT 1;
+    RETURN jsonb_build_object('success', true, 'already_finalized', true, 'payment_id', v_payment_id);
+  END IF;
+
+  -- Load subscription
+  SELECT * INTO v_sub FROM customer_subscriptions WHERE id = p_subscription_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'subscription_not_found');
+  END IF;
+
+  v_time := TO_CHAR(v_now, 'HH24:MI');
+
+  -- Create booking (recurring accounting record)
+  INSERT INTO bookings (
+    business_id, user_id, service_id, date, time, party_size,
+    flow_type, channel, payment_source, deposit_amount, deposit_status, status,
+    total_amount, quantity, guest_name, guest_phone, confirmed_at, notes
+  ) VALUES (
+    v_sub.business_id, v_sub.user_id, v_sub.service_id, v_today, v_time, 1,
+    'payment', 'recurring', 'subscription', p_amount, 'paid', 'confirmed',
+    p_amount, 1, COALESCE(v_sub.customer_name, ''), COALESCE(v_sub.customer_phone, ''),
+    v_now, 'Recurring ' || v_sub.frequency || ' charge'
+  ) RETURNING id, reference_code INTO v_booking_id, v_booking_ref;
+
+  -- Create payment
+  INSERT INTO payments (
+    business_id, user_id, booking_id, amount, currency, gateway,
+    gateway_reference, status, gateway_status, payment_method,
+    card_last_four, card_brand, paid_at, metadata
+  ) VALUES (
+    v_sub.business_id, v_sub.user_id, v_booking_id, p_amount, p_currency, p_gateway,
+    p_stable_ref, 'success', 'success', 'card',
+    v_sub.card_last_four, v_sub.card_brand,
+    v_now, jsonb_build_object('recurring', true, 'subscription_id', v_sub.id)
+  ) RETURNING id INTO v_payment_id;
+
+  -- Log subscription charge
+  INSERT INTO subscription_charges (
+    subscription_id, business_id, user_id, amount, currency,
+    status, gateway, gateway_reference, payment_id, booking_id, charged_at
+  ) VALUES (
+    v_sub.id, v_sub.business_id, v_sub.user_id, p_amount, p_currency,
+    'success', p_gateway, p_stable_ref, v_payment_id, v_booking_id, v_now
+  );
+
+  -- Platform fee (same logic as process_recurring_charge)
+  SELECT subscription_tier, trial_ends_at, payout_mode INTO v_business FROM businesses WHERE id = v_sub.business_id;
+  IF v_business IS NOT NULL AND COALESCE(v_business.payout_mode, 'platform') != 'direct_split' THEN
+    v_is_in_trial := v_business.trial_ends_at > v_now;
+    v_tier := COALESCE(v_business.subscription_tier, 'free');
+    IF v_is_in_trial THEN v_fee_pct := 0; v_fee_flat := 0; v_fee_total := 0;
+    ELSE
+      SELECT COALESCE((value::jsonb -> v_tier ->> 'feePercentage')::numeric, CASE v_tier WHEN 'free' THEN 2.5 WHEN 'growth' THEN 1.5 ELSE 1.5 END),
+             COALESCE((value::jsonb -> v_tier ->> 'feeFlat')::numeric, 0)
+      INTO v_fee_pct, v_fee_flat FROM platform_settings WHERE key = 'pricing_tiers' LIMIT 1;
+      IF v_fee_pct IS NULL THEN v_fee_pct := CASE v_tier WHEN 'free' THEN 2.5 WHEN 'growth' THEN 1.5 ELSE 1.5 END; v_fee_flat := 0; END IF;
+      IF v_fee_flat > 0 AND p_amount > 0 AND v_fee_flat / p_amount > 0.10 THEN v_fee_flat := 0; END IF;
+      v_fee_total := ROUND(p_amount * v_fee_pct / 100, 2) + v_fee_flat;
+    END IF;
+    INSERT INTO platform_fees (business_id, booking_id, transaction_amount, fee_percentage, fee_flat, fee_total, tier)
+    VALUES (v_sub.business_id, v_booking_id, p_amount, v_fee_pct, v_fee_flat, v_fee_total, v_tier);
+  END IF;
+
+  -- Update subscription totals atomically (no SELECT → +1 → UPDATE)
+  IF v_sub.frequency = 'weekly' THEN v_next_charge := v_now + INTERVAL '7 days';
+  ELSIF v_sub.frequency = 'yearly' THEN v_next_charge := v_now + INTERVAL '1 year';
+  ELSE v_next_charge := v_now + INTERVAL '1 month';
+  END IF;
+
+  UPDATE customer_subscriptions SET
+    charge_count = charge_count + 1,
+    total_charged = total_charged + p_amount,
+    last_charged_at = v_now,
+    next_charge_at = v_next_charge,
+    failure_count = 0
+  WHERE id = v_sub.id;
+
+  -- Mark billing cycle completed
+  UPDATE processed_webhook_events SET status = 'completed', completed_at = v_now WHERE event_id = p_stable_ref;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'already_finalized', false,
+    'subscription_id', v_sub.id,
+    'booking_id', v_booking_id,
+    'booking_ref', v_booking_ref,
+    'payment_id', v_payment_id,
+    'amount', p_amount,
+    'currency', p_currency,
+    'business_id', v_sub.business_id,
+    'customer_phone', v_sub.customer_phone,
+    'customer_name', v_sub.customer_name
+  );
+END;
+$$;
+
+DO $$ BEGIN
+  REVOKE ALL ON FUNCTION claim_recurring_billing_cycle(UUID, TIMESTAMPTZ, TEXT) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION finalize_token_recurring_charge(TEXT, UUID, NUMERIC, TEXT, TEXT) FROM PUBLIC;
+  EXECUTE 'GRANT EXECUTE ON FUNCTION claim_recurring_billing_cycle(UUID, TIMESTAMPTZ, TEXT) TO service_role';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION finalize_token_recurring_charge(TEXT, UUID, NUMERIC, TEXT, TEXT) TO service_role';
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;

@@ -203,10 +203,10 @@ export async function GET(request: NextRequest) {
 
     // ── Flutterwave normal renewal scheduler ──
     // Waaiio manages Flutterwave recurrence via token billing.
-    // Process active Flutterwave subscriptions that are due for renewal.
+    // Uses claim_recurring_billing_cycle → chargeToken → finalize_token_recurring_charge.
     const { data: flwDue } = await supabase
       .from('customer_subscriptions')
-      .select('id, business_id, user_id, service_id, amount, currency, authorization_code, customer_email, customer_name, customer_phone, frequency, failure_count')
+      .select('id, business_id, user_id, service_id, amount, currency, authorization_code, customer_email, customer_name, customer_phone, frequency, failure_count, next_charge_at')
       .eq('gateway', 'flutterwave')
       .eq('status', 'active')
       .not('authorization_code', 'is', null)
@@ -214,11 +214,27 @@ export async function GET(request: NextRequest) {
 
     for (const sub of flwDue || []) {
       if (!sub.authorization_code) continue;
-
-      const reference = `flw-renew-${sub.id}-${Date.now().toString(36)}`;
       const amountInCurrency = sub.amount || 0;
 
-      // Resolve split configuration
+      // Stable tx_ref: deterministic for this subscription + billing period
+      // Same billing cycle retry → same reference → same Flutterwave idempotency
+      const scheduledAt = sub.next_charge_at;
+      const stableRef = `flw-${sub.id}-${new Date(scheduledAt).toISOString().slice(0, 10)}`;
+
+      // Step 1: Atomic claim — prevents concurrent double charges
+      const { data: claim } = await supabase.rpc('claim_recurring_billing_cycle', {
+        p_subscription_id: sub.id,
+        p_scheduled_at: scheduledAt,
+        p_stable_ref: stableRef,
+      });
+
+      if (!claim?.claimed) {
+        cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, reason: claim?.reason || 'claim_failed' });
+        skipped++;
+        continue;
+      }
+
+      // Step 2: Resolve split configuration
       const flwSplitResult = await resolveGatewaySplit(supabase, sub.business_id, amountInCurrency, 'flutterwave');
       let flwSplitParams: { subaccounts: Array<{ id: string; transaction_charge_type: string; transaction_charge: number }> } | undefined;
       if (flwSplitResult.mode === 'split') {
@@ -240,80 +256,38 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
+      // Step 3: Charge the token (uses stable ref for Flutterwave idempotency)
       try {
         const result = await chargeFlutterwaveToken(
-          sub.authorization_code,
-          amountInCurrency,
-          sub.customer_email || '',
-          reference,
-          sub.currency || 'NGN',
-          flwSplitParams,
+          sub.authorization_code, amountInCurrency,
+          sub.customer_email || '', stableRef,
+          sub.currency || 'NGN', flwSplitParams,
         );
 
         if (result.success) {
-          // Calculate next charge
-          const nextCharge = new Date();
-          if (sub.frequency === 'weekly') nextCharge.setDate(nextCharge.getDate() + 7);
-          else if (sub.frequency === 'yearly') nextCharge.setFullYear(nextCharge.getFullYear() + 1);
-          else nextCharge.setMonth(nextCharge.getMonth() + 1);
-
-          // Create payment record
-          const { data: payment } = await supabase.from('payments').insert({
-            business_id: sub.business_id,
-            user_id: sub.user_id,
-            amount: amountInCurrency,
-            currency: sub.currency || 'NGN',
-            gateway: 'flutterwave',
-            gateway_reference: reference,
-            status: 'success',
-            paid_at: new Date().toISOString(),
-            metadata: { recurring: true, subscription_id: sub.id },
-          }).select('id').single();
-
-          // Log subscription charge
-          await supabase.from('subscription_charges').insert({
-            subscription_id: sub.id,
-            business_id: sub.business_id,
-            user_id: sub.user_id,
-            amount: amountInCurrency,
-            currency: sub.currency || 'NGN',
-            status: 'success',
-            gateway: 'flutterwave',
-            gateway_reference: reference,
-            payment_id: payment?.id || null,
-            charged_at: new Date().toISOString(),
+          // Step 4: Atomic finalize — creates payment, charge, booking, fee in one transaction
+          const { data: finResult } = await supabase.rpc('finalize_token_recurring_charge', {
+            p_stable_ref: stableRef,
+            p_subscription_id: sub.id,
+            p_amount: amountInCurrency,
+            p_currency: sub.currency || 'NGN',
+            p_gateway: 'flutterwave',
           });
 
-          // Update subscription stats — increment counts via raw SQL for atomicity
-          await supabase.from('customer_subscriptions').update({
-            last_charged_at: new Date().toISOString(),
-            next_charge_at: nextCharge.toISOString(),
-            failure_count: 0,
-          }).eq('id', sub.id);
-
-          // Increment charge_count + total_charged (safe for single-cron architecture)
-          const { data: currentSub } = await supabase
-            .from('customer_subscriptions')
-            .select('charge_count, total_charged')
-            .eq('id', sub.id)
-            .single();
-          if (currentSub) {
-            await supabase.from('customer_subscriptions').update({
-              charge_count: (currentSub.charge_count || 0) + 1,
-              total_charged: Number(currentSub.total_charged || 0) + amountInCurrency,
-            }).eq('id', sub.id);
+          if (finResult?.success) {
+            // Send confirmation (non-blocking)
+            if (finResult.payment_id && !finResult.already_finalized) {
+              import('@/lib/payments/send-confirmation').then(({ sendProactiveConfirmation }) =>
+                sendProactiveConfirmation(supabase, finResult.payment_id)
+              ).catch(() => {});
+            }
+            cron.itemCompleted({ gateway: 'flutterwave', subscriptionId: sub.id, type: 'normal_renewal', stableRef });
+            retried++;
+          } else {
+            cron.itemFailed('Finalize RPC failed', { subscriptionId: sub.id, result: finResult });
           }
-
-          // Send confirmation (non-blocking)
-          if (payment?.id) {
-            import('@/lib/payments/send-confirmation').then(({ sendProactiveConfirmation }) =>
-              sendProactiveConfirmation(supabase, payment.id)
-            ).catch(() => {});
-          }
-
-          cron.itemCompleted({ gateway: 'flutterwave', subscriptionId: sub.id, type: 'normal_renewal' });
-          retried++;
         } else {
+          // Charge failed — update failure state
           const newFailureCount = (sub.failure_count || 0) + 1;
           await supabase.from('customer_subscriptions').update({
             failure_count: newFailureCount,
@@ -332,10 +306,12 @@ export async function GET(request: NextRequest) {
               });
             } catch { /* non-fatal */ }
           }
-
           cron.itemFailed('Flutterwave renewal charge failed', { subscriptionId: sub.id, attempt: newFailureCount });
         }
       } catch (err) {
+        // Provider call failed — but billing cycle was claimed. Next retry will see
+        // the claimed event and the still-due next_charge_at, so it can retry finalization
+        // without re-charging (claim will skip, but finalize is idempotent).
         const newFailureCount = (sub.failure_count || 0) + 1;
         await supabase.from('customer_subscriptions').update({
           failure_count: newFailureCount,
@@ -354,20 +330,28 @@ export async function GET(request: NextRequest) {
 
     for (const sub of toCancel || []) {
       // Cancel on gateway
+      let providerCancelled = true;
       try {
         if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
           const { cancelSubscription } = await import('@/lib/payments/paystack-recurring');
-          await cancelSubscription(sub.gateway_subscription_code, '');
+          providerCancelled = await cancelSubscription(sub.gateway_subscription_code, '');
         } else if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
           const { cancelSubscription } = await import('@/lib/payments/stripe-recurring');
-          await cancelSubscription(sub.gateway_subscription_code);
+          providerCancelled = await cancelSubscription(sub.gateway_subscription_code);
         }
-        // Flutterwave: DB-only cancel — Waaiio manages token billing, no provider subscription to cancel
+        // Flutterwave: DB-only cancel — Waaiio manages token billing
       } catch (cancelErr) {
         logger.error(`[RETRY-CHARGES] Gateway cancel error for ${sub.id}:`, cancelErr);
+        providerCancelled = false;
       }
 
-      // Update DB
+      if (!providerCancelled && (sub.gateway === 'stripe' || sub.gateway === 'paystack')) {
+        // Provider cancel failed — do NOT mark DB as cancelled for provider-managed subs
+        logger.warn(`[RETRY-CHARGES] Skipping DB cancel for ${sub.id}: provider cancel failed`);
+        continue;
+      }
+
+      // Update DB (safe for Flutterwave DB-only or after successful provider cancel)
       await supabase
         .from('customer_subscriptions')
         .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
