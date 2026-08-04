@@ -312,7 +312,8 @@ export async function handleChatStart(
   }
 
   // Send acknowledgment on the first message in this chat session
-  if (!session.session_data.chat_ack_sent) {
+  // CAS-007: Only send ack if chat capability is authorized (ack is inside the auth branch)
+  if (!session.session_data.chat_ack_sent && caps.includes('chat')) {
     await sendText(from, "Thanks for your message! A team member will respond shortly.\n\nType *end chat* anytime to return to the menu.");
     await supabase.from('bot_sessions').update({
       session_data: { ...session.session_data, chat_ack_sent: true },

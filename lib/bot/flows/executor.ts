@@ -71,18 +71,31 @@ export class FlowExecutor {
     const MANAGE_EXISTING_STEPS = new Set([
       'my_bookings', 'modify_booking', 'my_orders', 'order_detail',
       'list_subscriptions', 'loyalty_menu', 'invoice_list', 'my_account_menu',
-      'refund_select', 'refund_confirm', 'chat_handoff', 'chat_start',
+      'refund_select', 'refund_confirm', 'chat_handoff',
       'post_completion',
     ]);
     const PSEUDO_CAPS = new Set(['my_account', 'waiver']);
     if (activeCap && !PSEUDO_CAPS.has(activeCap) && !MANAGE_EXISTING_STEPS.has(stepId)) {
       const effectiveCaps = (session.session_data.capabilities as string[]) || [];
       if (!effectiveCaps.includes(activeCap)) {
-        // Unauthorized capability — send recovery and return
-        const { buildCapabilityRecoveryMessage } = await import('@/lib/bot/capability-recovery');
+        // CAS-007: Unauthorized capability — recover session via CAS-005 primitives
+        const { clearRejectedTransactionalState, buildCapabilityRecoveryMessage } = await import('@/lib/bot/capability-recovery');
         const { getUserFacingCapabilities } = await import('@/lib/bot/handlers/flow-routing');
+
+        // Clean transactional state and redirect to capability selection
+        clearRejectedTransactionalState(session.session_data);
+        session.current_step = 'select_capability';
+
         const ufCaps = getUserFacingCapabilities(effectiveCaps as CapabilityId[]);
         const msg = buildCapabilityRecoveryMessage(activeCap, ufCaps, business?.category || 'other');
+
+        // CAS-persist the recovery (version-gated)
+        const recovered = await this.casUpdateSession(session, {
+          current_step: 'select_capability',
+          session_data: session.session_data,
+        });
+        if (!recovered) return; // stale worker — send nothing
+
         await this.sendText(from, msg);
         return;
       }

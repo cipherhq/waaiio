@@ -585,7 +585,7 @@ export class BotService {
           const MANAGE_EXISTING_STEPS = new Set([
             'my_bookings', 'modify_booking', 'my_orders', 'order_detail',
             'list_subscriptions', 'loyalty_menu', 'invoice_list', 'my_account_menu',
-            'refund_select', 'refund_confirm', 'chat_handoff', 'chat_start',
+            'refund_select', 'refund_confirm', 'chat_handoff',
             'post_completion',
           ]);
           const isManageExisting = !activeCap || MANAGE_EXISTING_STEPS.has(session.current_step);
@@ -623,11 +623,33 @@ export class BotService {
           });
           if (!refreshCas?.success) return; // stale — another worker owns this session
           session.version = refreshCas.version;
+        } else {
+          // CAS-007: Capability read failure — fail closed for CREATE_NEW.
+          // Cannot verify authorization → block CREATE_NEW routing with a temporary message.
+          const activeCap = session.session_data.active_capability as string | undefined;
+          const MANAGE_EXISTING_STEPS = new Set([
+            'my_bookings', 'modify_booking', 'my_orders', 'order_detail',
+            'list_subscriptions', 'loyalty_menu', 'invoice_list', 'my_account_menu',
+            'refund_select', 'refund_confirm', 'chat_handoff', 'post_completion',
+          ]);
+          if (activeCap && !MANAGE_EXISTING_STEPS.has(session.current_step)) {
+            await this.sendText(from, "We're experiencing a temporary issue verifying your session. Please try again in a moment.");
+            return;
+          }
         }
-        // On capability read failure, leave existing capabilities in place.
-        // CREATE_NEW commit guards (Point C) independently fail closed with fresh DB queries.
       } catch (err) {
-        logger.warn('[BOT] Session resume revalidation error (non-fatal):', err);
+        logger.warn('[BOT] Session resume revalidation error:', err);
+        // CAS-007: On exception, fail closed for CREATE_NEW sessions
+        const activeCap = session.session_data.active_capability as string | undefined;
+        const MANAGE_EXISTING_STEPS = new Set([
+          'my_bookings', 'modify_booking', 'my_orders', 'order_detail',
+          'list_subscriptions', 'loyalty_menu', 'invoice_list', 'my_account_menu',
+          'refund_select', 'refund_confirm', 'chat_handoff', 'post_completion',
+        ]);
+        if (activeCap && !MANAGE_EXISTING_STEPS.has(session.current_step)) {
+          await this.sendText(from, "We're experiencing a temporary issue verifying your session. Please try again in a moment.");
+          return;
+        }
       }
     }
 
