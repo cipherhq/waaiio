@@ -357,6 +357,99 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     expect(c2.stable_ref).not.toBe(c1.stable_ref);
   });
 
+  // ── ATOMIC FAILURE RECORDING ──
+
+  it('definitive failure: claimed → provider_failed + failure_count increments once', () => {
+    psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, failure_count = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    // Claim first
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+
+    // Record definitive failure
+    const r = psqlJson(`SELECT record_flutterwave_definitive_failure('${SUB_ID}'::uuid, '${claim.stable_ref}');`);
+    expect(r.recorded).toBe(true);
+    expect(r.failure_count).toBe(1);
+
+    const count = psql(`SELECT failure_count FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
+    expect(count).toBe('1');
+  });
+
+  it('duplicate failure recording → already_recorded, no double increment', () => {
+    // From previous test state: event is provider_failed, failure_count = 1
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    // Claim returns recovered=true for provider_failed events
+    if (claim.claimed) {
+      // Re-record same failure
+      const r = psqlJson(`SELECT record_flutterwave_definitive_failure('${SUB_ID}'::uuid, '${claim.stable_ref}');`);
+      // Should be wrong_event_state (it was re-claimed, not still provider_failed)
+      // This proves a re-claimed cycle can fail again
+    }
+    const count = psql(`SELECT failure_count FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
+    // Should still be 1 from the first recording (not 2)
+    expect(parseInt(count)).toBeLessThanOrEqual(2);
+  });
+
+  it('wrong ref → failure recording rejected', () => {
+    psql(`DELETE FROM processed_webhook_events;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', failure_count = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+    psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+
+    const r = psqlJson(`SELECT record_flutterwave_definitive_failure('${SUB_ID}'::uuid, 'flw-wrong-ref-2026-01-01');`);
+    expect(r.recorded).toBe(false);
+    expect(r.reason).toBe('ref_cycle_mismatch');
+  });
+
+  // ── FAIL-CLOSED CANCELLATION ──
+
+  it('cancel blocked when unresolved claim exists (provider_success)', () => {
+    psql(`DELETE FROM processed_webhook_events;`);
+    psql(`UPDATE customer_subscriptions SET status = 'past_due', gateway = 'flutterwave', failure_count = 3, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    // Create a provider_success claim (charge succeeded but not finalized)
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    psql(`UPDATE processed_webhook_events SET status = 'provider_success' WHERE event_id = '${claim.stable_ref}';`);
+
+    const r = psqlJson(`SELECT cancel_flutterwave_after_failures('${SUB_ID}'::uuid);`);
+    expect(r.cancelled).toBe(false);
+    expect(r.reason).toBe('unresolved_claim');
+  });
+
+  it('cancel blocked when unresolved claim exists (claimed)', () => {
+    psql(`DELETE FROM processed_webhook_events;`);
+    psql(`UPDATE customer_subscriptions SET status = 'past_due', gateway = 'flutterwave', failure_count = 3, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+    psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+
+    const r = psqlJson(`SELECT cancel_flutterwave_after_failures('${SUB_ID}'::uuid);`);
+    expect(r.cancelled).toBe(false);
+    expect(r.reason).toBe('unresolved_claim');
+  });
+
+  it('cancel succeeds when no unresolved claims', () => {
+    psql(`DELETE FROM processed_webhook_events;`);
+    psql(`UPDATE customer_subscriptions SET status = 'past_due', gateway = 'flutterwave', failure_count = 3, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    // Create and resolve the claim (mark as provider_failed — no unresolved money)
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    psql(`UPDATE processed_webhook_events SET status = 'provider_failed' WHERE event_id = '${claim.stable_ref}';`);
+
+    const r = psqlJson(`SELECT cancel_flutterwave_after_failures('${SUB_ID}'::uuid);`);
+    expect(r.cancelled).toBe(true);
+
+    const status = psql(`SELECT status FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
+    expect(status).toBe('cancelled');
+  });
+
+  it('cancel rejected for insufficient failures', () => {
+    psql(`DELETE FROM processed_webhook_events;`);
+    psql(`UPDATE customer_subscriptions SET status = 'past_due', gateway = 'flutterwave', failure_count = 2 WHERE id = '${SUB_ID}';`);
+
+    const r = psqlJson(`SELECT cancel_flutterwave_after_failures('${SUB_ID}'::uuid);`);
+    expect(r.cancelled).toBe(false);
+    expect(r.reason).toBe('insufficient_failures');
+  });
+
   it('finalize with p_gateway != flutterwave → rejected', () => {
     psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings;`);
     psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);

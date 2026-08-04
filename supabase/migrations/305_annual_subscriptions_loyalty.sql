@@ -393,3 +393,81 @@ DO $$ BEGIN
   EXECUTE 'GRANT EXECUTE ON FUNCTION finalize_token_recurring_charge(TEXT, UUID, NUMERIC, TEXT, TEXT) TO service_role';
 EXCEPTION WHEN undefined_object THEN NULL;
 END $$;
+
+-- ═══════════════════════════════════════════════════════
+-- 7. Atomic definitive failure recording
+-- ═══════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION record_flutterwave_definitive_failure(
+  p_subscription_id UUID, p_stable_ref TEXT
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_sub RECORD; v_event RECORD; v_derived_ref TEXT; v_new_count INT;
+BEGIN
+  SELECT * INTO v_sub FROM customer_subscriptions WHERE id = p_subscription_id FOR UPDATE;
+  IF NOT FOUND THEN RETURN jsonb_build_object('recorded', false, 'reason', 'subscription_not_found'); END IF;
+  IF COALESCE(v_sub.gateway, '') != 'flutterwave' THEN
+    RETURN jsonb_build_object('recorded', false, 'reason', 'wrong_gateway'); END IF;
+
+  v_derived_ref := 'flw-' || p_subscription_id::text || '-' || TO_CHAR(v_sub.next_charge_at, 'YYYY-MM-DD');
+  IF p_stable_ref != v_derived_ref THEN
+    RETURN jsonb_build_object('recorded', false, 'reason', 'ref_cycle_mismatch'); END IF;
+
+  SELECT * INTO v_event FROM processed_webhook_events WHERE event_id = p_stable_ref FOR UPDATE;
+  IF NOT FOUND THEN RETURN jsonb_build_object('recorded', false, 'reason', 'no_claim'); END IF;
+  IF v_event.gateway != 'flutterwave' OR v_event.event_type != 'token_renewal' THEN
+    RETURN jsonb_build_object('recorded', false, 'reason', 'wrong_event_type'); END IF;
+
+  -- Idempotent: already recorded → do not increment again
+  IF v_event.status = 'provider_failed' THEN
+    RETURN jsonb_build_object('recorded', false, 'reason', 'already_recorded', 'failure_count', v_sub.failure_count); END IF;
+
+  IF v_event.status != 'claimed' THEN
+    RETURN jsonb_build_object('recorded', false, 'reason', 'wrong_event_state', 'status', v_event.status); END IF;
+
+  -- Atomic: mark event + increment failure
+  UPDATE processed_webhook_events SET status = 'provider_failed', last_attempted_at = NOW() WHERE event_id = p_stable_ref;
+  v_new_count := COALESCE(v_sub.failure_count, 0) + 1;
+  UPDATE customer_subscriptions SET failure_count = v_new_count,
+    status = CASE WHEN v_new_count >= 3 THEN 'past_due' ELSE v_sub.status END
+  WHERE id = p_subscription_id;
+
+  RETURN jsonb_build_object('recorded', true, 'failure_count', v_new_count, 'cancellation_eligible', v_new_count >= 3);
+END;
+$$;
+
+-- ═══════════════════════════════════════════════════════
+-- 8. Fail-closed Flutterwave cancellation
+-- ═══════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION cancel_flutterwave_after_failures(p_subscription_id UUID
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_sub RECORD; v_derived_ref TEXT; v_event RECORD;
+BEGIN
+  SELECT * INTO v_sub FROM customer_subscriptions WHERE id = p_subscription_id FOR UPDATE;
+  IF NOT FOUND THEN RETURN jsonb_build_object('cancelled', false, 'reason', 'not_found'); END IF;
+  IF COALESCE(v_sub.gateway, '') != 'flutterwave' THEN
+    RETURN jsonb_build_object('cancelled', false, 'reason', 'wrong_gateway'); END IF;
+  IF v_sub.status != 'past_due' THEN
+    RETURN jsonb_build_object('cancelled', false, 'reason', 'not_past_due'); END IF;
+  IF v_sub.failure_count < 3 THEN
+    RETURN jsonb_build_object('cancelled', false, 'reason', 'insufficient_failures'); END IF;
+
+  v_derived_ref := 'flw-' || p_subscription_id::text || '-' || TO_CHAR(v_sub.next_charge_at, 'YYYY-MM-DD');
+  SELECT * INTO v_event FROM processed_webhook_events WHERE event_id = v_derived_ref;
+  IF FOUND AND v_event.status IN ('claimed', 'provider_success') THEN
+    RETURN jsonb_build_object('cancelled', false, 'reason', 'unresolved_claim', 'claim_status', v_event.status); END IF;
+
+  UPDATE customer_subscriptions SET status = 'cancelled', cancelled_at = NOW() WHERE id = p_subscription_id;
+  RETURN jsonb_build_object('cancelled', true);
+END;
+$$;
+
+DO $$ BEGIN
+  REVOKE ALL ON FUNCTION record_flutterwave_definitive_failure(UUID, TEXT) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION cancel_flutterwave_after_failures(UUID) FROM PUBLIC;
+  EXECUTE 'GRANT EXECUTE ON FUNCTION record_flutterwave_definitive_failure(UUID, TEXT) TO service_role';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION cancel_flutterwave_after_failures(UUID) TO service_role';
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;

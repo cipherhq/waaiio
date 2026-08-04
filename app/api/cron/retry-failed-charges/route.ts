@@ -253,44 +253,29 @@ export async function GET(request: NextRequest) {
             cron.itemFailed('Finalize RPC failed', { subscriptionId: sub.id, result: finResult });
           }
         } else {
-          // Definitive charge failure — record durably before notification
-          const newFailureCount = (sub.failure_count || 0) + 1;
+          // Definitive charge failure — use atomic RPC
+          const { data: failResult } = await supabase.rpc('record_flutterwave_definitive_failure', {
+            p_subscription_id: sub.id,
+            p_stable_ref: stableRef,
+          });
 
-          // Mark billing event as provider_failed (must succeed before incrementing failure_count)
-          const { error: eventErr } = await supabase.from('processed_webhook_events')
-            .update({ status: 'provider_failed' })
-            .eq('event_id', stableRef);
-
-          if (eventErr) {
-            // Cannot durably record failure — leave recoverable, do NOT increment
-            cron.itemFailed('Failed to record provider_failed state', { subscriptionId: sub.id });
-            continue;
+          if (failResult?.recorded) {
+            // Only notify after failure is atomically recorded
+            if (sub.customer_phone && sub.business_id) {
+              try {
+                const { notifyCustomerChargeFailed } = await import('@/lib/payments/notify-charge-failed');
+                await notifyCustomerChargeFailed(supabase, {
+                  subscriptionId: sub.id, businessId: sub.business_id,
+                  customerPhone: sub.customer_phone, amount: sub.amount || 0,
+                  currency: sub.currency || 'NGN', serviceId: sub.service_id,
+                  gateway: 'flutterwave',
+                });
+              } catch { /* non-fatal */ }
+            }
+            cron.itemFailed('Flutterwave renewal charge failed', { subscriptionId: sub.id, attempt: failResult.failure_count });
+          } else {
+            cron.itemFailed('Failure recording skipped', { subscriptionId: sub.id, reason: failResult?.reason });
           }
-
-          // Now safe to increment failure_count
-          const { error: subErr } = await supabase.from('customer_subscriptions').update({
-            failure_count: newFailureCount,
-            status: newFailureCount >= 3 ? 'past_due' : 'active',
-          }).eq('id', sub.id);
-
-          if (subErr) {
-            cron.itemFailed('Failed to update failure_count', { subscriptionId: sub.id });
-            continue;
-          }
-
-          // Only notify after failure is durably recorded
-          if (sub.customer_phone && sub.business_id) {
-            try {
-              const { notifyCustomerChargeFailed } = await import('@/lib/payments/notify-charge-failed');
-              await notifyCustomerChargeFailed(supabase, {
-                subscriptionId: sub.id, businessId: sub.business_id,
-                customerPhone: sub.customer_phone, amount: sub.amount || 0,
-                currency: sub.currency || 'NGN', serviceId: sub.service_id,
-                gateway: 'flutterwave',
-              });
-            } catch { /* non-fatal */ }
-          }
-          cron.itemFailed('Flutterwave renewal charge failed', { subscriptionId: sub.id, attempt: newFailureCount });
         }
       } catch (err) {
         // Internal/technical error — do NOT count as customer payment failure.
@@ -308,23 +293,21 @@ export async function GET(request: NextRequest) {
       .gte('failure_count', 3);
 
     for (const sub of toCancel || []) {
-      // For Flutterwave: check for unresolved billing cycles before cancelling
-      if (sub.gateway === 'flutterwave' && sub.id) {
-        const { data: unresolvedClaim } = await supabase
-          .from('processed_webhook_events')
-          .select('status')
-          .like('event_id', `flw-${sub.id}-%`)
-          .in('status', ['claimed', 'provider_success'])
-          .limit(1)
-          .maybeSingle();
-        if (unresolvedClaim) {
-          // Unresolved billing cycle exists — do NOT cancel yet
-          logger.warn(`[RETRY-CHARGES] Skipping cancel for ${sub.id}: unresolved claim status=${unresolvedClaim.status}`);
-          continue;
+      // For Flutterwave: use fail-closed atomic cancellation RPC
+      if (sub.gateway === 'flutterwave') {
+        const { data: cancelResult } = await supabase.rpc('cancel_flutterwave_after_failures', {
+          p_subscription_id: sub.id,
+        });
+        if (cancelResult?.cancelled) {
+          cancelled++;
+          logger.info(`[RETRY-CHARGES] Flutterwave subscription ${sub.id} cancelled atomically`);
+        } else {
+          logger.warn(`[RETRY-CHARGES] Flutterwave cancel blocked for ${sub.id}: ${cancelResult?.reason || 'rpc_error'}`);
         }
+        continue; // Skip provider-managed cancel logic below
       }
 
-      // Cancel on gateway
+      // Cancel on gateway (Stripe/Paystack — provider-first)
       let providerCancelled = true;
       try {
         if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
