@@ -253,14 +253,32 @@ export async function GET(request: NextRequest) {
             cron.itemFailed('Finalize RPC failed', { subscriptionId: sub.id, result: finResult });
           }
         } else {
-          // Charge failed — update failure state
+          // Definitive charge failure — record durably before notification
           const newFailureCount = (sub.failure_count || 0) + 1;
-          await supabase.from('customer_subscriptions').update({
+
+          // Mark billing event as provider_failed (must succeed before incrementing failure_count)
+          const { error: eventErr } = await supabase.from('processed_webhook_events')
+            .update({ status: 'provider_failed' })
+            .eq('event_id', stableRef);
+
+          if (eventErr) {
+            // Cannot durably record failure — leave recoverable, do NOT increment
+            cron.itemFailed('Failed to record provider_failed state', { subscriptionId: sub.id });
+            continue;
+          }
+
+          // Now safe to increment failure_count
+          const { error: subErr } = await supabase.from('customer_subscriptions').update({
             failure_count: newFailureCount,
             status: newFailureCount >= 3 ? 'past_due' : 'active',
           }).eq('id', sub.id);
 
-          // Notify customer
+          if (subErr) {
+            cron.itemFailed('Failed to update failure_count', { subscriptionId: sub.id });
+            continue;
+          }
+
+          // Only notify after failure is durably recorded
           if (sub.customer_phone && sub.business_id) {
             try {
               const { notifyCustomerChargeFailed } = await import('@/lib/payments/notify-charge-failed');
@@ -290,6 +308,22 @@ export async function GET(request: NextRequest) {
       .gte('failure_count', 3);
 
     for (const sub of toCancel || []) {
+      // For Flutterwave: check for unresolved billing cycles before cancelling
+      if (sub.gateway === 'flutterwave' && sub.id) {
+        const { data: unresolvedClaim } = await supabase
+          .from('processed_webhook_events')
+          .select('status')
+          .like('event_id', `flw-${sub.id}-%`)
+          .in('status', ['claimed', 'provider_success'])
+          .limit(1)
+          .maybeSingle();
+        if (unresolvedClaim) {
+          // Unresolved billing cycle exists — do NOT cancel yet
+          logger.warn(`[RETRY-CHARGES] Skipping cancel for ${sub.id}: unresolved claim status=${unresolvedClaim.status}`);
+          continue;
+        }
+      }
+
       // Cancel on gateway
       let providerCancelled = true;
       try {

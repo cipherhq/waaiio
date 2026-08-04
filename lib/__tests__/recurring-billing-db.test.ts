@@ -356,4 +356,17 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     expect(c2.claimed).toBe(true);
     expect(c2.stable_ref).not.toBe(c1.stable_ref);
   });
+
+  it('finalize with p_gateway != flutterwave → rejected', () => {
+    psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    const claimResult = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claimResult.claimed).toBe(true);
+
+    // Attempt finalize with wrong p_gateway
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claimResult.stable_ref}', '${SUB_ID}'::uuid, 50, 'NGN', 'paystack');`);
+    expect(r.success).toBe(false);
+    expect(r.reason).toBe('gateway_mismatch');
+  });
 });

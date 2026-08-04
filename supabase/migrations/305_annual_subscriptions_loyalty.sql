@@ -225,7 +225,7 @@ CREATE OR REPLACE FUNCTION finalize_token_recurring_charge(
   p_subscription_id  UUID,
   p_verified_amount  NUMERIC(12,2),  -- must match provider-verified amount
   p_verified_currency TEXT DEFAULT 'NGN',
-  p_gateway          TEXT DEFAULT 'flutterwave'
+  p_gateway          TEXT DEFAULT 'flutterwave'  -- must equal 'flutterwave'; validated below
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -284,6 +284,10 @@ BEGIN
   END IF;
   IF COALESCE(v_sub.gateway, '') != 'flutterwave' THEN
     RETURN jsonb_build_object('success', false, 'reason', 'wrong_gateway', 'gateway', v_sub.gateway);
+  END IF;
+  -- Reject if caller tries to record as a different gateway
+  IF p_gateway != 'flutterwave' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'gateway_mismatch', 'expected', 'flutterwave', 'received', p_gateway);
   END IF;
 
   -- Validate amount/currency against authoritative subscription

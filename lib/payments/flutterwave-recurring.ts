@@ -279,8 +279,12 @@ export async function verifyTransaction(txRef: string): Promise<{
     if (providerStatus === 'pending' || providerStatus === 'processing') {
       return { outcome: 'pending', providerStatus };
     }
-    // failed, error, etc.
-    return { outcome: 'failed', providerStatus };
+    const TERMINAL_FAILURES = ['failed', 'declined', 'cancelled', 'error'];
+    if (TERMINAL_FAILURES.includes(providerStatus)) {
+      return { outcome: 'failed', providerStatus };
+    }
+    // Unrecognized status — unknown, not failed
+    return { outcome: 'unknown', providerStatus: providerStatus || 'missing_status' };
   } catch {
     return null; // network/timeout — truly unknown
   }

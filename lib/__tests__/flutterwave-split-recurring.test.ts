@@ -239,7 +239,7 @@ describe('provider separation — no cross-contamination', () => {
   it('Paystack cron cannot accidentally use Flutterwave subaccounts array', () => {
     const psSection = cronCode.substring(
       cronCode.indexOf("sub.gateway === 'paystack'"),
-      cronCode.indexOf("sub.gateway === 'flutterwave'"),
+      cronCode.indexOf('Flutterwave past_due'),
     );
     expect(psSection).not.toContain('subaccounts:');
   });
