@@ -143,8 +143,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
   it('1. concurrent claim → exactly one wins', async () => {
     psql(`DELETE FROM processed_webhook_events; DELETE FROM customer_subscriptions;`);
-    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, frequency, status, next_charge_at)
-          VALUES ('${SUB_ID}', '${BIZ_ID}', '${USER_ID}', 50, 'monthly', 'active', NOW() - INTERVAL '1 hour');`);
+    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, frequency, status, gateway, next_charge_at)
+          VALUES ('${SUB_ID}', '${BIZ_ID}', '${USER_ID}', 50, 'monthly', 'active', 'flutterwave', NOW() - INTERVAL '1 hour');`);
 
     const sqlA = `
       BEGIN;
@@ -175,8 +175,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
   it('3. finalize is idempotent — duplicate produces same result', () => {
     psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM subscription_charges; DELETE FROM bookings; DELETE FROM platform_fees;`);
     psql(`DELETE FROM customer_subscriptions;`);
-    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, frequency, status, charge_count, total_charged, next_charge_at)
-          VALUES ('${SUB_ID}', '${BIZ_ID}', '${USER_ID}', 50, 'monthly', 'active', 0, 0, NOW() - INTERVAL '1 hour');`);
+    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, frequency, status, gateway, charge_count, total_charged, next_charge_at)
+          VALUES ('${SUB_ID}', '${BIZ_ID}', '${USER_ID}', 50, 'monthly', 'active', 'flutterwave', 0, 0, NOW() - INTERVAL '1 hour');`);
 
     // Claim returns the database-derived stable_ref
     const claimResult = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
@@ -206,7 +206,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
   it('4. yearly advance is correct', () => {
     psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM subscription_charges; DELETE FROM bookings; DELETE FROM platform_fees;`);
-    psql(`UPDATE customer_subscriptions SET frequency = 'yearly', amount = 500, charge_count = 0, total_charged = 0, status = 'active', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+    psql(`UPDATE customer_subscriptions SET frequency = 'yearly', gateway = 'flutterwave', amount = 500, charge_count = 0, total_charged = 0, status = 'active', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
     // Claim returns database-derived ref, then finalize
     const claimResult = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
@@ -241,7 +241,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
   it('7. finalize without claim is rejected', () => {
     psql(`DELETE FROM processed_webhook_events;`);
-    psql(`UPDATE customer_subscriptions SET status = 'active', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
     const r = psqlJson(`SELECT finalize_token_recurring_charge('${STABLE_REF_SEP}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
     expect(r.success).toBe(false);
@@ -261,7 +261,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
   it('claim derives stableRef from authoritative next_charge_at', () => {
     psql(`DELETE FROM processed_webhook_events;`);
-    psql(`UPDATE customer_subscriptions SET status = 'active', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
     const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
     expect(r.claimed).toBe(true);
@@ -273,7 +273,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
   it('valid claim A + finalize B → rejected', () => {
     psql(`DELETE FROM processed_webhook_events;`);
-    psql(`UPDATE customer_subscriptions SET status = 'active', amount = 50, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
     // Claim for SUB_ID
     const claimResult = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
@@ -288,7 +288,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
   it('wrong amount → finalization rejected', () => {
     psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings;`);
-    psql(`UPDATE customer_subscriptions SET status = 'active', amount = 50, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
     const claimResult = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
     const r = psqlJson(`SELECT finalize_token_recurring_charge('${claimResult.stable_ref}', '${SUB_ID}'::uuid, 999, 'NGN', 'flutterwave');`);
@@ -298,7 +298,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
   it('wrong currency → finalization rejected', () => {
     psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings;`);
-    psql(`UPDATE customer_subscriptions SET status = 'active', amount = 50, currency = 'NGN', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, currency = 'NGN', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
     const claimResult = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
     const r = psqlJson(`SELECT finalize_token_recurring_charge('${claimResult.stable_ref}', '${SUB_ID}'::uuid, 50, 'USD', 'flutterwave');`);
@@ -320,7 +320,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
   it('finalized cycle advances next_charge_at → next cycle derives different ref', () => {
     psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings; DELETE FROM platform_fees; DELETE FROM subscription_charges;`);
-    psql(`UPDATE customer_subscriptions SET status = 'active', amount = 50, frequency = 'monthly', charge_count = 0, total_charged = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, frequency = 'monthly', charge_count = 0, total_charged = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
     // First cycle
     const c1 = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
