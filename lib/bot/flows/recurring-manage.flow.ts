@@ -191,6 +191,9 @@ export const recurringManageFlow: FlowDefinition = {
             cancelled = await cancelPaystackSub(sub.gateway_subscription_code, emailToken);
           } else if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
             cancelled = await cancelStripeSub(sub.gateway_subscription_code);
+          } else if (sub.gateway === 'flutterwave' && sub.gateway_subscription_code) {
+            const { cancelSubscription: cancelFlwSub } = await import('@/lib/payments/flutterwave-recurring');
+            cancelled = await cancelFlwSub(sub.gateway_subscription_code);
           } else {
             cancelled = true; // No gateway subscription to cancel
           }
@@ -265,14 +268,17 @@ export const recurringManageFlow: FlowDefinition = {
           return [{ type: 'text', text: 'Subscription not found. Send *Hi* to start over.' }];
         }
 
-        // Pause on gateway
+        // Pause on gateway — provider-first, then DB
         let paused = false;
         try {
           if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
             paused = await pauseStripeSub(sub.gateway_subscription_code);
+          } else if (sub.gateway === 'flutterwave' && sub.gateway_subscription_code) {
+            // Flutterwave: cancel/deactivate the provider subscription to stop auto-charges
+            const { cancelSubscription: cancelFlwSub } = await import('@/lib/payments/flutterwave-recurring');
+            paused = await cancelFlwSub(sub.gateway_subscription_code);
           } else {
-            // Paystack doesn't have native pause — we just update DB status
-            // Webhook handler will skip charges for paused subscriptions
+            // Paystack doesn't have native pause — DB status guard prevents charges
             paused = true;
           }
         } catch (err) {
@@ -338,6 +344,10 @@ export const recurringManageFlow: FlowDefinition = {
             const metadata = (sub.metadata as Record<string, string>) || {};
             const emailToken = (ctx.session.session_data._recurring_email_token as string) || metadata.email_token || '';
             resumed = await enablePaystackSub(sub.gateway_subscription_code, emailToken);
+          } else if (sub.gateway === 'flutterwave' && sub.gateway_subscription_code) {
+            // Reactivate the Flutterwave subscription
+            const { activateSubscription: activateFlwSub } = await import('@/lib/payments/flutterwave-recurring');
+            resumed = await activateFlwSub(sub.gateway_subscription_code);
           } else {
             // No gateway subscription — just update status
             resumed = true;

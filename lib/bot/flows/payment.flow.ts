@@ -963,7 +963,7 @@ export const paymentFlow: FlowDefinition = {
           text === 'no thanks' || text === 'no thank you' ||
           text === 'nah' || text === 'nope'
         ) return { valid: true, data: { recurring_frequency: 'none' } };
-        return { valid: false, errorMessage: 'Please choose *Monthly*, *Yearly*, or *No thanks*.' };
+        return { valid: false, errorMessage: 'Please choose *Weekly*, *Monthly*, *Yearly*, or *No thanks*.' };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data.recurring_frequency === 'none') return 'payment_thank_you';

@@ -25,7 +25,7 @@ interface Service {
   sort_order: number;
   status: 'active' | 'inactive' | 'archived';
   billing_type: 'one_time' | 'recurring';
-  recurring_interval: 'weekly' | 'monthly' | null;
+  recurring_interval: 'weekly' | 'monthly' | 'yearly' | null;
   is_featured: boolean;
   image_url: string | null;
   cancellation_policy: string | null;
@@ -522,11 +522,12 @@ export default function ServicesPage() {
                     <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">How often?</label>
                     <select
                       value={form.recurring_interval || 'monthly'}
-                      onChange={(e) => setForm({ ...form, recurring_interval: e.target.value as 'weekly' | 'monthly' })}
+                      onChange={(e) => setForm({ ...form, recurring_interval: e.target.value as 'weekly' | 'monthly' | 'yearly' })}
                       className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
                     >
                       <option value="weekly">Weekly</option>
                       <option value="monthly">Monthly</option>
+                      <option value="yearly">Yearly</option>
                     </select>
                   </div>
                 )}
@@ -593,11 +594,12 @@ export default function ServicesPage() {
                     <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Recurring Interval</label>
                     <select
                       value={form.recurring_interval || 'monthly'}
-                      onChange={(e) => setForm({ ...form, recurring_interval: e.target.value as 'weekly' | 'monthly' })}
+                      onChange={(e) => setForm({ ...form, recurring_interval: e.target.value as 'weekly' | 'monthly' | 'yearly' })}
                       className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
                     >
                       <option value="weekly">Weekly</option>
                       <option value="monthly">Monthly</option>
+                      <option value="yearly">Yearly</option>
                     </select>
                   </div>
                 )}

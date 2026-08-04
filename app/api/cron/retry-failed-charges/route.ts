@@ -168,6 +168,22 @@ export async function GET(request: NextRequest) {
               .update({ failure_count: newFailureCount })
               .eq('id', sub.id);
 
+            // Notify customer of failed Flutterwave recurring charge
+            if (sub.customer_phone && sub.business_id) {
+              try {
+                const { notifyCustomerChargeFailed } = await import('@/lib/payments/notify-charge-failed');
+                await notifyCustomerChargeFailed(supabase, {
+                  subscriptionId: sub.id,
+                  businessId: sub.business_id,
+                  customerPhone: sub.customer_phone,
+                  amount: sub.amount || 0,
+                  currency: sub.currency || 'NGN',
+                  serviceId: sub.service_id,
+                  gateway: 'flutterwave',
+                });
+              } catch (notifyErr) { /* non-fatal */ }
+            }
+
             cron.itemFailed('Charge returned unsuccessful', { gateway: 'flutterwave', subscriptionId: sub.id, attempt: newFailureCount });
           }
         } catch (err) {

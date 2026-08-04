@@ -129,9 +129,26 @@ export async function createSubscription(
     }
 
     const chargeResult = chargeData.data as Record<string, unknown>;
-    // The subscription ID is created by Flutterwave when the charge is linked to a plan.
-    // We use the tx_ref as our subscription identifier; Flutterwave will auto-charge on schedule.
-    return { subscriptionId: (chargeResult.id ? String(chargeResult.id) : txRef) };
+
+    // Resolve the REAL Flutterwave subscription ID created when the charge is linked to a plan.
+    // Flutterwave creates a subscription automatically; we need its ID for pause/resume/cancel.
+    let realSubId = chargeResult.id ? String(chargeResult.id) : txRef;
+    try {
+      // Flutterwave lists subscriptions, filter by email + plan to find the one just created
+      const subsRes = await flutterwaveRequest('/v3/subscriptions', 'GET');
+      if (subsRes.status === 'success' && Array.isArray(subsRes.data)) {
+        const matching = (subsRes.data as Array<Record<string, unknown>>).find(
+          (s) => String((s.plan as Record<string, unknown>)?.id) === planId
+            && (s.customer as Record<string, unknown>)?.email === customerEmail
+            && s.status === 'active',
+        );
+        if (matching) {
+          realSubId = String(matching.id);
+        }
+      }
+    } catch { /* non-fatal — fall back to charge ID */ }
+
+    return { subscriptionId: realSubId };
   } catch (error) {
     logger.withContext({ op: 'flutterwave.create-subscription', ...safeLogErrorContext(error) }).error('Flutterwave create subscription error');
     return null;
@@ -159,6 +176,30 @@ export async function cancelSubscription(subscriptionId: string): Promise<boolea
     return data.status === 'success';
   } catch (error) {
     logger.withContext({ op: 'flutterwave.cancel-subscription', ...safeLogErrorContext(error) }).error('Flutterwave cancel subscription error');
+    return false;
+  }
+}
+
+/**
+ * Activate (resume) a Flutterwave subscription.
+ * PUT /v3/subscriptions/{id}/activate
+ */
+export async function activateSubscription(subscriptionId: string): Promise<boolean> {
+  if (!flutterwaveSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Flutterwave secret key');
+    }
+    return true;
+  }
+
+  try {
+    const data = await flutterwaveRequest(
+      `/v3/subscriptions/${encodeURIComponent(subscriptionId)}/activate`,
+      'PUT',
+    );
+    return data.status === 'success';
+  } catch (error) {
+    logger.withContext({ op: 'flutterwave.activate-subscription', ...safeLogErrorContext(error) }).error('Flutterwave activate subscription error');
     return false;
   }
 }
