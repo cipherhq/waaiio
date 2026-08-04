@@ -376,19 +376,32 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     expect(count).toBe('1');
   });
 
-  it('duplicate failure recording → already_recorded, no double increment', () => {
-    // From previous test state: event is provider_failed, failure_count = 1
-    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
-    // Claim returns recovered=true for provider_failed events
-    if (claim.claimed) {
-      // Re-record same failure
-      const r = psqlJson(`SELECT record_flutterwave_definitive_failure('${SUB_ID}'::uuid, '${claim.stable_ref}');`);
-      // Should be wrong_event_state (it was re-claimed, not still provider_failed)
-      // This proves a re-claimed cycle can fail again
-    }
+  it('CASE A: same-attempt duplicate → already_recorded, failure_count EXACTLY 1', () => {
+    // Previous test left event as provider_failed, failure_count = 1
+    // Try to record AGAIN without reclaiming
+    const derivedRef = psql(`SELECT 'flw-' || '${SUB_ID}' || '-' || TO_CHAR(next_charge_at, 'YYYY-MM-DD') FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
+    const r = psqlJson(`SELECT record_flutterwave_definitive_failure('${SUB_ID}'::uuid, '${derivedRef}');`);
+    expect(r.recorded).toBe(false);
+    expect(r.reason).toBe('already_recorded');
+
     const count = psql(`SELECT failure_count FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
-    // Should still be 1 from the first recording (not 2)
-    expect(parseInt(count)).toBeLessThanOrEqual(2);
+    expect(count).toBe('1'); // EXACTLY 1, not 2
+  });
+
+  it('CASE B: legitimate reclaimed next attempt → failure_count EXACTLY 2', () => {
+    // From CASE A: event is provider_failed, failure_count = 1
+    // Reclaim the cycle (simulates next cron retry)
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+    expect(claim.recovered).toBe(true);
+
+    // Second real provider failure
+    const r = psqlJson(`SELECT record_flutterwave_definitive_failure('${SUB_ID}'::uuid, '${claim.stable_ref}');`);
+    expect(r.recorded).toBe(true);
+    expect(r.failure_count).toBe(2);
+
+    const count = psql(`SELECT failure_count FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
+    expect(count).toBe('2'); // EXACTLY 2
   });
 
   it('wrong ref → failure recording rejected', () => {
@@ -403,47 +416,63 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
   // ── FAIL-CLOSED CANCELLATION ──
 
-  it('cancel blocked when unresolved claim exists (provider_success)', () => {
+  it('cancel blocked: provider_success unresolved', () => {
     psql(`DELETE FROM processed_webhook_events;`);
     psql(`UPDATE customer_subscriptions SET status = 'past_due', gateway = 'flutterwave', failure_count = 3, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
-
-    // Create a provider_success claim (charge succeeded but not finalized)
     const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
     psql(`UPDATE processed_webhook_events SET status = 'provider_success' WHERE event_id = '${claim.stable_ref}';`);
 
     const r = psqlJson(`SELECT cancel_flutterwave_after_failures('${SUB_ID}'::uuid);`);
     expect(r.cancelled).toBe(false);
-    expect(r.reason).toBe('unresolved_claim');
+    expect(r.reason).toBe('unresolved_event');
   });
 
-  it('cancel blocked when unresolved claim exists (claimed)', () => {
+  it('cancel blocked: claimed unresolved', () => {
     psql(`DELETE FROM processed_webhook_events;`);
     psql(`UPDATE customer_subscriptions SET status = 'past_due', gateway = 'flutterwave', failure_count = 3, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
     psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
 
     const r = psqlJson(`SELECT cancel_flutterwave_after_failures('${SUB_ID}'::uuid);`);
     expect(r.cancelled).toBe(false);
-    expect(r.reason).toBe('unresolved_claim');
+    expect(r.reason).toBe('unresolved_event');
   });
 
-  it('cancel succeeds when no unresolved claims', () => {
+  it('cancel blocked: completed event (money was received)', () => {
+    psql(`DELETE FROM processed_webhook_events;`);
+    psql(`UPDATE customer_subscriptions SET status = 'past_due', gateway = 'flutterwave', failure_count = 3, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    psql(`UPDATE processed_webhook_events SET status = 'completed' WHERE event_id = '${claim.stable_ref}';`);
+
+    const r = psqlJson(`SELECT cancel_flutterwave_after_failures('${SUB_ID}'::uuid);`);
+    expect(r.cancelled).toBe(false);
+    expect(r.reason).toBe('unresolved_event');
+  });
+
+  it('cancel blocked: missing billing event', () => {
     psql(`DELETE FROM processed_webhook_events;`);
     psql(`UPDATE customer_subscriptions SET status = 'past_due', gateway = 'flutterwave', failure_count = 3, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
-    // Create and resolve the claim (mark as provider_failed — no unresolved money)
+    const r = psqlJson(`SELECT cancel_flutterwave_after_failures('${SUB_ID}'::uuid);`);
+    expect(r.cancelled).toBe(false);
+    expect(r.reason).toBe('no_billing_event');
+  });
+
+  it('cancel succeeds: provider_failed + past_due + >=3 failures', () => {
+    psql(`DELETE FROM processed_webhook_events;`);
+    psql(`UPDATE customer_subscriptions SET status = 'past_due', gateway = 'flutterwave', failure_count = 3, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
     const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
-    psql(`UPDATE processed_webhook_events SET status = 'provider_failed' WHERE event_id = '${claim.stable_ref}';`);
+    // Record definitive failure (uses the RPC to set provider_failed atomically)
+    psqlJson(`SELECT record_flutterwave_definitive_failure('${SUB_ID}'::uuid, '${claim.stable_ref}');`);
 
     const r = psqlJson(`SELECT cancel_flutterwave_after_failures('${SUB_ID}'::uuid);`);
     expect(r.cancelled).toBe(true);
-
     const status = psql(`SELECT status FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
     expect(status).toBe('cancelled');
   });
 
-  it('cancel rejected for insufficient failures', () => {
+  it('cancel rejected: insufficient failures', () => {
     psql(`DELETE FROM processed_webhook_events;`);
-    psql(`UPDATE customer_subscriptions SET status = 'past_due', gateway = 'flutterwave', failure_count = 2 WHERE id = '${SUB_ID}';`);
+    psql(`UPDATE customer_subscriptions SET status = 'past_due', gateway = 'flutterwave', failure_count = 2, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
     const r = psqlJson(`SELECT cancel_flutterwave_after_failures('${SUB_ID}'::uuid);`);
     expect(r.cancelled).toBe(false);

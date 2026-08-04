@@ -454,10 +454,17 @@ BEGIN
   IF v_sub.failure_count < 3 THEN
     RETURN jsonb_build_object('cancelled', false, 'reason', 'insufficient_failures'); END IF;
 
+  -- Require POSITIVE evidence: current billing cycle must be a resolved provider_failed
   v_derived_ref := 'flw-' || p_subscription_id::text || '-' || TO_CHAR(v_sub.next_charge_at, 'YYYY-MM-DD');
   SELECT * INTO v_event FROM processed_webhook_events WHERE event_id = v_derived_ref;
-  IF FOUND AND v_event.status IN ('claimed', 'provider_success') THEN
-    RETURN jsonb_build_object('cancelled', false, 'reason', 'unresolved_claim', 'claim_status', v_event.status); END IF;
+
+  -- Missing event = unknown financial state → DO NOT cancel
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('cancelled', false, 'reason', 'no_billing_event'); END IF;
+
+  -- Only provider_failed is safe to cancel on
+  IF v_event.status != 'provider_failed' THEN
+    RETURN jsonb_build_object('cancelled', false, 'reason', 'unresolved_event', 'event_status', v_event.status); END IF;
 
   UPDATE customer_subscriptions SET status = 'cancelled', cancelled_at = NOW() WHERE id = p_subscription_id;
   RETURN jsonb_build_object('cancelled', true);

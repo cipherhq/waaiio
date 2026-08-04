@@ -209,16 +209,13 @@ export async function GET(request: NextRequest) {
               .eq('event_id', stableRef);
           } else if (result.outcome === 'pending' || result.outcome === 'unknown') {
             // Pending/unknown — do NOT count as failure, do NOT cancel
-            // Leave claim recoverable for next cron reconciliation
             cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, reason: `charge_${result.outcome}` });
             skipped++;
             continue;
-          } else {
-            // Definitive failure — mark for retry, increment failure count
-            await supabase.from('processed_webhook_events')
-              .update({ status: 'provider_failed' })
-              .eq('event_id', stableRef);
           }
+          // else: outcome === 'failed' — definitive failure
+          // Do NOT update processed_webhook_events directly.
+          // The atomic RPC below is the sole authority for claimed → provider_failed + failure_count.
         }
 
         if (providerSucceeded) {
