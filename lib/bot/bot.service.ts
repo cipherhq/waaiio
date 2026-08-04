@@ -624,30 +624,31 @@ export class BotService {
           if (!refreshCas?.success) return; // stale — another worker owns this session
           session.version = refreshCas.version;
         } else {
-          // CAS-007: Capability read failure — fail closed for CREATE_NEW.
-          // Cannot verify authorization → block CREATE_NEW routing with a temporary message.
-          const activeCap = session.session_data.active_capability as string | undefined;
+          // CAS-007: Capability read failure — fail closed for ALL non-MANAGE_EXISTING.
+          // Cannot verify authorization → block routing. This covers both:
+          // - sessions with active_capability (mid-flow CREATE_NEW)
+          // - sessions without active_capability (select_capability, greeting — where
+          //   a customer could START a capability using stale session caps)
           const MANAGE_EXISTING_STEPS = new Set([
             'my_bookings', 'modify_booking', 'my_orders', 'order_detail',
             'list_subscriptions', 'loyalty_menu', 'invoice_list', 'my_account_menu',
             'refund_select', 'refund_confirm', 'chat_handoff', 'post_completion',
           ]);
-          if (activeCap && !MANAGE_EXISTING_STEPS.has(session.current_step)) {
-            await this.sendText(from, "We're experiencing a temporary issue verifying your session. Please try again in a moment.");
+          if (!MANAGE_EXISTING_STEPS.has(session.current_step)) {
+            await this.sendText(from, "We're having trouble verifying what's available right now. Please try again in a moment.");
             return;
           }
         }
       } catch (err) {
         logger.warn('[BOT] Session resume revalidation error:', err);
-        // CAS-007: On exception, fail closed for CREATE_NEW sessions
-        const activeCap = session.session_data.active_capability as string | undefined;
+        // CAS-007: On exception, fail closed for ALL non-MANAGE_EXISTING
         const MANAGE_EXISTING_STEPS = new Set([
           'my_bookings', 'modify_booking', 'my_orders', 'order_detail',
           'list_subscriptions', 'loyalty_menu', 'invoice_list', 'my_account_menu',
           'refund_select', 'refund_confirm', 'chat_handoff', 'post_completion',
         ]);
-        if (activeCap && !MANAGE_EXISTING_STEPS.has(session.current_step)) {
-          await this.sendText(from, "We're experiencing a temporary issue verifying your session. Please try again in a moment.");
+        if (!MANAGE_EXISTING_STEPS.has(session.current_step)) {
+          await this.sendText(from, "We're having trouble verifying what's available right now. Please try again in a moment.");
           return;
         }
       }

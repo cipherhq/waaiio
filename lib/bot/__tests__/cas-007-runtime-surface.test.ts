@@ -179,11 +179,15 @@ describe('CAS-007 STRUCTURAL: runtime surface wiring', () => {
     expect(source).toContain("if (!refreshCas?.success) return");
   });
 
-  it('14. Point A fail-closed on policy read failure', () => {
+  it('14. Point A fail-closed on policy read failure (all non-MANAGE_EXISTING)', () => {
     const source = readFileSync(resolve(ROOT, 'lib/bot/bot.service.ts'), 'utf-8');
-    expect(source).toContain('temporary issue verifying your session');
-    // Must block CREATE_NEW routing
-    expect(source).toContain('Capability read failure');
+    expect(source).toContain('trouble verifying');
+    // Must block ALL non-MANAGE_EXISTING, not just sessions with active_capability
+    // The guard must NOT check activeCap — it must use only MANAGE_EXISTING_STEPS
+    const failBlock = source.substring(source.indexOf('Capability read failure'));
+    expect(failBlock).toContain('!MANAGE_EXISTING_STEPS.has(session.current_step)');
+    // Must NOT gate on activeCap
+    expect(failBlock).not.toContain('activeCap &&');
   });
 
   it('15. FlowExecutor denial uses CAS-005 recovery', () => {
