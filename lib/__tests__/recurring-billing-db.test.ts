@@ -125,7 +125,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
       CREATE TABLE IF NOT EXISTS processed_webhook_events (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), event_id TEXT UNIQUE,
         gateway TEXT, event_type TEXT, status TEXT, attempts INT DEFAULT 1,
-        first_received_at TIMESTAMPTZ, last_attempted_at TIMESTAMPTZ, completed_at TIMESTAMPTZ
+        first_received_at TIMESTAMPTZ, last_attempted_at TIMESTAMPTZ, completed_at TIMESTAMPTZ,
+        last_error TEXT
       );
       CREATE TABLE IF NOT EXISTS services (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
