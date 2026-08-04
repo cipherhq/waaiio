@@ -202,13 +202,19 @@ export async function GET(request: NextRequest) {
             sub.currency || 'NGN', flwSplitParams,
           );
 
-          if (result.success) {
+          if (result.outcome === 'successful') {
             providerSucceeded = true;
             await supabase.from('processed_webhook_events')
               .update({ status: 'provider_success' })
               .eq('event_id', stableRef);
+          } else if (result.outcome === 'pending' || result.outcome === 'unknown') {
+            // Pending/unknown — do NOT count as failure, do NOT cancel
+            // Leave claim recoverable for next cron reconciliation
+            cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, reason: `charge_${result.outcome}` });
+            skipped++;
+            continue;
           } else {
-            // Explicit failure — mark for future retry
+            // Definitive failure — mark for retry, increment failure count
             await supabase.from('processed_webhook_events')
               .update({ status: 'provider_failed' })
               .eq('event_id', stableRef);

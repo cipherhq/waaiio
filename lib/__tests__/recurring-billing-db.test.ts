@@ -306,6 +306,18 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     expect(r.reason).toBe('currency_mismatch');
   });
 
+  it('non-Flutterwave subscription → claim rejected', () => {
+    psql(`DELETE FROM processed_webhook_events;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'paystack', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(r.claimed).toBe(false);
+    expect(r.reason).toBe('wrong_gateway');
+
+    // Restore for subsequent tests
+    psql(`UPDATE customer_subscriptions SET gateway = 'flutterwave' WHERE id = '${SUB_ID}';`);
+  });
+
   it('finalized cycle advances next_charge_at → next cycle derives different ref', () => {
     psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings; DELETE FROM platform_fees; DELETE FROM subscription_charges;`);
     psql(`UPDATE customer_subscriptions SET status = 'active', amount = 50, frequency = 'monthly', charge_count = 0, total_charged = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);

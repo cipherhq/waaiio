@@ -153,6 +153,11 @@ BEGIN
     RETURN jsonb_build_object('claimed', false, 'reason', 'not_found');
   END IF;
 
+  -- Only Flutterwave subscriptions use token billing claims
+  IF COALESCE(v_sub.gateway, '') != 'flutterwave' THEN
+    RETURN jsonb_build_object('claimed', false, 'reason', 'wrong_gateway', 'gateway', v_sub.gateway);
+  END IF;
+
   IF v_sub.status NOT IN ('active', 'past_due') THEN
     RETURN jsonb_build_object('claimed', false, 'reason', 'not_active', 'status', v_sub.status);
   END IF;

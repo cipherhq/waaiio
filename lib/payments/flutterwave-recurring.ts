@@ -297,6 +297,8 @@ export async function verifyTransaction(txRef: string): Promise<{
  * Without verification, split params are silently omitted and the charge falls back
  * to platform collection (fail-open for unverified provider behavior).
  */
+export type ChargeOutcome = 'successful' | 'pending' | 'failed' | 'unknown';
+
 export async function chargeToken(
   token: string,
   amount: number,
@@ -304,18 +306,15 @@ export async function chargeToken(
   reference: string,
   currency?: string,
   splitParams?: { subaccounts: Array<{ id: string; transaction_charge_type: string; transaction_charge: number }> },
-): Promise<{ success: boolean; reference?: string }> {
+): Promise<{ outcome: ChargeOutcome; reference?: string }> {
   if (!flutterwaveSecretKey) {
     if (process.env.NODE_ENV === 'production') {
       throw new Error('Payment gateway not configured: missing Flutterwave secret key');
     }
-    return { success: true, reference: `mock_flw_charge_${Date.now()}` };
+    return { outcome: 'successful', reference: `mock_flw_charge_${Date.now()}` };
   }
 
   try {
-    // Only include split params if sandbox verification has been completed.
-    // Without this gate, an unverified provider assumption could silently
-    // route funds incorrectly — worse than not splitting at all.
     const verifiedSplit = process.env.FLUTTERWAVE_RECURRING_SPLIT_VERIFIED === 'true'
       ? splitParams
       : undefined;
@@ -330,13 +329,20 @@ export async function chargeToken(
     });
 
     const chargeData = data.data as Record<string, unknown> | undefined;
-    return {
-      success: data.status === 'success' && chargeData?.status === 'successful',
-      reference: (chargeData?.tx_ref as string) || reference,
-    };
+    const providerStatus = (chargeData?.status as string) || '';
+
+    if (data.status === 'success' && providerStatus === 'successful') {
+      return { outcome: 'successful', reference: (chargeData?.tx_ref as string) || reference };
+    }
+    if (providerStatus === 'pending' || providerStatus === 'processing') {
+      return { outcome: 'pending', reference: (chargeData?.tx_ref as string) || reference };
+    }
+    // Provider explicitly rejected/failed
+    return { outcome: 'failed', reference: (chargeData?.tx_ref as string) || reference };
   } catch (error) {
+    // Timeout, network error, malformed response — unknown whether charged
     logger.withContext({ op: 'flutterwave.charge-token', ...safeLogErrorContext(error) }).error('Flutterwave charge token error');
-    return { success: false };
+    return { outcome: 'unknown' };
   }
 }
 
