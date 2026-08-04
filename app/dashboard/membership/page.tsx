@@ -206,11 +206,11 @@ export default function MembershipPage() {
     <div>
       <PageHelp
         pageKey="membership"
-        title="How Membership Tiers Work"
+        title="How Loyalty Tiers Work"
         description="Tiers automatically upgrade customers based on their total spending. Each tier can offer discounts (e.g. 5% off) and a loyalty points multiplier (e.g. 2x points). Points are earned on every booking, order, or payment. Customers can redeem points for rewards via Loyalty. Start with the default tiers or create your own."
       />
 
-      <h1 className="text-2xl font-bold text-gray-900">Membership Tiers</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Loyalty Tiers</h1>
       <p className="mt-1 text-sm text-gray-500">
         Reward your best customers with automatic tier upgrades based on spending
       </p>

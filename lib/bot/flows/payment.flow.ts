@@ -944,8 +944,8 @@ export const paymentFlow: FlowDefinition = {
           type: 'buttons',
           body: `Would you like to set up automatic *${d.service_name as string}* payments of *${formatCurrency(d.amount as number, cc)}*?`,
           buttons: [
-            { id: 'monthly', title: 'Monthly ✓' },
-            { id: 'weekly', title: 'Weekly ✓' },
+            { id: 'monthly', title: 'Monthly' },
+            { id: 'yearly', title: 'Yearly' },
             { id: 'no_thanks', title: 'No thanks' },
           ],
         }];
@@ -954,12 +954,13 @@ export const paymentFlow: FlowDefinition = {
         const text = input.toLowerCase().trim();
         if (text === 'monthly') return { valid: true, data: { recurring_frequency: 'monthly' } };
         if (text === 'weekly') return { valid: true, data: { recurring_frequency: 'weekly' } };
+        if (text === 'yearly' || text === 'annual' || text === 'annually') return { valid: true, data: { recurring_frequency: 'yearly' } };
         if (
           text === 'no_thanks' || text === 'no' ||
           text === 'no thanks' || text === 'no thank you' ||
           text === 'nah' || text === 'nope'
         ) return { valid: true, data: { recurring_frequency: 'none' } };
-        return { valid: false, errorMessage: 'Please choose *Monthly*, *Weekly*, or *No thanks*.' };
+        return { valid: false, errorMessage: 'Please choose *Monthly*, *Yearly*, or *No thanks*.' };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data.recurring_frequency === 'none') return 'payment_thank_you';
@@ -974,7 +975,7 @@ export const paymentFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const frequency = d.recurring_frequency as string;
-        const label = frequency === 'weekly' ? 'every week' : 'every month';
+        const label = frequency === 'weekly' ? 'every week' : frequency === 'yearly' ? 'every year' : 'every month';
 
         return [{
           type: 'buttons',
@@ -1012,7 +1013,7 @@ export const paymentFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-        const frequency = d.recurring_frequency as 'weekly' | 'monthly';
+        const frequency = d.recurring_frequency as 'weekly' | 'monthly' | 'yearly';
         const amount = d.amount as number;
         const ref = d.payment_reference as string;
         const serviceName = d.service_name as string;
@@ -1137,7 +1138,7 @@ export const paymentFlow: FlowDefinition = {
             serviceName,
             amount,
             currency: getCurrencyCode(cc),
-            interval: frequency === 'weekly' ? 'week' : 'month',
+            interval: frequency === 'weekly' ? 'week' : frequency === 'yearly' ? 'year' : 'month',
             customerEmail: email,
             metadata: {
               business_id: ctx.business.id,
@@ -1180,6 +1181,8 @@ export const paymentFlow: FlowDefinition = {
         const nextCharge = new Date();
         if (frequency === 'weekly') {
           nextCharge.setDate(nextCharge.getDate() + 7);
+        } else if (frequency === 'yearly') {
+          nextCharge.setFullYear(nextCharge.getFullYear() + 1);
         } else {
           nextCharge.setMonth(nextCharge.getMonth() + 1);
         }
@@ -1213,7 +1216,7 @@ export const paymentFlow: FlowDefinition = {
           setup_channel: 'whatsapp',
         });
 
-        const label = frequency === 'weekly' ? 'weekly' : 'monthly';
+        const label = frequency === 'weekly' ? 'weekly' : frequency === 'yearly' ? 'yearly' : 'monthly';
         if (resolvedGateway === 'stripe') {
           // Stripe: subscription is pending until checkout is completed
           return [{

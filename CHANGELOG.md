@@ -7,6 +7,17 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-03
 
+### feat: Subscription & loyalty hardening
+
+- **Annual subscriptions** — Added `yearly` interval to `customer_subscriptions.frequency` and `services.recurring_interval`. Migration `305_annual_subscriptions_loyalty.sql`. Payment flow offers Monthly/Yearly options. Stripe uses `interval: 'year'`, Paystack/Flutterwave use yearly plan intervals. Correct `next_charge_at` calculation (1 year). Display labels updated throughout.
+- **Subscription payment history** — New `payment_history` step in `recurring-manage.flow.ts`. Customers can view recent successful renewal payments from the subscription details screen. Data from authoritative `subscription_charges` table, scoped by subscription ID.
+- **Automatic loyalty-tier assignment** — Wired `assignCustomerTier()` into `post-completion.ts`. Evaluates customer's `total_spent` against active `membership_tiers` after every completed transaction. Idempotent — safe on retry.
+- **Loyalty-tier points multiplier** — `points_multiplier` from the customer's active membership tier is now applied during loyalty point award. Default behavior (no tier): normal points. With tier: `base * multiplier`.
+- **Customer-facing "Membership" → "Loyalty Tiers"** — Sidebar label, dashboard page heading, capability label renamed. Internal `membership` ID preserved.
+- **Failed renewal notification verified** — Customer WhatsApp notification already exists via `notifyCustomerChargeFailed`. No fix needed.
+- **Flutterwave pause/resume verified** — DB-level `status='paused'` correctly prevents Flutterwave recurring charges (cron only processes `status='past_due'`). No fix needed.
+- Could break: businesses using the word "Membership" in their internal dashboard navigation will see "Loyalty Tiers" instead.
+
 ### fix(bot): CAS-007 — Runtime surface closure
 
 - **Revoked active_capability recovery** — Point A now checks if `active_capability` is still in the effective set. If revoked, clears transactional state via CAS-005 recovery and redirects to `select_capability`. MANAGE_EXISTING steps exempt.

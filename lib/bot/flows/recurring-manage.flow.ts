@@ -126,13 +126,15 @@ export const recurringManageFlow: FlowDefinition = {
         if (text === 'pause_sub') return { valid: true, data: { _sub_action: 'pause' } };
         if (text === 'resume_sub') return { valid: true, data: { _sub_action: 'resume' } };
         if (text === 'view_details') return { valid: true, data: { _sub_action: 'details' } };
+        if (text === 'payment_history') return { valid: true, data: { _sub_action: 'history' } };
         return { valid: false, errorMessage: 'Please choose an option from the buttons.' };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._sub_action === 'cancel') return 'confirm_cancel';
         if (ctx.session.session_data._sub_action === 'pause') return 'confirm_pause';
         if (ctx.session.session_data._sub_action === 'resume') return 'process_resume';
-        // View details: show info and end
+        if (ctx.session.session_data._sub_action === 'history') return 'payment_history';
+        // View details: show info then offer payment history
         const subId = ctx.session.session_data._selected_sub_id as string;
         const { data: sub } = await ctx.supabase
           .from('customer_subscriptions')
@@ -142,20 +144,24 @@ export const recurringManageFlow: FlowDefinition = {
 
         if (sub) {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-          await ctx.sender.sendText({
+          const freqLabel = sub.frequency === 'yearly' ? 'Yearly' : sub.frequency === 'monthly' ? 'Monthly' : 'Weekly';
+          await ctx.sender.sendButtons({
             to: ctx.from,
-            text: await ctx.t([
+            body: [
               `📋 *Subscription Details*`,
               '',
-              `Amount: ${formatCurrency(sub.amount, cc)}`,
-              `Frequency: ${sub.frequency}`,
+              `Amount: ${formatCurrency(sub.amount, cc)}/${freqLabel.toLowerCase()}`,
+              `Frequency: ${freqLabel}`,
               `Status: ${sub.status}`,
               `Total Charged: ${formatCurrency(sub.total_charged || 0, cc)}`,
               `Charges: ${sub.charge_count}`,
               sub.next_charge_at ? `Next Charge: ${new Date(sub.next_charge_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : '',
               sub.card_last_four ? `Card: *${sub.card_last_four} (${sub.card_brand || 'card'})` : '',
-            ].filter(Boolean).join('\n')
-            + `\n\n💡 *What you can do:*\n• Type *subscriptions* to manage payments\n• Type *Hi* to start a new conversation`),
+            ].filter(Boolean).join('\n'),
+            buttons: [
+              { id: 'payment_history', title: 'Payment History' },
+              { id: 'back_subs', title: 'Back' },
+            ],
           });
         }
         return null;
@@ -400,6 +406,48 @@ export const recurringManageFlow: FlowDefinition = {
           type: 'text',
           text: `✅ Your *${serviceName}* recurring payment has been resumed. Next charge: ${nextCharge}.`
             + `\n\n💡 *What you can do:*\n• Type *subscriptions* to manage payments\n• Type *Hi* to start a new conversation`,
+        }];
+      },
+      async validate(): Promise<ValidationResult> { return { valid: true }; },
+      async next() { return null; },
+    },
+
+    // ── Payment History ──
+    {
+      id: 'payment_history',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const subId = ctx.session.session_data._selected_sub_id as string;
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+
+        // Fetch recent successful charges for this subscription
+        // Security: filtered by subscription_id which is already scoped to the customer
+        const { data: charges } = await ctx.supabase
+          .from('subscription_charges')
+          .select('amount, currency, status, charged_at, gateway_reference')
+          .eq('subscription_id', subId)
+          .eq('status', 'success')
+          .order('charged_at', { ascending: false })
+          .limit(10);
+
+        if (!charges || charges.length === 0) {
+          return [{
+            type: 'text',
+            text: 'No payment history available yet.'
+              + '\n\n💡 Type *subscriptions* to go back.',
+          }];
+        }
+
+        const lines = charges.map(c => {
+          const date = c.charged_at
+            ? new Date(c.charged_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+            : 'Unknown';
+          return `${date} — ${formatCurrency(c.amount, cc)} — Paid`;
+        });
+
+        return [{
+          type: 'text',
+          text: `📜 *Payment History*\n\n${lines.join('\n')}`
+            + '\n\n💡 Type *subscriptions* to go back or *Hi* to start over.',
         }];
       },
       async validate(): Promise<ValidationResult> { return { valid: true }; },

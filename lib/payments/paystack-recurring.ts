@@ -30,7 +30,7 @@ async function paystackRequest(
  */
 export async function createPlan(opts: {
   name: string;
-  interval: 'weekly' | 'monthly';
+  interval: 'weekly' | 'monthly' | 'yearly';
   amount: number; // in base currency (naira) — will be converted to kobo
   currency?: string;
 }): Promise<{ planCode: string } | null> {

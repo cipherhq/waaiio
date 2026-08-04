@@ -33,7 +33,7 @@ export async function createRecurringCheckout(opts: {
   serviceName: string;
   amount: number; // in base currency (dollars) — will be converted to cents
   currency: string;
-  interval: 'week' | 'month';
+  interval: 'week' | 'month' | 'year';
   customerEmail?: string;
   successUrl?: string;
   cancelUrl?: string;

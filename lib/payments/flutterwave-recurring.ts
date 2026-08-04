@@ -51,7 +51,7 @@ async function flutterwaveRequest(
 export async function createPlan(
   name: string,
   amount: number,
-  interval: 'weekly' | 'monthly',
+  interval: 'weekly' | 'monthly' | 'yearly',
 ): Promise<{ planId: string } | null> {
   if (!flutterwaveSecretKey) {
     if (process.env.NODE_ENV === 'production') {
