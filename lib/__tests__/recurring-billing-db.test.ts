@@ -221,7 +221,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`DELETE FROM processed_webhook_events;`);
     psql(`UPDATE customer_subscriptions SET next_charge_at = NOW() + INTERVAL '30 days' WHERE id = '${SUB_ID}';`);
 
-    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() + INTERVAL '30 days', 'flw-future-test');`);
+    const futureRef = `flw-${SUB_ID}-2027-01-01`;
+    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() + INTERVAL '30 days', '${futureRef}');`);
     expect(r.claimed).toBe(false);
     expect(r.reason).toBe('not_due');
   });
@@ -229,7 +230,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
   it('6. paused subscription cannot be claimed', () => {
     psql(`UPDATE customer_subscriptions SET status = 'paused', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
-    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', 'flw-paused-test');`);
+    const pausedRef = `flw-${SUB_ID}-2026-07-01`;
+    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${pausedRef}');`);
     expect(r.claimed).toBe(false);
     expect(r.reason).toBe('not_active');
   });
@@ -246,7 +248,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
   it('cancelled subscription cannot be claimed', () => {
     psql(`UPDATE customer_subscriptions SET status = 'cancelled' WHERE id = '${SUB_ID}';`);
 
-    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', 'flw-cancelled-test');`);
+    const cancelledRef = `flw-${SUB_ID}-2026-06-01`;
+    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${cancelledRef}');`);
     expect(r.claimed).toBe(false);
     expect(r.reason).toBe('not_active');
   });
