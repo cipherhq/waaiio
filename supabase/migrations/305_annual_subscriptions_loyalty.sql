@@ -162,20 +162,14 @@ BEGIN
   END IF;
 
   -- Check if this billing cycle was already claimed/finalized
-  IF EXISTS (SELECT 1 FROM processed_webhook_events WHERE event_id = p_stable_ref AND status = 'completed') THEN
-    RETURN jsonb_build_object('claimed', false, 'reason', 'already_completed');
-  END IF;
-
-  -- Claim the billing cycle atomically
-  INSERT INTO processed_webhook_events (event_id, gateway, event_type, status, attempts, first_received_at, last_attempted_at)
-  VALUES (p_stable_ref, 'flutterwave', 'token_renewal', 'claimed', 1, NOW(), NOW())
-  ON CONFLICT (event_id) DO UPDATE SET attempts = processed_webhook_events.attempts + 1, last_attempted_at = NOW()
-  RETURNING status INTO v_sub; -- reuse variable
-
-  -- If already claimed by another worker, bail
-  IF v_sub.status != 'claimed' THEN
+  IF EXISTS (SELECT 1 FROM processed_webhook_events WHERE event_id = p_stable_ref) THEN
     RETURN jsonb_build_object('claimed', false, 'reason', 'already_claimed');
   END IF;
+
+  -- Claim the billing cycle atomically via INSERT (UNIQUE constraint prevents duplicates)
+  -- The FOR UPDATE lock on customer_subscriptions serializes, so only one worker reaches here.
+  INSERT INTO processed_webhook_events (event_id, gateway, event_type, status, attempts, first_received_at, last_attempted_at)
+  VALUES (p_stable_ref, 'flutterwave', 'token_renewal', 'claimed', 1, NOW(), NOW());
 
   RETURN jsonb_build_object(
     'claimed', true,
