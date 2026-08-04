@@ -154,7 +154,7 @@ BEGIN
     RETURN jsonb_build_object('claimed', false, 'reason', 'not_found');
   END IF;
 
-  IF v_sub.status != 'active' THEN
+  IF v_sub.status NOT IN ('active', 'past_due') THEN
     RETURN jsonb_build_object('claimed', false, 'reason', 'not_active', 'status', v_sub.status);
   END IF;
 
@@ -256,6 +256,11 @@ BEGIN
     UPDATE processed_webhook_events SET status = 'completed', completed_at = v_now WHERE event_id = p_stable_ref;
     SELECT id INTO v_payment_id FROM payments WHERE gateway_reference = p_stable_ref AND status = 'success' LIMIT 1;
     RETURN jsonb_build_object('success', true, 'already_finalized', true, 'payment_id', v_payment_id);
+  END IF;
+
+  -- Validate claim belongs to this subscription (stable_ref embeds subscription ID)
+  IF p_stable_ref NOT LIKE 'flw-' || p_subscription_id::text || '-%' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'claim_subscription_mismatch');
   END IF;
 
   -- Load subscription and validate ownership

@@ -107,108 +107,24 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // ── Flutterwave recurring retry ──
-      if (sub.gateway === 'flutterwave' && sub.authorization_code) {
-        const reference = `retry-flw-${sub.id}-${Date.now().toString(36)}`;
-
-        // Resolve split configuration (fail-closed for direct_split)
-        const flwSplitResult = await resolveGatewaySplit(supabase, sub.business_id, sub.amount || 0, 'flutterwave');
-        let flwSplitParams: { subaccounts: Array<{ id: string; transaction_charge_type: string; transaction_charge: number }> } | undefined;
-
-        if (flwSplitResult.mode === 'split') {
-          // Gate: only send split params after sandbox verification.
-          // Direct-split charges are skipped (not charged unsplit) to prevent
-          // funds from routing to the platform when the business expects splitting.
-          // Enable by setting FLUTTERWAVE_RECURRING_SPLIT_VERIFIED=true.
-          if (process.env.FLUTTERWAVE_RECURRING_SPLIT_VERIFIED !== 'true') {
-            cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, reason: 'Flutterwave recurring split not yet verified' });
-            skipped++;
-            continue;
-          }
-          // Flutterwave uses the subaccounts array format with flat charge = platform fee in main currency
-          flwSplitParams = {
-            subaccounts: [{
-              id: flwSplitResult.subaccount,
-              transaction_charge_type: 'flat',
-              transaction_charge: flwSplitResult.transactionChargeKobo / 100, // Flutterwave uses main currency units, not kobo
-            }],
-          };
-        } else if (flwSplitResult.mode === 'split_required_but_missing') {
-          cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, businessId: sub.business_id, reason: flwSplitResult.reason, splitRequired: true, splitResolved: false });
-          skipped++;
-          continue;
-        }
-
-        try {
-          const result = await chargeFlutterwaveToken(
-            sub.authorization_code,
-            sub.amount || 0,
-            sub.customer_email || '',
-            reference,
-            sub.currency || 'NGN',
-            flwSplitParams,
-          );
-
-          if (result.success) {
-            await supabase
-              .from('customer_subscriptions')
-              .update({
-                status: 'active',
-                failure_count: 0,
-                last_charged_at: new Date().toISOString(),
-              })
-              .eq('id', sub.id);
-
-            cron.itemCompleted({ gateway: 'flutterwave', subscriptionId: sub.id, providerReference: result.reference });
-            retried++;
-          } else {
-            const newFailureCount = (sub.failure_count || 0) + 1;
-            await supabase
-              .from('customer_subscriptions')
-              .update({ failure_count: newFailureCount })
-              .eq('id', sub.id);
-
-            // Notify customer of failed Flutterwave recurring charge
-            if (sub.customer_phone && sub.business_id) {
-              try {
-                const { notifyCustomerChargeFailed } = await import('@/lib/payments/notify-charge-failed');
-                await notifyCustomerChargeFailed(supabase, {
-                  subscriptionId: sub.id,
-                  businessId: sub.business_id,
-                  customerPhone: sub.customer_phone,
-                  amount: sub.amount || 0,
-                  currency: sub.currency || 'NGN',
-                  serviceId: sub.service_id,
-                  gateway: 'flutterwave',
-                });
-              } catch (notifyErr) { /* non-fatal */ }
-            }
-
-            cron.itemFailed('Charge returned unsuccessful', { gateway: 'flutterwave', subscriptionId: sub.id, attempt: newFailureCount });
-          }
-        } catch (err) {
-          const newFailureCount = (sub.failure_count || 0) + 1;
-          await supabase
-            .from('customer_subscriptions')
-            .update({ failure_count: newFailureCount })
-            .eq('id', sub.id);
-
-          cron.itemFailed(err, { gateway: 'flutterwave', subscriptionId: sub.id });
-        }
-      }
+      // Flutterwave past_due retries use the same claim/reconcile/finalize path below.
+      // No separate unsafe retry block needed — all Flutterwave charging goes through
+      // stableRef → claim → reconcile → charge → verify → finalize.
 
       // Stripe auto-retries — we don't need to charge manually
       // But if failure_count >= 3, cancel the subscription
     }
 
-    // ── Flutterwave normal renewal scheduler ──
+    // ── Flutterwave unified renewal + retry scheduler ──
     // Waaiio manages Flutterwave recurrence via token billing.
-    // Uses claim_recurring_billing_cycle → chargeToken → finalize_token_recurring_charge.
+    // Both active (normal renewal) and past_due (retry) use the same safe path:
+    // stableRef → claim → reconcile → charge → verify → finalize
     const { data: flwDue } = await supabase
       .from('customer_subscriptions')
       .select('id, business_id, user_id, service_id, amount, currency, authorization_code, customer_email, customer_name, customer_phone, frequency, failure_count, next_charge_at')
       .eq('gateway', 'flutterwave')
-      .eq('status', 'active')
+      .in('status', ['active', 'past_due'])
+      .lt('failure_count', 3)
       .not('authorization_code', 'is', null)
       .lte('next_charge_at', new Date().toISOString());
 
@@ -261,23 +177,25 @@ export async function GET(request: NextRequest) {
         const { verifyTransaction } = await import('@/lib/payments/flutterwave-recurring');
         let providerSucceeded = false;
 
-        if (claim.recovered) {
+        if (claim.recovered && !claim.provider_verified) {
           // Recovered/stale claim — reconcile with provider BEFORE any charge
           const reconciliation = await verifyTransaction(stableRef);
-          if (reconciliation?.success) {
+          if (reconciliation?.outcome === 'successful') {
             // Provider already charged — DO NOT charge again
             providerSucceeded = true;
-            // Mark claim as provider_success for future recovery
             await supabase.from('processed_webhook_events')
               .update({ status: 'provider_success' })
               .eq('event_id', stableRef);
-          } else if (reconciliation === null) {
-            // Ambiguous/timeout — do NOT charge, leave for next cron
-            cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, reason: 'ambiguous_reconciliation' });
+          } else if (reconciliation === null || reconciliation.outcome === 'pending' || reconciliation.outcome === 'unknown') {
+            // Ambiguous/pending/timeout — do NOT charge, leave for next cron
+            cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, reason: `reconciliation_${reconciliation?.outcome || 'timeout'}` });
             skipped++;
             continue;
           }
-          // else: reconciliation.success === false → provider definitively failed, retry below
+          // else: outcome === 'failed' → provider definitively failed, retry below
+        } else if (claim.recovered && claim.provider_verified) {
+          // Provider already confirmed successful — just need to finalize
+          providerSucceeded = true;
         }
 
         if (!providerSucceeded) {
@@ -304,10 +222,10 @@ export async function GET(request: NextRequest) {
         if (providerSucceeded) {
           // Step 4: Verify provider transaction before finalization
           const verification = await verifyTransaction(stableRef);
-          if (!verification?.success
+          if (!verification || verification.outcome !== 'successful'
             || Math.abs((verification.amount || 0) - amountInCurrency) > 0.01
             || (verification.currency || '').toUpperCase() !== (sub.currency || 'NGN').toUpperCase()) {
-            cron.itemFailed('Provider verification failed', { subscriptionId: sub.id, stableRef, verificationStatus: verification?.status || 'null' });
+            cron.itemFailed('Provider verification failed', { subscriptionId: sub.id, stableRef, verificationStatus: verification?.providerStatus || 'null' });
             continue;
           }
 
