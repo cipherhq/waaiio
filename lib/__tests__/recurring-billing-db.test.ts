@@ -318,6 +318,26 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`UPDATE customer_subscriptions SET gateway = 'flutterwave' WHERE id = '${SUB_ID}';`);
   });
 
+  it('non-Flutterwave subscription → finalize rejected', () => {
+    psql(`DELETE FROM processed_webhook_events;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    // Create a valid claim first
+    const claimResult = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claimResult.claimed).toBe(true);
+
+    // Change gateway to paystack AFTER claim (simulates misuse)
+    psql(`UPDATE customer_subscriptions SET gateway = 'paystack' WHERE id = '${SUB_ID}';`);
+
+    // Attempt finalize — should be rejected
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claimResult.stable_ref}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
+    expect(r.success).toBe(false);
+    expect(r.reason).toBe('wrong_gateway');
+
+    // Restore
+    psql(`UPDATE customer_subscriptions SET gateway = 'flutterwave' WHERE id = '${SUB_ID}';`);
+  });
+
   it('finalized cycle advances next_charge_at → next cycle derives different ref', () => {
     psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings; DELETE FROM platform_fees; DELETE FROM subscription_charges;`);
     psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, frequency = 'monthly', charge_count = 0, total_charged = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);

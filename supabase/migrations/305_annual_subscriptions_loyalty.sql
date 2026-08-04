@@ -277,10 +277,13 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'reason', 'claim_subscription_mismatch');
   END IF;
 
-  -- Load subscription and validate ownership
+  -- Load subscription and validate ownership + gateway
   SELECT * INTO v_sub FROM customer_subscriptions WHERE id = p_subscription_id;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('success', false, 'reason', 'subscription_not_found');
+  END IF;
+  IF COALESCE(v_sub.gateway, '') != 'flutterwave' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'wrong_gateway', 'gateway', v_sub.gateway);
   END IF;
 
   -- Validate amount/currency against authoritative subscription

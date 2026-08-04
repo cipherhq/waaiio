@@ -275,15 +275,10 @@ export async function GET(request: NextRequest) {
           cron.itemFailed('Flutterwave renewal charge failed', { subscriptionId: sub.id, attempt: newFailureCount });
         }
       } catch (err) {
-        // Provider call failed — but billing cycle was claimed. Next retry will see
-        // the claimed event and the still-due next_charge_at, so it can retry finalization
-        // without re-charging (claim will skip, but finalize is idempotent).
-        const newFailureCount = (sub.failure_count || 0) + 1;
-        await supabase.from('customer_subscriptions').update({
-          failure_count: newFailureCount,
-          status: newFailureCount >= 3 ? 'past_due' : 'active',
-        }).eq('id', sub.id);
-        cron.itemFailed(err, { gateway: 'flutterwave', subscriptionId: sub.id, type: 'normal_renewal' });
+        // Internal/technical error — do NOT count as customer payment failure.
+        // Do NOT increment failure_count, do NOT move to past_due, do NOT cancel.
+        // Billing claim remains recoverable for next cron run.
+        cron.itemFailed(err, { gateway: 'flutterwave', subscriptionId: sub.id, type: 'internal_error' });
       }
     }
 

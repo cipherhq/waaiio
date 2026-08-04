@@ -330,15 +330,23 @@ export async function chargeToken(
 
     const chargeData = data.data as Record<string, unknown> | undefined;
     const providerStatus = (chargeData?.status as string) || '';
+    const ref = (chargeData?.tx_ref as string) || reference;
 
+    // Only classify as successful/failed when the provider gives a definitive transaction status
     if (data.status === 'success' && providerStatus === 'successful') {
-      return { outcome: 'successful', reference: (chargeData?.tx_ref as string) || reference };
+      return { outcome: 'successful', reference: ref };
     }
     if (providerStatus === 'pending' || providerStatus === 'processing') {
-      return { outcome: 'pending', reference: (chargeData?.tx_ref as string) || reference };
+      return { outcome: 'pending', reference: ref };
     }
-    // Provider explicitly rejected/failed
-    return { outcome: 'failed', reference: (chargeData?.tx_ref as string) || reference };
+    // Definitive terminal failures only
+    const TERMINAL_FAILURES = ['failed', 'declined', 'cancelled', 'error'];
+    if (TERMINAL_FAILURES.includes(providerStatus)) {
+      return { outcome: 'failed', reference: ref };
+    }
+    // Any other response (API error without transaction status, unrecognized status, missing data)
+    // → unknown. Do NOT treat as definitive failure.
+    return { outcome: 'unknown', reference: ref };
   } catch (error) {
     // Timeout, network error, malformed response — unknown whether charged
     logger.withContext({ op: 'flutterwave.charge-token', ...safeLogErrorContext(error) }).error('Flutterwave charge token error');
