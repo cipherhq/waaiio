@@ -72,7 +72,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
       DO $$ BEGIN CREATE TYPE deposit_status AS ENUM ('none','pending','paid','refunded'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE TYPE payment_source AS ENUM ('whatsapp','web','api','subscription','invoice','manual'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-      CREATE TABLE IF NOT EXISTS businesses (id UUID PK DEFAULT gen_random_uuid(), subscription_tier TEXT DEFAULT 'free', trial_ends_at TIMESTAMPTZ, payout_mode TEXT DEFAULT 'platform');
+      CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), subscription_tier TEXT DEFAULT 'free', trial_ends_at TIMESTAMPTZ, payout_mode TEXT DEFAULT 'platform');
       CREATE TABLE IF NOT EXISTS customer_subscriptions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID, user_id UUID,
         service_id UUID, amount NUMERIC(12,2), currency TEXT DEFAULT 'NGN',
@@ -124,6 +124,10 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
         gateway TEXT, event_type TEXT, status TEXT, attempts INT DEFAULT 1,
         first_received_at TIMESTAMPTZ, last_attempted_at TIMESTAMPTZ, completed_at TIMESTAMPTZ
       );
+      CREATE TABLE IF NOT EXISTS services (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        recurring_interval TEXT
+      );
       INSERT INTO businesses (id) VALUES ('${BIZ_ID}') ON CONFLICT DO NOTHING;
     `);
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
@@ -131,7 +135,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
   afterAll(() => {
     if (!dbUrl) return;
-    psql(`DROP TABLE IF EXISTS platform_fees, subscription_charges, payments, bookings, customer_subscriptions, processed_webhook_events, platform_settings, businesses CASCADE;`);
+    psql(`DROP TABLE IF EXISTS platform_fees, subscription_charges, payments, bookings, customer_subscriptions, processed_webhook_events, platform_settings, services, businesses CASCADE;`);
   });
 
   it('1. concurrent claim → exactly one wins', async () => {
