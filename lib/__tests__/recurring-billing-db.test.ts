@@ -175,6 +175,9 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, frequency, status, charge_count, total_charged, next_charge_at)
           VALUES ('${SUB_ID}', '${BIZ_ID}', '${USER_ID}', 50, 'monthly', 'active', 0, 0, NOW() - INTERVAL '1 hour');`);
 
+    // First: claim the billing cycle (required by finalizer)
+    psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', 'flw-test-idem');`);
+
     const r1 = psqlJson(`SELECT finalize_token_recurring_charge('flw-test-idem', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
     expect(r1.success).toBe(true);
     expect(r1.already_finalized).toBe(false);
@@ -198,8 +201,10 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
   it('4. yearly advance is correct', () => {
     psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM subscription_charges; DELETE FROM bookings;`);
-    psql(`UPDATE customer_subscriptions SET frequency = 'yearly', charge_count = 0, total_charged = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+    psql(`UPDATE customer_subscriptions SET frequency = 'yearly', charge_count = 0, total_charged = 0, status = 'active', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
+    // Claim first, then finalize
+    psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', 'flw-yearly-test');`);
     psqlJson(`SELECT finalize_token_recurring_charge('flw-yearly-test', '${SUB_ID}'::uuid, 500, 'NGN', 'flutterwave');`);
 
     const nextCharge = psql(`SELECT next_charge_at FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
@@ -226,7 +231,16 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     expect(r.reason).toBe('not_active');
   });
 
-  it('7. cancelled subscription cannot be claimed', () => {
+  it('7. finalize without claim is rejected', () => {
+    psql(`DELETE FROM processed_webhook_events;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('flw-no-claim-test', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
+    expect(r.success).toBe(false);
+    expect(r.reason).toBe('no_valid_claim');
+  });
+
+  it('cancelled subscription cannot be claimed', () => {
     psql(`UPDATE customer_subscriptions SET status = 'cancelled' WHERE id = '${SUB_ID}';`);
 
     const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', 'flw-cancelled-test');`);
