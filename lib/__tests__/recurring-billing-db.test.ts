@@ -315,9 +315,9 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     expect(c1.claimed).toBe(true);
     psqlJson(`SELECT finalize_token_recurring_charge('${c1.stable_ref}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
 
-    // After finalization, next_charge_at advanced by 1 month
-    // Set it to overdue for next test
-    psql(`UPDATE customer_subscriptions SET next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+    // After finalization, next_charge_at advanced by 1 month.
+    // Set it to yesterday (overdue + different date → different billing-cycle ref)
+    psql(`UPDATE customer_subscriptions SET next_charge_at = NOW() - INTERVAL '1 day' WHERE id = '${SUB_ID}';`);
 
     // Second cycle — should derive a DIFFERENT ref
     const c2 = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
