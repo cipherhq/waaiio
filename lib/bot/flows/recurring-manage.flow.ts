@@ -187,7 +187,8 @@ export const recurringManageFlow: FlowDefinition = {
         let cancelled = false;
         try {
           if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
-            const emailToken = (ctx.session.session_data._recurring_email_token as string) || '';
+            const metadata = (sub.metadata as Record<string, string>) || {};
+            const emailToken = metadata.email_token || '';
             cancelled = await cancelPaystackSub(sub.gateway_subscription_code, emailToken);
           } else if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
             cancelled = await cancelStripeSub(sub.gateway_subscription_code);
@@ -279,10 +280,13 @@ export const recurringManageFlow: FlowDefinition = {
         try {
           if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
             paused = await pauseStripeSub(sub.gateway_subscription_code);
+          } else if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
+            // Paystack uses disable to pause
+            const metadata = (sub.metadata as Record<string, string>) || {};
+            const emailToken = metadata.email_token || '';
+            paused = await cancelPaystackSub(sub.gateway_subscription_code, emailToken);
           } else {
-            // Paystack/Flutterwave: DB-only pause. Waaiio controls Flutterwave token
-            // charging via cron (no provider subscription to pause). Paystack webhook
-            // handler skips charges for paused subscriptions.
+            // Flutterwave: DB-only pause — Waaiio controls token charging via cron
             paused = true;
           }
         } catch (err) {

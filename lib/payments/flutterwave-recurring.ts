@@ -246,6 +246,38 @@ export async function getSubscription(subscriptionId: string): Promise<{
 }
 
 /**
+ * Verify a Flutterwave transaction by tx_ref.
+ * Used to reconcile provider state before finalization.
+ */
+export async function verifyTransaction(txRef: string): Promise<{
+  success: boolean;
+  amount?: number;
+  currency?: string;
+  status?: string;
+} | null> {
+  if (!flutterwaveSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Flutterwave secret key');
+    }
+    return { success: true, amount: 0, currency: 'NGN', status: 'successful' };
+  }
+
+  try {
+    const data = await flutterwaveRequest(`/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(txRef)}`, 'GET');
+    if (data.status !== 'success') return null;
+    const txData = data.data as Record<string, unknown>;
+    return {
+      success: txData.status === 'successful',
+      amount: txData.amount as number,
+      currency: txData.currency as string,
+      status: txData.status as string,
+    };
+  } catch {
+    return null; // network/timeout — ambiguous
+  }
+}
+
+/**
  * Charge a saved card token (for manual recurring charges or retries).
  *
  * POST /v3/tokenized-charges

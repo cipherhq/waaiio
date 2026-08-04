@@ -152,13 +152,17 @@ describe('STRUCTURAL: Flutterwave Waaiio-managed token billing', () => {
     expect(source).toContain('waaiio_flw_');
   });
 
-  it('pause/resume/cancel are DB-only', async () => {
+  it('Flutterwave pause/resume/cancel are DB-only (Paystack uses provider)', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../flows/recurring-manage.flow.ts'), 'utf-8');
+    // Flutterwave: no provider calls
     expect(source).not.toContain('cancelFlwSub');
     expect(source).not.toContain('activateFlwSub');
-    expect(source).toContain('Waaiio controls Flutterwave token');
+    expect(source).toContain('Flutterwave: DB-only pause');
+    // Paystack: uses provider disable/enable
+    expect(source).toContain('cancelPaystackSub');
+    expect(source).toContain('enablePaystackSub');
   });
 
   it('renewal uses atomic claim + finalize RPCs', async () => {

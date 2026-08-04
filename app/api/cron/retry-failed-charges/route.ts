@@ -265,7 +265,15 @@ export async function GET(request: NextRequest) {
         );
 
         if (result.success) {
-          // Step 4: Atomic finalize — creates payment, charge, booking, fee in one transaction
+          // Step 4: Verify provider transaction before finalization
+          const { verifyTransaction } = await import('@/lib/payments/flutterwave-recurring');
+          const verification = await verifyTransaction(stableRef);
+          if (!verification?.success || Math.abs((verification.amount || 0) - amountInCurrency) > 0.01) {
+            cron.itemFailed('Provider verification failed', { subscriptionId: sub.id, stableRef, verificationStatus: verification?.status || 'null' });
+            continue; // Do NOT finalize — ambiguous state
+          }
+
+          // Step 5: Atomic finalize — creates payment, charge, booking, fee in one transaction
           const { data: finResult } = await supabase.rpc('finalize_token_recurring_charge', {
             p_stable_ref: stableRef,
             p_subscription_id: sub.id,
@@ -324,7 +332,7 @@ export async function GET(request: NextRequest) {
     // Cancel subscriptions with 3+ failures
     const { data: toCancel } = await supabase
       .from('customer_subscriptions')
-      .select('id, business_id, customer_name, customer_phone, gateway, gateway_subscription_code, amount, currency')
+      .select('id, business_id, customer_name, customer_phone, gateway, gateway_subscription_code, amount, currency, metadata')
       .eq('status', 'past_due')
       .gte('failure_count', 3);
 
@@ -334,7 +342,9 @@ export async function GET(request: NextRequest) {
       try {
         if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
           const { cancelSubscription } = await import('@/lib/payments/paystack-recurring');
-          providerCancelled = await cancelSubscription(sub.gateway_subscription_code, '');
+          // Use stored email token from subscription metadata
+          const psMeta = typeof sub.metadata === 'object' && sub.metadata ? (sub.metadata as Record<string, string>) : {};
+          providerCancelled = await cancelSubscription(sub.gateway_subscription_code, psMeta.email_token || '');
         } else if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
           const { cancelSubscription } = await import('@/lib/payments/stripe-recurring');
           providerCancelled = await cancelSubscription(sub.gateway_subscription_code);

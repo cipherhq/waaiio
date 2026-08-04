@@ -144,6 +144,7 @@ CREATE OR REPLACE FUNCTION claim_recurring_billing_cycle(
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_sub RECORD;
+  v_existing RECORD;
 BEGIN
   -- Lock the subscription row to serialize concurrent workers
   SELECT * INTO v_sub FROM customer_subscriptions
@@ -161,21 +162,37 @@ BEGIN
     RETURN jsonb_build_object('claimed', false, 'reason', 'not_due', 'next_charge_at', v_sub.next_charge_at);
   END IF;
 
-  -- Check if this billing cycle was already claimed/finalized
-  IF EXISTS (SELECT 1 FROM processed_webhook_events WHERE event_id = p_stable_ref) THEN
-    RETURN jsonb_build_object('claimed', false, 'reason', 'already_claimed');
+  -- Check existing claim state for this billing cycle
+  SELECT status, last_attempted_at INTO v_existing
+  FROM processed_webhook_events WHERE event_id = p_stable_ref;
+
+  IF FOUND THEN
+    -- Already completed — skip
+    IF v_existing.status = 'completed' THEN
+      RETURN jsonb_build_object('claimed', false, 'reason', 'already_completed');
+    END IF;
+
+    -- Stale claim recovery: if claimed > 10 min ago, allow re-claim
+    -- (worker died or provider timed out)
+    IF v_existing.status = 'claimed' AND v_existing.last_attempted_at > NOW() - INTERVAL '10 minutes' THEN
+      RETURN jsonb_build_object('claimed', false, 'reason', 'already_claimed');
+    END IF;
+
+    -- Stale/failed claim: re-claim by updating
+    UPDATE processed_webhook_events
+    SET status = 'claimed', attempts = attempts + 1, last_attempted_at = NOW()
+    WHERE event_id = p_stable_ref;
+
+    RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
+      'stable_ref', p_stable_ref, 'recovered', true);
   END IF;
 
-  -- Claim the billing cycle atomically via INSERT (UNIQUE constraint prevents duplicates)
-  -- The FOR UPDATE lock on customer_subscriptions serializes, so only one worker reaches here.
+  -- Fresh claim
   INSERT INTO processed_webhook_events (event_id, gateway, event_type, status, attempts, first_received_at, last_attempted_at)
   VALUES (p_stable_ref, 'flutterwave', 'token_renewal', 'claimed', 1, NOW(), NOW());
 
-  RETURN jsonb_build_object(
-    'claimed', true,
-    'subscription_id', p_subscription_id,
-    'stable_ref', p_stable_ref
-  );
+  RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
+    'stable_ref', p_stable_ref, 'recovered', false);
 END;
 $$;
 
@@ -203,6 +220,11 @@ DECLARE
   v_is_in_trial      BOOLEAN;
   v_tier             TEXT;
 BEGIN
+  -- Require a valid claim or completed state — reject orphaned finalize calls
+  IF NOT EXISTS (SELECT 1 FROM processed_webhook_events WHERE event_id = p_stable_ref AND status IN ('claimed', 'completed')) THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'no_valid_claim');
+  END IF;
+
   -- Check idempotency: if already finalized, return success without duplicating
   IF EXISTS (SELECT 1 FROM processed_webhook_events WHERE event_id = p_stable_ref AND status = 'completed') THEN
     -- Already finalized — return the existing data

@@ -1107,6 +1107,7 @@ export const paymentFlow: FlowDefinition = {
           }
           subscriptionCode = sub.subscriptionCode;
           d._recurring_email_token = sub.emailToken;
+          d._paystack_email_token = sub.emailToken; // persist to metadata below
         } else if (resolvedGateway === 'flutterwave') {
           // Flutterwave: extract card token from the payment just made, then create plan + subscription
           const tokenData = await getCardToken(ref);
@@ -1216,6 +1217,7 @@ export const paymentFlow: FlowDefinition = {
           customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
           customer_email: (d.customer_email as string) || null,
           setup_channel: 'whatsapp',
+          metadata: d._paystack_email_token ? { email_token: d._paystack_email_token } : {},
         });
 
         const label = frequency === 'weekly' ? 'weekly' : frequency === 'yearly' ? 'yearly' : 'monthly';
