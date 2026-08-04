@@ -173,9 +173,8 @@ describe('STRUCTURAL: Flutterwave Waaiio-managed token billing', () => {
     expect(source).toContain("rpc('claim_recurring_billing_cycle'");
     // Uses finalize RPC after charge success
     expect(source).toContain("rpc('finalize_token_recurring_charge'");
-    // Stable tx_ref (deterministic, not Date.now())
-    expect(source).toContain('flw-${sub.id}-');
-    expect(source).toContain('.toISOString().slice(0, 10)');
+    // Uses database-derived stable_ref from claim result
+    expect(source).toContain('claim.stable_ref');
   });
 
   it('auto-cancel respects provider-first for Stripe/Paystack', async () => {

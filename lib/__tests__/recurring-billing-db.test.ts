@@ -148,12 +148,12 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
     const sqlA = `
       BEGIN;
-      SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${STABLE_REF_AUG}');
+      SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);
       SELECT pg_sleep(1);
       COMMIT;
     `;
     const sqlB = `
-      SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${STABLE_REF_AUG}');
+      SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);
     `;
 
     const { a, b } = await runTwoSessions(sqlA, sqlB);
@@ -178,19 +178,21 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, frequency, status, charge_count, total_charged, next_charge_at)
           VALUES ('${SUB_ID}', '${BIZ_ID}', '${USER_ID}', 50, 'monthly', 'active', 0, 0, NOW() - INTERVAL '1 hour');`);
 
-    // First: claim the billing cycle (required by finalizer)
-    psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${STABLE_REF_AUG}');`);
+    // Claim returns the database-derived stable_ref
+    const claimResult = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claimResult.claimed).toBe(true);
+    const ref = claimResult.stable_ref;
 
-    const r1 = psqlJson(`SELECT finalize_token_recurring_charge('${STABLE_REF_AUG}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
+    const r1 = psqlJson(`SELECT finalize_token_recurring_charge('${ref}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
     expect(r1.success).toBe(true);
     expect(r1.already_finalized).toBe(false);
 
-    const r2 = psqlJson(`SELECT finalize_token_recurring_charge('${STABLE_REF_AUG}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
+    const r2 = psqlJson(`SELECT finalize_token_recurring_charge('${ref}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
     expect(r2.success).toBe(true);
     expect(r2.already_finalized).toBe(true);
 
     // Exactly one payment
-    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = '${STABLE_REF_AUG}';`);
+    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = '${ref}';`);
     expect(paymentCount).toBe('1');
 
     // charge_count = 1 (not 2)
@@ -206,9 +208,10 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM subscription_charges; DELETE FROM bookings; DELETE FROM platform_fees;`);
     psql(`UPDATE customer_subscriptions SET frequency = 'yearly', amount = 500, charge_count = 0, total_charged = 0, status = 'active', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
-    // Claim first, then finalize
-    psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${STABLE_REF_DEC}');`);
-    psqlJson(`SELECT finalize_token_recurring_charge('${STABLE_REF_DEC}', '${SUB_ID}'::uuid, 500, 'NGN', 'flutterwave');`);
+    // Claim returns database-derived ref, then finalize
+    const claimResult = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claimResult.claimed).toBe(true);
+    psqlJson(`SELECT finalize_token_recurring_charge('${claimResult.stable_ref}', '${SUB_ID}'::uuid, 500, 'NGN', 'flutterwave');`);
 
     const nextCharge = psql(`SELECT next_charge_at FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
     const nextDate = new Date(nextCharge);
@@ -222,7 +225,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`UPDATE customer_subscriptions SET next_charge_at = NOW() + INTERVAL '30 days' WHERE id = '${SUB_ID}';`);
 
     const futureRef = `flw-${SUB_ID}-2027-01-01`;
-    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() + INTERVAL '30 days', '${futureRef}');`);
+    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
     expect(r.claimed).toBe(false);
     expect(r.reason).toBe('not_due');
   });
@@ -231,7 +234,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`UPDATE customer_subscriptions SET status = 'paused', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
     const pausedRef = `flw-${SUB_ID}-2026-07-01`;
-    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${pausedRef}');`);
+    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
     expect(r.claimed).toBe(false);
     expect(r.reason).toBe('not_active');
   });
@@ -249,22 +252,23 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`UPDATE customer_subscriptions SET status = 'cancelled' WHERE id = '${SUB_ID}';`);
 
     const cancelledRef = `flw-${SUB_ID}-2026-06-01`;
-    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${cancelledRef}');`);
+    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
     expect(r.claimed).toBe(false);
     expect(r.reason).toBe('not_active');
   });
 
   // ── OWNERSHIP TESTS ──
 
-  it('claim A with B stableRef → rejected', () => {
+  it('claim derives stableRef from authoritative next_charge_at', () => {
     psql(`DELETE FROM processed_webhook_events;`);
     psql(`UPDATE customer_subscriptions SET status = 'active', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
-    // stableRef contains a different subscription ID
-    const wrongRef = 'flw-99999999-9999-9999-9999-999999999999-2026-08-01';
-    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${wrongRef}');`);
-    expect(r.claimed).toBe(false);
-    expect(r.reason).toBe('ref_subscription_mismatch');
+    const r = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(r.claimed).toBe(true);
+    // stableRef must contain the subscription ID
+    expect(r.stable_ref).toContain(SUB_ID);
+    // stableRef must start with 'flw-'
+    expect(r.stable_ref.startsWith('flw-')).toBe(true);
   });
 
   it('valid claim A + finalize B → rejected', () => {
@@ -272,11 +276,12 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`UPDATE customer_subscriptions SET status = 'active', amount = 50, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
     // Claim for SUB_ID
-    psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${STABLE_REF_AUG}');`);
+    const claimResult = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claimResult.claimed).toBe(true);
 
     // Try to finalize with a DIFFERENT subscription ID
     const otherSubId = '99999999-9999-9999-9999-999999999999';
-    const r = psqlJson(`SELECT finalize_token_recurring_charge('${STABLE_REF_AUG}', '${otherSubId}'::uuid, 50, 'NGN', 'flutterwave');`);
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claimResult.stable_ref}', '${otherSubId}'::uuid, 50, 'NGN', 'flutterwave');`);
     expect(r.success).toBe(false);
     expect(r.reason).toBe('claim_subscription_mismatch');
   });
@@ -285,11 +290,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings;`);
     psql(`UPDATE customer_subscriptions SET status = 'active', amount = 50, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
-    const ref = `flw-${SUB_ID}-2026-10-01`;
-    psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${ref}');`);
-
-    // Try to finalize with wrong amount
-    const r = psqlJson(`SELECT finalize_token_recurring_charge('${ref}', '${SUB_ID}'::uuid, 999, 'NGN', 'flutterwave');`);
+    const claimResult = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claimResult.stable_ref}', '${SUB_ID}'::uuid, 999, 'NGN', 'flutterwave');`);
     expect(r.success).toBe(false);
     expect(r.reason).toBe('amount_mismatch');
   });
@@ -298,11 +300,28 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings;`);
     psql(`UPDATE customer_subscriptions SET status = 'active', amount = 50, currency = 'NGN', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
-    const ref = `flw-${SUB_ID}-2026-11-01`;
-    psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${ref}');`);
-
-    const r = psqlJson(`SELECT finalize_token_recurring_charge('${ref}', '${SUB_ID}'::uuid, 50, 'USD', 'flutterwave');`);
+    const claimResult = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claimResult.stable_ref}', '${SUB_ID}'::uuid, 50, 'USD', 'flutterwave');`);
     expect(r.success).toBe(false);
     expect(r.reason).toBe('currency_mismatch');
+  });
+
+  it('finalized cycle advances next_charge_at → next cycle derives different ref', () => {
+    psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings; DELETE FROM platform_fees; DELETE FROM subscription_charges;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', amount = 50, frequency = 'monthly', charge_count = 0, total_charged = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    // First cycle
+    const c1 = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(c1.claimed).toBe(true);
+    psqlJson(`SELECT finalize_token_recurring_charge('${c1.stable_ref}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
+
+    // After finalization, next_charge_at advanced by 1 month
+    // Set it to overdue for next test
+    psql(`UPDATE customer_subscriptions SET next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    // Second cycle — should derive a DIFFERENT ref
+    const c2 = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(c2.claimed).toBe(true);
+    expect(c2.stable_ref).not.toBe(c1.stable_ref);
   });
 });

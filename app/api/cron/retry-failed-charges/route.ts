@@ -132,10 +132,6 @@ export async function GET(request: NextRequest) {
       if (!sub.authorization_code) continue;
       const amountInCurrency = sub.amount || 0;
 
-      // Stable tx_ref: deterministic for this subscription + billing period
-      const scheduledAt = sub.next_charge_at;
-      const stableRef = `flw-${sub.id}-${new Date(scheduledAt).toISOString().slice(0, 10)}`;
-
       // Step 1: LOCAL prerequisites BEFORE claim (prevents stranded claims)
       const flwSplitResult = await resolveGatewaySplit(supabase, sub.business_id, amountInCurrency, 'flutterwave');
       let flwSplitParams: { subaccounts: Array<{ id: string; transaction_charge_type: string; transaction_charge: number }> } | undefined;
@@ -158,11 +154,9 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      // Step 2: Atomic claim — only after local prerequisites pass
+      // Step 2: Atomic claim — database derives stable_ref from authoritative next_charge_at
       const { data: claim } = await supabase.rpc('claim_recurring_billing_cycle', {
         p_subscription_id: sub.id,
-        p_scheduled_at: scheduledAt,
-        p_stable_ref: stableRef,
       });
 
       if (!claim?.claimed) {
@@ -170,6 +164,9 @@ export async function GET(request: NextRequest) {
         skipped++;
         continue;
       }
+
+      // Use the database-derived stable reference (authoritative billing-cycle identity)
+      const stableRef = claim.stable_ref as string;
 
       // Step 3: Reconcile if recovered claim, then charge if needed
       try {

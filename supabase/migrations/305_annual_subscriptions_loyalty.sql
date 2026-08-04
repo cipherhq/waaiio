@@ -137,14 +137,13 @@ END $$;
 -- ═══════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION claim_recurring_billing_cycle(
-  p_subscription_id UUID,
-  p_scheduled_at     TIMESTAMPTZ,
-  p_stable_ref       TEXT
+  p_subscription_id UUID
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_sub RECORD;
   v_existing RECORD;
+  v_stable_ref TEXT;
 BEGIN
   -- Lock the subscription row to serialize concurrent workers
   SELECT * INTO v_sub FROM customer_subscriptions
@@ -152,11 +151,6 @@ BEGIN
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('claimed', false, 'reason', 'not_found');
-  END IF;
-
-  -- Validate stableRef belongs to this subscription (must contain subscription ID)
-  IF p_stable_ref NOT LIKE 'flw-' || p_subscription_id::text || '-%' THEN
-    RETURN jsonb_build_object('claimed', false, 'reason', 'ref_subscription_mismatch');
   END IF;
 
   IF v_sub.status NOT IN ('active', 'past_due') THEN
@@ -167,9 +161,12 @@ BEGIN
     RETURN jsonb_build_object('claimed', false, 'reason', 'not_due', 'next_charge_at', v_sub.next_charge_at);
   END IF;
 
+  -- Derive exact stable reference from authoritative state (database-controlled)
+  v_stable_ref := 'flw-' || p_subscription_id::text || '-' || TO_CHAR(v_sub.next_charge_at, 'YYYY-MM-DD');
+
   -- Check existing claim state for this billing cycle
   SELECT status, last_attempted_at INTO v_existing
-  FROM processed_webhook_events WHERE event_id = p_stable_ref;
+  FROM processed_webhook_events WHERE event_id = v_stable_ref;
 
   IF FOUND THEN
     IF v_existing.status = 'completed' THEN
@@ -179,16 +176,16 @@ BEGIN
     -- provider_success: provider charged but DB finalize crashed — needs finalize only
     IF v_existing.status = 'provider_success' THEN
       RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
-        'stable_ref', p_stable_ref, 'recovered', true, 'provider_verified', true);
+        'stable_ref', v_stable_ref, 'recovered', true, 'provider_verified', true);
     END IF;
 
     -- provider_failed: explicit provider failure — retryable
     IF v_existing.status = 'provider_failed' THEN
       UPDATE processed_webhook_events
       SET status = 'claimed', attempts = attempts + 1, last_attempted_at = NOW()
-      WHERE event_id = p_stable_ref;
+      WHERE event_id = v_stable_ref;
       RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
-        'stable_ref', p_stable_ref, 'recovered', true, 'provider_verified', false);
+        'stable_ref', v_stable_ref, 'recovered', true, 'provider_verified', false);
     END IF;
 
     -- Active claim not yet stale — skip
@@ -200,9 +197,9 @@ BEGIN
     IF v_existing.status = 'claimed' THEN
       UPDATE processed_webhook_events
       SET status = 'claimed', attempts = attempts + 1, last_attempted_at = NOW()
-      WHERE event_id = p_stable_ref;
+      WHERE event_id = v_stable_ref;
       RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
-        'stable_ref', p_stable_ref, 'recovered', true, 'provider_verified', false);
+        'stable_ref', v_stable_ref, 'recovered', true, 'provider_verified', false);
     END IF;
 
     -- Unknown state — skip
@@ -211,10 +208,10 @@ BEGIN
 
   -- Fresh claim
   INSERT INTO processed_webhook_events (event_id, gateway, event_type, status, attempts, first_received_at, last_attempted_at)
-  VALUES (p_stable_ref, 'flutterwave', 'token_renewal', 'claimed', 1, NOW(), NOW());
+  VALUES (v_stable_ref, 'flutterwave', 'token_renewal', 'claimed', 1, NOW(), NOW());
 
   RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
-    'stable_ref', p_stable_ref, 'recovered', false, 'provider_verified', false);
+    'stable_ref', v_stable_ref, 'recovered', false, 'provider_verified', false);
 END;
 $$;
 
@@ -243,10 +240,17 @@ DECLARE
   v_is_in_trial      BOOLEAN;
   v_tier             TEXT;
 BEGIN
-  -- Require a valid claim — reject orphaned finalize calls
+  -- Require a valid claim with correct ownership
   SELECT * INTO v_claim FROM processed_webhook_events WHERE event_id = p_stable_ref;
   IF NOT FOUND OR v_claim.status NOT IN ('claimed', 'completed', 'provider_success') THEN
     RETURN jsonb_build_object('success', false, 'reason', 'no_valid_claim');
+  END IF;
+  -- Validate claim belongs to the correct gateway + event type + subscription
+  IF v_claim.gateway != 'flutterwave' OR v_claim.event_type != 'token_renewal' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'claim_type_mismatch');
+  END IF;
+  IF p_stable_ref NOT LIKE 'flw-' || p_subscription_id::text || '-%' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'claim_subscription_mismatch');
   END IF;
 
   -- Check idempotency: if already finalized, return success without duplicating
@@ -371,9 +375,9 @@ END;
 $$;
 
 DO $$ BEGIN
-  REVOKE ALL ON FUNCTION claim_recurring_billing_cycle(UUID, TIMESTAMPTZ, TEXT) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION claim_recurring_billing_cycle(UUID) FROM PUBLIC;
   REVOKE ALL ON FUNCTION finalize_token_recurring_charge(TEXT, UUID, NUMERIC, TEXT, TEXT) FROM PUBLIC;
-  EXECUTE 'GRANT EXECUTE ON FUNCTION claim_recurring_billing_cycle(UUID, TIMESTAMPTZ, TEXT) TO service_role';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION claim_recurring_billing_cycle(UUID) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION finalize_token_recurring_charge(TEXT, UUID, NUMERIC, TEXT, TEXT) TO service_role';
 EXCEPTION WHEN undefined_object THEN NULL;
 END $$;
