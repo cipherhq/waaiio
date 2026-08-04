@@ -54,6 +54,9 @@ function runTwoSessions(sqlA: string, sqlB: string): Promise<{ a: { stdout: stri
 const BIZ_ID = '22aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const USER_ID = '22bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const SUB_ID = '22cccccc-cccc-cccc-cccc-cccccccccccc';
+const STABLE_REF_AUG = `flw-${SUB_ID}-2026-08-01`;
+const STABLE_REF_DEC = `flw-${SUB_ID}-2026-12-01`;
+const STABLE_REF_SEP = `flw-${SUB_ID}-2026-09-01`;
 
 describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', () => {
   beforeAll(() => {
@@ -145,12 +148,12 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
     const sqlA = `
       BEGIN;
-      SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', 'flw-${SUB_ID}-2026-08-01');
+      SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${STABLE_REF_AUG}');
       SELECT pg_sleep(1);
       COMMIT;
     `;
     const sqlB = `
-      SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', 'flw-${SUB_ID}-2026-08-01');
+      SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${STABLE_REF_AUG}');
     `;
 
     const { a, b } = await runTwoSessions(sqlA, sqlB);
@@ -164,8 +167,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
   it('2. stable ref → same billing cycle always same ref', () => {
     // The ref is deterministic: flw-{sub_id}-{date}
-    const ref1 = `flw-${SUB_ID}-2026-08-01`;
-    const ref2 = `flw-${SUB_ID}-2026-08-01`;
+    const ref1 = STABLE_REF_AUG;
+    const ref2 = STABLE_REF_AUG;
     expect(ref1).toBe(ref2);
   });
 
@@ -176,18 +179,18 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
           VALUES ('${SUB_ID}', '${BIZ_ID}', '${USER_ID}', 50, 'monthly', 'active', 0, 0, NOW() - INTERVAL '1 hour');`);
 
     // First: claim the billing cycle (required by finalizer)
-    psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', `flw-${SUB_ID}-2026-08-01`);`);
+    psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${STABLE_REF_AUG}');`);
 
-    const r1 = psqlJson(`SELECT finalize_token_recurring_charge(`flw-${SUB_ID}-2026-08-01`, '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
+    const r1 = psqlJson(`SELECT finalize_token_recurring_charge('${STABLE_REF_AUG}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
     expect(r1.success).toBe(true);
     expect(r1.already_finalized).toBe(false);
 
-    const r2 = psqlJson(`SELECT finalize_token_recurring_charge(`flw-${SUB_ID}-2026-08-01`, '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
+    const r2 = psqlJson(`SELECT finalize_token_recurring_charge('${STABLE_REF_AUG}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
     expect(r2.success).toBe(true);
     expect(r2.already_finalized).toBe(true);
 
     // Exactly one payment
-    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = `flw-${SUB_ID}-2026-08-01`;`);
+    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = '${STABLE_REF_AUG}';`);
     expect(paymentCount).toBe('1');
 
     // charge_count = 1 (not 2)
@@ -204,8 +207,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`UPDATE customer_subscriptions SET frequency = 'yearly', amount = 500, charge_count = 0, total_charged = 0, status = 'active', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
     // Claim first, then finalize
-    psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', `flw-${SUB_ID}-2026-12-01`);`);
-    psqlJson(`SELECT finalize_token_recurring_charge(`flw-${SUB_ID}-2026-12-01`, '${SUB_ID}'::uuid, 500, 'NGN', 'flutterwave');`);
+    psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', '${STABLE_REF_DEC}');`);
+    psqlJson(`SELECT finalize_token_recurring_charge('${STABLE_REF_DEC}', '${SUB_ID}'::uuid, 500, 'NGN', 'flutterwave');`);
 
     const nextCharge = psql(`SELECT next_charge_at FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
     const nextDate = new Date(nextCharge);
@@ -235,7 +238,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`DELETE FROM processed_webhook_events;`);
     psql(`UPDATE customer_subscriptions SET status = 'active', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
-    const r = psqlJson(`SELECT finalize_token_recurring_charge(`flw-${SUB_ID}-2026-09-01`, '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${STABLE_REF_SEP}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
     expect(r.success).toBe(false);
     expect(r.reason).toBe('no_valid_claim');
   });
