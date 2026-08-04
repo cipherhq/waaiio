@@ -200,8 +200,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
   });
 
   it('4. yearly advance is correct', () => {
-    psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM subscription_charges; DELETE FROM bookings;`);
-    psql(`UPDATE customer_subscriptions SET frequency = 'yearly', charge_count = 0, total_charged = 0, status = 'active', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+    psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM subscription_charges; DELETE FROM bookings; DELETE FROM platform_fees;`);
+    psql(`UPDATE customer_subscriptions SET frequency = 'yearly', amount = 500, charge_count = 0, total_charged = 0, status = 'active', next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
     // Claim first, then finalize
     psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid, NOW() - INTERVAL '1 hour', 'flw-yearly-test');`);
