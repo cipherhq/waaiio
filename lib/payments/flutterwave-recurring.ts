@@ -129,26 +129,23 @@ export async function createSubscription(
     }
 
     const chargeResult = chargeData.data as Record<string, unknown>;
+    const txId = chargeResult.id ? String(chargeResult.id) : null;
 
-    // Resolve the REAL Flutterwave subscription ID created when the charge is linked to a plan.
-    // Flutterwave creates a subscription automatically; we need its ID for pause/resume/cancel.
-    let realSubId = chargeResult.id ? String(chargeResult.id) : txRef;
-    try {
-      // Flutterwave lists subscriptions, filter by email + plan to find the one just created
-      const subsRes = await flutterwaveRequest('/v3/subscriptions', 'GET');
-      if (subsRes.status === 'success' && Array.isArray(subsRes.data)) {
-        const matching = (subsRes.data as Array<Record<string, unknown>>).find(
-          (s) => String((s.plan as Record<string, unknown>)?.id) === planId
-            && (s.customer as Record<string, unknown>)?.email === customerEmail
-            && s.status === 'active',
-        );
-        if (matching) {
-          realSubId = String(matching.id);
+    // Resolve the REAL Flutterwave subscription ID from this specific transaction.
+    // Use Flutterwave's subscription lookup filtered by the exact transaction ID.
+    if (txId) {
+      try {
+        const subsRes = await flutterwaveRequest(`/v3/subscriptions?transaction_id=${txId}`, 'GET');
+        if (subsRes.status === 'success' && Array.isArray(subsRes.data) && subsRes.data.length > 0) {
+          const realSub = subsRes.data[0] as Record<string, unknown>;
+          return { subscriptionId: String(realSub.id) };
         }
-      }
-    } catch { /* non-fatal — fall back to charge ID */ }
+      } catch { /* fall through to failure */ }
+    }
 
-    return { subscriptionId: realSubId };
+    // Cannot resolve real subscription ID — fail safely
+    logger.error('[FLUTTERWAVE] Could not resolve subscription ID from transaction', { txId, planId });
+    return null;
   } catch (error) {
     logger.withContext({ op: 'flutterwave.create-subscription', ...safeLogErrorContext(error) }).error('Flutterwave create subscription error');
     return null;

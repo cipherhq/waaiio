@@ -143,12 +143,12 @@ describe('Loyalty phone normalization', () => {
 // ═══════════════════════════════════════════════════════
 
 describe('Flutterwave subscription lifecycle', () => {
-  it('createSubscription resolves real subscription ID', async () => {
+  it('createSubscription resolves real subscription ID via transaction_id', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../../payments/flutterwave-recurring.ts'), 'utf-8');
-    expect(source).toContain('/v3/subscriptions');
-    expect(source).toContain('realSubId');
+    expect(source).toContain('transaction_id=');
+    expect(source).toContain('return null'); // fails safely if unresolved
   });
 
   it('activateSubscription function exists', async () => {
@@ -222,17 +222,86 @@ describe('Recurring offer validation', () => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 10. FIRST-CYCLE DOUBLE CHARGE — DOCUMENTED FINDING
+// 10. FIRST-CYCLE DOUBLE CHARGE PREVENTION
 // ═══════════════════════════════════════════════════════
 
-describe('First-cycle subscription behavior', () => {
-  it('Paystack subscription uses start_date parameter (when provided)', async () => {
+describe('First-cycle double charge prevention', () => {
+  it('Paystack subscription defers first charge with start_date', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const source = fs.readFileSync(path.resolve(__dirname, '../../payments/paystack-recurring.ts'), 'utf-8');
-    // The createSubscription function accepts startDate
-    expect(source).toContain('startDate');
-    expect(source).toContain('start_date');
+    const source = fs.readFileSync(path.resolve(__dirname, '../flows/payment.flow.ts'), 'utf-8');
+    // Must pass startDate to createPaystackSubscription
+    expect(source).toContain('startDate: paystackNextCharge.toISOString()');
+  });
+
+  it('Stripe subscription defers first charge with trial_end', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(path.resolve(__dirname, '../../payments/stripe-recurring.ts'), 'utf-8');
+    expect(source).toContain("subscription_data[trial_end]");
+    const flowSource = fs.readFileSync(path.resolve(__dirname, '../flows/payment.flow.ts'), 'utf-8');
+    expect(flowSource).toContain('trialEnd: Math.floor(stripeTrialEnd.getTime() / 1000)');
+  });
+
+  it('Flutterwave does not charge again on enrollment', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(path.resolve(__dirname, '../flows/payment.flow.ts'), 'utf-8');
+    // Must NOT call createFlutterwaveSubscription (which charges immediately)
+    expect(source).not.toContain('createFlutterwaveSubscription(');
+    // Instead stores plan ID for cron-based charging
+    expect(source).toContain('subscriptionCode = plan.planId');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 11. CANCEL FALSE SUCCESS FIX
+// ═══════════════════════════════════════════════════════
+
+describe('Cancel does not falsely update DB', () => {
+  it('provider failure prevents DB status change', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(path.resolve(__dirname, '../flows/recurring-manage.flow.ts'), 'utf-8');
+    // Must check !cancelled BEFORE DB update
+    expect(source).toContain("if (!cancelled)");
+    expect(source).toContain("cancel the subscription at the payment provider");
+    // DB cancelled update must exist AFTER the failure check
+    const failIdx = source.indexOf("if (!cancelled)");
+    const dbIdx = source.indexOf("status: 'cancelled'", failIdx);
+    expect(failIdx).toBeGreaterThan(-1);
+    expect(dbIdx).toBeGreaterThan(failIdx);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 12. FLUTTERWAVE AUTOMATIC RENEWAL HANDLING
+// ═══════════════════════════════════════════════════════
+
+describe('Flutterwave automatic renewal webhook', () => {
+  it('handles renewal charges without pre-existing payment', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(path.resolve(__dirname, '../../../app/api/webhooks/flutterwave/route.ts'), 'utf-8');
+    // Must check for recurring renewal when payment not found
+    expect(source).toContain('Flutterwave automatic renewal');
+    expect(source).toContain("event_type: 'recurring_renewal'");
+    // Must update subscription stats
+    expect(source).toContain('charge_count');
+    expect(source).toContain('next_charge_at');
+    // Must handle yearly renewals
+    expect(source).toContain("frequency === 'yearly'");
+  });
+
+  it('Flutterwave subscription ID resolution uses transaction_id', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(path.resolve(__dirname, '../../payments/flutterwave-recurring.ts'), 'utf-8');
+    // Must use exact transaction ID lookup, not all-subscriptions search
+    expect(source).toContain('transaction_id=');
+    // Must fail safely if ID cannot be resolved
+    expect(source).toContain('return null');
+    expect(source).toContain('Could not resolve subscription ID');
   });
 });
 

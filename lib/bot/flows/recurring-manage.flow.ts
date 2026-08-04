@@ -202,7 +202,16 @@ export const recurringManageFlow: FlowDefinition = {
           cancelled = false;
         }
 
-        // Update DB regardless
+        if (!cancelled) {
+          // Provider cancellation failed — do NOT mark DB as cancelled
+          return [{
+            type: 'text',
+            text: 'We couldn\'t cancel the subscription at the payment provider right now. Please try again later or contact support.'
+              + '\n\n💡 Type *subscriptions* to try again.',
+          }];
+        }
+
+        // Provider succeeded — now update DB
         await ctx.supabase
           .from('customer_subscriptions')
           .update({
@@ -213,10 +222,8 @@ export const recurringManageFlow: FlowDefinition = {
 
         return [{
           type: 'text',
-          text: (cancelled
-            ? '✅ Your recurring payment has been cancelled. You will no longer be charged automatically.'
-            : '✅ Your recurring payment has been cancelled in our system. If you see any unexpected charges, please contact support.')
-            + `\n\n💡 *What you can do:*\n• Type *subscriptions* to manage payments\n• Type *Hi* to start a new conversation`,
+          text: '✅ Your recurring payment has been cancelled. You will no longer be charged automatically.'
+            + '\n\n💡 Type *subscriptions* to manage payments or *Hi* to start over.',
         }];
       },
       async validate(): Promise<ValidationResult> { return { valid: true }; },

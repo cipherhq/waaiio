@@ -99,6 +99,91 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (!payment) {
+      // No pre-existing payment — check if this is a Flutterwave automatic recurring renewal.
+      // Provider-generated renewal charges have tx_refs linked to payment plans.
+      const webhookAmount = data.amount as number;
+      const customerEmail = (data.customer as Record<string, unknown>)?.email as string;
+
+      if (customerEmail && webhookAmount > 0) {
+        // Try to find the customer subscription by email + gateway
+        const { data: sub } = await supabase
+          .from('customer_subscriptions')
+          .select('*')
+          .eq('gateway', 'flutterwave')
+          .eq('customer_email', customerEmail)
+          .eq('status', 'active')
+          .maybeSingle();
+
+        if (sub && Math.abs(webhookAmount - Number(sub.amount)) < 0.01) {
+          // This is a genuine Flutterwave automatic renewal
+          const renewalAmount = webhookAmount;
+          const now = new Date();
+
+          // Create payment record
+          const { data: renewalPayment } = await supabase.from('payments').insert({
+            business_id: sub.business_id,
+            user_id: sub.user_id,
+            amount: renewalAmount,
+            currency: sub.currency || 'NGN',
+            gateway: 'flutterwave',
+            gateway_reference: txRef,
+            status: 'success',
+            paid_at: now.toISOString(),
+            metadata: { recurring: true, subscription_id: sub.id },
+          }).select('id').single();
+
+          // Log subscription charge
+          await supabase.from('subscription_charges').insert({
+            subscription_id: sub.id,
+            business_id: sub.business_id,
+            user_id: sub.user_id,
+            amount: renewalAmount,
+            currency: sub.currency || 'NGN',
+            status: 'success',
+            gateway: 'flutterwave',
+            gateway_reference: txRef,
+            payment_id: renewalPayment?.id || null,
+            charged_at: now.toISOString(),
+          });
+
+          // Update subscription stats
+          const nextCharge = new Date();
+          if (sub.frequency === 'weekly') nextCharge.setDate(nextCharge.getDate() + 7);
+          else if (sub.frequency === 'yearly') nextCharge.setFullYear(nextCharge.getFullYear() + 1);
+          else nextCharge.setMonth(nextCharge.getMonth() + 1);
+
+          await supabase.from('customer_subscriptions').update({
+            charge_count: (sub.charge_count || 0) + 1,
+            total_charged: Number(sub.total_charged || 0) + renewalAmount,
+            last_charged_at: now.toISOString(),
+            next_charge_at: nextCharge.toISOString(),
+            failure_count: 0,
+          }).eq('id', sub.id);
+
+          // Mark event processed
+          await supabase.from('processed_webhook_events').insert({
+            event_id: eventId,
+            gateway: 'flutterwave',
+            event_type: 'recurring_renewal',
+            status: 'completed',
+            first_received_at: now.toISOString(),
+            completed_at: now.toISOString(),
+          });
+
+          // Send customer confirmation (non-blocking)
+          try {
+            const { sendProactiveConfirmation: sendRenewalConfirmation } = await import('@/lib/payments/send-confirmation');
+            if (renewalPayment?.id) {
+              await sendRenewalConfirmation(supabase, renewalPayment.id);
+            }
+          } catch { /* non-fatal */ }
+
+          wh.processed({ paymentId: renewalPayment?.id, isRenewal: true });
+          return NextResponse.json({ message: 'Renewal processed' }, { status: 200 });
+        }
+      }
+
+      wh.ignored('Payment not found and not a recognized renewal');
       return NextResponse.json({ message: 'Payment not found' }, { status: 404 });
     }
 

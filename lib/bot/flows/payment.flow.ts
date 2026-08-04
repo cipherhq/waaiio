@@ -1088,11 +1088,19 @@ export const paymentFlow: FlowDefinition = {
           }
           planCode = plan.planCode;
 
-          // Create subscription
+          // Calculate next charge date — customer already paid for the current period.
+          // Defer first automatic charge to avoid double-billing.
+          const paystackNextCharge = new Date();
+          if (frequency === 'weekly') paystackNextCharge.setDate(paystackNextCharge.getDate() + 7);
+          else if (frequency === 'yearly') paystackNextCharge.setFullYear(paystackNextCharge.getFullYear() + 1);
+          else paystackNextCharge.setMonth(paystackNextCharge.getMonth() + 1);
+
+          // Create subscription with start_date to prevent double-charging current period
           const sub = await createPaystackSubscription({
             customer: authData.email || authData.customerCode,
             planCode: plan.planCode,
             authorizationCode: authCode,
+            startDate: paystackNextCharge.toISOString(),
           });
           if (!sub) {
             return [{ type: 'text', text: 'Failed to activate recurring payments. Please try again later.' }];
@@ -1121,20 +1129,20 @@ export const paymentFlow: FlowDefinition = {
           }
           planCode = plan.planId;
 
-          // Subscribe customer to the plan using their card token
-          const sub = await createFlutterwaveSubscription(
-            plan.planId,
-            tokenData.email,
-            cardToken,
-          );
-          if (!sub) {
-            return [{ type: 'text', text: 'Failed to activate recurring payments. Please try again later.' }];
-          }
-          subscriptionCode = sub.subscriptionId;
+          // Do NOT charge again — customer already paid for the current period.
+          // Store the plan ID and card token; the recurring charge cron will handle
+          // future billing using chargeToken() on the correct schedule.
+          subscriptionCode = plan.planId; // Use plan ID as subscription reference
         } else {
           // Stripe: create subscription checkout
           const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
           const email = (d.customer_email as string) || `${phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
+
+          // Calculate when first automatic charge should happen (defer current period)
+          const stripeTrialEnd = new Date();
+          if (frequency === 'weekly') stripeTrialEnd.setDate(stripeTrialEnd.getDate() + 7);
+          else if (frequency === 'yearly') stripeTrialEnd.setFullYear(stripeTrialEnd.getFullYear() + 1);
+          else stripeTrialEnd.setMonth(stripeTrialEnd.getMonth() + 1);
 
           const checkout = await createRecurringCheckout({
             businessName: ctx.business.name,
@@ -1143,6 +1151,7 @@ export const paymentFlow: FlowDefinition = {
             currency: getCurrencyCode(cc),
             interval: frequency === 'weekly' ? 'week' : frequency === 'yearly' ? 'year' : 'month',
             customerEmail: email,
+            trialEnd: Math.floor(stripeTrialEnd.getTime() / 1000), // Unix timestamp for Stripe
             metadata: {
               business_id: ctx.business.id,
               user_id: userId,
