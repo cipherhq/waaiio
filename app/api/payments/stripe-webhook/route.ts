@@ -447,6 +447,8 @@ export async function POST(request: NextRequest) {
             const nextCharge = new Date();
             if (customerSub.frequency === 'weekly') {
               nextCharge.setDate(nextCharge.getDate() + 7);
+            } else if (customerSub.frequency === 'yearly') {
+              nextCharge.setFullYear(nextCharge.getFullYear() + 1);
             } else {
               nextCharge.setMonth(nextCharge.getMonth() + 1);
             }
@@ -789,6 +791,8 @@ export async function POST(request: NextRequest) {
           const nextCharge = new Date();
           if (sub.frequency === 'weekly') {
             nextCharge.setDate(nextCharge.getDate() + 7);
+          } else if (sub.frequency === 'yearly') {
+            nextCharge.setFullYear(nextCharge.getFullYear() + 1);
           } else {
             nextCharge.setMonth(nextCharge.getMonth() + 1);
           }

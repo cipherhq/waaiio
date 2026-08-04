@@ -213,7 +213,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
             .from('customer_profiles')
             .select('membership_tier_id')
             .eq('business_id', businessId)
-            .eq('phone', customerPhone)
+            .eq('phone', phoneWithPlus)
             .maybeSingle();
           if (cp?.membership_tier_id) {
             const { data: tier } = await supabase
@@ -293,12 +293,12 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   // Safe on retry: assignCustomerTier is idempotent (reads total_spent, assigns highest qualifying tier).
   if (capabilities.includes('membership')) {
     try {
-      // Look up customer_profile by phone+business
+      // Look up customer_profile by phone+business (use canonical phone format)
       const { data: cp } = await supabase
         .from('customer_profiles')
         .select('id')
         .eq('business_id', businessId)
-        .eq('phone', customerPhone)
+        .eq('phone', phoneWithPlus)
         .maybeSingle();
       if (cp) {
         const { assignCustomerTier } = await import('@/lib/membership/assign-tiers');

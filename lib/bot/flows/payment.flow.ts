@@ -941,12 +941,15 @@ export const paymentFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         return [{
-          type: 'buttons',
+          type: 'list',
+          title: 'Set up recurring?',
           body: `Would you like to set up automatic *${d.service_name as string}* payments of *${formatCurrency(d.amount as number, cc)}*?`,
-          buttons: [
-            { id: 'monthly', title: 'Monthly' },
-            { id: 'yearly', title: 'Yearly' },
-            { id: 'no_thanks', title: 'No thanks' },
+          buttonLabel: 'Choose Frequency',
+          items: [
+            { title: 'Weekly', description: 'Charge every week', postbackText: 'weekly' },
+            { title: 'Monthly', description: 'Charge every month', postbackText: 'monthly' },
+            { title: 'Yearly', description: 'Charge once a year', postbackText: 'yearly' },
+            { title: 'No thanks', description: 'Skip recurring setup', postbackText: 'no_thanks' },
           ],
         }];
       },

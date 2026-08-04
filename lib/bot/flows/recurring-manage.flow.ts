@@ -134,36 +134,7 @@ export const recurringManageFlow: FlowDefinition = {
         if (ctx.session.session_data._sub_action === 'pause') return 'confirm_pause';
         if (ctx.session.session_data._sub_action === 'resume') return 'process_resume';
         if (ctx.session.session_data._sub_action === 'history') return 'payment_history';
-        // View details: show info then offer payment history
-        const subId = ctx.session.session_data._selected_sub_id as string;
-        const { data: sub } = await ctx.supabase
-          .from('customer_subscriptions')
-          .select('*')
-          .eq('id', subId)
-          .single();
-
-        if (sub) {
-          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-          const freqLabel = sub.frequency === 'yearly' ? 'Yearly' : sub.frequency === 'monthly' ? 'Monthly' : 'Weekly';
-          await ctx.sender.sendButtons({
-            to: ctx.from,
-            body: [
-              `📋 *Subscription Details*`,
-              '',
-              `Amount: ${formatCurrency(sub.amount, cc)}/${freqLabel.toLowerCase()}`,
-              `Frequency: ${freqLabel}`,
-              `Status: ${sub.status}`,
-              `Total Charged: ${formatCurrency(sub.total_charged || 0, cc)}`,
-              `Charges: ${sub.charge_count}`,
-              sub.next_charge_at ? `Next Charge: ${new Date(sub.next_charge_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : '',
-              sub.card_last_four ? `Card: *${sub.card_last_four} (${sub.card_brand || 'card'})` : '',
-            ].filter(Boolean).join('\n'),
-            buttons: [
-              { id: 'payment_history', title: 'Payment History' },
-              { id: 'back_subs', title: 'Back' },
-            ],
-          });
-        }
+        if (ctx.session.session_data._sub_action === 'details') return 'subscription_details';
         return null;
       },
     },
@@ -412,6 +383,54 @@ export const recurringManageFlow: FlowDefinition = {
       async next() { return null; },
     },
 
+    // ── Subscription Details ──
+    {
+      id: 'subscription_details',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const subId = ctx.session.session_data._selected_sub_id as string;
+        const { data: sub } = await ctx.supabase
+          .from('customer_subscriptions')
+          .select('*')
+          .eq('id', subId)
+          .single();
+
+        if (!sub) {
+          return [{ type: 'text', text: 'Subscription not found. Type *subscriptions* to try again.' }];
+        }
+
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        const freqLabel = sub.frequency === 'yearly' ? 'Yearly' : sub.frequency === 'monthly' ? 'Monthly' : 'Weekly';
+        return [{
+          type: 'buttons',
+          body: [
+            `📋 *Subscription Details*`,
+            '',
+            `Amount: ${formatCurrency(sub.amount, cc)}/${freqLabel.toLowerCase()}`,
+            `Frequency: ${freqLabel}`,
+            `Status: ${sub.status}`,
+            `Total Charged: ${formatCurrency(sub.total_charged || 0, cc)}`,
+            `Charges: ${sub.charge_count}`,
+            sub.next_charge_at ? `Next Charge: ${new Date(sub.next_charge_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : '',
+            sub.card_last_four ? `Card: *${sub.card_last_four} (${sub.card_brand || 'card'})` : '',
+          ].filter(Boolean).join('\n'),
+          buttons: [
+            { id: 'payment_history', title: 'Payment History' },
+            { id: 'back_subs', title: 'Back' },
+          ],
+        }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        const text = input.toLowerCase();
+        if (text === 'payment_history') return { valid: true, data: { _details_action: 'history' } };
+        if (text === 'back_subs' || text === 'back') return { valid: true, data: { _details_action: 'back' } };
+        return { valid: false, errorMessage: 'Please choose an option.' };
+      },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._details_action === 'history') return 'payment_history';
+        return 'select_action';
+      },
+    },
+
     // ── Payment History ──
     {
       id: 'payment_history',
@@ -419,8 +438,20 @@ export const recurringManageFlow: FlowDefinition = {
         const subId = ctx.session.session_data._selected_sub_id as string;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
-        // Fetch recent successful charges for this subscription
-        // Security: filtered by subscription_id which is already scoped to the customer
+        // Ownership validation: verify subscription belongs to this customer + business
+        const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+        const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
+        const { data: sub } = await ctx.supabase
+          .from('customer_subscriptions')
+          .select('id')
+          .eq('id', subId)
+          .eq('business_id', ctx.session.business_id)
+          .or(`customer_phone.eq.${phoneP},customer_phone.eq.${phoneN}`)
+          .maybeSingle();
+        if (!sub) {
+          return [{ type: 'text', text: 'Subscription not found. Type *subscriptions* to try again.' }];
+        }
+
         const { data: charges } = await ctx.supabase
           .from('subscription_charges')
           .select('amount, currency, status, charged_at, gateway_reference')
