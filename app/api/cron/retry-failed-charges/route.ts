@@ -165,8 +165,9 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      // Use the database-derived stable reference (authoritative billing-cycle identity)
-      const stableRef = claim.stable_ref as string;
+      // Database-derived identities
+      const stableRef = claim.stable_ref as string;       // billing cycle (Waaiio idempotency)
+      const attemptRef = claim.attempt_ref as string;     // provider attempt (Flutterwave tx_ref)
 
       // Step 3: Reconcile if recovered claim, then charge if needed
       try {
@@ -174,8 +175,8 @@ export async function GET(request: NextRequest) {
         let providerSucceeded = false;
 
         if (claim.recovered && !claim.provider_verified) {
-          // Recovered/stale claim — reconcile with provider BEFORE any charge
-          const reconciliation = await verifyTransaction(stableRef);
+          // Recovered/stale claim — reconcile using the SAME provider attempt ref
+          const reconciliation = await verifyTransaction(attemptRef);
           if (reconciliation?.outcome === 'successful') {
             // Provider already charged — DO NOT charge again
             providerSucceeded = true;
@@ -198,7 +199,7 @@ export async function GET(request: NextRequest) {
           // Fresh claim or retryable: charge the token
           const result = await chargeFlutterwaveToken(
             sub.authorization_code, amountInCurrency,
-            sub.customer_email || '', stableRef,
+            sub.customer_email || '', attemptRef,  // provider attempt ref as tx_ref
             sub.currency || 'NGN', flwSplitParams,
           );
 
@@ -219,8 +220,8 @@ export async function GET(request: NextRequest) {
         }
 
         if (providerSucceeded) {
-          // Step 4: Verify provider transaction before finalization
-          const verification = await verifyTransaction(stableRef);
+          // Step 4: Verify provider transaction using the provider attempt ref
+          const verification = await verifyTransaction(attemptRef);
           if (!verification || verification.outcome !== 'successful'
             || Math.abs((verification.amount || 0) - amountInCurrency) > 0.01
             || (verification.currency || '').toUpperCase() !== (sub.currency || 'NGN').toUpperCase()) {

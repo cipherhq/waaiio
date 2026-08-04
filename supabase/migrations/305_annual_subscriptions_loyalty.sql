@@ -144,6 +144,8 @@ DECLARE
   v_sub RECORD;
   v_existing RECORD;
   v_stable_ref TEXT;
+  v_attempt_ref TEXT;
+  v_attempt_num INT;
 BEGIN
   -- Lock the subscription row to serialize concurrent workers
   SELECT * INTO v_sub FROM customer_subscriptions
@@ -170,7 +172,7 @@ BEGIN
   v_stable_ref := 'flw-' || p_subscription_id::text || '-' || TO_CHAR(v_sub.next_charge_at, 'YYYY-MM-DD');
 
   -- Check existing claim state for this billing cycle
-  SELECT status, last_attempted_at INTO v_existing
+  SELECT status, last_attempted_at, attempts, last_error INTO v_existing
   FROM processed_webhook_events WHERE event_id = v_stable_ref;
 
   IF FOUND THEN
@@ -178,19 +180,24 @@ BEGIN
       RETURN jsonb_build_object('claimed', false, 'reason', 'already_completed');
     END IF;
 
-    -- provider_success: provider charged but DB finalize crashed — needs finalize only
+    -- provider_success: charge succeeded, needs finalize only — reuse SAME attempt ref
     IF v_existing.status = 'provider_success' THEN
       RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
-        'stable_ref', v_stable_ref, 'recovered', true, 'provider_verified', true);
+        'stable_ref', v_stable_ref, 'attempt_ref', v_existing.last_error,
+        'recovered', true, 'provider_verified', true);
     END IF;
 
-    -- provider_failed: explicit provider failure — retryable
+    -- provider_failed: explicit failure — create NEW attempt ref for genuine retry
     IF v_existing.status = 'provider_failed' THEN
+      v_attempt_num := COALESCE(v_existing.attempts, 0) + 1;
+      v_attempt_ref := v_stable_ref || '-a' || v_attempt_num;
       UPDATE processed_webhook_events
-      SET status = 'claimed', attempts = attempts + 1, last_attempted_at = NOW()
+      SET status = 'claimed', attempts = v_attempt_num, last_attempted_at = NOW(),
+          last_error = v_attempt_ref
       WHERE event_id = v_stable_ref;
       RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
-        'stable_ref', v_stable_ref, 'recovered', true, 'provider_verified', false);
+        'stable_ref', v_stable_ref, 'attempt_ref', v_attempt_ref,
+        'recovered', true, 'provider_verified', false);
     END IF;
 
     -- Active claim not yet stale — skip
@@ -198,25 +205,27 @@ BEGIN
       RETURN jsonb_build_object('claimed', false, 'reason', 'already_claimed');
     END IF;
 
-    -- Stale claim (>10 min): needs reconciliation before any charge
+    -- Stale claim (>10 min): reuse SAME attempt ref (must reconcile, not recharge)
     IF v_existing.status = 'claimed' THEN
       UPDATE processed_webhook_events
-      SET status = 'claimed', attempts = attempts + 1, last_attempted_at = NOW()
+      SET attempts = COALESCE(attempts, 0) + 1, last_attempted_at = NOW()
       WHERE event_id = v_stable_ref;
       RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
-        'stable_ref', v_stable_ref, 'recovered', true, 'provider_verified', false);
+        'stable_ref', v_stable_ref, 'attempt_ref', v_existing.last_error,
+        'recovered', true, 'provider_verified', false);
     END IF;
 
-    -- Unknown state — skip
     RETURN jsonb_build_object('claimed', false, 'reason', 'unknown_state', 'status', v_existing.status);
   END IF;
 
-  -- Fresh claim
-  INSERT INTO processed_webhook_events (event_id, gateway, event_type, status, attempts, first_received_at, last_attempted_at)
-  VALUES (v_stable_ref, 'flutterwave', 'token_renewal', 'claimed', 1, NOW(), NOW());
+  -- Fresh claim — generate first provider attempt ref
+  v_attempt_ref := v_stable_ref || '-a1';
+  INSERT INTO processed_webhook_events (event_id, gateway, event_type, status, attempts, first_received_at, last_attempted_at, last_error)
+  VALUES (v_stable_ref, 'flutterwave', 'token_renewal', 'claimed', 1, NOW(), NOW(), v_attempt_ref);
 
   RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
-    'stable_ref', v_stable_ref, 'recovered', false, 'provider_verified', false);
+    'stable_ref', v_stable_ref, 'attempt_ref', v_attempt_ref,
+    'recovered', false, 'provider_verified', false);
 END;
 $$;
 
