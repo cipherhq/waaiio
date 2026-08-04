@@ -133,24 +133,10 @@ export async function GET(request: NextRequest) {
       const amountInCurrency = sub.amount || 0;
 
       // Stable tx_ref: deterministic for this subscription + billing period
-      // Same billing cycle retry → same reference → same Flutterwave idempotency
       const scheduledAt = sub.next_charge_at;
       const stableRef = `flw-${sub.id}-${new Date(scheduledAt).toISOString().slice(0, 10)}`;
 
-      // Step 1: Atomic claim — prevents concurrent double charges
-      const { data: claim } = await supabase.rpc('claim_recurring_billing_cycle', {
-        p_subscription_id: sub.id,
-        p_scheduled_at: scheduledAt,
-        p_stable_ref: stableRef,
-      });
-
-      if (!claim?.claimed) {
-        cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, reason: claim?.reason || 'claim_failed' });
-        skipped++;
-        continue;
-      }
-
-      // Step 2: Resolve split configuration
+      // Step 1: LOCAL prerequisites BEFORE claim (prevents stranded claims)
       const flwSplitResult = await resolveGatewaySplit(supabase, sub.business_id, amountInCurrency, 'flutterwave');
       let flwSplitParams: { subaccounts: Array<{ id: string; transaction_charge_type: string; transaction_charge: number }> } | undefined;
       if (flwSplitResult.mode === 'split') {
@@ -168,6 +154,19 @@ export async function GET(request: NextRequest) {
         };
       } else if (flwSplitResult.mode === 'split_required_but_missing') {
         cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, reason: flwSplitResult.reason });
+        skipped++;
+        continue;
+      }
+
+      // Step 2: Atomic claim — only after local prerequisites pass
+      const { data: claim } = await supabase.rpc('claim_recurring_billing_cycle', {
+        p_subscription_id: sub.id,
+        p_scheduled_at: scheduledAt,
+        p_stable_ref: stableRef,
+      });
+
+      if (!claim?.claimed) {
+        cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, reason: claim?.reason || 'claim_failed' });
         skipped++;
         continue;
       }

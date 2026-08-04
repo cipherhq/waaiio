@@ -154,6 +154,11 @@ BEGIN
     RETURN jsonb_build_object('claimed', false, 'reason', 'not_found');
   END IF;
 
+  -- Validate stableRef belongs to this subscription (must contain subscription ID)
+  IF p_stable_ref NOT LIKE 'flw-' || p_subscription_id::text || '-%' THEN
+    RETURN jsonb_build_object('claimed', false, 'reason', 'ref_subscription_mismatch');
+  END IF;
+
   IF v_sub.status NOT IN ('active', 'past_due') THEN
     RETURN jsonb_build_object('claimed', false, 'reason', 'not_active', 'status', v_sub.status);
   END IF;
