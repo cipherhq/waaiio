@@ -191,11 +191,10 @@ export const recurringManageFlow: FlowDefinition = {
             cancelled = await cancelPaystackSub(sub.gateway_subscription_code, emailToken);
           } else if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
             cancelled = await cancelStripeSub(sub.gateway_subscription_code);
-          } else if (sub.gateway === 'flutterwave' && sub.gateway_subscription_code) {
-            const { cancelSubscription: cancelFlwSub } = await import('@/lib/payments/flutterwave-recurring');
-            cancelled = await cancelFlwSub(sub.gateway_subscription_code);
           } else {
-            cancelled = true; // No gateway subscription to cancel
+            // Paystack/Flutterwave: DB-only cancel. Waaiio manages Flutterwave
+            // recurrence via cron — no provider subscription to cancel.
+            cancelled = true;
           }
         } catch (err) {
           logger.withContext({ op: 'recurring.gateway-cancel', ...safeLogErrorContext(err) }).error('[RECURRING] Gateway cancel error (continuing with DB cancel)');
@@ -280,12 +279,10 @@ export const recurringManageFlow: FlowDefinition = {
         try {
           if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
             paused = await pauseStripeSub(sub.gateway_subscription_code);
-          } else if (sub.gateway === 'flutterwave' && sub.gateway_subscription_code) {
-            // Flutterwave: cancel/deactivate the provider subscription to stop auto-charges
-            const { cancelSubscription: cancelFlwSub } = await import('@/lib/payments/flutterwave-recurring');
-            paused = await cancelFlwSub(sub.gateway_subscription_code);
           } else {
-            // Paystack doesn't have native pause — DB status guard prevents charges
+            // Paystack/Flutterwave: DB-only pause. Waaiio controls Flutterwave token
+            // charging via cron (no provider subscription to pause). Paystack webhook
+            // handler skips charges for paused subscriptions.
             paused = true;
           }
         } catch (err) {
@@ -351,12 +348,9 @@ export const recurringManageFlow: FlowDefinition = {
             const metadata = (sub.metadata as Record<string, string>) || {};
             const emailToken = (ctx.session.session_data._recurring_email_token as string) || metadata.email_token || '';
             resumed = await enablePaystackSub(sub.gateway_subscription_code, emailToken);
-          } else if (sub.gateway === 'flutterwave' && sub.gateway_subscription_code) {
-            // Reactivate the Flutterwave subscription
-            const { activateSubscription: activateFlwSub } = await import('@/lib/payments/flutterwave-recurring');
-            resumed = await activateFlwSub(sub.gateway_subscription_code);
           } else {
-            // No gateway subscription — just update status
+            // Paystack/Flutterwave: DB-only resume. Waaiio manages Flutterwave
+            // recurrence via cron. Paystack re-enable already handled above.
             resumed = true;
           }
         } catch (err) {

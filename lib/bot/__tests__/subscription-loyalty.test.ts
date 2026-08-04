@@ -142,54 +142,59 @@ describe('Loyalty phone normalization', () => {
 // 7. FLUTTERWAVE LIFECYCLE
 // ═══════════════════════════════════════════════════════
 
-describe('Flutterwave subscription lifecycle', () => {
-  it('createSubscription resolves real subscription ID via transaction_id', async () => {
+describe('Flutterwave Waaiio-managed token billing', () => {
+  it('enrollment does NOT create Flutterwave plan or subscription', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const source = fs.readFileSync(path.resolve(__dirname, '../../payments/flutterwave-recurring.ts'), 'utf-8');
-    expect(source).toContain('transaction_id=');
-    expect(source).toContain('return null'); // fails safely if unresolved
+    const source = fs.readFileSync(path.resolve(__dirname, '../flows/payment.flow.ts'), 'utf-8');
+    // Must NOT call createFlutterwavePlan or createFlutterwaveSubscription
+    expect(source).not.toContain('createFlutterwavePlan');
+    expect(source).not.toContain('createFlutterwaveSubscription');
+    // Must use internal reference (not a provider subscription ID)
+    expect(source).toContain('waaiio_flw_');
   });
 
-  it('activateSubscription function exists', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const source = fs.readFileSync(path.resolve(__dirname, '../../payments/flutterwave-recurring.ts'), 'utf-8');
-    expect(source).toContain('export async function activateSubscription');
-    expect(source).toContain('/activate');
-  });
-
-  it('pause calls Flutterwave cancel provider-first', async () => {
+  it('pause/resume/cancel are DB-only (no Flutterwave provider calls)', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../flows/recurring-manage.flow.ts'), 'utf-8');
-    expect(source).toContain("gateway === 'flutterwave'");
-    expect(source).toContain('cancelFlwSub');
+    // Must NOT call Flutterwave cancel/activate for pause/resume
+    expect(source).not.toContain('cancelFlwSub');
+    expect(source).not.toContain('activateFlwSub');
+    // DB-only comment present
+    expect(source).toContain('Waaiio controls Flutterwave token');
   });
 
-  it('resume calls Flutterwave activate provider-first', async () => {
+  it('normal renewal scheduler exists for active due Flutterwave subscriptions', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(path.resolve(__dirname, '../../../app/api/cron/retry-failed-charges/route.ts'), 'utf-8');
+    // Must query active + due Flutterwave subscriptions
+    expect(source).toContain("eq('gateway', 'flutterwave')");
+    expect(source).toContain("eq('status', 'active')");
+    expect(source).toContain("lte('next_charge_at'");
+    // Must handle yearly
+    expect(source).toContain("frequency === 'yearly'");
+    // Must create payment + subscription_charge
+    expect(source).toContain("from('payments').insert");
+    expect(source).toContain("from('subscription_charges').insert");
+    // Must notify customer on failure
+    expect(source).toContain('notifyCustomerChargeFailed');
+  });
+
+  it('auto-cancel for Flutterwave is DB-only', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(path.resolve(__dirname, '../../../app/api/cron/retry-failed-charges/route.ts'), 'utf-8');
+    // Must NOT call Flutterwave cancelSubscription in auto-cancel
+    expect(source).toContain('Flutterwave: DB-only cancel');
+  });
+
+  it('provider failure (pause) does not falsely update DB', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../flows/recurring-manage.flow.ts'), 'utf-8');
-    expect(source).toContain('activateFlwSub');
-  });
-
-  it('cancel calls Flutterwave cancel provider-first', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const source = fs.readFileSync(path.resolve(__dirname, '../flows/recurring-manage.flow.ts'), 'utf-8');
-    const cancelSection = source.substring(source.indexOf("id: 'process_cancel'"));
-    expect(cancelSection).toContain("gateway === 'flutterwave'");
-    expect(cancelSection).toContain('cancelFlwSub');
-  });
-
-  it('provider failure does not falsely update DB', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const source = fs.readFileSync(path.resolve(__dirname, '../flows/recurring-manage.flow.ts'), 'utf-8');
-    // Pause: if provider fails, paused = false → DB not updated
     expect(source).toContain('if (!paused)');
-    // Resume: if provider fails, resumed = false → DB not updated
     expect(source).toContain('if (!resumed)');
   });
 });
@@ -247,10 +252,11 @@ describe('First-cycle double charge prevention', () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../flows/payment.flow.ts'), 'utf-8');
-    // Must NOT call createFlutterwaveSubscription (which charges immediately)
+    // Must NOT call createFlutterwavePlan or createFlutterwaveSubscription
+    expect(source).not.toContain('createFlutterwavePlan');
     expect(source).not.toContain('createFlutterwaveSubscription(');
-    // Instead stores plan ID for cron-based charging
-    expect(source).toContain('subscriptionCode = plan.planId');
+    // Uses internal reference — no provider subscription
+    expect(source).toContain('waaiio_flw_');
   });
 });
 
@@ -278,30 +284,14 @@ describe('Cancel does not falsely update DB', () => {
 // 12. FLUTTERWAVE AUTOMATIC RENEWAL HANDLING
 // ═══════════════════════════════════════════════════════
 
-describe('Flutterwave automatic renewal webhook', () => {
-  it('handles renewal charges without pre-existing payment', async () => {
+describe('Flutterwave webhook — Waaiio-managed model', () => {
+  it('webhook ignores unknown tx_refs (no provider subscriptions)', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../../../app/api/webhooks/flutterwave/route.ts'), 'utf-8');
-    // Must check for recurring renewal when payment not found
-    expect(source).toContain('Flutterwave automatic renewal');
-    expect(source).toContain("event_type: 'recurring_renewal'");
-    // Must update subscription stats
-    expect(source).toContain('charge_count');
-    expect(source).toContain('next_charge_at');
-    // Must handle yearly renewals
-    expect(source).toContain("frequency === 'yearly'");
-  });
-
-  it('Flutterwave subscription ID resolution uses transaction_id', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const source = fs.readFileSync(path.resolve(__dirname, '../../payments/flutterwave-recurring.ts'), 'utf-8');
-    // Must use exact transaction ID lookup, not all-subscriptions search
-    expect(source).toContain('transaction_id=');
-    // Must fail safely if ID cannot be resolved
-    expect(source).toContain('return null');
-    expect(source).toContain('Could not resolve subscription ID');
+    // Must NOT process unknown charges as renewals
+    expect(source).toContain('no Flutterwave provider subscriptions');
+    expect(source).not.toContain('Flutterwave automatic renewal');
   });
 });
 

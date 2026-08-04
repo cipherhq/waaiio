@@ -90,9 +90,9 @@ describe('retry-failed-charges cron Flutterwave support', () => {
     expect(flwSection).toContain('skipped++');
   });
 
-  it('cancels Flutterwave subscriptions after 3 failures', () => {
-    expect(cronCode).toContain("sub.gateway === 'flutterwave' && sub.gateway_subscription_code");
-    expect(cronCode).toContain("import('@/lib/payments/flutterwave-recurring')");
+  it('cancels Flutterwave subscriptions after 3 failures (DB-only — Waaiio manages tokens)', () => {
+    // Flutterwave recurring is Waaiio-managed token billing — no provider subscription to cancel
+    expect(cronCode).toContain('Flutterwave: DB-only cancel');
   });
 });
 

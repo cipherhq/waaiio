@@ -201,6 +201,150 @@ export async function GET(request: NextRequest) {
       // But if failure_count >= 3, cancel the subscription
     }
 
+    // ── Flutterwave normal renewal scheduler ──
+    // Waaiio manages Flutterwave recurrence via token billing.
+    // Process active Flutterwave subscriptions that are due for renewal.
+    const { data: flwDue } = await supabase
+      .from('customer_subscriptions')
+      .select('id, business_id, user_id, service_id, amount, currency, authorization_code, customer_email, customer_name, customer_phone, frequency, failure_count')
+      .eq('gateway', 'flutterwave')
+      .eq('status', 'active')
+      .not('authorization_code', 'is', null)
+      .lte('next_charge_at', new Date().toISOString());
+
+    for (const sub of flwDue || []) {
+      if (!sub.authorization_code) continue;
+
+      const reference = `flw-renew-${sub.id}-${Date.now().toString(36)}`;
+      const amountInCurrency = sub.amount || 0;
+
+      // Resolve split configuration
+      const flwSplitResult = await resolveGatewaySplit(supabase, sub.business_id, amountInCurrency, 'flutterwave');
+      let flwSplitParams: { subaccounts: Array<{ id: string; transaction_charge_type: string; transaction_charge: number }> } | undefined;
+      if (flwSplitResult.mode === 'split') {
+        if (process.env.FLUTTERWAVE_RECURRING_SPLIT_VERIFIED !== 'true') {
+          cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, reason: 'split not verified' });
+          skipped++;
+          continue;
+        }
+        flwSplitParams = {
+          subaccounts: [{
+            id: flwSplitResult.subaccount,
+            transaction_charge_type: 'flat',
+            transaction_charge: flwSplitResult.transactionChargeKobo / 100,
+          }],
+        };
+      } else if (flwSplitResult.mode === 'split_required_but_missing') {
+        cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: sub.id, reason: flwSplitResult.reason });
+        skipped++;
+        continue;
+      }
+
+      try {
+        const result = await chargeFlutterwaveToken(
+          sub.authorization_code,
+          amountInCurrency,
+          sub.customer_email || '',
+          reference,
+          sub.currency || 'NGN',
+          flwSplitParams,
+        );
+
+        if (result.success) {
+          // Calculate next charge
+          const nextCharge = new Date();
+          if (sub.frequency === 'weekly') nextCharge.setDate(nextCharge.getDate() + 7);
+          else if (sub.frequency === 'yearly') nextCharge.setFullYear(nextCharge.getFullYear() + 1);
+          else nextCharge.setMonth(nextCharge.getMonth() + 1);
+
+          // Create payment record
+          const { data: payment } = await supabase.from('payments').insert({
+            business_id: sub.business_id,
+            user_id: sub.user_id,
+            amount: amountInCurrency,
+            currency: sub.currency || 'NGN',
+            gateway: 'flutterwave',
+            gateway_reference: reference,
+            status: 'success',
+            paid_at: new Date().toISOString(),
+            metadata: { recurring: true, subscription_id: sub.id },
+          }).select('id').single();
+
+          // Log subscription charge
+          await supabase.from('subscription_charges').insert({
+            subscription_id: sub.id,
+            business_id: sub.business_id,
+            user_id: sub.user_id,
+            amount: amountInCurrency,
+            currency: sub.currency || 'NGN',
+            status: 'success',
+            gateway: 'flutterwave',
+            gateway_reference: reference,
+            payment_id: payment?.id || null,
+            charged_at: new Date().toISOString(),
+          });
+
+          // Update subscription stats — increment counts via raw SQL for atomicity
+          await supabase.from('customer_subscriptions').update({
+            last_charged_at: new Date().toISOString(),
+            next_charge_at: nextCharge.toISOString(),
+            failure_count: 0,
+          }).eq('id', sub.id);
+
+          // Increment charge_count + total_charged (safe for single-cron architecture)
+          const { data: currentSub } = await supabase
+            .from('customer_subscriptions')
+            .select('charge_count, total_charged')
+            .eq('id', sub.id)
+            .single();
+          if (currentSub) {
+            await supabase.from('customer_subscriptions').update({
+              charge_count: (currentSub.charge_count || 0) + 1,
+              total_charged: Number(currentSub.total_charged || 0) + amountInCurrency,
+            }).eq('id', sub.id);
+          }
+
+          // Send confirmation (non-blocking)
+          if (payment?.id) {
+            import('@/lib/payments/send-confirmation').then(({ sendProactiveConfirmation }) =>
+              sendProactiveConfirmation(supabase, payment.id)
+            ).catch(() => {});
+          }
+
+          cron.itemCompleted({ gateway: 'flutterwave', subscriptionId: sub.id, type: 'normal_renewal' });
+          retried++;
+        } else {
+          const newFailureCount = (sub.failure_count || 0) + 1;
+          await supabase.from('customer_subscriptions').update({
+            failure_count: newFailureCount,
+            status: newFailureCount >= 3 ? 'past_due' : 'active',
+          }).eq('id', sub.id);
+
+          // Notify customer
+          if (sub.customer_phone && sub.business_id) {
+            try {
+              const { notifyCustomerChargeFailed } = await import('@/lib/payments/notify-charge-failed');
+              await notifyCustomerChargeFailed(supabase, {
+                subscriptionId: sub.id, businessId: sub.business_id,
+                customerPhone: sub.customer_phone, amount: sub.amount || 0,
+                currency: sub.currency || 'NGN', serviceId: sub.service_id,
+                gateway: 'flutterwave',
+              });
+            } catch { /* non-fatal */ }
+          }
+
+          cron.itemFailed('Flutterwave renewal charge failed', { subscriptionId: sub.id, attempt: newFailureCount });
+        }
+      } catch (err) {
+        const newFailureCount = (sub.failure_count || 0) + 1;
+        await supabase.from('customer_subscriptions').update({
+          failure_count: newFailureCount,
+          status: newFailureCount >= 3 ? 'past_due' : 'active',
+        }).eq('id', sub.id);
+        cron.itemFailed(err, { gateway: 'flutterwave', subscriptionId: sub.id, type: 'normal_renewal' });
+      }
+    }
+
     // Cancel subscriptions with 3+ failures
     const { data: toCancel } = await supabase
       .from('customer_subscriptions')
@@ -217,10 +361,8 @@ export async function GET(request: NextRequest) {
         } else if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
           const { cancelSubscription } = await import('@/lib/payments/stripe-recurring');
           await cancelSubscription(sub.gateway_subscription_code);
-        } else if (sub.gateway === 'flutterwave' && sub.gateway_subscription_code) {
-          const { cancelSubscription } = await import('@/lib/payments/flutterwave-recurring');
-          await cancelSubscription(sub.gateway_subscription_code);
         }
+        // Flutterwave: DB-only cancel — Waaiio manages token billing, no provider subscription to cancel
       } catch (cancelErr) {
         logger.error(`[RETRY-CHARGES] Gateway cancel error for ${sub.id}:`, cancelErr);
       }

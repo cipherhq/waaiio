@@ -11,7 +11,7 @@ import { createNotification } from './shared/notifications';
 import type { SubscriptionTier } from '@/lib/constants';
 import { getAuthorization, createPlan as createPaystackPlan, createSubscription as createPaystackSubscription } from '@/lib/payments/paystack-recurring';
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
-import { getCardToken, createPlan as createFlutterwavePlan, createSubscription as createFlutterwaveSubscription } from '@/lib/payments/flutterwave-recurring';
+import { getCardToken } from '@/lib/payments/flutterwave-recurring';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { logger } from '@/lib/logger';
@@ -1118,21 +1118,11 @@ export const paymentFlow: FlowDefinition = {
           cardLast4 = tokenData.last4;
           cardBrand = tokenData.brand;
 
-          // Create Flutterwave payment plan
-          const plan = await createFlutterwavePlan(
-            `${ctx.business.name} - ${serviceName} (${frequency})`,
-            amount,
-            frequency,
-          );
-          if (!plan) {
-            return [{ type: 'text', text: 'Failed to set up recurring plan. Please try again later.' }];
-          }
-          planCode = plan.planId;
-
-          // Do NOT charge again — customer already paid for the current period.
-          // Store the plan ID and card token; the recurring charge cron will handle
-          // future billing using chargeToken() on the correct schedule.
-          subscriptionCode = plan.planId; // Use plan ID as subscription reference
+          // Waaiio-managed token billing: do NOT create a Flutterwave plan or subscription.
+          // The customer already paid for the current period. Store the card token
+          // and let Waaiio's recurring charge cron handle future billing via chargeToken().
+          // No provider-side subscription to manage — pause/resume/cancel are DB-only.
+          subscriptionCode = `waaiio_flw_${Date.now()}`; // Internal reference (not a provider subscription ID)
         } else {
           // Stripe: create subscription checkout
           const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
