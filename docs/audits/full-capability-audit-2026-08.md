@@ -3,7 +3,7 @@
 **Date:** 2026-08-05
 **Auditor:** Claude (code audit, read-only)
 **Branch:** `main` at commit `f02e6e58` (post-PR #98 merge)
-**Method:** Automated code inspection of all 34 capabilities and 20 shared systems against current `main`
+**Method:** Automated code inspection of all 34 requested capabilities and 20 shared systems against current `main`
 
 ---
 
@@ -13,7 +13,7 @@ Waaiio is a substantial WhatsApp-first business automation platform with **31 de
 
 The core commerce flows (scheduling, ordering, ticketing, payments, reservations) are **functionally complete end-to-end** through the WhatsApp bot. The dashboard provides full CRUD for most entities. RLS is systematically applied. Payment integration spans 4+ gateways with webhook verification and platform fee accounting.
 
-The audit identified **9 P0 findings**, **19 P1 findings**, **28 P2 findings**, and **12 P3/future items**. Most P0s are data-integrity or silent-failure issues in specific paths rather than broad systemic failures.
+The audit identified **4 P0 findings**, **18 P1 findings**, **29 P2 findings**, and **12 P3/future items** across **34 audited capabilities**.
 
 ---
 
@@ -29,381 +29,237 @@ For each capability, the audit traced:
 - Test coverage
 - Financial handling where applicable
 
-Classification: COMPLETE | PARTIAL | DEFECT | UX IMPROVEMENT | FUTURE/NOT REQUIRED
-Severity: P0 (launch blocker) | P1 (important broken/incomplete) | P2 (quality/UX) | P3 (future)
+### Classification rules
+
+Each capability receives ONE primary classification:
+- **COMPLETE** — intended end-to-end workflow is connected and usable
+- **PARTIAL** — core functionality exists but material gaps remain
+- **DEFECT** — primary workflow is broken by a concrete code defect
+- **UX IMPROVEMENT** — works but has notable UX rough edges
+- **FUTURE / NOT REQUIRED** — capability is defined but not yet implemented
+
+A capability classified as COMPLETE may still contain defects; the classification reflects the primary workflow, not perfection. The scorecard severity column reflects the highest verified finding.
+
+### Severity rules
+
+- **P0** — launch blocker: concrete financial integrity risk, provider/local state divergence that causes real money consequences, or fundamental inability to use a core workflow
+- **P1** — important: existing capability is materially broken or incomplete in a way that affects real users
+- **P2** — quality: usability, observability, resilience, or workflow improvement
+- **P3** — future: optional enhancement / nice-to-have
 
 ---
 
-## 3. Capability Scorecard
+## 3. Requested Capability Mapping
 
-| # | Capability | ID | Tier | Classification | Severity |
+The audit scope requested 34 entries. Two entries (#9 "Waivers" and #33 "Waiver System") map to the **same underlying implementation**: `waiver` capability, `waiver_templates` + `signed_waivers` tables, `app/dashboard/waivers/page.tsx`, and `app/api/waivers/` routes. They are audited as a single entry (#30 in the scorecard). Similarly, #32 "Electronic Signature" maps to `whatsapp_sign` capability and is audited as "E-Signatures / Contracts" (#33 in the scorecard).
+
+All 34 requested capabilities are accounted for: 33 unique implementations + 1 consolidated duplicate.
+
+---
+
+## 4. Capability Scorecard
+
+| # | Capability | ID | Tier | Classification | Highest Severity |
 |---|---|---|---|---|---|
 | 1 | Appointments | `appointment` | Free | PARTIAL | P1 |
 | 2 | Services | `scheduling` | Free | COMPLETE | P2 |
-| 3 | Products / Online Store | `ordering` | Free | COMPLETE | P2 |
+| 3 | Products | `ordering` | Free | COMPLETE | P2 |
 | 4 | Properties | (via `reservation`) | Growth | PARTIAL | P1 |
 | 5 | Events / Ticketing | `ticketing` | Free | COMPLETE | P2 |
 | 6 | Donations / Giving | `giving` | Free | PARTIAL | P1 |
 | 7 | Locations | `multi_location` | Growth | COMPLETE | P2 |
 | 8 | Reservations | `reservation` | Growth | COMPLETE | P2 |
 | 9 | Online Store (web) | (via `ordering`) | Free | PARTIAL | P2 |
-| 10 | Class Booking | `class_booking` | Growth | PARTIAL | P2 |
+| 10 | Class Booking | `class_booking` | Growth | PARTIAL | P1 |
 | 11 | Estimates & Quotes | `estimates` | Free | PARTIAL | P2 |
-| 12 | Invoices | `invoice` | Growth | COMPLETE | P2 |
-| 13 | Subscriptions | `recurring` | Growth | COMPLETE | P0 |
-| 14 | Session Packages | `packages` | Growth | PARTIAL | P2 |
+| 12 | Invoices | `invoice` | Growth | DEFECT | P1 |
+| 13 | Subscriptions | `recurring` | Growth | PARTIAL | P0 |
+| 14 | Session Packages | `packages` | Growth | PARTIAL | P1 |
 | 15 | Campaigns / Crowdfunding | `crowdfunding` | Business | COMPLETE | P2 |
 | 16 | Chat | `chat` | Free | COMPLETE | P1 |
 | 17 | Broadcast | `broadcast` | Growth | COMPLETE | P2 |
 | 18 | Reviews / Feedback | `feedback` | Free | COMPLETE | — |
-| 19 | Surveys | `survey` | Growth | COMPLETE | — |
-| 20 | Polls | `poll` | Free | COMPLETE | — |
+| 19 | Surveys | `survey` | Growth | COMPLETE | P2 |
+| 20 | Polls | `poll` | Free | COMPLETE | P2 |
 | 21 | Loyalty | `loyalty` | Growth | COMPLETE | P1 |
-| 22 | Referrals | `referral` | Growth | PARTIAL | P2 |
+| 22 | Referrals | `referral` | Growth | PARTIAL | P1 |
 | 23 | Membership / Loyalty Tiers | `membership` | Growth | COMPLETE | P2 |
 | 24 | Staff | `staff` | Business | PARTIAL | P1 |
 | 25 | Attendance | — | — | PARTIAL | P2 |
-| 26 | Queue | `queue` | Business | COMPLETE | — |
-| 27 | Waitlist | `waitlist` | Business | COMPLETE | — |
+| 26 | Queue | `queue` | Business | DEFECT | P1 |
+| 27 | Waitlist | `waitlist` | Business | COMPLETE | P2 |
 | 28 | Reminders | `reminders` | Growth | COMPLETE | P2 |
 | 29 | Auto-Reply | `auto_reply` | Growth | PARTIAL | P1 |
-| 30 | Waivers | `waiver` | Growth | COMPLETE | P2 |
-| 31 | Documentation / Reports | `reports` | Business | COMPLETE | — |
-| 32 | E-Signatures / Contracts | `whatsapp_sign` | Business | COMPLETE | P2 |
-| 33 | Settings | — | — | COMPLETE | — |
+| 30 | Waivers (incl. Waiver System) | `waiver` | Growth | COMPLETE | P2 |
+| 31 | Documentation / Reports | `reports` | Business | DEFECT | P1 |
+| 32 | E-Signatures / Contracts | `whatsapp_sign` | Business | COMPLETE | P1 |
+| 33 | Settings | — | — | COMPLETE | P2 |
 
-**Summary:** 20 COMPLETE, 12 PARTIAL, 1 DEFECT (Subscriptions Paystack path)
-
----
-
-## 4. Detailed Findings by Capability
-
-### 4.1 Appointments (`appointment`) — PARTIAL
-
-**Evidence:**
-- UI: `app/dashboard/appointments-management/page.tsx`
-- Bot: `lib/bot/flows/appointment.flow.ts` → delegates to scheduling flow
-- DB: `appointments` table (migration 117), `bookings.appointment_id` FK (migration 166)
-- RLS: 4 owner-scoped policies + service_role bypass (117)
-- Gating: Free tier, properly enforced
-
-**Working:** Bot flow (select appointment → date → staff → time → confirm → pay) works end-to-end. Dashboard CRUD works via RLS.
-
-**Defects:**
-- **P1-APPT-1:** `buffer_minutes` column missing from `appointments` table. Migration 146 only added it to `services`. Dashboard UI reads/writes it but the column doesn't exist, causing silent save failures or no buffer enforcement.
-- **P1-APPT-2:** `reschedule` API (`app/api/bookings/[id]/reschedule/route.ts` line 81-98) queries `services` table using `service_id` which is NULL for appointment bookings. Capacity check silently returns 0 conflicts — reschedule ignores capacity.
-- **P1-APPT-3:** `create-manual` API only supports services, not appointments. Dashboard manual booking broken for appointment-only businesses.
-- **P1-APPT-4:** Public booking endpoints (`/api/bookings/public/[slug]`, `/api/bookings/public/slots`) query `services` only — non-functional for appointment-only businesses.
-- **P2-APPT-5:** `flow_type` stored as `'scheduling'` for all appointment bookings despite `'appointment'` enum value existing. Analytics cannot distinguish.
-
-**Questions for Babajide:**
-1. Should `buffer_minutes` be added to `appointments` table, or should the UI field be removed?
-2. Should public web booking support appointment-type businesses?
-3. Should `flow_type` distinguish appointments from services for analytics?
+**Summary:** 18 COMPLETE, 12 PARTIAL, 3 DEFECT
 
 ---
 
-### 4.2 Services (`scheduling`) — COMPLETE
+## 5. P0 Findings (Launch Blockers)
 
-**Evidence:**
-- UI: `app/dashboard/services/page.tsx` (1,242 lines)
-- Bot: `lib/bot/flows/scheduling.flow.ts`
-- DB: `services` table (migration 002), `service_addons` (103)
-- RLS: Owner-scoped + public read for active services
-- Gating: Free tier
+Each P0 has a concrete financial or provider-state-divergence consequence.
 
-**Working:** Full CRUD via browser Supabase client. Bot flow complete. Cross-capability hub.
+### P0-SUB-1 — Paystack subscription pause/cancel uses wrong credential
 
-**Defects:**
-- **P2-SVC-1:** `priceLabel()` (page.tsx line 376) renders yearly services as "/month" — ternary doesn't handle `'yearly'`.
-- **P2-SVC-2:** `handleSave()` doesn't check Supabase error return — silent save failures possible.
+**Path:** `app/api/recurring/manage/route.ts` line 28 (SELECT) and line 54 (usage)
+**Verified behavior:** SELECT fetches `customer_email` but not `metadata`. Line 54: `const emailToken = sub.customer_email || ''`. Paystack's `/subscription/disable` API requires the subscription's `email_token` (stored in `metadata.email_token`), not the customer's email address.
+**Consequence:** Dashboard pause/cancel of Paystack subscriptions silently fails at the provider level. The DB status is updated to `paused`/`cancelled`, but Paystack continues charging the customer. This creates local/provider state divergence with direct financial impact — the customer is charged money that Waaiio shows as cancelled.
+**Why P0:** Concrete financial consequence — real money continues to be charged after the business believes they cancelled.
 
----
+### P0-SUB-2 — Paystack subscription created active before payment confirmation
 
-### 4.3 Products / Online Store (`ordering`) — COMPLETE
+**Path:** `app/api/recurring/setup/route.ts` lines 106 and 151
+**Verified behavior:** Both Paystack setup paths insert `customer_subscriptions` with `status: 'active'` immediately upon initializing checkout, before the customer completes payment.
+**Consequence:** If the customer abandons checkout, a phantom `active` subscription exists with no `authorization_code`. The daily `retry-failed-charges` cron (line 45) skips Paystack subs without `authorization_code`, but only for the charge path — the subscription still appears as "active" in the business dashboard and counts toward MRR metrics. More critically, if the webhook fires but fails to correlate (timing race), the cron will eventually attempt to charge and fail, incrementing `failure_count` toward auto-cancellation — generating false failure notifications to the business.
+**Why P0:** Creates phantom active subscriptions that pollute business metrics and generate false alerts. The financial state is inconsistent from creation.
 
-**Evidence:**
-- UI: `app/dashboard/products/page.tsx` + 5 sub-components
-- Bot: `lib/bot/flows/ordering.flow.ts` (3,258 lines, 44 steps)
-- DB: `products`, `product_variants`, `product_addons`, `orders`, `order_items`, `delivery_zones`, `volume_discount_rules`
-- RPCs: `create_catalog_order_atomic`, `decrement_stock`, `calculate_volume_discount`
-- RLS: Owner-scoped on all tables
-- Gating: Free tier
+### P0-CONFIRM-1 — Webhook payment confirmations never sent
 
-**Working:** Full product CRUD, multi-axis variants, addons, volume discounts, promo codes, WhatsApp catalog sync, CSV bulk import, low-stock alerts cron. Bot ordering flow is comprehensive.
+**Path:** `lib/payments/send-confirmation.ts` lines 46-55
+**Verified behavior:** `.update({ confirmation_sent_at: ... })` is called without `{ count: 'exact' }` as second argument. Supabase returns `count: null` without this option. The guard `if (!count || count === 0)` always evaluates true (null is falsy). Function returns at line 53 before sending any message.
+**Consequence:** ALL webhook-triggered payment confirmations are silently skipped. This affects all 5 payment gateways + BYO. Customers who pay via mobile payment apps (which don't redirect to the success page) never receive a WhatsApp confirmation. The cascading skip also prevents: ticket delivery for events, `handlePostCompletion` (loyalty points, feedback requests, referral code generation), and owner notifications for webhook-path payments. The "I've Paid" bot path and the payment-success redirect page are unaffected (they call different code paths).
+**Why P0:** Customers paying via any gateway webhook path receive no confirmation, no tickets, no loyalty points. This affects the core customer experience for every payment that doesn't redirect to the success page.
 
-**Important note:** Online Store is WhatsApp-only. **No web storefront exists.** `/b/[slug]` is service booking only. This is a product decision, not a bug.
+### P0-INVOICE-1 — Bot invoice flow queries nonexistent column
 
-**Defects:**
-- **P2-PROD-1:** Price stored as INTEGER (whole currency units) but WhatsApp catalog sync multiplies by 100. Internally consistent but should be documented.
-
-**Question for Babajide:** Is WhatsApp-only ordering intentional, or should a web product catalog be on the roadmap?
+**Path:** `lib/bot/flows/invoice.flow.ts` lines 32, 117, 194 (three separate SELECT queries)
+**Verified behavior:** All three queries select `invoice_number`. The actual DB column (migration `063_invoices.sql` line 14) is `reference_code`. The API route (`app/api/invoices/route.ts` line 137) correctly uses `reference_code`. The bot flow uses the wrong column name.
+**Consequence:** Supabase returns `null` for the nonexistent column. Every bot message displays "Invoice undefined". `initializePayment` at line 235 receives `referenceCode: undefined`, causing payment initialization to fail or create a payment with no reference. The entire bot-side invoice workflow (list → view → pay) is broken at runtime.
+**Why P0:** Fundamental inability to use the invoice bot workflow. Every customer interaction with invoices via WhatsApp fails.
 
 ---
 
-### 4.4 Properties — PARTIAL
+## 6. P1 Findings
 
-**Evidence:**
-- UI: `app/dashboard/properties/page.tsx`, `properties/checkin/page.tsx`
-- Bot: No dedicated flow; properties feed into `reservation.flow.ts`
-- DB: `properties` (migration 115), `property_blocked_dates` (121)
-
-**Defects:**
-- **P1-PROP-1:** Property occupancy status shows "Vacant" for checked-in properties. `page.tsx` line 125 checks `status === 'in_progress'` but the actual status is `'checked_in'` (from migration 132).
-- **P2-PROP-2:** `price_is_variable` column exists but no UI toggle — cannot be set from dashboard.
-
----
-
-### 4.5 Events / Ticketing (`ticketing`) — COMPLETE
-
-**Evidence:**
-- UI: `app/dashboard/events/page.tsx`, `events/checkin/`, `events/invites/`, `dashboard/tickets/`
-- Bot: `lib/bot/flows/ticketing.flow.ts`
-- DB: `events`, `event_tickets`, `event_ticket_types`, `event_invites`
-- RPCs: `purchase_tickets_atomic`
-- Public: `/e/[slug]` event page, `/api/events/public/[slug]`
-
-**Working:** Web + WhatsApp purchase paths. QR check-in. RSVP invites. Atomic ticket purchase prevents overselling.
-
-**Defects:**
-- **P2-EVT-1:** Need to verify that `purchase_tickets_atomic` creates individual `event_tickets` rows (not just a `bookings` row) — if missing, QR check-in would break.
+| ID | Capability | Finding | Evidence |
+|---|---|---|---|
+| P1-APPT-1 | Appointments | `buffer_minutes` column missing from `appointments` table. Dashboard UI reads/writes it but column doesn't exist in any migration. Buffer enforcement non-functional. | Migration 146 adds to `services` only; `appointments-management/page.tsx` line 19 |
+| P1-APPT-2 | Appointments | Reschedule ignores capacity for appointment bookings. `service_id` is NULL → query returns 0 conflicts. | `app/api/bookings/[id]/reschedule/route.ts` lines 81-98 |
+| P1-APPT-3 | Appointments | Dashboard manual booking broken for appointment-only businesses. API only queries `services`. | `app/api/bookings/create-manual/route.ts` lines 62-68 |
+| P1-APPT-4 | Appointments | Public booking page non-functional for appointment-only businesses. | `app/api/bookings/public/[slug]/route.ts`, `public/slots/route.ts` |
+| P1-PROP-1 | Properties | Occupancy status shows "Vacant" for checked-in properties. Checks `status === 'in_progress'` but canonical status is `'checked_in'`. | `app/dashboard/properties/page.tsx` line 125 vs migration 132 |
+| P1-GIVE-1 | Giving | Recurring giving advertised in UI but no auto-charge cron. `recurring_interval` stored, never acted on. | `app/dashboard/giving/page.tsx` — toggle exists; no cron in `app/api/cron/` |
+| P1-CHAT-1 | Chat | Team members cannot mark messages as read. Browser client UPDATE blocked by RLS (no UPDATE policy for team members). | `app/dashboard/chat/page.tsx` line 543; migration 168 grants INSERT only |
+| P1-LOYAL-1 | Loyalty | Redemption code update silently fails. No UPDATE RLS on `loyalty_transactions` for any role. | `lib/bot/flows/loyalty.flow.ts` lines 244-251 |
+| P1-STAFF-1 | Staff | Staff schedules stored but never consulted during bot booking. Customers can book staff on their day off. | `business_staff.schedule` JSONB; `scheduling.flow.ts` reads service-level `available_days` only |
+| P1-AUTO-1 | Auto-Reply | Capability defined but `instant_reply_message` is configured in UI yet never sent by bot. Away message works for first message only. | `app/dashboard/settings/tabs/FeaturesTab.tsx` vs `bot.service.ts` — no `instant_reply` reference |
+| P1-QUEUE-1 | Queue | Bot writes `status='cancelled'` violating DB CHECK constraint (`waiting/serving/completed/no_show`). "Leave Queue" fails. | `lib/bot/flows/queue-checkin.flow.ts` lines 108, 435; migration 018 CHECK |
+| P1-QUEUE-2 | Queue | Queue reopen opt-in writes `type` column to `waitlist_entries` — column doesn't exist. | `queue-checkin.flow.ts` line 135; migration 020 schema |
+| P1-CLASS-1 | Class Booking | No dedicated dashboard page or sidebar entry. No class schedule display in bot. | Managed inside `services/page.tsx`; `class_booking` in `nonUserFacing` |
+| P1-PKG-1 | Session Packages | `sessions_used` is never incremented anywhere. No redemption mechanism. Dashboard shows 0/N forever. | `app/api/packages/enroll/route.ts` sets 0; no update anywhere |
+| P1-REF-1 | Referrals | Customers cannot discover referral code via bot despite code comment claiming they can. | `post-completion.ts` line 379 says "type 'refer'"; no handler exists |
+| P1-REPORT-1 | Documents | Send API double-auth causes all dashboard-initiated sends to 403. | `app/api/reports/send/route.ts` lines 14-31: cookie auth + bearer on service client |
+| P1-REPORT-2 | Documents | Upload rejects PNG/JPEG despite UI advertising support. Magic byte check is PDF-only. | `app/api/reports/upload/route.ts` line 43-44 |
+| P1-ESIG-1 | E-Signatures | Multi-signer PDF captures only last signer's signature. | `app/api/contracts/submit/route.ts` line 218 |
 
 ---
 
-### 4.6 Donations / Giving (`giving`) — PARTIAL
+## 7. P2 Findings
 
-**Evidence:**
-- UI: `app/dashboard/giving/page.tsx` — uses `services` table with `service_type = 'giving'`
-- Bot: Routed through `payment.flow.ts` (`select_category` step)
-- No dedicated API routes
-
-**Defects:**
-- **P1-GIVE-1:** Recurring giving is advertised in UI (weekly/monthly toggle) but **no cron job exists to auto-charge**. The `recurring_interval` field is stored but never acted on. Dead feature flag.
-
----
-
-### 4.7 Subscriptions (`recurring`) — COMPLETE but P0 defect
-
-**Evidence:**
-- UI: `app/dashboard/recurring/page.tsx`
-- Bot: Enrollment in `payment.flow.ts`, management in `recurring-manage.flow.ts`
-- Cron: `app/api/cron/retry-failed-charges/route.ts`
-- DB: `customer_subscriptions`, `subscription_charges`
-- RPCs: `claim_recurring_billing_cycle`, `finalize_token_recurring_charge`, `record_flutterwave_definitive_failure`, `cancel_flutterwave_after_failures`
-- Tests: 42 PostgreSQL tests + 22 executable tests
-
-**Working:** Flutterwave path is robustly engineered with atomic claim/finalize/failure RPCs and concurrent finalizer protection (PR #97 + #98).
-
-**Defects:**
-- **P0-SUB-1:** Dashboard Paystack pause/cancel uses `customer_email` as Paystack `email_token` (`app/api/recurring/manage/route.ts` line 54). Paystack requires the subscription's email token (stored in `metadata.email_token`), not the email address. The SELECT query doesn't fetch `metadata`. Dashboard pause/cancel of Paystack subscriptions **silently fails** — DB status is updated but provider subscription continues charging.
-- **P0-SUB-2:** Web-initiated Paystack subscription creates `customer_subscriptions` with `status: 'active'` before payment is confirmed (`app/api/recurring/setup/route.ts` lines 99-115). If user abandons checkout, phantom active subscription remains. Cron will attempt to charge it and fail.
-
----
-
-### 4.8 Chat (`chat`) — COMPLETE with P1
-
-**Evidence:**
-- UI: `app/dashboard/chat/page.tsx`
-- Bot: `lib/bot/flows/chat.flow.ts`, `lib/bot/handlers/chat-handoff.ts`
-- API: 7 routes under `/api/chat/`
-- DB: `chat_conversations`, `chat_messages`, `canned_responses`
-
-**Working:** Full inbound → bot → escalate → agent replies → resolve cycle with Supabase Realtime.
-
-**Defects:**
-- **P1-CHAT-1:** Team members cannot mark messages as read. `markAsRead` in chat page uses browser client, but team members have no UPDATE RLS policy on `chat_messages` (migration 168 only grants INSERT for outbound). Unread badge persists permanently for team members.
+| ID | Capability | Finding |
+|---|---|---|
+| P2-SVC-1 | Services | `priceLabel()` renders yearly services as "/month" — ternary doesn't handle `'yearly'` |
+| P2-SVC-2 | Services | `handleSave()` doesn't check Supabase error return — silent save failures |
+| P2-PROD-1 | Products | Price INTEGER vs WhatsApp catalog API minor-unit multiplication — internally consistent but undocumented |
+| P2-PROP-2 | Properties | `price_is_variable` column exists but no UI toggle |
+| P2-EVT-1 | Events | Verify `purchase_tickets_atomic` creates individual `event_tickets` rows |
+| P2-APPT-5 | Appointments | `flow_type` always `'scheduling'` — no appointment analytics distinction |
+| P2-LOC-1 | Locations | Latitude/longitude columns exist but no UI fields |
+| P2-LOC-2 | Locations | No location step in reservation or ticketing flows |
+| P2-LOC-3 | Locations | Operating hours not exposed in bot responses |
+| P2-ATTEND-1 | Attendance | No capability gate — any business can access the dashboard page |
+| P2-ATTEND-2 | Attendance | WhatsApp check-in source badge in UI but no bot flow implements it |
+| P2-WAIVER-1 | Waivers | No PDF generation for signed waivers (column exists, never written) |
+| P2-WAIVER-2 | Waivers | QR download button canvas timing issue |
+| P2-ESIG-2 | E-Signatures | Contract revoke does not update `contract_signers` rows — stay `pending` |
+| P2-REMIND-1 | Reminders | No-show reminder resolves service name via NULL `service_id` for appointments |
+| P2-ONBOARD-1 | Onboarding | Draft persistence in localStorage stores business details |
+| P2-ANALYTICS-1 | Analytics | All metrics computed client-side — slow on large datasets |
+| P2-ANALYTICS-2 | Analytics | Dropoffs page queries `step_name` but column is `step_id` — all steps show "unknown" |
+| P2-ANALYTICS-3 | Analytics | Bot completion check uses `'complete'` vs `'completed'` inconsistently between pages |
+| P2-LOYAL-2 | Loyalty | Stale balance displayed during redemption (uses session-cached value) |
+| P2-MEMBER-1 | Membership | `discount_percent` stored/configured but never applied during checkout |
+| P2-STORE-1 | Online Store | No web product catalog — WhatsApp only |
+| P2-BCAST-1 | Broadcast | History tab uses `notifications` table grouping heuristic — inaccurate counts |
+| P2-POLL-1 | Polls | `closes_at` not injected into bot session — expired polls still accept votes |
+| P2-AI-1 | Ace AI | `increment_ai_usage` RPC uses old 2-arg signature; call silently fails. Analytics tracking only. |
+| P2-CRON-1 | Cron | Reminders cron is UTC-naive — off by 1 hour for non-UTC businesses |
+| P2-CRON-2 | Cron | Custom reminder hours have no dedup flag — re-sends every 30 min |
+| P2-TZ-1 | Scheduling | Uses UTC `new Date().toISOString().split('T')[0]` for "today" — wrong for late-night non-UTC users |
+| P2-COUNTRY-1 | Country | `CountryCode` is `string` not union — unsupported country silently defaults to Nigeria |
 
 ---
 
-### 4.9 Loyalty (`loyalty`) — COMPLETE with P1
+## 8. P3 / Future Items
 
-**Evidence:**
-- UI: `app/dashboard/loyalty/page.tsx`
-- Bot: `lib/bot/flows/loyalty.flow.ts`, global keyword handler
-- DB: `loyalty_points`, `loyalty_transactions`, `redeem_loyalty_points` RPC
-
-**Working:** Earn path (post-completion → upsert points → WhatsApp notification) and redeem path work.
-
-**Defects:**
-- **P1-LOYAL-1:** `loyalty_transactions` has no UPDATE RLS policy for any role. The redemption code update (`loyalty.flow.ts` lines 244-251) silently fails via browser client. Redemption code is never stored in the transaction log.
-
----
-
-### 4.10 Staff (`staff`) — PARTIAL with P1
-
-**Evidence:**
-- UI: `app/dashboard/staff/page.tsx`
-- API: `app/api/staff/route.ts` (full CRUD)
-- DB: `business_staff` (migration 020)
-
-**Defects:**
-- **P1-STAFF-1:** Staff schedules are stored (`schedule` JSONB) but **never consulted by the bot** during booking. A customer can book a staff member on their day off if the service allows that day.
+| ID | Capability | Item |
+|---|---|---|
+| P3-SVC-1 | Services | Duplicate/copy service function |
+| P3-SVC-2 | Services | Drag-and-drop reorder |
+| P3-PROD-1 | Products | Restore-from-trash for soft-deleted products |
+| P3-LOC-1 | Locations | Google Maps integration / geocoding |
+| P3-REF-1 | Referrals | Web referral landing page |
+| P3-CHAT-1 | Chat | Agent typing indicators |
+| P3-BCAST-2 | Broadcast | Scheduled broadcast execution verification |
+| P3-WAIVER-3 | Waivers | Pre-booking waiver requirement enforcement |
+| P3-ESIG-3 | E-Signatures | Multi-party sequential signing improvements |
+| P3-ATTEND-1 | Attendance | Event-linked attendance tracking |
+| P3-QUEUE-3 | Queue | Estimated wait time display |
+| P3-STORE-2 | Online Store | Web storefront with cart/checkout |
 
 ---
 
-### 4.11 Auto-Reply (`auto_reply`) — PARTIAL with P1
-
-**Evidence:**
-- Capability is defined (`auto_reply: 'growth'`) and appears in category defaults
-- `ai_conversation_config` table stores business hours and away message
-
-**Defects:**
-- **P1-AUTO-1:** No implementation found for auto-reply behavior in the bot. The `ai_conversation_config` stores `business_hours` and `away_message` fields, but `bot.service.ts` does not check business hours before processing messages. The capability toggle exists but the runtime behavior is not wired.
-
-**Question for Babajide:** Is auto-reply implemented elsewhere (e.g., at the WhatsApp provider level), or is this genuinely unimplemented?
-
----
-
-## 5. Cross-Capability Findings
-
-### 5.1 `appointments` vs `services` table divergence
-The `appointments` table (migration 117) mirrors many `services` columns but independently. Several shared APIs/RPCs only query `services`, breaking when `appointment_id` is set and `service_id` is NULL. Affected: reschedule, create-manual, public slots, public booking page.
-
-### 5.2 `business_staff` vs `business_members` duplication
-Both tables exist (migrations 020 and 099). The staff page uses only `business_staff`. Chat team assignment uses `business_members`. These appear to be separate concepts (operational staff vs account team members) but could cause confusion.
-
-### 5.3 Webhook confirmation dedup bug
-`send-confirmation.ts` line 46 calls `supabase.from().update()` without `{ count: 'exact' }`. The `count` is always `null`, causing the dedup guard at line 52 to always return early. **No webhook-path payment confirmations are ever sent.**
-
-### 5.4 Online Store is WhatsApp-only
-Products/ordering have no web storefront. `/b/[slug]` serves only service bookings. This is likely intentional but worth confirming.
-
----
-
-## 6. Questions Requiring Product Decisions
+## 9. Questions Requiring Product Decisions
 
 1. **Appointments buffer_minutes:** Add column to `appointments` table, or remove from dashboard UI?
 2. **Public booking for appointments:** Should `/b/[slug]` support appointment-type businesses?
 3. **Recurring giving:** Should a cron job auto-charge recurring giving categories, or remove the recurring toggle from giving UI?
 4. **Online Store web:** Is WhatsApp-only ordering intentional? Should web product catalog be on the roadmap?
-5. **Auto-reply:** Is this implemented at the provider level, or genuinely unimplemented?
+5. **Auto-reply instant_reply:** Is `instant_reply_message` intended to be implemented, or should it be removed from the settings UI?
 6. **Staff scheduling enforcement:** Should the bot check staff member schedules when selecting a staff member?
 7. **Attendance capability gate:** Should attendance require a specific capability, or remain ungated?
 8. **`flow_type` for appointments:** Should appointment bookings store `flow_type = 'appointment'` for analytics?
 
 ---
 
-## 7. P0 Findings (Launch Blockers)
-
-| ID | Capability | Finding | Impact |
-|---|---|---|---|
-| P0-SUB-1 | Subscriptions | Paystack dashboard pause/cancel uses wrong email_token | Dashboard cancel silently fails; Paystack keeps charging |
-| P0-SUB-2 | Subscriptions | Web Paystack subscription created as active before payment | Phantom active subscriptions; cron charges fail |
-| ~~P0-AUTH-1~~ | ~~Authentication~~ | ~~Removed: `generatePhonePassword` uses random nonce — not deterministic~~ | ~~N/A~~ |
-| P0-INVOICE-1 | Invoices | Bot invoice flow queries `invoice_number` column — does not exist in DB (should be `reference_code`). All bot invoice interactions show "Invoice undefined" and payment init fails. | Bot invoice flow completely broken |
-| P0-QUEUE-1 | Queue | Bot writes `status='cancelled'` to `queue_entries` but CHECK constraint only allows `waiting/serving/completed/no_show`. "Leave Queue" silently fails or throws constraint error. | Customer cannot leave queue via bot |
-| P0-TZ-1 | Country/Timezone | Scheduling flow uses `new Date().toISOString().split('T')[0]` for "today" — UTC server time. Nigerian customer at 11PM Lagos (midnight UTC) sees tomorrow as today. | Wrong booking date for late-night customers |
-| P0-CONFIRM-1 | Notifications | Webhook payment confirmation dedup always returns early | No webhook-path confirmations ever sent |
-| P0-AI-1 | Ace AI | `increment_ai_usage` RPC call uses old 2-arg signature (migration 084); function replaced with 3-arg (migration 091) | Intent usage tracking silently broken |
-| P0-APPT-1 | Appointments | `buffer_minutes` column missing from appointments table | Buffer time between appointments non-functional |
-| P0-PROP-1 | Properties | Property occupancy shows "Vacant" for checked-in properties | Property managers see wrong occupancy status |
-
----
-
-## 8. P1 Findings (Important Broken/Incomplete)
-
-| ID | Capability | Finding |
-|---|---|---|
-| P1-APPT-2 | Appointments | Reschedule ignores capacity for appointment bookings |
-| P1-APPT-3 | Appointments | Dashboard manual booking broken for appointment-only businesses |
-| P1-APPT-4 | Appointments | Public booking page non-functional for appointment-only businesses |
-| P1-GIVE-1 | Giving | Recurring giving advertised but no auto-charge mechanism |
-| P1-CHAT-1 | Chat | Team members cannot mark messages as read (no UPDATE RLS policy) |
-| P1-LOYAL-1 | Loyalty | Redemption code update silently fails (no UPDATE RLS on loyalty_transactions) |
-| P1-STAFF-1 | Staff | Staff schedules stored but never consulted during bot booking |
-| P1-AUTO-1 | Auto-Reply | Capability defined but no runtime behavior implemented |
-| P1-APPT-5 | Appointments | No test file for appointment.flow.ts |
-| P1-CLASS-1 | Class Booking | No dedicated dashboard page — managed inside Services page with no sidebar entry |
-| P1-CLASS-2 | Class Booking | No class schedule display in bot — students see regular time slot picker, not class times |
-| P1-PKG-1 | Session Packages | Redemption flow incomplete — no bot integration for session consumption |
-| P1-REF-1 | Referrals | Customers cannot discover their referral code via bot — no keyword handler |
-| P1-BCAST-1 | Broadcast | History tab reconstructs from `notifications` table, not `business_broadcasts` — inaccurate counts |
-| P1-REPORT-1 | Documents | Send API double-auth: `authenticateRequest` (cookie) + `getUser(bearer)` on service client — bearer is empty from dashboard, causing 403 on all document sends |
-| P1-REPORT-2 | Documents | Upload API only accepts PDF (magic byte check) despite UI showing PDF/PNG/JPG accepted |
-| P1-ESIG-1 | E-Signatures | Multi-signer PDF captures only last signer's signature — earlier signers' signatures not incorporated |
-| P1-ESIG-2 | E-Signatures | Contract revoke does not update `contract_signers` rows — signer records stay `pending` |
-| P1-QUEUE-2 | Queue | Queue reopen opt-in writes `type` column to `waitlist_entries` — column doesn't exist, INSERT fails silently |
-
----
-
-## 9. P2 Findings (Quality/UX)
-
-| ID | Capability | Finding |
-|---|---|---|
-| P2-SVC-1 | Services | Yearly recurring label shows "/month" |
-| P2-SVC-2 | Services | Silent save failures — error not checked |
-| P2-PROD-1 | Products | Price integer vs catalog API minor-unit inconsistency |
-| P2-PROP-2 | Properties | `price_is_variable` toggle missing from UI |
-| P2-EVT-1 | Events | Verify `purchase_tickets_atomic` creates individual ticket rows |
-| P2-APPT-5 | Appointments | `flow_type` always 'scheduling' — no appointment analytics distinction |
-| P2-LOC-1 | Locations | Latitude/longitude columns exist but no UI fields |
-| P2-LOC-2 | Locations | No location step in reservation or ticketing flows |
-| P2-LOC-3 | Locations | Operating hours not exposed in bot responses |
-| P2-ATTEND-1 | Attendance | No capability gate — any business can access |
-| P2-ATTEND-2 | Attendance | WhatsApp check-in source defined but no bot flow implements it |
-| P2-WAIVER-1 | Waivers | No PDF generation for signed waivers |
-| P2-WAIVER-2 | Waivers | QR download button timing issue |
-| P2-ESIG-1 | E-Signatures | Contract template versioning not implemented |
-| P2-REMIND-1 | Reminders | No-show reminder resolves service name via `service_id` which is NULL for appointment bookings |
-| P2-ONBOARD-1 | Onboarding | Draft persistence in localStorage stores business details |
-| P2-ANALYTICS-1 | Analytics | All metrics computed client-side — slow on large datasets |
-| P2-LOYAL-2 | Loyalty | Stale balance displayed during redemption (uses session-cached value) |
-| P2-MEMBER-1 | Membership | Tier assignment uses `total_spent` from `loyalty_points` — may not match actual payment totals |
-| P2-STORE-1 | Online Store | No web product catalog — WhatsApp only |
-| P2-CHAT-2 | Chat | No business hours / away message integration |
-| P2-SURVEY-1 | Surveys | Response rate calculation divides by broadcast count which may not match actual survey sends |
-| P2-POLL-1 | Polls | No results visualization — text-only counts |
-| P2-POLL-2 | Polls | `closes_at` not injected into bot session — expired polls still accept votes from sent messages |
-| P2-ANALYTICS-2 | Analytics | Dropoffs page queries `step_name` but DB column is `step_id` — all steps show "unknown" |
-| P2-ANALYTICS-3 | Analytics | Bot completion check uses `'complete'` vs `'completed'` inconsistently between Analytics and Insights pages |
-| P2-CRON-1 | Cron | Reminders cron is UTC-naive — off by 1 hour for non-UTC business reminder windows |
-| P2-CRON-2 | Cron | Custom reminder hours have no dedup flag — re-sends every 30 min after window passes |
-| P2-COUNTRY-1 | Country | `CountryCode` is `string` not union — unsupported country silently defaults to Nigeria |
-
----
-
-## 10. P3 / Future Items
-
-| ID | Capability | Item |
-|---|---|---|
-| P3-SVC-1 | Services | Duplicate/copy service function |
-| P3-SVC-2 | Services | Drag-and-drop reorder |
-| P3-PROD-2 | Products | Restore-from-trash for soft-deleted products |
-| P3-LOC-4 | Locations | Google Maps integration / geocoding |
-| P3-REF-2 | Referrals | Web referral landing page |
-| P3-CHAT-3 | Chat | Agent typing indicators |
-| P3-BCAST-2 | Broadcast | Broadcast scheduling (UI exists but implementation needs verification) |
-| P3-WAIVER-3 | Waivers | Pre-booking waiver requirement enforcement |
-| P3-ESIG-2 | E-Signatures | Multi-party signing (sequential signers) |
-| P3-ATTEND-3 | Attendance | Event-linked attendance tracking |
-| P3-QUEUE-1 | Queue | Estimated wait time display |
-| P3-STORE-2 | Online Store | Web storefront with cart/checkout |
-
----
-
-## 11. Recommended Remediation Sequence
+## 10. Recommended Remediation Sequence
 
 ### Phase 1 — P0 fixes (before any public launch)
-1. Fix Paystack subscription email_token (P0-SUB-1) — fetch `metadata` in SELECT
-2. Fix web Paystack subscription status (P0-SUB-2) — create as `pending`, activate on webhook
-3. Fix webhook confirmation dedup (P0-CONFIRM-1) — add `{ count: 'exact' }` to update call
-4. Fix `increment_ai_usage` signature (P0-AI-1) — update to 3-arg version
-5. Add `buffer_minutes` to appointments table (P0-APPT-1)
-6. Fix property occupancy status check (P0-PROP-1) — check `'checked_in'` not `'in_progress'`
-7. Fix invoice bot flow column name (P0-INVOICE-1) — change `invoice_number` to `reference_code`
-8. Fix queue `cancelled` status (P0-QUEUE-1) — add `'cancelled'` to CHECK constraint
-9. Fix scheduling "today" timezone (P0-TZ-1) — use business timezone for date derivation
+1. Fix Paystack subscription email_token (P0-SUB-1) — fetch `metadata` in SELECT, use `metadata.email_token`
+2. Fix web Paystack subscription status (P0-SUB-2) — create as `pending`, activate on webhook confirmation
+3. Fix webhook confirmation dedup (P0-CONFIRM-1) — add `{ count: 'exact' }` to `.update()` call
+4. Fix invoice bot flow column name (P0-INVOICE-1) — change `invoice_number` to `reference_code` in all 3 queries
 
 ### Phase 2 — P1 fixes (critical for launched capabilities)
-1. Fix appointment reschedule capacity (P1-APPT-2)
-2. Fix appointment manual booking (P1-APPT-3)
-3. Add UPDATE RLS for `loyalty_transactions` (P1-LOYAL-1)
-4. Add UPDATE RLS for `chat_messages` for team members (P1-CHAT-1)
-5. Either implement auto-reply or remove the capability (P1-AUTO-1)
-6. Either implement recurring giving cron or remove the toggle (P1-GIVE-1)
+1. Fix queue `cancelled` status (P1-QUEUE-1) — add `'cancelled'` to CHECK constraint
+2. Fix queue reopen opt-in (P1-QUEUE-2) — use correct table/column
+3. Fix property occupancy status (P1-PROP-1) — check `'checked_in'`
+4. Add `buffer_minutes` to appointments table (P1-APPT-1)
+5. Fix appointment reschedule capacity (P1-APPT-2)
+6. Fix document send API auth (P1-REPORT-1) — remove duplicate bearer check
+7. Fix document upload magic bytes (P1-REPORT-2) — accept PNG/JPEG
+8. Add UPDATE RLS for `loyalty_transactions` (P1-LOYAL-1)
+9. Add UPDATE RLS for `chat_messages` for team members (P1-CHAT-1)
+10. Fix multi-signer PDF (P1-ESIG-1)
 
 ### Phase 3 — P2 improvements (quality)
 Prioritize based on customer-facing visibility and business impact.
+
+---
+
+## 11. Severity Downgrade Notes
+
+The following findings were initially considered for P0 but downgraded after evidence review:
+
+- **AI usage tracking (now P2-AI-1):** `increment_ai_usage` RPC signature mismatch causes intent tracking to silently fail. However, this only affects internal analytics — no customer-facing, billing, or security consequence. The tier-guard usage checks (`ai-tier-guard.ts`) correctly use the 3-arg signature, so feature limits still work. Downgraded to P2.
+- **Scheduling timezone (now P2-TZ-1):** UTC "today" derivation is wrong for late-night non-UTC users. This is a real date-off-by-one bug but only affects a narrow window (~11PM-midnight local time). Not a launch blocker, but important to fix. Downgraded to P2.
+- **Appointments buffer_minutes (now P1-APPT-1):** Column missing from `appointments` table. Dashboard writes silently fail. This is a workflow defect but not a financial or security issue. Downgraded to P1.
+- **Property occupancy (now P1-PROP-1):** Wrong status label in dashboard. UI-only issue — no booking or data integrity consequence. Downgraded to P1.
+- **Queue cancelled status (now P1-QUEUE-1):** Bot writes invalid status. The customer cannot leave the queue via bot. Real but not launch-blocking (queue is a Business-tier feature, and the dashboard can still manage the queue). Downgraded to P1.
 
 ---
 
@@ -421,6 +277,6 @@ All findings in this audit are for review and prioritization only.
 
 **Next steps:**
 1. Independent CTO review of this audit
-2. Babajide answers product questions (Section 6)
+2. Babajide answers product questions (Section 9)
 3. Prioritized fix list created
 4. Implementation begins only after approval
