@@ -42,11 +42,17 @@ export async function sendProactiveConfirmation(
   logPrefix = '[WEBHOOK]',
 ): Promise<void> {
   // ── Atomic claim: only one concurrent caller wins processing rights ──
-  // Uses FOR UPDATE row lock in the RPC to serialize webhook, redirect, and bot paths.
+  // Uses FOR UPDATE row lock + ownership token to serialize webhook, redirect, and bot paths.
   // Stale claims (>5 min) are recoverable. Completed confirmations are idempotent.
-  const { data: claim } = await supabase.rpc('claim_payment_confirmation', {
+  const { data: claim, error: claimError } = await supabase.rpc('claim_payment_confirmation', {
     p_payment_id: payment.id,
   });
+
+  if (claimError) {
+    logSafeError(logPrefix, 'claim-rpc', claimError);
+    Sentry.captureException(claimError, { tags: { component: 'send-confirmation', operation: 'claim' } });
+    return;
+  }
 
   if (!claim?.claimed) {
     if (claim?.already_completed) {
@@ -54,6 +60,13 @@ export async function sendProactiveConfirmation(
     } else {
       logger.info(`${logPrefix} Confirmation claim not granted for payment ${payment.id}: ${claim?.reason || 'unknown'}`);
     }
+    return;
+  }
+
+  // Validate claim returned expected data
+  const claimToken = claim.claim_token as string;
+  if (!claimToken || !claim.payment_id) {
+    logger.error(`${logPrefix} Claim succeeded but returned incomplete data for payment ${payment.id}`);
     return;
   }
 
@@ -206,7 +219,7 @@ export async function sendProactiveConfirmation(
   if (!businessId) {
     logger.warn(`${logPrefix} Proactive confirmation skipped — no business`);
     // Release claim so retry can succeed if business data is later available
-    try { await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id }); } catch { /* best-effort */ }
+    try { await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id, p_claim_token: claimToken }); } catch { /* best-effort */ }
     return;
   }
 
@@ -232,7 +245,7 @@ export async function sendProactiveConfirmation(
     }
     if (!guestEmail) {
       logger.warn(`${logPrefix} Proactive confirmation skipped — no phone or email`);
-      try { await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id }); } catch { /* best-effort */ }
+      try { await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id, p_claim_token: claimToken }); } catch { /* best-effort */ }
       return;
     }
     // We have email but no phone — send email-only below
@@ -655,8 +668,27 @@ export async function sendProactiveConfirmation(
 
     // ── 10. Finalize: mark confirmation as successfully completed ──
     // confirmation_sent_at is set NOW (after all sends succeeded), not at claim time.
-    await supabase.rpc('finalize_payment_confirmation', { p_payment_id: payment.id });
-    logger.info(`${logPrefix} Confirmation finalized for payment ${payment.id}`);
+    // Only the token owner can finalize — prevents stale worker A from finalizing worker B's claim.
+    const { data: finResult, error: finError } = await supabase.rpc('finalize_payment_confirmation', {
+      p_payment_id: payment.id, p_claim_token: claimToken,
+    });
+
+    if (finError) {
+      // Finalization RPC failed — external sends already occurred.
+      // Do NOT release: that would guarantee a duplicate retry after sends already happened.
+      // Leave claim in place; stale recovery will handle it after 5 min.
+      logSafeError(logPrefix, 'finalize-rpc', finError);
+      Sentry.captureException(finError, { tags: { component: 'send-confirmation', operation: 'finalize' } });
+      // Retry finalization once — the RPC is idempotent
+      try {
+        await supabase.rpc('finalize_payment_confirmation', { p_payment_id: payment.id, p_claim_token: claimToken });
+      } catch { /* stale recovery will handle */ }
+    } else if (finResult?.finalized) {
+      logger.info(`${logPrefix} Confirmation finalized for payment ${payment.id}`);
+    } else {
+      // Token mismatch or unexpected state — our claim was superseded
+      logger.warn(`${logPrefix} Finalization not confirmed for payment ${payment.id}: ${finResult?.reason || 'unknown'}`);
+    }
 
   } catch (err) {
     logSafeError(logPrefix, 'send-confirmation', err);
@@ -664,9 +696,18 @@ export async function sendProactiveConfirmation(
 
     // Release the processing claim so a future retry can succeed.
     // Do NOT finalize — confirmation was not fully sent.
+    // Only release with our token — stale workers cannot release a newer claim.
     try {
-      await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id });
-      logger.info(`${logPrefix} Confirmation claim released for retry — payment ${payment.id}`);
+      const { data: relResult, error: relError } = await supabase.rpc('release_payment_confirmation', {
+        p_payment_id: payment.id, p_claim_token: claimToken,
+      });
+      if (relError) {
+        logSafeError(logPrefix, 'release-rpc', relError);
+      } else if (relResult?.released) {
+        logger.info(`${logPrefix} Confirmation claim released for retry — payment ${payment.id}`);
+      } else {
+        logger.warn(`${logPrefix} Release not confirmed — payment ${payment.id}: ${relResult?.reason || 'unknown'}`);
+      }
     } catch (releaseErr) {
       logSafeError(logPrefix, 'release-claim', releaseErr);
     }
@@ -678,8 +719,14 @@ export async function sendProactiveConfirmation(
     Sentry.captureException(outerErr, { tags: { component: 'send-confirmation', operation: 'confirmation-outer' } });
 
     try {
-      await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id });
-      logger.info(`${logPrefix} Confirmation claim released after outer error — payment ${payment.id}`);
+      const { error: relError } = await supabase.rpc('release_payment_confirmation', {
+        p_payment_id: payment.id, p_claim_token: claimToken,
+      });
+      if (relError) {
+        logSafeError(logPrefix, 'release-rpc-outer', relError);
+      } else {
+        logger.info(`${logPrefix} Confirmation claim released after outer error — payment ${payment.id}`);
+      }
     } catch (releaseErr) {
       logSafeError(logPrefix, 'release-claim-outer', releaseErr);
     }
