@@ -29,7 +29,7 @@ const invoiceListStep: FlowStepConfig = {
 
     const { data: invoices } = await ctx.supabase
       .from('invoices')
-      .select('id, invoice_number, total_amount, due_date, status, businesses!inner(name, country_code)')
+      .select('id, reference_code, total_amount, due_date, status, businesses!inner(name, country_code)')
       .or(`customer_phone.eq.${sanitizeFilterValue(phone)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
       .eq('business_id', businessId)
       .in('status', ['sent', 'viewed', 'overdue'])
@@ -61,7 +61,7 @@ const invoiceListStep: FlowStepConfig = {
         ? new Date(inv.due_date).toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { month: 'short', day: 'numeric' })
         : 'No due date';
       const statusTag = inv.status === 'overdue' ? ' ⚠️ OVERDUE' : '';
-      return `${emoji} ${inv.invoice_number} • ${formatCurrency(inv.total_amount, cc)} • Due ${dueDateStr}${statusTag}`;
+      return `${emoji} ${inv.reference_code} • ${formatCurrency(inv.total_amount, cc)} • Due ${dueDateStr}${statusTag}`;
     });
 
     return [
@@ -114,7 +114,7 @@ const invoiceDetailStep: FlowStepConfig = {
 
     const { data: invoice } = await ctx.supabase
       .from('invoices')
-      .select('id, invoice_number, total_amount, due_date, status, created_at, businesses!inner(name, country_code)')
+      .select('id, reference_code, total_amount, due_date, status, created_at, businesses!inner(name, country_code)')
       .eq('id', invoiceId)
       .single();
 
@@ -144,7 +144,7 @@ const invoiceDetailStep: FlowStepConfig = {
     );
 
     const summary = [
-      `📄 *Invoice ${invoice.invoice_number}*`,
+      `📄 *Invoice ${invoice.reference_code}*`,
       '',
       `From: ${biz?.name || 'Business'}`,
       `Date: ${createdDate}`,
@@ -191,7 +191,7 @@ const invoicePayStep: FlowStepConfig = {
 
     const { data: invoice } = await ctx.supabase
       .from('invoices')
-      .select('id, invoice_number, total_amount, business_id, businesses!inner(name, country_code, payment_gateway, subscription_tier)')
+      .select('id, reference_code, total_amount, business_id, businesses!inner(name, country_code, payment_gateway, subscription_tier)')
       .eq('id', invoiceId)
       .single();
 
@@ -232,7 +232,7 @@ const invoicePayStep: FlowStepConfig = {
         invoiceId: invoice.id,
         userId,
         amount: invoice.total_amount,
-        referenceCode: invoice.invoice_number,
+        referenceCode: invoice.reference_code,
         businessName: biz?.name || 'Business',
         phone: ctx.from,
         countryCode: cc as CountryCode,
@@ -263,7 +263,7 @@ const invoicePayStep: FlowStepConfig = {
         if (bankAccount) {
           const sd = ctx.session.session_data;
           sd._invoice_id = invoice.id;
-          sd._invoice_number = invoice.invoice_number;
+          sd._invoice_ref = invoice.reference_code;
           sd._invoice_amount = invoice.total_amount;
           sd._invoice_business_id = invoice.business_id;
           sd._invoice_customer_name = custName;
@@ -292,7 +292,7 @@ const invoicePayStep: FlowStepConfig = {
               text: await ctx.t([
                 `🏦 *Bank Transfer Payment*`,
                 '',
-                `💳 Invoice ${invoice.invoice_number}`,
+                `💳 Invoice ${invoice.reference_code}`,
                 `💰 ${formatCurrency(invoice.total_amount, cc)}`,
                 '',
                 `Transfer to:`,
@@ -323,10 +323,10 @@ const invoicePayStep: FlowStepConfig = {
         businessId: invoice.business_id,
         businessName: biz?.name || 'Business',
         countryCode: cc,
-        referenceCode: invoice.invoice_number,
+        referenceCode: invoice.reference_code,
         customerName: custName,
         amount: invoice.total_amount,
-        invoiceNumber: invoice.invoice_number,
+        invoiceNumber: invoice.reference_code,
       }).catch(err => logger.error('[INVOICE] Notify error:', err));
 
       // In-app notification
@@ -334,14 +334,14 @@ const invoicePayStep: FlowStepConfig = {
         businessId: invoice.business_id,
         type: 'invoice_payment',
         channel: 'whatsapp',
-        body: `${custName} opened payment link for Invoice ${invoice.invoice_number} (${formatCurrency(invoice.total_amount, cc)}).`,
+        body: `${custName} opened payment link for Invoice ${invoice.reference_code} (${formatCurrency(invoice.total_amount, cc)}).`,
       }).catch(err => logger.error('[INVOICE] Notification error:', err));
 
       // Store payment reference and customer info for await step
       const sd = ctx.session.session_data;
       sd.payment_reference = result.reference;
       sd._invoice_id = invoice.id;
-      sd._invoice_number = invoice.invoice_number;
+      sd._invoice_ref = invoice.reference_code;
       sd._invoice_amount = invoice.total_amount;
       sd._invoice_business_id = invoice.business_id;
       sd._invoice_customer_name = custName;
@@ -370,7 +370,7 @@ const invoicePayStep: FlowStepConfig = {
           {
             type: 'text',
             text: await ctx.t([
-              `💳 Pay ${formatCurrency(invoice.total_amount, cc)} for Invoice ${invoice.invoice_number}`,
+              `💳 Pay ${formatCurrency(invoice.total_amount, cc)} for Invoice ${invoice.reference_code}`,
               '',
               `*Option 1 — Pay Online* 👇`,
               result.url,
@@ -396,7 +396,7 @@ const invoicePayStep: FlowStepConfig = {
 
       return [{
         type: 'text',
-        text: await ctx.t(`💳 Pay ${formatCurrency(invoice.total_amount, cc)} for Invoice ${invoice.invoice_number}\n\nTap the link below to pay securely:\n${result.url}\n\n💡 *What you can do:*\n• Type *my invoices* to check your invoices\n• Type *receipt* to get your payment receipt${getPoweredByFooter(biz.subscription_tier)}`),
+        text: await ctx.t(`💳 Pay ${formatCurrency(invoice.total_amount, cc)} for Invoice ${invoice.reference_code}\n\nTap the link below to pay securely:\n${result.url}\n\n💡 *What you can do:*\n• Type *my invoices* to check your invoices\n• Type *receipt* to get your payment receipt${getPoweredByFooter(biz.subscription_tier)}`),
       }];
     } catch (err) {
       logger.error('[INVOICE] Payment initialization error:', err);
@@ -504,7 +504,7 @@ const awaitInvoicePaymentStep: FlowStepConfig = {
           referenceCode: transferRef,
           customerName: custName,
           amount: expectedAmount,
-          invoiceNumber: `${sd._invoice_number as string} (Bank Transfer)`,
+          invoiceNumber: `${sd._invoice_ref as string} (Bank Transfer)`,
         }).catch(err => logger.error('[INVOICE] Transfer notify error:', err));
 
         createNotification(ctx.supabase, {
@@ -561,7 +561,7 @@ const awaitInvoicePaymentStep: FlowStepConfig = {
 
       if (verified) {
         const invoiceId = sd._invoice_id as string;
-        const invoiceNum = sd._invoice_number as string;
+        const invoiceNum = sd._invoice_ref as string;
         const amount = sd._invoice_amount as number;
 
         // Atomic dedup: only proceed if invoice is not already paid
