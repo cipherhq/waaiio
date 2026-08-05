@@ -184,10 +184,10 @@ BEGIN
     IF v_existing.status = 'provider_success' THEN
       RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
         'stable_ref', v_stable_ref, 'attempt_ref', v_existing.last_error,
-        'recovered', true, 'provider_verified', true);
+        'reconcile_required', false, 'provider_verified', true);
     END IF;
 
-    -- provider_failed: explicit failure — create NEW attempt ref for genuine retry
+    -- provider_failed: create NEW attempt ref — charge immediately, do NOT reconcile
     IF v_existing.status = 'provider_failed' THEN
       v_attempt_num := COALESCE(v_existing.attempts, 0) + 1;
       v_attempt_ref := v_stable_ref || '-a' || v_attempt_num;
@@ -197,7 +197,7 @@ BEGIN
       WHERE event_id = v_stable_ref;
       RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
         'stable_ref', v_stable_ref, 'attempt_ref', v_attempt_ref,
-        'recovered', true, 'provider_verified', false);
+        'reconcile_required', false, 'provider_verified', false);
     END IF;
 
     -- Active claim not yet stale — skip
@@ -205,15 +205,14 @@ BEGIN
       RETURN jsonb_build_object('claimed', false, 'reason', 'already_claimed');
     END IF;
 
-    -- Stale claim (>10 min): reuse SAME attempt ref (must reconcile, not recharge)
-    -- Do NOT increment attempts — only real provider attempts advance the number
+    -- Stale claim (>10 min): reuse SAME attempt ref — MUST reconcile first
     IF v_existing.status = 'claimed' THEN
       UPDATE processed_webhook_events
       SET last_attempted_at = NOW()
       WHERE event_id = v_stable_ref;
       RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
         'stable_ref', v_stable_ref, 'attempt_ref', v_existing.last_error,
-        'recovered', true, 'provider_verified', false);
+        'reconcile_required', true, 'provider_verified', false);
     END IF;
 
     RETURN jsonb_build_object('claimed', false, 'reason', 'unknown_state', 'status', v_existing.status);
@@ -226,16 +225,17 @@ BEGIN
 
   RETURN jsonb_build_object('claimed', true, 'subscription_id', p_subscription_id,
     'stable_ref', v_stable_ref, 'attempt_ref', v_attempt_ref,
-    'recovered', false, 'provider_verified', false);
+    'reconcile_required', false, 'provider_verified', false);
 END;
 $$;
 
 CREATE OR REPLACE FUNCTION finalize_token_recurring_charge(
   p_stable_ref       TEXT,
   p_subscription_id  UUID,
-  p_verified_amount  NUMERIC(12,2),  -- must match provider-verified amount
+  p_verified_amount  NUMERIC(12,2),
   p_verified_currency TEXT DEFAULT 'NGN',
-  p_gateway          TEXT DEFAULT 'flutterwave'  -- must equal 'flutterwave'; validated below
+  p_gateway          TEXT DEFAULT 'flutterwave',
+  p_provider_attempt_ref TEXT DEFAULT NULL  -- actual Flutterwave tx_ref for the successful attempt
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -270,15 +270,17 @@ BEGIN
 
   -- Check idempotency: if already finalized, return success without duplicating
   IF v_claim.status = 'completed' THEN
-    -- Already finalized — return the existing data
-    SELECT id INTO v_payment_id FROM payments WHERE gateway_reference = p_stable_ref AND status = 'success' LIMIT 1;
+    -- Already finalized — find payment by either ref
+    SELECT id INTO v_payment_id FROM payments
+      WHERE (gateway_reference = p_stable_ref OR gateway_reference = COALESCE(p_provider_attempt_ref, p_stable_ref))
+      AND status = 'success' LIMIT 1;
     RETURN jsonb_build_object('success', true, 'already_finalized', true, 'payment_id', v_payment_id);
   END IF;
 
   -- Check payment doesn't already exist (belt + suspenders)
-  IF EXISTS (SELECT 1 FROM payments WHERE gateway_reference = p_stable_ref AND status = 'success') THEN
+  IF EXISTS (SELECT 1 FROM payments WHERE (gateway_reference = p_stable_ref OR gateway_reference = COALESCE(p_provider_attempt_ref, p_stable_ref)) AND status = 'success') THEN
     UPDATE processed_webhook_events SET status = 'completed', completed_at = v_now WHERE event_id = p_stable_ref;
-    SELECT id INTO v_payment_id FROM payments WHERE gateway_reference = p_stable_ref AND status = 'success' LIMIT 1;
+    SELECT id INTO v_payment_id FROM payments WHERE (gateway_reference = p_stable_ref OR gateway_reference = COALESCE(p_provider_attempt_ref, p_stable_ref)) AND status = 'success' LIMIT 1;
     RETURN jsonb_build_object('success', true, 'already_finalized', true, 'payment_id', v_payment_id);
   END IF;
 
@@ -331,9 +333,9 @@ BEGIN
     card_last_four, card_brand, paid_at, metadata
   ) VALUES (
     v_sub.business_id, v_sub.user_id, v_booking_id, p_verified_amount, p_verified_currency, p_gateway,
-    p_stable_ref, 'success', 'success', 'card',
+    COALESCE(p_provider_attempt_ref, p_stable_ref), 'success', 'success', 'card',
     v_sub.card_last_four, v_sub.card_brand,
-    v_now, jsonb_build_object('recurring', true, 'subscription_id', v_sub.id)
+    v_now, jsonb_build_object('recurring', true, 'subscription_id', v_sub.id, 'billing_cycle_ref', p_stable_ref, 'provider_attempt_ref', COALESCE(p_provider_attempt_ref, p_stable_ref))
   ) RETURNING id INTO v_payment_id;
 
   -- Log subscription charge
@@ -342,7 +344,7 @@ BEGIN
     status, gateway, gateway_reference, payment_id, booking_id, charged_at
   ) VALUES (
     v_sub.id, v_sub.business_id, v_sub.user_id, p_verified_amount, p_verified_currency,
-    'success', p_gateway, p_stable_ref, v_payment_id, v_booking_id, v_now
+    'success', p_gateway, COALESCE(p_provider_attempt_ref, p_stable_ref), v_payment_id, v_booking_id, v_now
   );
 
   -- Platform fee (same logic as process_recurring_charge)
@@ -398,9 +400,9 @@ $$;
 
 DO $$ BEGIN
   REVOKE ALL ON FUNCTION claim_recurring_billing_cycle(UUID) FROM PUBLIC;
-  REVOKE ALL ON FUNCTION finalize_token_recurring_charge(TEXT, UUID, NUMERIC, TEXT, TEXT) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION finalize_token_recurring_charge(TEXT, UUID, NUMERIC, TEXT, TEXT, TEXT) FROM PUBLIC;
   EXECUTE 'GRANT EXECUTE ON FUNCTION claim_recurring_billing_cycle(UUID) TO service_role';
-  EXECUTE 'GRANT EXECUTE ON FUNCTION finalize_token_recurring_charge(TEXT, UUID, NUMERIC, TEXT, TEXT) TO service_role';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION finalize_token_recurring_charge(TEXT, UUID, NUMERIC, TEXT, TEXT, TEXT) TO service_role';
 EXCEPTION WHEN undefined_object THEN NULL;
 END $$;
 

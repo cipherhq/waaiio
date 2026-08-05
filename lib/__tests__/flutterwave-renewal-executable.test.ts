@@ -30,7 +30,7 @@ function mockDeps(opts: {
   const rpcMock = vi.fn().mockImplementation((name: string) => {
     if (name === 'claim_recurring_billing_cycle') {
       return Promise.resolve({
-        data: opts.claimResult ?? { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a1', recovered: false, provider_verified: false },
+        data: opts.claimResult ?? { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a1', reconcile_required: false, provider_verified: false },
         error: null,
       });
     }
@@ -137,7 +137,7 @@ describe('Flutterwave renewal — executable production tests', () => {
 
   it('8. recovered claim with provider already successful: finalize, no recharge', async () => {
     const deps = mockDeps({
-      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a1', recovered: true, provider_verified: true },
+      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a1', reconcile_required: false, provider_verified: true },
     });
     const result = await processFlutterwaveRenewal(deps, mockSub());
 
@@ -148,7 +148,7 @@ describe('Flutterwave renewal — executable production tests', () => {
 
   it('9. recovered stale claim: reconciliation uses same attempt ref', async () => {
     const deps = mockDeps({
-      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a1', recovered: true, provider_verified: false },
+      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a1', reconcile_required: true, provider_verified: false },
       verifyOutcome: 'successful',
     });
     const result = await processFlutterwaveRenewal(deps, mockSub());
@@ -162,7 +162,7 @@ describe('Flutterwave renewal — executable production tests', () => {
 
   it('10. recovered stale claim + pending reconciliation: no recharge', async () => {
     const deps = mockDeps({
-      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a1', recovered: true, provider_verified: false },
+      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a1', reconcile_required: true, provider_verified: false },
       verifyOutcome: 'pending',
     });
     const result = await processFlutterwaveRenewal(deps, mockSub());
@@ -191,7 +191,7 @@ describe('Flutterwave renewal — executable production tests', () => {
 
   it('13. recovered a1 + verify=failed → record failure, NO charge', async () => {
     const deps = mockDeps({
-      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a1', recovered: true, provider_verified: false },
+      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a1', reconcile_required: true, provider_verified: false },
       verifyOutcome: 'failed',
       failureResult: { recorded: true, failure_count: 1 },
     });
@@ -205,24 +205,35 @@ describe('Flutterwave renewal — executable production tests', () => {
     expect((deps.supabase as any).rpc).toHaveBeenCalledWith('record_flutterwave_definitive_failure', expect.anything());
   });
 
-  it('14. next retry after failure → new attempt a2', async () => {
+  it('14. next retry after failure → new attempt a2 charged IMMEDIATELY', async () => {
     const deps = mockDeps({
-      // Simulates provider_failed reclaim → new attempt ref
-      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a2', recovered: true, provider_verified: false },
-      verifyOutcome: null, // reconciliation timeout for new a2 (not yet charged)
+      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a2', reconcile_required: false, provider_verified: false },
+      chargeOutcome: 'successful',
     });
-    // Since reconciliation returns null (timeout), it should skip — correct for unresolved
-    // But a2 is a NEW ref that was never charged, so reconciliation should return 'unknown'
-    // In reality the claim RPC generates a2 after provider_failed. The test verifies the attempt ref is a2.
+    // Mock chargeToken to return the correct a2 reference
+    deps.chargeTokenFn = vi.fn().mockResolvedValue({ outcome: 'successful', reference: 'flw-sub-001-2026-08-04-a2' });
     const result = await processFlutterwaveRenewal(deps, mockSub());
 
-    // With null reconciliation, it skips (leave for next cron)
-    expect(result.action).toBe('skipped');
-    // Verify the attempt ref used for reconciliation is a2, not a1
+    expect(result.action).toBe('finalized');
+    // chargeToken called with a2 (not a1)
+    expect(deps.chargeTokenFn).toHaveBeenCalledWith(
+      'auth-token', 50, 'test@example.com', 'flw-sub-001-2026-08-04-a2', 'NGN', undefined,
+    );
+    // verifyTransaction NOT called before charge (reconcile_required=false)
+    // But IS called after charge success for verification
     expect(deps.verifyTransactionFn).toHaveBeenCalledWith('flw-sub-001-2026-08-04-a2');
   });
 
-  it('15. X-Idempotency-Key: same attemptRef → same key', async () => {
+  it('15. returned tx_ref != expected → no finalization', async () => {
+    const deps = mockDeps({ chargeOutcome: 'successful' });
+    deps.chargeTokenFn = vi.fn().mockResolvedValue({ outcome: 'successful', reference: 'WRONG-REF' });
+    const result = await processFlutterwaveRenewal(deps, mockSub());
+
+    expect(result.action).toBe('error');
+    expect(result.reason).toBe('provider_ref_mismatch');
+  });
+
+  it('16. X-Idempotency-Key: same attemptRef → same key', async () => {
     // The chargeToken function sends X-Idempotency-Key = reference (the attemptRef)
     // This is verified structurally since the mock doesn't exercise the actual fetch
     const fs = await import('fs');

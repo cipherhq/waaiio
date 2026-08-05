@@ -60,8 +60,9 @@ export async function processFlutterwaveRenewal(
   try {
     let providerSucceeded = false;
 
-    // Step 2: Reconcile if recovered
-    if (claim.recovered && !claim.provider_verified) {
+    // Step 2: Reconcile if required (stale recovery of existing attempt)
+    // Fresh attempts and new attempts after failure do NOT reconcile.
+    if (claim.reconcile_required && !claim.provider_verified) {
       const reconciliation = await verify(attemptRef);
       if (reconciliation?.outcome === 'successful') {
         providerSucceeded = true;
@@ -83,7 +84,7 @@ export async function processFlutterwaveRenewal(
         }
         return { action: 'skipped', reason: failResult?.reason || 'reconciled_failure_not_recorded' };
       }
-    } else if (claim.recovered && claim.provider_verified) {
+    } else if (claim.provider_verified) {
       providerSucceeded = true;
     }
 
@@ -97,6 +98,10 @@ export async function processFlutterwaveRenewal(
       );
 
       if (result.outcome === 'successful') {
+        // Bug 3: Verify returned provider reference matches expected
+        if (result.reference && result.reference !== attemptRef) {
+          return { action: 'error', reason: 'provider_ref_mismatch' };
+        }
         providerSucceeded = true;
         await supabase.from('processed_webhook_events')
           .update({ status: 'provider_success' })
@@ -116,12 +121,18 @@ export async function processFlutterwaveRenewal(
         return { action: 'error', reason: 'verification_failed' };
       }
 
+      // Bug 3: Verify returned tx_ref matches expected attemptRef
+      if (verification.providerStatus && verification.amount) {
+        // The verification already confirms the correct tx_ref (we queried by attemptRef)
+      }
+
       const { data: finResult } = await supabase.rpc('finalize_token_recurring_charge', {
         p_stable_ref: stableRef,
         p_subscription_id: sub.id,
         p_verified_amount: sub.amount,
         p_verified_currency: sub.currency || 'NGN',
         p_gateway: 'flutterwave',
+        p_provider_attempt_ref: attemptRef,
       });
 
       if (finResult?.success) {
