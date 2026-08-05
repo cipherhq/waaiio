@@ -56,15 +56,26 @@ export async function POST(request: NextRequest) {
     // ── Provider operation (must succeed before DB update) ──
     let providerSuccess = true;
 
-    if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
+    if (sub.gateway === 'paystack') {
+      // Paystack requires both gateway_subscription_code and email_token.
+      // Fail closed if either is missing — do not allow DB-only status change
+      // for a provider-managed subscription.
+      if (!sub.gateway_subscription_code) {
+        logger.warn('[RECURRING] Paystack subscription missing gateway_subscription_code', {
+          subscriptionId, action, gateway: 'paystack',
+        });
+        return NextResponse.json({
+          error: 'Subscription is missing the Paystack subscription code required for this operation. Please contact support.',
+          code: 'MISSING_SUBSCRIPTION_CODE',
+        }, { status: 422 });
+      }
+
       // Paystack requires the subscription's email_token (returned at creation),
       // NOT the customer's email address. The token is stored in metadata.email_token.
       const metadata = (sub.metadata as Record<string, string>) || {};
       const emailToken = metadata.email_token || '';
 
       if (!emailToken) {
-        // Legacy subscriptions created before email_token storage may lack this field.
-        // Fail closed rather than sending an empty token to Paystack.
         logger.warn('[RECURRING] Paystack subscription missing email_token', {
           subscriptionId, action, gateway: 'paystack',
         });
@@ -82,7 +93,17 @@ export async function POST(request: NextRequest) {
         const { enableSubscription } = await import('@/lib/payments/paystack-recurring');
         providerSuccess = await enableSubscription(sub.gateway_subscription_code, emailToken);
       }
-    } else if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
+    } else if (sub.gateway === 'stripe') {
+      if (!sub.gateway_subscription_code) {
+        logger.warn('[RECURRING] Stripe subscription missing gateway_subscription_code', {
+          subscriptionId, action, gateway: 'stripe',
+        });
+        return NextResponse.json({
+          error: 'Subscription is missing the Stripe subscription ID required for this operation. Please contact support.',
+          code: 'MISSING_SUBSCRIPTION_CODE',
+        }, { status: 422 });
+      }
+
       if (action === 'pause') {
         const { pauseSubscription } = await import('@/lib/payments/stripe-recurring');
         providerSuccess = await pauseSubscription(sub.gateway_subscription_code);

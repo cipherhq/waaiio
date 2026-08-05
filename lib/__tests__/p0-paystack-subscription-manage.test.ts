@@ -1,20 +1,13 @@
 /**
  * P0-SUB-1 — Paystack subscription pause/cancel credential fix
  *
- * Proves:
- * 1. Cancel uses metadata.email_token, not customer_email
- * 2. Pause uses the same correct token
- * 3. Provider failure does NOT update local status
- * 4. Provider success updates local status correctly
- * 5. Missing email_token fails safely with 422
- * 6. Stripe management behavior unchanged
- * 7. Auth/ownership protections intact
- * 8. Credentials never returned/logged in response
+ * Executable route-level tests with mocked auth/Supabase/provider dependencies.
+ * Proves correct behavior for all management paths.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
-// ── Mock setup ──
-
+// ── Provider mocks ──
 const mockPaystackCancel = vi.fn();
 const mockPaystackEnable = vi.fn();
 const mockStripePause = vi.fn();
@@ -32,14 +25,148 @@ vi.mock('@/lib/payments/stripe-recurring', () => ({
   cancelSubscription: (...args: unknown[]) => mockStripeCancel(...args),
 }));
 
-// Read the route source to verify structural correctness
-const fs = await import('fs');
-const path = await import('path');
-const routeSource = fs.readFileSync(
-  path.resolve(__dirname, '../../app/api/recurring/manage/route.ts'), 'utf-8',
-);
+// ── Supabase mocks ──
+const mockSubscription: Record<string, unknown> = {
+  id: 'sub-001',
+  business_id: 'biz-001',
+  gateway: 'paystack',
+  gateway_subscription_code: 'SUB_ps_abc123',
+  gateway_customer_code: 'CUS_abc123',
+  status: 'active',
+  customer_email: 'customer@example.com',
+  metadata: { email_token: 'tok_secret_abc123' },
+};
 
-describe('P0-SUB-1: Paystack subscription manage — credential fix', () => {
+let capturedSubSelect = '';
+let capturedUpdateArgs: Record<string, unknown> | null = null;
+let updateCalled = false;
+
+function buildServiceMock(subOverrides: Partial<Record<string, unknown>> = {}) {
+  const sub = { ...mockSubscription, ...subOverrides };
+  capturedUpdateArgs = null;
+  updateCalled = false;
+
+  return {
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === 'customer_subscriptions') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            capturedSubSelect = cols;
+            return {
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: sub, error: null }),
+              }),
+            };
+          }),
+          update: vi.fn().mockImplementation((data: Record<string, unknown>) => {
+            capturedUpdateArgs = data;
+            updateCalled = true;
+            return { eq: vi.fn().mockResolvedValue({ data: null, error: null }) };
+          }),
+        };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { id: 'biz-001' }, error: null }),
+            }),
+          }),
+        }),
+      };
+    }),
+  };
+}
+
+const mockRequireCapability = vi.fn().mockResolvedValue({ allowed: true });
+
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: vi.fn().mockResolvedValue({
+    auth: {
+      getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'user-001' } } }),
+    },
+    from: vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({ data: { id: 'biz-001' }, error: null }),
+          }),
+        }),
+      }),
+    }),
+  }),
+}));
+
+let serviceMock: ReturnType<typeof buildServiceMock>;
+
+vi.mock('@/lib/supabase/service', () => ({
+  createServiceClient: vi.fn(() => serviceMock),
+}));
+
+vi.mock('@/lib/capabilities/api-guard', () => ({
+  requireCapability: (...args: unknown[]) => mockRequireCapability(...args),
+}));
+
+vi.mock('@/lib/logger', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+function makeRequest(body: Record<string, unknown>) {
+  return new NextRequest('http://localhost/api/recurring/manage', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+async function callRoute(body: Record<string, unknown>, subOverrides: Partial<Record<string, unknown>> = {}) {
+  serviceMock = buildServiceMock(subOverrides);
+  // Re-import to pick up fresh mocks each call
+  vi.resetModules();
+
+  // Re-apply mocks after resetModules
+  vi.doMock('@/lib/supabase/service', () => ({
+    createServiceClient: vi.fn(() => serviceMock),
+  }));
+  vi.doMock('@/lib/supabase/server', () => ({
+    createClient: vi.fn().mockResolvedValue({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'user-001' } } }),
+      },
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { id: 'biz-001' }, error: null }),
+            }),
+          }),
+        }),
+      }),
+    }),
+  }));
+  vi.doMock('@/lib/capabilities/api-guard', () => ({
+    requireCapability: (...args: unknown[]) => mockRequireCapability(...args),
+  }));
+  vi.doMock('@/lib/logger', () => ({
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  }));
+  vi.doMock('@/lib/payments/paystack-recurring', () => ({
+    cancelSubscription: (...args: unknown[]) => mockPaystackCancel(...args),
+    enableSubscription: (...args: unknown[]) => mockPaystackEnable(...args),
+  }));
+  vi.doMock('@/lib/payments/stripe-recurring', () => ({
+    pauseSubscription: (...args: unknown[]) => mockStripePause(...args),
+    resumeSubscription: (...args: unknown[]) => mockStripeResume(...args),
+    cancelSubscription: (...args: unknown[]) => mockStripeCancel(...args),
+  }));
+
+  const { POST } = await import('../../app/api/recurring/manage/route');
+  const res = await POST(makeRequest(body));
+  const json = await res.json();
+  return { status: res.status, json };
+}
+
+describe('P0-SUB-1: Route-level subscription management', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -50,107 +177,153 @@ describe('P0-SUB-1: Paystack subscription manage — credential fix', () => {
     mockStripeCancel.mockResolvedValue(true);
   });
 
-  // ── 1. Cancel uses metadata.email_token ──
-  it('1. SELECT fetches metadata column', () => {
-    // The SELECT must include metadata to access email_token
-    expect(routeSource).toContain("'id, business_id, gateway, gateway_subscription_code, gateway_customer_code, status, customer_email, metadata'");
-  });
-
-  it('2. email_token extracted from metadata, not customer_email', () => {
-    // Must read from metadata object
-    expect(routeSource).toContain('metadata.email_token');
-    // Must NOT use customer_email as the token
-    expect(routeSource).not.toMatch(/emailToken\s*=\s*sub\.customer_email/);
-  });
-
-  // ── 3. Provider failure does NOT update local status ──
-  it('3. providerSuccess checked before DB update', () => {
-    // The route must check provider result before updating DB
-    expect(routeSource).toContain('if (!providerSuccess)');
-    // The DB update must come AFTER the provider success check
-    const providerCheckIdx = routeSource.indexOf('if (!providerSuccess)');
-    const dbUpdateIdx = routeSource.indexOf(".update(updates)");
-    expect(providerCheckIdx).toBeGreaterThan(-1);
-    expect(dbUpdateIdx).toBeGreaterThan(providerCheckIdx);
-  });
-
-  it('4. provider failure returns error without updating DB', () => {
-    // Provider failure returns a 502 error
-    expect(routeSource).toContain('PROVIDER_OPERATION_FAILED');
-    expect(routeSource).toContain('status: 502');
-    // The error message mentions local status was not changed
-    expect(routeSource).toContain('Local status was not changed');
-  });
-
-  // ── 5. Missing email_token fails safely ──
-  it('5. missing email_token returns 422 with MISSING_EMAIL_TOKEN code', () => {
-    expect(routeSource).toContain("if (!emailToken)");
-    expect(routeSource).toContain('MISSING_EMAIL_TOKEN');
-    expect(routeSource).toContain('status: 422');
-  });
-
-  // ── 6. Stripe behavior unchanged ──
-  it('6. Stripe pause/resume/cancel do not use email_token', () => {
-    // Stripe calls should pass only subscription code, no email token
-    const stripeSection = routeSource.substring(
-      routeSource.indexOf("sub.gateway === 'stripe'"),
-      routeSource.indexOf('// Flutterwave'),
+  // ── A. Paystack cancel: correct email_token, provider true → DB updated ──
+  it('A. Paystack cancel passes metadata.email_token to provider and updates DB on success', async () => {
+    const { status, json } = await callRoute(
+      { subscriptionId: 'sub-001', action: 'cancel' },
     );
-    expect(stripeSection).not.toContain('emailToken');
-    expect(stripeSection).toContain('pauseSubscription(sub.gateway_subscription_code)');
-    expect(stripeSection).toContain('resumeSubscription(sub.gateway_subscription_code)');
-    expect(stripeSection).toContain('cancelSubscription(sub.gateway_subscription_code)');
+
+    expect(status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.status).toBe('cancelled');
+
+    // Provider called with email_token from metadata, NOT customer_email
+    expect(mockPaystackCancel).toHaveBeenCalledWith('SUB_ps_abc123', 'tok_secret_abc123');
+    expect(mockPaystackCancel).not.toHaveBeenCalledWith('SUB_ps_abc123', 'customer@example.com');
+
+    // DB update was called
+    expect(updateCalled).toBe(true);
+    expect(capturedUpdateArgs?.status).toBe('cancelled');
   });
 
-  // ── 7. Auth/ownership protections intact ──
-  it('7. auth check and ownership verification present', () => {
-    expect(routeSource).toContain("await supabase.auth.getUser()");
-    expect(routeSource).toContain("eq('owner_id', user.id)");
-    expect(routeSource).toContain("requireCapability");
-    expect(routeSource).toContain("recurring");
-    expect(routeSource).toContain("manage_existing");
+  // ── B. Paystack pause: correct email_token, provider true → DB updated ──
+  it('B. Paystack pause passes correct email_token and updates DB on success', async () => {
+    const { status, json } = await callRoute(
+      { subscriptionId: 'sub-001', action: 'pause' },
+    );
+
+    expect(status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.status).toBe('paused');
+
+    // Pause uses the same disable endpoint (cancelSubscription)
+    expect(mockPaystackCancel).toHaveBeenCalledWith('SUB_ps_abc123', 'tok_secret_abc123');
+    expect(updateCalled).toBe(true);
+    expect(capturedUpdateArgs?.status).toBe('paused');
   });
 
-  // ── 8. Credentials never in response ──
-  it('8. email_token never appears in response JSON', () => {
-    // The response JSON should contain { success, action, status } or { error, code }
-    // Never the token itself
-    const responseLines = routeSource.split('\n').filter(l =>
+  // ── C. Paystack provider returns false → DB NOT updated ──
+  it('C. Paystack provider failure returns 502 and does NOT update DB', async () => {
+    mockPaystackCancel.mockResolvedValue(false);
+
+    const { status, json } = await callRoute(
+      { subscriptionId: 'sub-001', action: 'cancel' },
+    );
+
+    expect(status).toBe(502);
+    expect(json.code).toBe('PROVIDER_OPERATION_FAILED');
+    expect(updateCalled).toBe(false);
+  });
+
+  // ── D. Paystack missing email_token → fail closed ──
+  it('D. Paystack missing email_token returns 422 without calling provider or updating DB', async () => {
+    const { status, json } = await callRoute(
+      { subscriptionId: 'sub-001', action: 'cancel' },
+      { metadata: {} }, // no email_token
+    );
+
+    expect(status).toBe(422);
+    expect(json.code).toBe('MISSING_EMAIL_TOKEN');
+    expect(mockPaystackCancel).not.toHaveBeenCalled();
+    expect(updateCalled).toBe(false);
+  });
+
+  // ── E. Paystack missing gateway_subscription_code → fail closed ──
+  it('E. Paystack missing gateway_subscription_code returns 422 without calling provider or updating DB', async () => {
+    const { status, json } = await callRoute(
+      { subscriptionId: 'sub-001', action: 'cancel' },
+      { gateway_subscription_code: null },
+    );
+
+    expect(status).toBe(422);
+    expect(json.code).toBe('MISSING_SUBSCRIPTION_CODE');
+    expect(mockPaystackCancel).not.toHaveBeenCalled();
+    expect(updateCalled).toBe(false);
+  });
+
+  // ── F. Stripe: existing behavior works, provider failure blocks DB ──
+  it('F1. Stripe cancel succeeds and updates DB', async () => {
+    const { status, json } = await callRoute(
+      { subscriptionId: 'sub-001', action: 'cancel' },
+      { gateway: 'stripe', gateway_subscription_code: 'sub_stripe_123', metadata: {} },
+    );
+
+    expect(status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(mockStripeCancel).toHaveBeenCalledWith('sub_stripe_123');
+    expect(updateCalled).toBe(true);
+  });
+
+  it('F2. Stripe provider failure returns 502 and does NOT update DB', async () => {
+    mockStripeCancel.mockResolvedValue(false);
+
+    const { status, json } = await callRoute(
+      { subscriptionId: 'sub-001', action: 'cancel' },
+      { gateway: 'stripe', gateway_subscription_code: 'sub_stripe_123', metadata: {} },
+    );
+
+    expect(status).toBe(502);
+    expect(json.code).toBe('PROVIDER_OPERATION_FAILED');
+    expect(updateCalled).toBe(false);
+  });
+
+  it('F3. Stripe missing gateway_subscription_code returns 422', async () => {
+    const { status, json } = await callRoute(
+      { subscriptionId: 'sub-001', action: 'cancel' },
+      { gateway: 'stripe', gateway_subscription_code: null, metadata: {} },
+    );
+
+    expect(status).toBe(422);
+    expect(json.code).toBe('MISSING_SUBSCRIPTION_CODE');
+    expect(mockStripeCancel).not.toHaveBeenCalled();
+    expect(updateCalled).toBe(false);
+  });
+
+  // ── G. Flutterwave: DB-only management ──
+  it('G. Flutterwave cancel updates DB without provider call', async () => {
+    const { status, json } = await callRoute(
+      { subscriptionId: 'sub-001', action: 'cancel' },
+      { gateway: 'flutterwave', gateway_subscription_code: null, metadata: {} },
+    );
+
+    expect(status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.status).toBe('cancelled');
+    expect(mockPaystackCancel).not.toHaveBeenCalled();
+    expect(mockStripeCancel).not.toHaveBeenCalled();
+    expect(updateCalled).toBe(true);
+  });
+
+  // ── H. Auth/ownership/capability protections ──
+  it('H. Route checks auth, ownership, and capability', async () => {
+    // Verify structural presence — the route calls these in sequence
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(path.resolve(__dirname, '../../app/api/recurring/manage/route.ts'), 'utf-8');
+
+    expect(src).toContain("await supabase.auth.getUser()");
+    expect(src).toContain("eq('owner_id', user.id)");
+    expect(src).toContain("requireCapability");
+    expect(src).toContain("manage_existing");
+
+    // Credentials never in any response JSON
+    const responseLines = src.split('\n').filter(l =>
       l.includes('NextResponse.json') && !l.trim().startsWith('//')
     );
     for (const line of responseLines) {
       expect(line).not.toContain('emailToken');
       expect(line).not.toContain('email_token');
+      expect(line).not.toContain('tok_');
     }
-  });
-
-  // ── Executable: Paystack cancel calls with correct args ──
-  it('9. cancelSubscription called with (code, emailToken) when token exists', async () => {
-    const { cancelSubscription } = await import('@/lib/payments/paystack-recurring');
-    await cancelSubscription('SUB_CODE_123', 'tok_abc123');
-    expect(mockPaystackCancel).toHaveBeenCalledWith('SUB_CODE_123', 'tok_abc123');
-  });
-
-  it('10. enableSubscription called with (code, emailToken) when token exists', async () => {
-    const { enableSubscription } = await import('@/lib/payments/paystack-recurring');
-    await enableSubscription('SUB_CODE_123', 'tok_abc123');
-    expect(mockPaystackEnable).toHaveBeenCalledWith('SUB_CODE_123', 'tok_abc123');
-  });
-
-  // ── Structural: Flutterwave is DB-only ──
-  it('11. Flutterwave has no provider call — DB-only comment present', () => {
-    expect(routeSource).toContain('Flutterwave: DB-only');
-  });
-
-  // ── Structural: Paystack pause and cancel both use disable endpoint ──
-  it('12. Paystack pause and cancel both call cancelSubscription (Paystack disable API)', () => {
-    // Paystack uses the same disable endpoint for both pause and cancel
-    const paystackSection = routeSource.substring(
-      routeSource.indexOf("sub.gateway === 'paystack'"),
-      routeSource.indexOf("sub.gateway === 'stripe'"),
-    );
-    // Both pause and cancel should call cancelSubscription
-    // Pause and cancel share one conditional block
-    expect(paystackSection).toContain("action === 'pause' || action === 'cancel'");
   });
 });
