@@ -865,6 +865,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
   it('P. two concurrent finalizers → exactly one wins, other gets idempotent result', async () => {
     psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings; DELETE FROM subscription_charges; DELETE FROM platform_fees;`);
+    // Ensure business fixture is fee-applicable: non-trial (expired), non-direct-split, tier=free
+    psql(`UPDATE businesses SET subscription_tier = 'free', trial_ends_at = '2020-01-01T00:00:00Z', payout_mode = 'platform' WHERE id = '${BIZ_ID}';`);
     psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, currency = 'NGN', charge_count = 0, total_charged = 0, failure_count = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
 
     // Claim the billing cycle (single worker — claim is already serialized)
