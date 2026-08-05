@@ -206,7 +206,7 @@ export async function sendProactiveConfirmation(
   if (!businessId) {
     logger.warn(`${logPrefix} Proactive confirmation skipped — no business`);
     // Release claim so retry can succeed if business data is later available
-    await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id }).catch(() => {});
+    try { await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id }); } catch { /* best-effort */ }
     return;
   }
 
@@ -232,7 +232,7 @@ export async function sendProactiveConfirmation(
     }
     if (!guestEmail) {
       logger.warn(`${logPrefix} Proactive confirmation skipped — no phone or email`);
-      await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id }).catch(() => {});
+      try { await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id }); } catch { /* best-effort */ }
       return;
     }
     // We have email but no phone — send email-only below
