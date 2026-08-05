@@ -580,6 +580,35 @@ jobs:
           if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No Recurring Billing DB tests passed."; exit 1; fi
           echo "✅ Recurring Billing contention tests complete — zero skips, zero failures."
 
+      - name: Payment confirmation ownership database tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_p0_confirmation_test
+          createdb --maintenance-db=waaiio_test waaiio_p0_confirmation_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_p0_confirmation_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_p0_confirmation_test
+          echo "Running P0-CONFIRM-1 real PostgreSQL ownership tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/p0-payment-confirmation-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then echo "❌ Payment confirmation DB tests failed."; exit "$TEST_EXIT"; fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Payment confirmation DB tests had $SKIP_COUNT skipped. All must execute."; exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No payment confirmation DB tests passed."; exit 1; fi
+          echo "✅ Payment confirmation ownership tests complete — zero skips, zero failures."
+
       - name: FIN-002 database tests
         if: hashFiles('scripts/test-fin-002-db.sql') != ''
         env:

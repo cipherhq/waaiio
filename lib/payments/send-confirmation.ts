@@ -14,6 +14,83 @@ function logSafeError(prefix: string, label: string, error: unknown): void {
     .error(`${prefix} ${label.replace(/-/g, ' ')} error`);
 }
 
+// ── Centralized lifecycle RPC helpers ──
+// Every helper inspects both { data, error } and validates the semantic result.
+
+type LifecycleResult = { ok: boolean; reason?: string };
+
+async function renewConfirmationClaim(
+  supabase: SupabaseClient, paymentId: string, claimToken: string, logPrefix: string,
+): Promise<LifecycleResult> {
+  const { data, error } = await supabase.rpc('renew_payment_confirmation_claim', {
+    p_payment_id: paymentId, p_claim_token: claimToken,
+  });
+  if (error) {
+    logSafeError(logPrefix, 'renew-rpc', error);
+    Sentry.captureException(error, { tags: { component: 'send-confirmation', operation: 'renew' } });
+    return { ok: false, reason: 'rpc_error' };
+  }
+  if (!data?.renewed) {
+    return { ok: false, reason: data?.reason || 'unknown' };
+  }
+  return { ok: true };
+}
+
+async function releaseConfirmationClaim(
+  supabase: SupabaseClient, paymentId: string, claimToken: string, logPrefix: string,
+): Promise<LifecycleResult> {
+  const { data, error } = await supabase.rpc('release_payment_confirmation', {
+    p_payment_id: paymentId, p_claim_token: claimToken,
+  });
+  if (error) {
+    logSafeError(logPrefix, 'release-rpc', error);
+    return { ok: false, reason: 'rpc_error' };
+  }
+  if (!data?.released) {
+    return { ok: false, reason: data?.reason || 'unknown' };
+  }
+  logger.info(`${logPrefix} Confirmation claim released for retry`);
+  return { ok: true };
+}
+
+async function finalizeConfirmationClaim(
+  supabase: SupabaseClient, paymentId: string, claimToken: string, logPrefix: string,
+): Promise<LifecycleResult> {
+  // First attempt
+  let { data, error } = await supabase.rpc('finalize_payment_confirmation', {
+    p_payment_id: paymentId, p_claim_token: claimToken,
+  });
+
+  // Retry once on RPC/db error (idempotent operation)
+  if (error) {
+    logSafeError(logPrefix, 'finalize-rpc-attempt1', error);
+    const retry = await supabase.rpc('finalize_payment_confirmation', {
+      p_payment_id: paymentId, p_claim_token: claimToken,
+    });
+    data = retry.data;
+    error = retry.error;
+  }
+
+  if (error) {
+    logSafeError(logPrefix, 'finalize-rpc-attempt2', error);
+    Sentry.captureException(error, { tags: { component: 'send-confirmation', operation: 'finalize' } });
+    // Leave claim in place — do NOT release after sends occurred.
+    // Stale recovery or reconciliation will handle.
+    return { ok: false, reason: 'rpc_error' };
+  }
+  if (data?.finalized) {
+    if (data.already_finalized) {
+      logger.info(`${logPrefix} Confirmation already finalized`);
+    } else {
+      logger.info(`${logPrefix} Confirmation finalized`);
+    }
+    return { ok: true };
+  }
+  // token_mismatch or unexpected state — claim may belong to another worker
+  logger.warn(`${logPrefix} Finalization not confirmed: ${data?.reason || 'unknown'}`);
+  return { ok: false, reason: data?.reason || 'unknown' };
+}
+
 interface PaymentForConfirmation {
   id: string;
   amount: number;
@@ -41,18 +118,50 @@ export async function sendProactiveConfirmation(
   payment: PaymentForConfirmation,
   logPrefix = '[WEBHOOK]',
 ): Promise<void> {
-  // Dedup: only the first caller sends confirmation.
-  // Atomic: UPDATE ... WHERE confirmation_sent_at IS NULL — only one path can claim it.
-  const { count } = await supabase
-    .from('payments')
-    .update({ confirmation_sent_at: new Date().toISOString() })
-    .eq('id', payment.id)
-    .is('confirmation_sent_at', null);
+  // ── Atomic claim: only one concurrent caller wins processing rights ──
+  const { data: claim, error: claimError } = await supabase.rpc('claim_payment_confirmation', {
+    p_payment_id: payment.id,
+  });
 
-  if (!count || count === 0) {
-    logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
+  if (claimError) {
+    logSafeError(logPrefix, 'claim-rpc', claimError);
+    Sentry.captureException(claimError, { tags: { component: 'send-confirmation', operation: 'claim' } });
     return;
   }
+
+  if (!claim?.claimed) {
+    if (claim?.already_completed) {
+      logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
+    } else {
+      logger.info(`${logPrefix} Confirmation claim not granted for payment ${payment.id}: ${claim?.reason || 'unknown'}`);
+    }
+    return;
+  }
+
+  const claimToken = claim.claim_token as string;
+  if (!claimToken || !claim.payment_id) {
+    logger.error(`${logPrefix} Claim succeeded but returned incomplete data for payment ${payment.id}`);
+    return;
+  }
+
+  // Use the claim's authoritative payment data
+  payment = {
+    id: claim.payment_id,
+    amount: claim.amount,
+    booking_id: claim.booking_id || null,
+    invoice_id: claim.invoice_id || null,
+    campaign_id: claim.campaign_id || null,
+    reservation_id: claim.reservation_id || null,
+    order_id: claim.order_id || null,
+  };
+
+  // Track whether any external sends have occurred (affects release safety)
+  // Conservative: set BEFORE attempting any external/non-idempotent operation.
+  // Once true, never returns to false. Prevents claim release after indeterminate sends.
+  let sideEffectsMayHaveOccurred = false;
+
+  try {
+  // ── Post-claim processing: any failure releases the claim for retry ──
 
   let customerPhone: string | null = null;
   let businessId: string | null = null;
@@ -186,6 +295,7 @@ export async function sendProactiveConfirmation(
 
   if (!businessId) {
     logger.warn(`${logPrefix} Proactive confirmation skipped — no business`);
+    await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     return;
   }
 
@@ -211,6 +321,7 @@ export async function sendProactiveConfirmation(
     }
     if (!guestEmail) {
       logger.warn(`${logPrefix} Proactive confirmation skipped — no phone or email`);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
       return;
     }
     // We have email but no phone — send email-only below
@@ -219,7 +330,7 @@ export async function sendProactiveConfirmation(
 
   logger.info(`${logPrefix} Sending proactive confirmation for ${businessName}`);
 
-  // ── 4. Build confirmation message ──
+  // ── 4. Build confirmation message (local string work — no external calls) ──
   const lines = [
     `✅ *Payment Confirmed!*`,
     '',
@@ -231,13 +342,21 @@ export async function sendProactiveConfirmation(
     'Thank you for your payment! 🙏',
   ].filter(Boolean);
 
+  // ── CHECKPOINT 1: Renew ownership before ANY external/non-idempotent operation ──
+  // This must happen before balance-payment initialization (which contacts a payment provider)
+  // and before the customer WhatsApp send.
+  const preExternal = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+  if (!preExternal.ok) {
+    logger.warn(`${logPrefix} Ownership lost before external operations: ${preExternal.reason}`);
+    return; // Do NOT release — claim may belong to another worker
+  }
+
   // Add balance info if deposit was partial
   if (balanceRemaining > 0) {
     lines.push('', `💳 Remaining balance: *${formatCurrency(balanceRemaining, countryCode)}*`);
 
-    // Generate payment link for the balance (non-blocking, best-effort)
+    // Generate payment link for the balance — contacts the payment provider
     try {
-      // Find user profile for payment initialization
       const phoneForLookup = customerPhone || '';
       const phoneP = phoneForLookup.startsWith('+') ? phoneForLookup : `+${phoneForLookup}`;
       const phoneN = phoneForLookup.startsWith('+') ? phoneForLookup.slice(1) : phoneForLookup;
@@ -249,6 +368,7 @@ export async function sendProactiveConfirmation(
         .maybeSingle();
 
       if (profile && businessId) {
+        sideEffectsMayHaveOccurred = true; // Provider initialization — indeterminate on failure
         const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
         const result = await initializePayment(supabase, {
           bookingId: balanceBookingId || undefined,
@@ -266,7 +386,8 @@ export async function sendProactiveConfirmation(
         }
       }
     } catch {
-      // Non-critical — balance info still shown without link
+      // Non-critical — balance info still shown without link.
+      // sideEffectsMayHaveOccurred remains true — provider may have accepted the request.
     }
   }
 
@@ -318,7 +439,7 @@ export async function sendProactiveConfirmation(
     lines.push('💳 Type *save card* to save this card for faster checkout next time');
   }
 
-  // ── 5. Resolve channel + send ──
+  // ── 5. Resolve channel + send (protected by checkpoint 1 above) ──
   try {
     const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
     const resolver = new ChannelResolver(supabase);
@@ -353,13 +474,22 @@ export async function sendProactiveConfirmation(
 
     // Send WhatsApp confirmation if channel is available and we have a phone
     if (resolved && customerPhone) {
+      sideEffectsMayHaveOccurred = true; // Mark BEFORE attempt — timeout/disconnect after provider accepts is indeterminate
       const phone = stripPlus(customerPhone);
       await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
     } else {
       logger.info(`${logPrefix} No WhatsApp channel resolved — will attempt email-only confirmation`);
     }
 
+    // ── Renew ownership before post-completion mutations ──
+    const prePostCompletion = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    if (!prePostCompletion.ok) {
+      logger.warn(`${logPrefix} Ownership lost before post-completion: ${prePostCompletion.reason}`);
+      return; // Do NOT release or finalize — claim belongs to another worker
+    }
+
     // ── 6. Post-completion (loyalty, feedback, referral, customer profile) ──
+    sideEffectsMayHaveOccurred = true; // loyalty points, referral codes, feedback — non-idempotent
     if (customerPhone) {
       try {
         const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
@@ -378,7 +508,15 @@ export async function sendProactiveConfirmation(
       }
     }
 
+    // ── CHECKPOINT 3: Renew before owner notifications and email ──
+    const preOwnerNotify = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    if (!preOwnerNotify.ok) {
+      logger.warn(`${logPrefix} Ownership lost before owner notify: ${preOwnerNotify.reason}`);
+      return;
+    }
+
     // ── 7. Owner notification ──
+    sideEffectsMayHaveOccurred = true; // owner WhatsApp + email
     try {
       if (payment.booking_id && resolved) {
         const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
@@ -478,6 +616,14 @@ export async function sendProactiveConfirmation(
     } catch (notifyErr) {
       logSafeError(logPrefix, 'owner-notification', notifyErr);
     }
+
+    // ── CHECKPOINT 4: Renew before tickets, customer emails, donation receipt ──
+    const preTickets = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    if (!preTickets.ok) {
+      logger.warn(`${logPrefix} Ownership lost before tickets/emails: ${preTickets.reason}`);
+      return;
+    }
+    sideEffectsMayHaveOccurred = true; // tickets, customer email, donation receipt
 
     // ── 8. Send tickets for ticketing bookings ──
     try {
@@ -620,6 +766,13 @@ export async function sendProactiveConfirmation(
       }
     }
 
+    // ── CHECKPOINT 5: Renew before session mutation and finalization ──
+    const preFinalize = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    if (!preFinalize.ok) {
+      logger.warn(`${logPrefix} Ownership lost before session/finalize: ${preFinalize.reason}`);
+      return;
+    }
+
     // ── 9. Deactivate the payment-waiting session (webhook confirmed — user doesn't need to tap "I've Paid") ──
     if (customerPhone) {
       await supabase
@@ -630,8 +783,32 @@ export async function sendProactiveConfirmation(
         .eq('is_active', true)
         .in('current_step', ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking']);
     }
+
+    // ── 10. Finalize: mark confirmation as successfully completed ──
+    await finalizeConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+
   } catch (err) {
     logSafeError(logPrefix, 'send-confirmation', err);
     Sentry.captureException(err, { tags: { component: 'send-confirmation', operation: 'send-confirmation' } });
+
+    // Release only if no external sends occurred yet.
+    // After external sends, releasing guarantees a duplicate retry → unsafe.
+    // Leave the claim for stale recovery instead.
+    if (!sideEffectsMayHaveOccurred) {
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    } else {
+      logger.warn(`${logPrefix} External sends occurred — leaving claim for stale recovery, not releasing`);
+    }
+  }
+
+  } catch (outerErr) {
+    logSafeError(logPrefix, 'confirmation-outer', outerErr);
+    Sentry.captureException(outerErr, { tags: { component: 'send-confirmation', operation: 'confirmation-outer' } });
+
+    if (!sideEffectsMayHaveOccurred) {
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    } else {
+      logger.warn(`${logPrefix} Side effects may have occurred — leaving claim for stale recovery, not releasing`);
+    }
   }
 }
