@@ -640,9 +640,10 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     expect(fees).toBe('0');
 
     // Subscription totals unchanged
-    const sub = psqlJson(`SELECT charge_count, total_charged::text FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
-    expect(sub.charge_count).toBe(0);
-    expect(parseFloat(sub.total_charged)).toBe(0);
+    const chargeCount = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
+    expect(chargeCount).toBe('0');
+    const totalCharged = psql(`SELECT total_charged FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
+    expect(parseFloat(totalCharged)).toBe(0);
   });
 
   it('K. empty string claim attempt + caller FOREIGN-REF → rejected, zero financial mutation', () => {
