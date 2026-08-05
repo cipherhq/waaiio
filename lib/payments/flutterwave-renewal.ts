@@ -1,0 +1,165 @@
+/**
+ * Flutterwave Renewal Decision Logic
+ *
+ * Extracted from the retry-failed-charges cron for testability.
+ * Both the production cron and tests call this same helper.
+ */
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { chargeToken, verifyTransaction } from './flutterwave-recurring';
+import { logger } from '@/lib/logger';
+
+export interface FlwRenewalDeps {
+  supabase: SupabaseClient;
+  chargeTokenFn?: typeof chargeToken;
+  verifyTransactionFn?: typeof verifyTransaction;
+}
+
+export interface FlwRenewalResult {
+  action: 'finalized' | 'failure_recorded' | 'skipped' | 'error';
+  reason?: string;
+  failureCount?: number;
+  paymentId?: string;
+}
+
+/**
+ * Process a single Flutterwave subscription renewal.
+ * Handles claim, reconciliation, charge, verification, and finalization.
+ */
+export async function processFlutterwaveRenewal(
+  deps: FlwRenewalDeps,
+  sub: {
+    id: string;
+    business_id: string;
+    amount: number;
+    currency: string;
+    authorization_code: string;
+    customer_email: string;
+    customer_phone: string;
+    service_id: string | null;
+    frequency: string;
+    failure_count: number;
+  },
+  splitParams?: Record<string, unknown>,
+): Promise<FlwRenewalResult> {
+  const { supabase } = deps;
+  const charge = deps.chargeTokenFn || chargeToken;
+  const verify = deps.verifyTransactionFn || verifyTransaction;
+
+  // Step 1: Claim
+  const { data: claim } = await supabase.rpc('claim_recurring_billing_cycle', {
+    p_subscription_id: sub.id,
+  });
+
+  if (!claim?.claimed) {
+    return { action: 'skipped', reason: claim?.reason || 'claim_failed' };
+  }
+
+  const stableRef = claim.stable_ref as string;
+  const attemptRef = claim.attempt_ref as string;
+
+  try {
+    let providerSucceeded = false;
+
+    // Step 2: Reconcile if required (stale recovery of existing attempt)
+    // Fresh attempts and new attempts after failure do NOT reconcile.
+    if (claim.reconcile_required && !claim.provider_verified) {
+      const reconciliation = await verify(attemptRef);
+      if (reconciliation?.outcome === 'successful') {
+        providerSucceeded = true;
+        await supabase.from('processed_webhook_events')
+          .update({ status: 'provider_success' })
+          .eq('event_id', stableRef);
+      } else if (reconciliation === null || reconciliation.outcome === 'pending' || reconciliation.outcome === 'unknown') {
+        return { action: 'skipped', reason: `reconciliation_${reconciliation?.outcome || 'timeout'}` };
+      } else if (reconciliation?.outcome === 'failed') {
+        // Previous attempt definitively failed — record failure and STOP.
+        // Do NOT charge again using the same attemptRef.
+        // Next claim will create a new attemptRef (a2).
+        const { data: failResult } = await supabase.rpc('record_flutterwave_definitive_failure', {
+          p_subscription_id: sub.id,
+          p_stable_ref: stableRef,
+        });
+        if (failResult?.recorded) {
+          return { action: 'failure_recorded', failureCount: failResult.failure_count };
+        }
+        return { action: 'skipped', reason: failResult?.reason || 'reconciled_failure_not_recorded' };
+      }
+    } else if (claim.provider_verified) {
+      providerSucceeded = true;
+    }
+
+    // Step 3: Charge if needed
+    if (!providerSucceeded) {
+      const result = await charge(
+        sub.authorization_code, sub.amount,
+        sub.customer_email, attemptRef,
+        sub.currency,
+        splitParams as any,
+      );
+
+      if (result.outcome === 'successful') {
+        // Bug 3: Verify returned provider reference matches expected
+        if (result.reference && result.reference !== attemptRef) {
+          return { action: 'error', reason: 'provider_ref_mismatch' };
+        }
+        providerSucceeded = true;
+        await supabase.from('processed_webhook_events')
+          .update({ status: 'provider_success' })
+          .eq('event_id', stableRef);
+      } else if (result.outcome === 'pending' || result.outcome === 'unknown') {
+        return { action: 'skipped', reason: `charge_${result.outcome}` };
+      }
+      // else: outcome === 'failed' → definitive failure handled below
+    }
+
+    // Step 4: Finalize or record failure
+    if (providerSucceeded) {
+      const verification = await verify(attemptRef);
+      if (!verification || verification.outcome !== 'successful'
+        || Math.abs((verification.amount || 0) - sub.amount) > 0.01
+        || (verification.currency || '').toUpperCase() !== (sub.currency || 'NGN').toUpperCase()) {
+        return { action: 'error', reason: 'verification_failed' };
+      }
+
+      // INVARIANT: provider tx_ref must EXIST and MATCH the authoritative attemptRef.
+      // Missing tx_ref is NOT success evidence — identity is unproven.
+      // Mismatch is NOT success evidence — could be a different transaction.
+      // Neither condition is a customer payment failure (failure_count unchanged).
+      if (!verification.providerTxRef) {
+        return { action: 'error', reason: 'verification_tx_ref_missing' };
+      }
+      if (verification.providerTxRef !== attemptRef) {
+        return { action: 'error', reason: 'verification_tx_ref_mismatch' };
+      }
+
+      const { data: finResult } = await supabase.rpc('finalize_token_recurring_charge', {
+        p_stable_ref: stableRef,
+        p_subscription_id: sub.id,
+        p_verified_amount: sub.amount,
+        p_verified_currency: sub.currency || 'NGN',
+        p_gateway: 'flutterwave',
+        p_provider_attempt_ref: attemptRef,
+      });
+
+      if (finResult?.success) {
+        return { action: 'finalized', paymentId: finResult.payment_id };
+      }
+      return { action: 'error', reason: 'finalize_failed' };
+    } else {
+      // Definitive failure — use atomic RPC (sole authority)
+      const { data: failResult } = await supabase.rpc('record_flutterwave_definitive_failure', {
+        p_subscription_id: sub.id,
+        p_stable_ref: stableRef,
+      });
+
+      if (failResult?.recorded) {
+        return { action: 'failure_recorded', failureCount: failResult.failure_count };
+      }
+      return { action: 'skipped', reason: failResult?.reason || 'failure_not_recorded' };
+    }
+  } catch (err) {
+    // Internal error — do NOT count as payment failure
+    logger.error('[FLW-RENEWAL] Internal error', err);
+    return { action: 'error', reason: 'internal_exception' };
+  }
+}

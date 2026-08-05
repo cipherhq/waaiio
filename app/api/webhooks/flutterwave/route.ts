@@ -99,6 +99,10 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (!payment) {
+      // Waaiio manages Flutterwave recurring via token billing (cron-initiated).
+      // No provider-side subscription exists, so no provider-generated renewals.
+      // Unknown tx_ref without a pre-existing payment → ignore safely.
+      wh.ignored('Payment not found (no Flutterwave provider subscriptions)');
       return NextResponse.json({ message: 'Payment not found' }, { status: 404 });
     }
 

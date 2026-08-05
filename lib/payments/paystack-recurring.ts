@@ -30,7 +30,7 @@ async function paystackRequest(
  */
 export async function createPlan(opts: {
   name: string;
-  interval: 'weekly' | 'monthly';
+  interval: 'weekly' | 'monthly' | 'yearly'; // Waaiio canonical values
   amount: number; // in base currency (naira) — will be converted to kobo
   currency?: string;
 }): Promise<{ planCode: string } | null> {
@@ -41,9 +41,11 @@ export async function createPlan(opts: {
     return { planCode: `mock_plan_${Date.now()}` };
   }
 
+  // Paystack API uses 'annually' not 'yearly' — map the canonical Waaiio interval
+  const PAYSTACK_INTERVAL_MAP: Record<string, string> = { weekly: 'weekly', monthly: 'monthly', yearly: 'annually' };
   const data = await paystackRequest('/plan', 'POST', {
     name: opts.name,
-    interval: opts.interval,
+    interval: PAYSTACK_INTERVAL_MAP[opts.interval] || opts.interval,
     amount: Math.round(opts.amount * 100), // kobo
     currency: opts.currency || 'NGN',
   });

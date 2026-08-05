@@ -52,14 +52,14 @@ describe('retry-failed-charges cron Flutterwave support', () => {
     expect(cronCode).toContain("import { resolvePaystackSplit, resolveGatewaySplit }");
   });
 
-  it('handles flutterwave gateway in the retry loop', () => {
-    expect(cronCode).toContain("sub.gateway === 'flutterwave'");
+  it('handles flutterwave gateway in the unified renewal scheduler', () => {
+    expect(cronCode).toContain("eq('gateway', 'flutterwave')");
   });
 
   it('resolves split for Flutterwave before charging', () => {
     const flwSection = cronCode.substring(
-      cronCode.indexOf("sub.gateway === 'flutterwave'"),
-      cronCode.indexOf('chargeFlutterwaveToken('),
+      cronCode.indexOf('Flutterwave unified renewal'),
+      cronCode.indexOf('Cancel subscriptions'),
     );
     expect(flwSection).toContain("resolveGatewaySplit(supabase, sub.business_id");
     expect(flwSection).toContain("'flutterwave'");
@@ -72,8 +72,8 @@ describe('retry-failed-charges cron Flutterwave support', () => {
 
   it('skips Flutterwave charge when direct_split config is missing (fail-closed)', () => {
     const flwSection = cronCode.substring(
-      cronCode.indexOf("sub.gateway === 'flutterwave'"),
-      cronCode.indexOf('chargeFlutterwaveToken('),
+      cronCode.indexOf('Flutterwave unified renewal'),
+      cronCode.indexOf('Cancel subscriptions'),
     );
     expect(flwSection).toContain("flwSplitResult.mode === 'split_required_but_missing'");
     expect(flwSection).toContain('skipped++');
@@ -82,17 +82,17 @@ describe('retry-failed-charges cron Flutterwave support', () => {
 
   it('skips Flutterwave charge when split is needed but verification gate is off', () => {
     const flwSection = cronCode.substring(
-      cronCode.indexOf("sub.gateway === 'flutterwave'"),
-      cronCode.indexOf('chargeFlutterwaveToken('),
+      cronCode.indexOf('Flutterwave unified renewal'),
+      cronCode.indexOf('Cancel subscriptions'),
     );
     expect(flwSection).toContain('FLUTTERWAVE_RECURRING_SPLIT_VERIFIED');
-    expect(flwSection).toContain('not yet verified');
+    expect(flwSection).toContain('split not verified');
     expect(flwSection).toContain('skipped++');
   });
 
-  it('cancels Flutterwave subscriptions after 3 failures', () => {
-    expect(cronCode).toContain("sub.gateway === 'flutterwave' && sub.gateway_subscription_code");
-    expect(cronCode).toContain("import('@/lib/payments/flutterwave-recurring')");
+  it('cancels Flutterwave subscriptions after 3 failures (DB-only — Waaiio manages tokens)', () => {
+    // Flutterwave recurring is Waaiio-managed token billing — no provider subscription to cancel
+    expect(cronCode).toContain('Flutterwave: DB-only cancel');
   });
 });
 
@@ -220,7 +220,7 @@ describe('provider separation — no cross-contamination', () => {
     // Paystack splitParams uses transactionChargeKobo without dividing
     const psSection = cronCode.substring(
       cronCode.indexOf("sub.gateway === 'paystack'"),
-      cronCode.indexOf("sub.gateway === 'flutterwave'"),
+      cronCode.indexOf('Flutterwave past_due'),
     );
     expect(psSection).toContain('transaction_charge: splitResult.transactionChargeKobo');
     expect(psSection).not.toContain('/ 100');
@@ -228,8 +228,8 @@ describe('provider separation — no cross-contamination', () => {
 
   it('Flutterwave cron cannot accidentally use Paystack subaccount field', () => {
     const flwSection = cronCode.substring(
-      cronCode.indexOf("sub.gateway === 'flutterwave'"),
-      cronCode.indexOf('chargeFlutterwaveToken('),
+      cronCode.indexOf('Flutterwave unified renewal'),
+      cronCode.indexOf('Cancel subscriptions'),
     );
     // Must use subaccounts array, not flat subaccount field
     expect(flwSection).toContain('subaccounts:');
@@ -239,7 +239,7 @@ describe('provider separation — no cross-contamination', () => {
   it('Paystack cron cannot accidentally use Flutterwave subaccounts array', () => {
     const psSection = cronCode.substring(
       cronCode.indexOf("sub.gateway === 'paystack'"),
-      cronCode.indexOf("sub.gateway === 'flutterwave'"),
+      cronCode.indexOf('Flutterwave past_due'),
     );
     expect(psSection).not.toContain('subaccounts:');
   });

@@ -33,13 +33,15 @@ export async function createRecurringCheckout(opts: {
   serviceName: string;
   amount: number; // in base currency (dollars) — will be converted to cents
   currency: string;
-  interval: 'week' | 'month';
+  interval: 'week' | 'month' | 'year';
   customerEmail?: string;
   successUrl?: string;
   cancelUrl?: string;
   metadata?: Record<string, string>;
   stripeAccountId?: string;
   platformFeePercent?: number;
+  /** Unix timestamp — defer first charge until this time (prevents double-billing current period) */
+  trialEnd?: number;
 }): Promise<{ sessionId: string; url: string } | null> {
   if (!stripeSecretKey) {
     if (process.env.NODE_ENV === 'production') {
@@ -63,6 +65,11 @@ export async function createRecurringCheckout(opts: {
     success_url: `${callbackUrl}/payment-success?type=recurring`,
     cancel_url: opts.cancelUrl || callbackUrl,
   };
+
+  // Defer first subscription charge — customer already paid for current period
+  if (opts.trialEnd) {
+    params['subscription_data[trial_end]'] = String(opts.trialEnd);
+  }
 
   if (opts.customerEmail) {
     params.customer_email = opts.customerEmail;

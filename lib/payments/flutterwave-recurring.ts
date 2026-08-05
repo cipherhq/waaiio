@@ -11,6 +11,7 @@
  * Flutterwave API docs: https://developer.flutterwave.com/reference
  */
 
+import { createHash } from 'crypto';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { safeProviderError } from '@/lib/redact';
@@ -28,12 +29,14 @@ async function flutterwaveRequest(
   path: string,
   method: 'GET' | 'POST' | 'PUT' = 'POST',
   body?: Record<string, unknown>,
+  extraHeaders?: Record<string, string>,
 ): Promise<Record<string, unknown>> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${flutterwaveSecretKey}`,
       'Content-Type': 'application/json',
+      ...(extraHeaders || {}),
     },
     ...(body && { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(15000),
@@ -51,7 +54,7 @@ async function flutterwaveRequest(
 export async function createPlan(
   name: string,
   amount: number,
-  interval: 'weekly' | 'monthly',
+  interval: 'weekly' | 'monthly' | 'yearly',
 ): Promise<{ planId: string } | null> {
   if (!flutterwaveSecretKey) {
     if (process.env.NODE_ENV === 'production') {
@@ -129,9 +132,23 @@ export async function createSubscription(
     }
 
     const chargeResult = chargeData.data as Record<string, unknown>;
-    // The subscription ID is created by Flutterwave when the charge is linked to a plan.
-    // We use the tx_ref as our subscription identifier; Flutterwave will auto-charge on schedule.
-    return { subscriptionId: (chargeResult.id ? String(chargeResult.id) : txRef) };
+    const txId = chargeResult.id ? String(chargeResult.id) : null;
+
+    // Resolve the REAL Flutterwave subscription ID from this specific transaction.
+    // Use Flutterwave's subscription lookup filtered by the exact transaction ID.
+    if (txId) {
+      try {
+        const subsRes = await flutterwaveRequest(`/v3/subscriptions?transaction_id=${txId}`, 'GET');
+        if (subsRes.status === 'success' && Array.isArray(subsRes.data) && subsRes.data.length > 0) {
+          const realSub = subsRes.data[0] as Record<string, unknown>;
+          return { subscriptionId: String(realSub.id) };
+        }
+      } catch { /* fall through to failure */ }
+    }
+
+    // Cannot resolve real subscription ID — fail safely
+    logger.error('[FLUTTERWAVE] Could not resolve subscription ID from transaction', { txId, planId });
+    return null;
   } catch (error) {
     logger.withContext({ op: 'flutterwave.create-subscription', ...safeLogErrorContext(error) }).error('Flutterwave create subscription error');
     return null;
@@ -159,6 +176,30 @@ export async function cancelSubscription(subscriptionId: string): Promise<boolea
     return data.status === 'success';
   } catch (error) {
     logger.withContext({ op: 'flutterwave.cancel-subscription', ...safeLogErrorContext(error) }).error('Flutterwave cancel subscription error');
+    return false;
+  }
+}
+
+/**
+ * Activate (resume) a Flutterwave subscription.
+ * PUT /v3/subscriptions/{id}/activate
+ */
+export async function activateSubscription(subscriptionId: string): Promise<boolean> {
+  if (!flutterwaveSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Flutterwave secret key');
+    }
+    return true;
+  }
+
+  try {
+    const data = await flutterwaveRequest(
+      `/v3/subscriptions/${encodeURIComponent(subscriptionId)}/activate`,
+      'PUT',
+    );
+    return data.status === 'success';
+  } catch (error) {
+    logger.withContext({ op: 'flutterwave.activate-subscription', ...safeLogErrorContext(error) }).error('Flutterwave activate subscription error');
     return false;
   }
 }
@@ -208,6 +249,53 @@ export async function getSubscription(subscriptionId: string): Promise<{
 }
 
 /**
+ * Verify a Flutterwave transaction by tx_ref.
+ * Used to reconcile provider state before finalization.
+ */
+export type FlwVerificationOutcome = 'successful' | 'pending' | 'failed' | 'unknown';
+
+export async function verifyTransaction(txRef: string): Promise<{
+  outcome: FlwVerificationOutcome;
+  amount?: number;
+  currency?: string;
+  providerStatus?: string;
+  providerTxRef?: string; // actual tx_ref from Flutterwave response for cross-check
+} | null> {
+  if (!flutterwaveSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Flutterwave secret key');
+    }
+    return { outcome: 'successful', amount: 0, currency: 'NGN', providerStatus: 'successful', providerTxRef: txRef };
+  }
+
+  try {
+    const data = await flutterwaveRequest(`/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(txRef)}`, 'GET');
+    if (data.status !== 'success') {
+      // API returned error — could mean tx doesn't exist yet (not found) or server error
+      return { outcome: 'unknown', providerStatus: 'api_error' };
+    }
+    const txData = data.data as Record<string, unknown>;
+    const providerStatus = txData.status as string;
+    const actualTxRef = txData.tx_ref as string | undefined;
+
+    if (providerStatus === 'successful') {
+      return { outcome: 'successful', amount: txData.amount as number, currency: txData.currency as string, providerStatus, providerTxRef: actualTxRef };
+    }
+    if (providerStatus === 'pending' || providerStatus === 'processing') {
+      return { outcome: 'pending', providerStatus, providerTxRef: actualTxRef };
+    }
+    const TERMINAL_FAILURES = ['failed', 'declined', 'cancelled', 'error'];
+    if (TERMINAL_FAILURES.includes(providerStatus)) {
+      return { outcome: 'failed', providerStatus, providerTxRef: actualTxRef };
+    }
+    // Unrecognized status — unknown, not failed
+    return { outcome: 'unknown', providerStatus: providerStatus || 'missing_status', providerTxRef: actualTxRef };
+  } catch {
+    return null; // network/timeout — truly unknown
+  }
+}
+
+/**
  * Charge a saved card token (for manual recurring charges or retries).
  *
  * POST /v3/tokenized-charges
@@ -218,6 +306,8 @@ export async function getSubscription(subscriptionId: string): Promise<{
  * Without verification, split params are silently omitted and the charge falls back
  * to platform collection (fail-open for unverified provider behavior).
  */
+export type ChargeOutcome = 'successful' | 'pending' | 'failed' | 'unknown';
+
 export async function chargeToken(
   token: string,
   amount: number,
@@ -225,18 +315,15 @@ export async function chargeToken(
   reference: string,
   currency?: string,
   splitParams?: { subaccounts: Array<{ id: string; transaction_charge_type: string; transaction_charge: number }> },
-): Promise<{ success: boolean; reference?: string }> {
+): Promise<{ outcome: ChargeOutcome; reference?: string }> {
   if (!flutterwaveSecretKey) {
     if (process.env.NODE_ENV === 'production') {
       throw new Error('Payment gateway not configured: missing Flutterwave secret key');
     }
-    return { success: true, reference: `mock_flw_charge_${Date.now()}` };
+    return { outcome: 'successful', reference: `mock_flw_charge_${Date.now()}` };
   }
 
   try {
-    // Only include split params if sandbox verification has been completed.
-    // Without this gate, an unverified provider assumption could silently
-    // route funds incorrectly — worse than not splitting at all.
     const verifiedSplit = process.env.FLUTTERWAVE_RECURRING_SPLIT_VERIFIED === 'true'
       ? splitParams
       : undefined;
@@ -248,16 +335,31 @@ export async function chargeToken(
       amount,
       tx_ref: reference,
       ...(verifiedSplit || {}),
-    });
+    }, { 'X-Idempotency-Key': createHash('sha256').update(reference).digest('hex') }); // SHA-256 of attempt ref — deterministic, non-leaking
 
     const chargeData = data.data as Record<string, unknown> | undefined;
-    return {
-      success: data.status === 'success' && chargeData?.status === 'successful',
-      reference: (chargeData?.tx_ref as string) || reference,
-    };
+    const providerStatus = (chargeData?.status as string) || '';
+    const ref = (chargeData?.tx_ref as string) || reference;
+
+    // Only classify as successful/failed when the provider gives a definitive transaction status
+    if (data.status === 'success' && providerStatus === 'successful') {
+      return { outcome: 'successful', reference: ref };
+    }
+    if (providerStatus === 'pending' || providerStatus === 'processing') {
+      return { outcome: 'pending', reference: ref };
+    }
+    // Definitive terminal failures only
+    const TERMINAL_FAILURES = ['failed', 'declined', 'cancelled', 'error'];
+    if (TERMINAL_FAILURES.includes(providerStatus)) {
+      return { outcome: 'failed', reference: ref };
+    }
+    // Any other response (API error without transaction status, unrecognized status, missing data)
+    // → unknown. Do NOT treat as definitive failure.
+    return { outcome: 'unknown', reference: ref };
   } catch (error) {
+    // Timeout, network error, malformed response — unknown whether charged
     logger.withContext({ op: 'flutterwave.charge-token', ...safeLogErrorContext(error) }).error('Flutterwave charge token error');
-    return { success: false };
+    return { outcome: 'unknown' };
   }
 }
 

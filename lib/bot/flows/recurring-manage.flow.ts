@@ -126,38 +126,15 @@ export const recurringManageFlow: FlowDefinition = {
         if (text === 'pause_sub') return { valid: true, data: { _sub_action: 'pause' } };
         if (text === 'resume_sub') return { valid: true, data: { _sub_action: 'resume' } };
         if (text === 'view_details') return { valid: true, data: { _sub_action: 'details' } };
+        if (text === 'payment_history') return { valid: true, data: { _sub_action: 'history' } };
         return { valid: false, errorMessage: 'Please choose an option from the buttons.' };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._sub_action === 'cancel') return 'confirm_cancel';
         if (ctx.session.session_data._sub_action === 'pause') return 'confirm_pause';
         if (ctx.session.session_data._sub_action === 'resume') return 'process_resume';
-        // View details: show info and end
-        const subId = ctx.session.session_data._selected_sub_id as string;
-        const { data: sub } = await ctx.supabase
-          .from('customer_subscriptions')
-          .select('*')
-          .eq('id', subId)
-          .single();
-
-        if (sub) {
-          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-          await ctx.sender.sendText({
-            to: ctx.from,
-            text: await ctx.t([
-              `📋 *Subscription Details*`,
-              '',
-              `Amount: ${formatCurrency(sub.amount, cc)}`,
-              `Frequency: ${sub.frequency}`,
-              `Status: ${sub.status}`,
-              `Total Charged: ${formatCurrency(sub.total_charged || 0, cc)}`,
-              `Charges: ${sub.charge_count}`,
-              sub.next_charge_at ? `Next Charge: ${new Date(sub.next_charge_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : '',
-              sub.card_last_four ? `Card: *${sub.card_last_four} (${sub.card_brand || 'card'})` : '',
-            ].filter(Boolean).join('\n')
-            + `\n\n💡 *What you can do:*\n• Type *subscriptions* to manage payments\n• Type *Hi* to start a new conversation`),
-          });
-        }
+        if (ctx.session.session_data._sub_action === 'history') return 'payment_history';
+        if (ctx.session.session_data._sub_action === 'details') return 'subscription_details';
         return null;
       },
     },
@@ -210,19 +187,31 @@ export const recurringManageFlow: FlowDefinition = {
         let cancelled = false;
         try {
           if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
-            const emailToken = (ctx.session.session_data._recurring_email_token as string) || '';
+            const metadata = (sub.metadata as Record<string, string>) || {};
+            const emailToken = metadata.email_token || '';
             cancelled = await cancelPaystackSub(sub.gateway_subscription_code, emailToken);
           } else if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
             cancelled = await cancelStripeSub(sub.gateway_subscription_code);
           } else {
-            cancelled = true; // No gateway subscription to cancel
+            // Paystack/Flutterwave: DB-only cancel. Waaiio manages Flutterwave
+            // recurrence via cron — no provider subscription to cancel.
+            cancelled = true;
           }
         } catch (err) {
           logger.withContext({ op: 'recurring.gateway-cancel', ...safeLogErrorContext(err) }).error('[RECURRING] Gateway cancel error (continuing with DB cancel)');
           cancelled = false;
         }
 
-        // Update DB regardless
+        if (!cancelled) {
+          // Provider cancellation failed — do NOT mark DB as cancelled
+          return [{
+            type: 'text',
+            text: 'We couldn\'t cancel the subscription at the payment provider right now. Please try again later or contact support.'
+              + '\n\n💡 Type *subscriptions* to try again.',
+          }];
+        }
+
+        // Provider succeeded — now update DB
         await ctx.supabase
           .from('customer_subscriptions')
           .update({
@@ -233,10 +222,8 @@ export const recurringManageFlow: FlowDefinition = {
 
         return [{
           type: 'text',
-          text: (cancelled
-            ? '✅ Your recurring payment has been cancelled. You will no longer be charged automatically.'
-            : '✅ Your recurring payment has been cancelled in our system. If you see any unexpected charges, please contact support.')
-            + `\n\n💡 *What you can do:*\n• Type *subscriptions* to manage payments\n• Type *Hi* to start a new conversation`,
+          text: '✅ Your recurring payment has been cancelled. You will no longer be charged automatically.'
+            + '\n\n💡 Type *subscriptions* to manage payments or *Hi* to start over.',
         }];
       },
       async validate(): Promise<ValidationResult> { return { valid: true }; },
@@ -288,14 +275,18 @@ export const recurringManageFlow: FlowDefinition = {
           return [{ type: 'text', text: 'Subscription not found. Send *Hi* to start over.' }];
         }
 
-        // Pause on gateway
+        // Pause on gateway — provider-first, then DB
         let paused = false;
         try {
           if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
             paused = await pauseStripeSub(sub.gateway_subscription_code);
+          } else if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
+            // Paystack uses disable to pause
+            const metadata = (sub.metadata as Record<string, string>) || {};
+            const emailToken = metadata.email_token || '';
+            paused = await cancelPaystackSub(sub.gateway_subscription_code, emailToken);
           } else {
-            // Paystack doesn't have native pause — we just update DB status
-            // Webhook handler will skip charges for paused subscriptions
+            // Flutterwave: DB-only pause — Waaiio controls token charging via cron
             paused = true;
           }
         } catch (err) {
@@ -362,7 +353,8 @@ export const recurringManageFlow: FlowDefinition = {
             const emailToken = (ctx.session.session_data._recurring_email_token as string) || metadata.email_token || '';
             resumed = await enablePaystackSub(sub.gateway_subscription_code, emailToken);
           } else {
-            // No gateway subscription — just update status
+            // Paystack/Flutterwave: DB-only resume. Waaiio manages Flutterwave
+            // recurrence via cron. Paystack re-enable already handled above.
             resumed = true;
           }
         } catch (err) {
@@ -400,6 +392,108 @@ export const recurringManageFlow: FlowDefinition = {
           type: 'text',
           text: `✅ Your *${serviceName}* recurring payment has been resumed. Next charge: ${nextCharge}.`
             + `\n\n💡 *What you can do:*\n• Type *subscriptions* to manage payments\n• Type *Hi* to start a new conversation`,
+        }];
+      },
+      async validate(): Promise<ValidationResult> { return { valid: true }; },
+      async next() { return null; },
+    },
+
+    // ── Subscription Details ──
+    {
+      id: 'subscription_details',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const subId = ctx.session.session_data._selected_sub_id as string;
+        const { data: sub } = await ctx.supabase
+          .from('customer_subscriptions')
+          .select('*')
+          .eq('id', subId)
+          .single();
+
+        if (!sub) {
+          return [{ type: 'text', text: 'Subscription not found. Type *subscriptions* to try again.' }];
+        }
+
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        const freqLabel = sub.frequency === 'yearly' ? 'Yearly' : sub.frequency === 'monthly' ? 'Monthly' : 'Weekly';
+        return [{
+          type: 'buttons',
+          body: [
+            `📋 *Subscription Details*`,
+            '',
+            `Amount: ${formatCurrency(sub.amount, cc)}/${freqLabel.toLowerCase()}`,
+            `Frequency: ${freqLabel}`,
+            `Status: ${sub.status}`,
+            `Total Charged: ${formatCurrency(sub.total_charged || 0, cc)}`,
+            `Charges: ${sub.charge_count}`,
+            sub.next_charge_at ? `Next Charge: ${new Date(sub.next_charge_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : '',
+            sub.card_last_four ? `Card: *${sub.card_last_four} (${sub.card_brand || 'card'})` : '',
+          ].filter(Boolean).join('\n'),
+          buttons: [
+            { id: 'payment_history', title: 'Payment History' },
+            { id: 'back_subs', title: 'Back' },
+          ],
+        }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        const text = input.toLowerCase();
+        if (text === 'payment_history') return { valid: true, data: { _details_action: 'history' } };
+        if (text === 'back_subs' || text === 'back') return { valid: true, data: { _details_action: 'back' } };
+        return { valid: false, errorMessage: 'Please choose an option.' };
+      },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._details_action === 'history') return 'payment_history';
+        return 'select_action';
+      },
+    },
+
+    // ── Payment History ──
+    {
+      id: 'payment_history',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const subId = ctx.session.session_data._selected_sub_id as string;
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+
+        // Ownership validation: verify subscription belongs to this customer + business
+        const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+        const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
+        const { data: sub } = await ctx.supabase
+          .from('customer_subscriptions')
+          .select('id')
+          .eq('id', subId)
+          .eq('business_id', ctx.session.business_id)
+          .or(`customer_phone.eq.${phoneP},customer_phone.eq.${phoneN}`)
+          .maybeSingle();
+        if (!sub) {
+          return [{ type: 'text', text: 'Subscription not found. Type *subscriptions* to try again.' }];
+        }
+
+        const { data: charges } = await ctx.supabase
+          .from('subscription_charges')
+          .select('amount, currency, status, charged_at, gateway_reference')
+          .eq('subscription_id', subId)
+          .eq('status', 'success')
+          .order('charged_at', { ascending: false })
+          .limit(10);
+
+        if (!charges || charges.length === 0) {
+          return [{
+            type: 'text',
+            text: 'No payment history available yet.'
+              + '\n\n💡 Type *subscriptions* to go back.',
+          }];
+        }
+
+        const lines = charges.map(c => {
+          const date = c.charged_at
+            ? new Date(c.charged_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+            : 'Unknown';
+          return `${date} — ${formatCurrency(c.amount, cc)} — Paid`;
+        });
+
+        return [{
+          type: 'text',
+          text: `📜 *Payment History*\n\n${lines.join('\n')}`
+            + '\n\n💡 Type *subscriptions* to go back or *Hi* to start over.',
         }];
       },
       async validate(): Promise<ValidationResult> { return { valid: true }; },

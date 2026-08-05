@@ -11,7 +11,7 @@ import { createNotification } from './shared/notifications';
 import type { SubscriptionTier } from '@/lib/constants';
 import { getAuthorization, createPlan as createPaystackPlan, createSubscription as createPaystackSubscription } from '@/lib/payments/paystack-recurring';
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
-import { getCardToken, createPlan as createFlutterwavePlan, createSubscription as createFlutterwaveSubscription } from '@/lib/payments/flutterwave-recurring';
+import { getCardToken } from '@/lib/payments/flutterwave-recurring';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { logger } from '@/lib/logger';
@@ -941,12 +941,15 @@ export const paymentFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         return [{
-          type: 'buttons',
+          type: 'list',
+          title: 'Set up recurring?',
           body: `Would you like to set up automatic *${d.service_name as string}* payments of *${formatCurrency(d.amount as number, cc)}*?`,
-          buttons: [
-            { id: 'monthly', title: 'Monthly ✓' },
-            { id: 'weekly', title: 'Weekly ✓' },
-            { id: 'no_thanks', title: 'No thanks' },
+          buttonLabel: 'Choose Frequency',
+          items: [
+            { title: 'Weekly', description: 'Charge every week', postbackText: 'weekly' },
+            { title: 'Monthly', description: 'Charge every month', postbackText: 'monthly' },
+            { title: 'Yearly', description: 'Charge once a year', postbackText: 'yearly' },
+            { title: 'No thanks', description: 'Skip recurring setup', postbackText: 'no_thanks' },
           ],
         }];
       },
@@ -954,12 +957,13 @@ export const paymentFlow: FlowDefinition = {
         const text = input.toLowerCase().trim();
         if (text === 'monthly') return { valid: true, data: { recurring_frequency: 'monthly' } };
         if (text === 'weekly') return { valid: true, data: { recurring_frequency: 'weekly' } };
+        if (text === 'yearly' || text === 'annual' || text === 'annually') return { valid: true, data: { recurring_frequency: 'yearly' } };
         if (
           text === 'no_thanks' || text === 'no' ||
           text === 'no thanks' || text === 'no thank you' ||
           text === 'nah' || text === 'nope'
         ) return { valid: true, data: { recurring_frequency: 'none' } };
-        return { valid: false, errorMessage: 'Please choose *Monthly*, *Weekly*, or *No thanks*.' };
+        return { valid: false, errorMessage: 'Please choose *Weekly*, *Monthly*, *Yearly*, or *No thanks*.' };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data.recurring_frequency === 'none') return 'payment_thank_you';
@@ -974,7 +978,7 @@ export const paymentFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const frequency = d.recurring_frequency as string;
-        const label = frequency === 'weekly' ? 'every week' : 'every month';
+        const label = frequency === 'weekly' ? 'every week' : frequency === 'yearly' ? 'every year' : 'every month';
 
         return [{
           type: 'buttons',
@@ -1012,7 +1016,7 @@ export const paymentFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-        const frequency = d.recurring_frequency as 'weekly' | 'monthly';
+        const frequency = d.recurring_frequency as 'weekly' | 'monthly' | 'yearly';
         const amount = d.amount as number;
         const ref = d.payment_reference as string;
         const serviceName = d.service_name as string;
@@ -1084,17 +1088,26 @@ export const paymentFlow: FlowDefinition = {
           }
           planCode = plan.planCode;
 
-          // Create subscription
+          // Calculate next charge date — customer already paid for the current period.
+          // Defer first automatic charge to avoid double-billing.
+          const paystackNextCharge = new Date();
+          if (frequency === 'weekly') paystackNextCharge.setDate(paystackNextCharge.getDate() + 7);
+          else if (frequency === 'yearly') paystackNextCharge.setFullYear(paystackNextCharge.getFullYear() + 1);
+          else paystackNextCharge.setMonth(paystackNextCharge.getMonth() + 1);
+
+          // Create subscription with start_date to prevent double-charging current period
           const sub = await createPaystackSubscription({
             customer: authData.email || authData.customerCode,
             planCode: plan.planCode,
             authorizationCode: authCode,
+            startDate: paystackNextCharge.toISOString(),
           });
           if (!sub) {
             return [{ type: 'text', text: 'Failed to activate recurring payments. Please try again later.' }];
           }
           subscriptionCode = sub.subscriptionCode;
           d._recurring_email_token = sub.emailToken;
+          d._paystack_email_token = sub.emailToken; // persist to metadata below
         } else if (resolvedGateway === 'flutterwave') {
           // Flutterwave: extract card token from the payment just made, then create plan + subscription
           const tokenData = await getCardToken(ref);
@@ -1106,39 +1119,30 @@ export const paymentFlow: FlowDefinition = {
           cardLast4 = tokenData.last4;
           cardBrand = tokenData.brand;
 
-          // Create Flutterwave payment plan
-          const plan = await createFlutterwavePlan(
-            `${ctx.business.name} - ${serviceName} (${frequency})`,
-            amount,
-            frequency,
-          );
-          if (!plan) {
-            return [{ type: 'text', text: 'Failed to set up recurring plan. Please try again later.' }];
-          }
-          planCode = plan.planId;
-
-          // Subscribe customer to the plan using their card token
-          const sub = await createFlutterwaveSubscription(
-            plan.planId,
-            tokenData.email,
-            cardToken,
-          );
-          if (!sub) {
-            return [{ type: 'text', text: 'Failed to activate recurring payments. Please try again later.' }];
-          }
-          subscriptionCode = sub.subscriptionId;
+          // Waaiio-managed token billing: do NOT create a Flutterwave plan or subscription.
+          // The customer already paid for the current period. Store the card token
+          // and let Waaiio's recurring charge cron handle future billing via chargeToken().
+          // No provider-side subscription to manage — pause/resume/cancel are DB-only.
+          subscriptionCode = `waaiio_flw_${Date.now()}`; // Internal reference (not a provider subscription ID)
         } else {
           // Stripe: create subscription checkout
           const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
           const email = (d.customer_email as string) || `${phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
+
+          // Calculate when first automatic charge should happen (defer current period)
+          const stripeTrialEnd = new Date();
+          if (frequency === 'weekly') stripeTrialEnd.setDate(stripeTrialEnd.getDate() + 7);
+          else if (frequency === 'yearly') stripeTrialEnd.setFullYear(stripeTrialEnd.getFullYear() + 1);
+          else stripeTrialEnd.setMonth(stripeTrialEnd.getMonth() + 1);
 
           const checkout = await createRecurringCheckout({
             businessName: ctx.business.name,
             serviceName,
             amount,
             currency: getCurrencyCode(cc),
-            interval: frequency === 'weekly' ? 'week' : 'month',
+            interval: frequency === 'weekly' ? 'week' : frequency === 'yearly' ? 'year' : 'month',
             customerEmail: email,
+            trialEnd: Math.floor(stripeTrialEnd.getTime() / 1000), // Unix timestamp for Stripe
             metadata: {
               business_id: ctx.business.id,
               user_id: userId,
@@ -1180,6 +1184,8 @@ export const paymentFlow: FlowDefinition = {
         const nextCharge = new Date();
         if (frequency === 'weekly') {
           nextCharge.setDate(nextCharge.getDate() + 7);
+        } else if (frequency === 'yearly') {
+          nextCharge.setFullYear(nextCharge.getFullYear() + 1);
         } else {
           nextCharge.setMonth(nextCharge.getMonth() + 1);
         }
@@ -1211,9 +1217,10 @@ export const paymentFlow: FlowDefinition = {
           customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
           customer_email: (d.customer_email as string) || null,
           setup_channel: 'whatsapp',
+          metadata: d._paystack_email_token ? { email_token: d._paystack_email_token } : {},
         });
 
-        const label = frequency === 'weekly' ? 'weekly' : 'monthly';
+        const label = frequency === 'weekly' ? 'weekly' : frequency === 'yearly' ? 'yearly' : 'monthly';
         if (resolvedGateway === 'stripe') {
           // Stripe: subscription is pending until checkout is completed
           return [{

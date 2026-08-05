@@ -206,6 +206,29 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         if (earnedPoints < 1) earnedPoints = 1; // minimum 1 point
       }
 
+      // Apply loyalty-tier points multiplier if customer has an active tier
+      if (capabilities.includes('membership')) {
+        try {
+          const { data: cp } = await supabase
+            .from('customer_profiles')
+            .select('membership_tier_id')
+            .eq('business_id', businessId)
+            .eq('phone', phoneWithPlus)
+            .maybeSingle();
+          if (cp?.membership_tier_id) {
+            const { data: tier } = await supabase
+              .from('membership_tiers')
+              .select('points_multiplier')
+              .eq('id', cp.membership_tier_id)
+              .eq('is_active', true)
+              .single();
+            if (tier?.points_multiplier && tier.points_multiplier > 1) {
+              earnedPoints = Math.floor(earnedPoints * tier.points_multiplier);
+            }
+          }
+        } catch { /* non-fatal — award base points if multiplier lookup fails */ }
+      }
+
       // Upsert loyalty_points
       const { data: existing } = await supabase
         .from('loyalty_points')
@@ -262,6 +285,27 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
     } catch (err) {
       logger.withContext({ op: 'post-completion.loyalty', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Loyalty error');
+    }
+  }
+
+  // 1b. Membership — auto-assign loyalty tier based on lifetime spend
+  // Runs after loyalty points but before feedback, so the tier is current for next visit's multiplier.
+  // Safe on retry: assignCustomerTier is idempotent (reads total_spent, assigns highest qualifying tier).
+  if (capabilities.includes('membership')) {
+    try {
+      // Look up customer_profile by phone+business (use canonical phone format)
+      const { data: cp } = await supabase
+        .from('customer_profiles')
+        .select('id')
+        .eq('business_id', businessId)
+        .eq('phone', phoneWithPlus)
+        .maybeSingle();
+      if (cp) {
+        const { assignCustomerTier } = await import('@/lib/membership/assign-tiers');
+        await assignCustomerTier(supabase, businessId, cp.id);
+      }
+    } catch (err) {
+      logger.withContext({ op: 'post-completion.tier-assign', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Tier assignment error');
     }
   }
 

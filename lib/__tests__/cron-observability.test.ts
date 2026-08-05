@@ -137,7 +137,7 @@ describe('retry-failed-charges cron observability', () => {
 
   it('emits item.skipped for unverified Flutterwave split', () => {
     expect(retryCronCode).toContain("cron.itemSkipped({ gateway: 'flutterwave'");
-    expect(retryCronCode).toContain('not yet verified');
+    expect(retryCronCode).toContain('split not verified');
   });
 
   it('does not include runId in HTTP response body', () => {

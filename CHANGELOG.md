@@ -5,7 +5,49 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-04
+
+### fix: Completed billing cycle fails closed when payment record missing
+
+- **Root cause:** `finalize_token_recurring_charge` returned `success=true, already_finalized=true, payment_id=NULL` when a billing event was marked `completed` but no matching payment existed. This masked an accounting inconsistency — the caller treated it as "done" and moved on.
+- **Fix:** After looking up the payment in the completed path, check `IF v_payment_id IS NULL` and return `success=false, reason='completed_payment_missing'`. No new payment created. No financial records modified. Surfaces the condition for investigation.
+- **Legacy support preserved:** stableRef lookup for pre-dual-identity payments continues to work.
+- **Tests N1-N6:** N1: unrelated payment never returned. N2: no matching payment → `completed_payment_missing`. N3: authoritative payment found → exact payment returned. N4: legacy stableRef payment → found. N5: repeated calls → same payment every time. N6: `completed_payment_missing` → zero bookings/payments/charges/fees, subscription totals unchanged.
+
+### fix: Close NULL-semantics provider identity bypass in finalizer
+
+- **Root cause:** `p_provider_attempt_ref != v_claim.last_error` where `last_error` is NULL evaluates to NULL in PostgreSQL, not TRUE. A caller-supplied `'FOREIGN-REF'` passed the mismatch check, survived into financial records, and the later `IS NULL` guard checked the *caller's* non-null ref, not the claim's missing ref.
+- **Fix:** Separate `v_authoritative_attempt_ref` variable holds claim-derived ref. `IS DISTINCT FROM` for NULL-safe comparison. Authoritative ref checked for NULL/empty before financial mutation. Caller input never substitutes for missing claim identity. All downstream INSERTs use `v_authoritative_attempt_ref` exclusively.
+- **Idempotent completed lookup:** Scoped to claim-authoritative identities only — `stableRef` always, `v_authoritative_attempt_ref` only when non-null. Caller-supplied ref never used for payment lookup, preventing unrelated payment returns.
+- **Tests J-O:** J: NULL claim + FOREIGN-REF → rejected, zero financial records. K: empty claim + FOREIGN-REF → rejected. L: valid claim + different ref → mismatch. M: valid claim + NULL caller → claim authority used, success. N: completed claim + NULL attempt + unrelated payment ref → must NOT return it. O: completed legacy record using stableRef → idempotent lookup works.
+
+### fix: Provider identity integrity — final closeout
+
+- **Fail closed on missing tx_ref** — `processFlutterwaveRenewal` now REQUIRES `verification.providerTxRef` to exist AND match `attemptRef`. Missing tx_ref → `verification_tx_ref_missing` (not finalized, not failed, recoverable). Mismatch → `verification_tx_ref_mismatch`. Neither condition increments failure_count. File: `flutterwave-renewal.ts`.
+- **Database rejects missing authoritative attempt ref** — `finalize_token_recurring_charge` now rejects with `missing_authoritative_attempt_ref` if the claim row has no stored attempt ref (last_error=NULL). New finalization never silently falls back to billingCycleRef as gateway_reference. Historical completed records use backwards-compatible dual-ref lookup. File: `305_annual_subscriptions_loyalty.sql`.
+- **Finalizer validates caller attempt ref against claim** — Caller-supplied `p_provider_attempt_ref` must match claim's stored ref. Wrong ref → `attempt_ref_mismatch`. NULL → auto-derived from claim. Caller can never override.
+- **verifyTransaction returns providerTxRef** — Actual `tx_ref` from Flutterwave response for cross-check.
+- **SHA-256 idempotency key** — `chargeToken()` sends `X-Idempotency-Key: SHA-256(reference)` (deterministic, non-leaking).
+- **Dual-identity PostgreSQL test** — Test 3 now proves: `payments.gateway_reference == providerAttemptRef`, `payments.metadata.billing_cycle_ref == billingCycleRef`, `payments.metadata.provider_attempt_ref == providerAttemptRef`, `subscription_charges.gateway_reference == providerAttemptRef`, exactly one payment and charge, idempotent duplicate returns same payment.
+- **Database identity tests F-I** — F: correct caller attempt → success. G: wrong caller attempt → `attempt_ref_mismatch`. H: corrupted claim (NULL attempt ref) → `missing_authoritative_attempt_ref`. I: completed → idempotent, same payment returned.
+- **Executable identity tests A-E** — A: matching tx_ref → finalize once. B: wrong tx_ref → no finalize. C: missing tx_ref → no finalize. D: recovered provider_success + missing tx_ref → no finalize. E: missing/mismatched tx_ref → failure_count unchanged.
+- **Executable idempotency tests** — Test 17: SHA-256 determinism + structural. Test 18: mocked fetch integration — same ref → same key, different ref → different key.
+- Could break: Any code that passes a wrong `p_provider_attempt_ref` to the finalizer. Any verification where Flutterwave omits `tx_ref` from response (blocked safely — will retry next cron).
+- **Verification tx_ref mismatch test** — Test 16 now verifies that mismatched `providerTxRef` from verification is detected and blocked.
+- Could break: Any code that passes a `p_provider_attempt_ref` to `finalize_token_recurring_charge` that doesn't match the claim's stored attempt ref will be rejected. Any code that relied on `X-Idempotency-Key` being the raw reference string (now it's SHA-256).
+
 ## 2026-08-03
+
+### feat: Subscription & loyalty hardening
+
+- **Annual subscriptions** — Added `yearly` interval to `customer_subscriptions.frequency` and `services.recurring_interval`. Migration `305_annual_subscriptions_loyalty.sql`. Payment flow offers Monthly/Yearly options. Stripe uses `interval: 'year'`, Paystack/Flutterwave use yearly plan intervals. Correct `next_charge_at` calculation (1 year). Display labels updated throughout.
+- **Subscription payment history** — New `payment_history` step in `recurring-manage.flow.ts`. Customers can view recent successful renewal payments from the subscription details screen. Data from authoritative `subscription_charges` table, scoped by subscription ID.
+- **Automatic loyalty-tier assignment** — Wired `assignCustomerTier()` into `post-completion.ts`. Evaluates customer's `total_spent` against active `membership_tiers` after every completed transaction. Idempotent — safe on retry.
+- **Loyalty-tier points multiplier** — `points_multiplier` from the customer's active membership tier is now applied during loyalty point award. Default behavior (no tier): normal points. With tier: `base * multiplier`.
+- **Customer-facing "Membership" → "Loyalty Tiers"** — Sidebar label, dashboard page heading, capability label renamed. Internal `membership` ID preserved.
+- **Failed renewal notification verified** — Customer WhatsApp notification already exists via `notifyCustomerChargeFailed`. No fix needed.
+- **Flutterwave pause/resume verified** — DB-level `status='paused'` correctly prevents Flutterwave recurring charges (cron only processes `status='past_due'`). No fix needed.
+- Could break: businesses using the word "Membership" in their internal dashboard navigation will see "Loyalty Tiers" instead.
 
 ### fix(bot): CAS-007 — Runtime surface closure
 

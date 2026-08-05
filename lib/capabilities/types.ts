@@ -28,7 +28,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'table_reservation', label: 'Table Reservations', description: 'Let customers reserve tables for dining with date, time, and party size.', icon: '🍽️' },
   { id: 'recurring', label: 'Subscriptions', description: 'Auto-charge customers weekly or monthly. They can manage their own subscriptions via WhatsApp.', icon: '🔄' },
   { id: 'broadcast', label: 'Broadcasts', description: 'Send promotions, updates, and announcements to all your customers at once via WhatsApp.', icon: '📢' },
-  { id: 'membership', label: 'Membership', description: 'Create Bronze/Silver/Gold tiers. Customers auto-upgrade based on spending and get discounts.', icon: '🏅' },
+  { id: 'membership', label: 'Loyalty Tiers', description: 'Create Bronze/Silver/Gold tiers. Customers auto-upgrade based on spending and get discounts.', icon: '🏅' },
   { id: 'survey', label: 'Surveys', description: 'Build custom surveys with multiple question types. Send via WhatsApp and track all responses.', icon: '📊' },
   { id: 'invoice', label: 'Invoices', description: 'Create professional invoices with line items. Send via WhatsApp with a one-click payment link.', icon: '🧾' },
   { id: 'auto_reply', label: 'Auto-Reply', description: 'Set business hours and an away message. Customers who message after hours get an instant reply.', icon: '🤖' },
