@@ -351,7 +351,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     // After finalization, next_charge_at advanced by 1 month.
     // Set it to yesterday (overdue + different date → different billing-cycle ref)
     // Also ensure status=active and failure_count=0 for clean second cycle
-    psql(`UPDATE customer_subscriptions SET status = 'active', failure_count = 0, next_charge_at = NOW() - INTERVAL '1 day' WHERE id = '${SUB_ID}';`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', failure_count = 0, next_charge_at = '2026-07-15T10:00:00Z' WHERE id = '${SUB_ID}';`);
 
     // Second cycle — should derive a DIFFERENT ref
     const c2 = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
