@@ -393,6 +393,52 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     expect(mockRpc).toHaveBeenCalledWith('release_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
   });
 
+  // ── Outer-catch release invariant regression ──
+
+  it('28. outer catch: provider init done + later throw → NO release (global invariant)', async () => {
+    // Scenario: checkpoint 1 succeeds, balance section runs (flag set),
+    // then whitelabel check throws (outside inner try) → hits outer catch.
+    // The outer catch must NOT release because sideEffectsMayHaveOccurred is true.
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK });
+    // Partial-balance booking
+    mockFrom.mockImplementation((table: string) => {
+      const c = chain();
+      if (table === 'bookings') c.single = vi.fn().mockResolvedValue({
+        data: { guest_phone: '+234123', business_id: 'b1', reference_code: 'X1', date: '2026-08-10', time: '14:00', flow_type: 'scheduling', total_amount: 100, deposit_amount: 50, businesses: { name: 'Biz', country_code: 'NG' }, services: { name: 'S', duration: 30 } },
+        error: null,
+      });
+      if (table === 'businesses') {
+        // First call succeeds (whitelabel check), subsequent calls throw
+        let callNum = 0;
+        c.single = vi.fn().mockImplementation(() => {
+          callNum++;
+          if (callNum === 1) return Promise.resolve({ data: { subscription_tier: 'free', owner_id: 'o1' }, error: null });
+          // Second businesses query (for save-card-tip section) — throw to simulate crash
+          throw new Error('simulated crash after balance init');
+        });
+      }
+      if (table === 'profiles') c.single = vi.fn().mockResolvedValue({ data: { email: 'o@t.com', phone: '+234', id: 'usr1' }, error: null });
+      return c;
+    });
+    s.from = mockFrom;
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    // Key assertion: release must NOT be called because balance-payment init was attempted
+    // (sideEffectsMayHaveOccurred was set before initializePayment at line 371)
+    expect(mockRpc).not.toHaveBeenCalledWith('release_payment_confirmation', expect.anything());
+  });
+
+  it('29. outer catch: failure before ANY side effect → release IS permitted', async () => {
+    // No balance, no provider init, no WhatsApp — pure pre-checkpoint failure
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK, release_payment_confirmation: REL_OK });
+    // Throw during business resolution (before checkpoint 1, before any side effect)
+    s.from = vi.fn().mockImplementation(() => { throw new Error('boom'); });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    // sideEffectsMayHaveOccurred is still false → release permitted
+    expect(mockRpc).toHaveBeenCalledWith('release_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
+  });
+
   it('21. lost ownership never releases/finalizes replacement claim', async () => {
     // Checkpoint 2 fails → stale worker stops, does NOT release or finalize
     let renewCount = 0;

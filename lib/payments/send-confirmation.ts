@@ -804,7 +804,11 @@ export async function sendProactiveConfirmation(
   } catch (outerErr) {
     logSafeError(logPrefix, 'confirmation-outer', outerErr);
     Sentry.captureException(outerErr, { tags: { component: 'send-confirmation', operation: 'confirmation-outer' } });
-    // Outer catch: before the send try block → no external sends occurred → safe to release
-    await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+
+    if (!sideEffectsMayHaveOccurred) {
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    } else {
+      logger.warn(`${logPrefix} Side effects may have occurred — leaving claim for stale recovery, not releasing`);
+    }
   }
 }
