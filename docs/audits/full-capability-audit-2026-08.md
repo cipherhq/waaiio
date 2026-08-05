@@ -13,7 +13,7 @@ Waaiio is a substantial WhatsApp-first business automation platform with **31 de
 
 The core commerce flows (scheduling, ordering, ticketing, payments, reservations) are **functionally complete end-to-end** through the WhatsApp bot. The dashboard provides full CRUD for most entities. RLS is systematically applied. Payment integration spans 4+ gateways with webhook verification and platform fee accounting.
 
-The audit identified **6 P0 findings**, **14 P1 findings**, **23 P2 findings**, and **12 P3/future items**. Most P0s are data-integrity or silent-failure issues in specific paths rather than broad systemic failures.
+The audit identified **9 P0 findings**, **19 P1 findings**, **28 P2 findings**, and **12 P3/future items**. Most P0s are data-integrity or silent-failure issues in specific paths rather than broad systemic failures.
 
 ---
 
@@ -290,6 +290,9 @@ Products/ordering have no web storefront. `/b/[slug]` serves only service bookin
 | P0-SUB-1 | Subscriptions | Paystack dashboard pause/cancel uses wrong email_token | Dashboard cancel silently fails; Paystack keeps charging |
 | P0-SUB-2 | Subscriptions | Web Paystack subscription created as active before payment | Phantom active subscriptions; cron charges fail |
 | ~~P0-AUTH-1~~ | ~~Authentication~~ | ~~Removed: `generatePhonePassword` uses random nonce — not deterministic~~ | ~~N/A~~ |
+| P0-INVOICE-1 | Invoices | Bot invoice flow queries `invoice_number` column — does not exist in DB (should be `reference_code`). All bot invoice interactions show "Invoice undefined" and payment init fails. | Bot invoice flow completely broken |
+| P0-QUEUE-1 | Queue | Bot writes `status='cancelled'` to `queue_entries` but CHECK constraint only allows `waiting/serving/completed/no_show`. "Leave Queue" silently fails or throws constraint error. | Customer cannot leave queue via bot |
+| P0-TZ-1 | Country/Timezone | Scheduling flow uses `new Date().toISOString().split('T')[0]` for "today" — UTC server time. Nigerian customer at 11PM Lagos (midnight UTC) sees tomorrow as today. | Wrong booking date for late-night customers |
 | P0-CONFIRM-1 | Notifications | Webhook payment confirmation dedup always returns early | No webhook-path confirmations ever sent |
 | P0-AI-1 | Ace AI | `increment_ai_usage` RPC call uses old 2-arg signature (migration 084); function replaced with 3-arg (migration 091) | Intent usage tracking silently broken |
 | P0-APPT-1 | Appointments | `buffer_minutes` column missing from appointments table | Buffer time between appointments non-functional |
@@ -315,6 +318,11 @@ Products/ordering have no web storefront. `/b/[slug]` serves only service bookin
 | P1-PKG-1 | Session Packages | Redemption flow incomplete — no bot integration for session consumption |
 | P1-REF-1 | Referrals | Customers cannot discover their referral code via bot — no keyword handler |
 | P1-BCAST-1 | Broadcast | History tab reconstructs from `notifications` table, not `business_broadcasts` — inaccurate counts |
+| P1-REPORT-1 | Documents | Send API double-auth: `authenticateRequest` (cookie) + `getUser(bearer)` on service client — bearer is empty from dashboard, causing 403 on all document sends |
+| P1-REPORT-2 | Documents | Upload API only accepts PDF (magic byte check) despite UI showing PDF/PNG/JPG accepted |
+| P1-ESIG-1 | E-Signatures | Multi-signer PDF captures only last signer's signature — earlier signers' signatures not incorporated |
+| P1-ESIG-2 | E-Signatures | Contract revoke does not update `contract_signers` rows — signer records stay `pending` |
+| P1-QUEUE-2 | Queue | Queue reopen opt-in writes `type` column to `waitlist_entries` — column doesn't exist, INSERT fails silently |
 
 ---
 
@@ -345,6 +353,12 @@ Products/ordering have no web storefront. `/b/[slug]` serves only service bookin
 | P2-CHAT-2 | Chat | No business hours / away message integration |
 | P2-SURVEY-1 | Surveys | Response rate calculation divides by broadcast count which may not match actual survey sends |
 | P2-POLL-1 | Polls | No results visualization — text-only counts |
+| P2-POLL-2 | Polls | `closes_at` not injected into bot session — expired polls still accept votes from sent messages |
+| P2-ANALYTICS-2 | Analytics | Dropoffs page queries `step_name` but DB column is `step_id` — all steps show "unknown" |
+| P2-ANALYTICS-3 | Analytics | Bot completion check uses `'complete'` vs `'completed'` inconsistently between Analytics and Insights pages |
+| P2-CRON-1 | Cron | Reminders cron is UTC-naive — off by 1 hour for non-UTC business reminder windows |
+| P2-CRON-2 | Cron | Custom reminder hours have no dedup flag — re-sends every 30 min after window passes |
+| P2-COUNTRY-1 | Country | `CountryCode` is `string` not union — unsupported country silently defaults to Nigeria |
 
 ---
 
@@ -376,7 +390,9 @@ Products/ordering have no web storefront. `/b/[slug]` serves only service bookin
 4. Fix `increment_ai_usage` signature (P0-AI-1) — update to 3-arg version
 5. Add `buffer_minutes` to appointments table (P0-APPT-1)
 6. Fix property occupancy status check (P0-PROP-1) — check `'checked_in'` not `'in_progress'`
-7. ~~P0-AUTH-1 removed — `generatePhonePassword` uses random nonce, not deterministic~~
+7. Fix invoice bot flow column name (P0-INVOICE-1) — change `invoice_number` to `reference_code`
+8. Fix queue `cancelled` status (P0-QUEUE-1) — add `'cancelled'` to CHECK constraint
+9. Fix scheduling "today" timezone (P0-TZ-1) — use business timezone for date derivation
 
 ### Phase 2 — P1 fixes (critical for launched capabilities)
 1. Fix appointment reschedule capacity (P1-APPT-2)
