@@ -31,22 +31,52 @@ function buildMock(rpcMap: Record<string, { data?: unknown; error?: unknown }> =
   return { rpc: mockRpc, from: mockFrom, _rpcCalls: rpcCalls } as any;
 }
 
+// Hoisted mocks for observable dependencies
+const { mockInitializePayment, mockCalendarLinks } = vi.hoisted(() => ({
+  mockInitializePayment: vi.fn(),
+  mockCalendarLinks: vi.fn(),
+}));
+
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), withContext: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }) } }));
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
 vi.mock('@/lib/constants', () => ({ formatCurrency: (a: number) => `$${a}` }));
 vi.mock('@/lib/utils/phone', () => ({ stripPlus: (p: string) => p.replace(/^\+/, '') }));
 vi.mock('@/lib/bot/flows/shared/user', () => ({ getCustomerName: vi.fn().mockResolvedValue('U') }));
-vi.mock('@/lib/calendar/generate-links', () => ({ getCalendarLinksText: vi.fn().mockReturnValue(null) }));
+vi.mock('@/lib/calendar/generate-links', () => ({ getCalendarLinksText: mockCalendarLinks }));
 vi.mock('@/lib/utils/sanitize', () => ({ sanitizeFilterValue: (v: string) => v }));
+vi.mock('@/lib/bot/flows/shared/payment', () => ({ initializePayment: mockInitializePayment }));
 
 const CLAIM_OK = { data: { claimed: true, claim_token: 'tok-aaa', payment_id: 'p1', amount: 50, booking_id: 'bk1', invoice_id: null, campaign_id: null, reservation_id: null, order_id: null } };
+const CLAIM_BALANCE = { data: { claimed: true, claim_token: 'tok-aaa', payment_id: 'p1', amount: 50, booking_id: 'bk1', invoice_id: null, campaign_id: null, reservation_id: null, order_id: null } };
+
+/** Configure mockFrom for a partial-balance booking (total=100, deposit=50). maybeSingle returns profile with id. */
+function setupPartialBalanceMock() {
+  mockFrom.mockImplementation((table: string) => {
+    const c = chain();
+    if (table === 'bookings') c.single = vi.fn().mockResolvedValue({
+      data: { guest_phone: '+234123', business_id: 'b1', reference_code: 'X1', date: '2026-08-10', time: '14:00', flow_type: 'scheduling', total_amount: 100, deposit_amount: 50, businesses: { name: 'Biz', country_code: 'NG', address: '1 Main St' }, services: { name: 'S', duration: 30 } },
+      error: null,
+    });
+    if (table === 'businesses') c.single = vi.fn().mockResolvedValue({ data: { subscription_tier: 'free', owner_id: 'o1' }, error: null });
+    if (table === 'profiles') {
+      // The balance path uses maybeSingle, not single
+      c.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'usr1', email: 'o@t.com', phone: '+234123' }, error: null });
+      c.single = vi.fn().mockResolvedValue({ data: { id: 'usr1', email: 'o@t.com', phone: '+234123' }, error: null });
+    }
+    return c;
+  });
+}
 const RENEW_OK = { data: { renewed: true } };
 const FIN_OK = { data: { finalized: true, already_finalized: false } };
 const REL_OK = { data: { released: true } };
 const pay = { id: 'p1', amount: 50, booking_id: 'bk1', invoice_id: null, campaign_id: null };
 
 describe('P0-CONFIRM-1: Control-flow tests', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockInitializePayment.mockResolvedValue(null);
+    mockCalendarLinks.mockReturnValue(null);
+  });
 
   it('1. renewal success → processing continues', async () => {
     const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK, finalize_payment_confirmation: FIN_OK });
@@ -275,72 +305,40 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
 
   // ── Partial-balance / remaining-balance provider initialization ──
 
-  it('22. partial balance + ownership lost at checkpoint 1 → no initializePayment, no WhatsApp', async () => {
-    // Booking with total > deposit → balanceRemaining > 0
+  it('22. partial balance + ownership lost at checkpoint 1 → no initializePayment', async () => {
     const s = buildMock({
       claim_payment_confirmation: CLAIM_OK,
       renew_payment_confirmation_claim: { data: { renewed: false, reason: 'token_mismatch' } },
     });
-    // Override booking to have partial deposit
-    mockFrom.mockImplementation((table: string) => {
-      const c = chain();
-      if (table === 'bookings') c.single = vi.fn().mockResolvedValue({
-        data: { guest_phone: '+234123', business_id: 'b1', reference_code: 'X1', date: '2026-08-10', time: '14:00', flow_type: 'scheduling', total_amount: 100, deposit_amount: 50, businesses: { name: 'Biz', country_code: 'NG' }, services: { name: 'S', duration: 30 } },
-        error: null,
-      });
-      if (table === 'businesses') c.single = vi.fn().mockResolvedValue({ data: { subscription_tier: 'free', owner_id: 'o1' }, error: null });
-      if (table === 'profiles') c.single = vi.fn().mockResolvedValue({ data: { email: 'o@t.com', phone: '+234' }, error: null });
-      return c;
-    });
+    setupPartialBalanceMock();
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
-    // Checkpoint 1 fails → no initializePayment, no WhatsApp, no finalize, no release
+    expect(mockInitializePayment).not.toHaveBeenCalled();
     expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
     expect(mockRpc).not.toHaveBeenCalledWith('release_payment_confirmation', expect.anything());
-    // Only claim + one failed renewal
-    const renewCalls = mockRpc.mock.calls.filter((c: any[]) => c[0] === 'renew_payment_confirmation_claim');
-    expect(renewCalls.length).toBe(1);
   });
 
   it('23. partial balance + provider init attempted then throws → no release', async () => {
+    mockInitializePayment.mockRejectedValue(new Error('provider timeout'));
     const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK, finalize_payment_confirmation: FIN_OK });
-    // Mock initializePayment to throw (but attempt was made)
-    vi.doMock('@/lib/bot/flows/shared/payment', () => ({
-      initializePayment: vi.fn().mockRejectedValue(new Error('provider timeout')),
-    }));
-    mockFrom.mockImplementation((table: string) => {
-      const c = chain();
-      if (table === 'bookings') c.single = vi.fn().mockResolvedValue({
-        data: { guest_phone: '+234123', business_id: 'b1', reference_code: 'X1', date: '2026-08-10', time: '14:00', flow_type: 'scheduling', total_amount: 100, deposit_amount: 50, businesses: { name: 'Biz', country_code: 'NG' }, services: { name: 'S', duration: 30 } },
-        error: null,
-      });
-      if (table === 'businesses') c.single = vi.fn().mockResolvedValue({ data: { subscription_tier: 'free', owner_id: 'o1' }, error: null });
-      if (table === 'profiles') c.single = vi.fn().mockResolvedValue({ data: { email: 'o@t.com', phone: '+234', id: 'usr1' }, error: null });
-      return c;
-    });
+    setupPartialBalanceMock();
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
-    // Provider init threw but was attempted → side effects flagged → no release
+    // initializePayment WAS called (proves the profile mock works)
+    expect(mockInitializePayment).toHaveBeenCalledTimes(1);
+    // Provider threw but was attempted → no release
     expect(mockRpc).not.toHaveBeenCalledWith('release_payment_confirmation', expect.anything());
   });
 
-  it('24. partial balance success → balance URL in message, finalize succeeds', async () => {
+  it('24. partial balance success → initializePayment called, finalize succeeds', async () => {
+    mockInitializePayment.mockResolvedValue({ url: 'https://pay.example.com/balance' });
     const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK, finalize_payment_confirmation: FIN_OK });
-    vi.doMock('@/lib/bot/flows/shared/payment', () => ({
-      initializePayment: vi.fn().mockResolvedValue({ url: 'https://pay.example.com/balance' }),
-    }));
-    mockFrom.mockImplementation((table: string) => {
-      const c = chain();
-      if (table === 'bookings') c.single = vi.fn().mockResolvedValue({
-        data: { guest_phone: '+234123', business_id: 'b1', reference_code: 'X1', date: '2026-08-10', time: '14:00', flow_type: 'scheduling', total_amount: 100, deposit_amount: 50, businesses: { name: 'Biz', country_code: 'NG' }, services: { name: 'S', duration: 30 } },
-        error: null,
-      });
-      if (table === 'businesses') c.single = vi.fn().mockResolvedValue({ data: { subscription_tier: 'free', owner_id: 'o1' }, error: null });
-      if (table === 'profiles') c.single = vi.fn().mockResolvedValue({ data: { email: 'o@t.com', phone: '+234', id: 'usr1' }, error: null });
-      return c;
-    });
+    setupPartialBalanceMock();
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
+    expect(mockInitializePayment).toHaveBeenCalledTimes(1);
+    // Correct amount passed (balanceRemaining = 100 - 50 = 50)
+    expect(mockInitializePayment).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ amount: 50 }));
     expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
   });
 
@@ -366,20 +364,10 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
       const map: Record<string, any> = { claim_payment_confirmation: CLAIM_OK, finalize_payment_confirmation: FIN_OK };
       return Promise.resolve({ data: map[name]?.data ?? null, error: map[name]?.error ?? null });
     });
-    // Booking with total == deposit → no balance
-    mockFrom.mockImplementation((table: string) => {
-      const c = chain();
-      if (table === 'bookings') c.single = vi.fn().mockResolvedValue({
-        data: { guest_phone: '+234123', business_id: 'b1', reference_code: 'X1', date: '2026-08-10', time: '14:00', flow_type: 'scheduling', total_amount: 50, deposit_amount: 50, businesses: { name: 'Biz', country_code: 'NG' }, services: { name: 'S', duration: 30 } },
-        error: null,
-      });
-      if (table === 'businesses') c.single = vi.fn().mockResolvedValue({ data: { subscription_tier: 'free', owner_id: 'o1' }, error: null });
-      if (table === 'profiles') c.single = vi.fn().mockResolvedValue({ data: { email: 'o@t.com', phone: '+234' }, error: null });
-      return c;
-    });
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
-    await sendProactiveConfirmation(s, pay);
+    await sendProactiveConfirmation(s, pay); // default mock: total=deposit=50 → no balance
     expect(renewCount).toBe(5);
+    expect(mockInitializePayment).not.toHaveBeenCalled();
     expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
   });
 
@@ -395,37 +383,24 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
 
   // ── Outer-catch release invariant regression ──
 
-  it('28. outer catch: provider init done + later throw → NO release (global invariant)', async () => {
-    // Scenario: checkpoint 1 succeeds, balance section runs (flag set),
-    // then whitelabel check throws (outside inner try) → hits outer catch.
-    // The outer catch must NOT release because sideEffectsMayHaveOccurred is true.
+  it('28. outer catch: provider init done + calendar throw → NO release (global invariant)', async () => {
+    // Scenario: checkpoint 1 succeeds, initializePayment succeeds (flag=true),
+    // then getCalendarLinksText throws (after balance init, before inner try).
+    // Outer catch fires. Must NOT release.
+    mockInitializePayment.mockResolvedValue({ url: 'https://pay.example.com/balance' });
+    mockCalendarLinks.mockImplementation(() => { throw new Error('post-provider pre-send crash'); });
     const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK });
-    // Partial-balance booking
-    mockFrom.mockImplementation((table: string) => {
-      const c = chain();
-      if (table === 'bookings') c.single = vi.fn().mockResolvedValue({
-        data: { guest_phone: '+234123', business_id: 'b1', reference_code: 'X1', date: '2026-08-10', time: '14:00', flow_type: 'scheduling', total_amount: 100, deposit_amount: 50, businesses: { name: 'Biz', country_code: 'NG' }, services: { name: 'S', duration: 30 } },
-        error: null,
-      });
-      if (table === 'businesses') {
-        // First call succeeds (whitelabel check), subsequent calls throw
-        let callNum = 0;
-        c.single = vi.fn().mockImplementation(() => {
-          callNum++;
-          if (callNum === 1) return Promise.resolve({ data: { subscription_tier: 'free', owner_id: 'o1' }, error: null });
-          // Second businesses query (for save-card-tip section) — throw to simulate crash
-          throw new Error('simulated crash after balance init');
-        });
-      }
-      if (table === 'profiles') c.single = vi.fn().mockResolvedValue({ data: { email: 'o@t.com', phone: '+234', id: 'usr1' }, error: null });
-      return c;
-    });
-    s.from = mockFrom;
+    setupPartialBalanceMock();
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
-    // Key assertion: release must NOT be called because balance-payment init was attempted
-    // (sideEffectsMayHaveOccurred was set before initializePayment at line 371)
+    // initializePayment WAS called
+    expect(mockInitializePayment).toHaveBeenCalledTimes(1);
+    // Calendar throw WAS reached
+    expect(mockCalendarLinks).toHaveBeenCalled();
+    // Release must NOT be called — provider init already happened
     expect(mockRpc).not.toHaveBeenCalledWith('release_payment_confirmation', expect.anything());
+    // Finalize must NOT be called — processing stopped at the crash
+    expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
   });
 
   it('29. outer catch: failure before ANY side effect → release IS permitted', async () => {
