@@ -15,6 +15,7 @@ import { execSync } from 'child_process';
 import * as path from 'path';
 
 const MIGRATION_PATH = path.resolve('supabase/migrations/305_annual_subscriptions_loyalty.sql');
+const MIGRATION_306_PATH = path.resolve('supabase/migrations/306_concurrent_finalizer_lock.sql');
 const dbUrl = process.env.TEST_DATABASE_URL;
 
 function psql(sql: string): string {
@@ -135,6 +136,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
       INSERT INTO businesses (id) VALUES ('${BIZ_ID}') ON CONFLICT DO NOTHING;
     `);
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
+    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_306_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
   });
 
   afterAll(() => {
@@ -919,9 +921,9 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const bookingCount = psql(`SELECT COUNT(*) FROM bookings;`);
     expect(bookingCount).toBe('1');
 
-    // Platform fee recorded exactly once (or zero if trial — test uses non-trial business)
+    // Platform fee recorded exactly once (business fixture: tier=free, non-trial, payout_mode=platform)
     const feeCount = psql(`SELECT COUNT(*) FROM platform_fees;`);
-    expect(parseInt(feeCount)).toBeLessThanOrEqual(1);
+    expect(feeCount).toBe('1');
 
     // charge_count incremented exactly once
     const subChargeCount = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
