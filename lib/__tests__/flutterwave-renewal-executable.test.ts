@@ -24,6 +24,7 @@ function mockDeps(opts: {
   verifyOutcome?: string | null; // 'successful', 'pending', 'failed', 'unknown', null (timeout)
   verifyAmount?: number;
   verifyCurrency?: string;
+  verifyTxRef?: string; // providerTxRef returned by verify mock
   finalizeResult?: Record<string, unknown>;
   failureResult?: Record<string, unknown>;
 }): FlwRenewalDeps {
@@ -55,6 +56,7 @@ function mockDeps(opts: {
         amount: opts.verifyAmount ?? 50,
         currency: opts.verifyCurrency ?? 'NGN',
         providerStatus: opts.verifyOutcome ?? 'successful',
+        providerTxRef: opts.verifyTxRef ?? 'flw-sub-001-2026-08-04-a1',
       }
     ),
   };
@@ -209,6 +211,7 @@ describe('Flutterwave renewal — executable production tests', () => {
     const deps = mockDeps({
       claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a2', reconcile_required: false, provider_verified: false },
       chargeOutcome: 'successful',
+      verifyTxRef: 'flw-sub-001-2026-08-04-a2',
     });
     // Mock chargeToken to return the correct a2 reference
     deps.chargeTokenFn = vi.fn().mockResolvedValue({ outcome: 'successful', reference: 'flw-sub-001-2026-08-04-a2' });
@@ -233,12 +236,107 @@ describe('Flutterwave renewal — executable production tests', () => {
     expect(result.reason).toBe('provider_ref_mismatch');
   });
 
-  it('16. X-Idempotency-Key: same attemptRef → same key', async () => {
-    // The chargeToken function sends X-Idempotency-Key = reference (the attemptRef)
-    // This is verified structurally since the mock doesn't exercise the actual fetch
+  it('16. verification tx_ref mismatch → error', async () => {
+    const deps = mockDeps({ chargeOutcome: 'successful' });
+    // verifyTransaction returns a different providerTxRef than expected
+    deps.verifyTransactionFn = vi.fn().mockResolvedValue({
+      outcome: 'successful', amount: 50, currency: 'NGN',
+      providerStatus: 'successful', providerTxRef: 'DIFFERENT-TX-REF',
+    });
+    const result = await processFlutterwaveRenewal(deps, mockSub());
+
+    expect(result.action).toBe('error');
+    expect(result.reason).toBe('verification_tx_ref_mismatch');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// Executable idempotency test — mocks global fetch, calls REAL chargeToken
+// ═══════════════════════════════════════════════════════
+
+describe('Flutterwave chargeToken — idempotency key (executable)', () => {
+  it('17. X-Idempotency-Key is SHA-256(reference), deterministic, not raw ref', async () => {
+    const { createHash } = await import('crypto');
+    const ref = 'flw-sub-001-2026-08-04-a1';
+    const expectedKey = createHash('sha256').update(ref).digest('hex');
+
+    // The module captures FLUTTERWAVE_SECRET_KEY at load time. Since it's empty in test,
+    // chargeToken returns early with a mock result. We test the SHA-256 logic directly
+    // by verifying the createHash pipeline produces the expected output, then structurally
+    // verify chargeToken passes it to flutterwaveRequest.
+
+    // 1. Verify SHA-256 produces deterministic 64-char lowercase hex
+    const key1 = createHash('sha256').update(ref).digest('hex');
+    const key2 = createHash('sha256').update(ref).digest('hex');
+    expect(key1).toBe(key2); // deterministic
+    expect(key1).toMatch(/^[a-f0-9]{64}$/); // SHA-256 format
+    expect(key1).not.toBe(ref); // not raw reference
+
+    // 2. Different references produce different keys
+    const otherKey = createHash('sha256').update('flw-sub-001-2026-08-04-a2').digest('hex');
+    expect(otherKey).not.toBe(key1);
+
+    // 3. Structurally verify chargeToken passes SHA-256 hash as X-Idempotency-Key
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../payments/flutterwave-recurring.ts'), 'utf-8');
-    expect(source).toContain("'X-Idempotency-Key': reference");
+    // Must use createHash('sha256') for the key
+    expect(source).toContain("createHash('sha256').update(reference).digest('hex')");
+    // Must import createHash
+    expect(source).toContain("import { createHash } from 'crypto'");
+    // X-Idempotency-Key must NOT use raw reference
+    expect(source).not.toContain("'X-Idempotency-Key': reference");
+
+    // 4. Verify the expected SHA-256 for our test reference
+    expect(expectedKey).toBe(key1);
+  });
+
+  it('18. chargeToken sends idempotency header via fetch (integration)', async () => {
+    const { createHash } = await import('crypto');
+    const ref = 'flw-sub-001-2026-08-04-a1';
+    const expectedKey = createHash('sha256').update(ref).digest('hex');
+
+    const capturedHeaders: Record<string, string>[] = [];
+    const capturedBodies: Record<string, unknown>[] = [];
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+      const headers = init.headers as Record<string, string>;
+      capturedHeaders.push({ ...headers });
+      if (init.body) capturedBodies.push(JSON.parse(init.body as string));
+      return new Response(JSON.stringify({
+        status: 'success',
+        data: { status: 'successful', tx_ref: ref, id: 12345 },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+
+    try {
+      // Dynamically re-import with secret key set so chargeToken uses fetch path
+      vi.resetModules();
+      process.env.FLUTTERWAVE_SECRET_KEY = 'test-secret-key-for-idempotency';
+      const mod = await import('../payments/flutterwave-recurring');
+
+      await mod.chargeToken('tok-123', 50, 'test@example.com', ref, 'NGN');
+      await mod.chargeToken('tok-123', 50, 'test@example.com', ref, 'NGN');
+
+      // Both calls must produce the SAME idempotency key
+      expect(capturedHeaders.length).toBe(2);
+      expect(capturedHeaders[0]['X-Idempotency-Key']).toBe(expectedKey);
+      expect(capturedHeaders[1]['X-Idempotency-Key']).toBe(expectedKey);
+
+      // Key must be 64-char lowercase hex (SHA-256)
+      expect(capturedHeaders[0]['X-Idempotency-Key']).toMatch(/^[a-f0-9]{64}$/);
+
+      // Key must NOT be the raw reference
+      expect(capturedHeaders[0]['X-Idempotency-Key']).not.toBe(ref);
+
+      // tx_ref in body must be the raw reference (not hashed)
+      expect(capturedBodies[0].tx_ref).toBe(ref);
+      expect(capturedBodies[1].tx_ref).toBe(ref);
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.FLUTTERWAVE_SECRET_KEY;
+      vi.resetModules();
+    }
   });
 });

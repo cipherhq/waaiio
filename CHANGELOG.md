@@ -5,6 +5,17 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-04
+
+### fix: Provider identity integrity — Flutterwave recurring billing
+
+- **Finalizer validates providerAttemptRef against claim** — `finalize_token_recurring_charge` now reads the authoritative attempt ref from the claim row (`last_error` column) and validates that the caller's `p_provider_attempt_ref` matches. If NULL, derives it from the claim. Prevents a buggy/compromised caller from associating a foreign tx_ref with a billing cycle. Migration: `305_annual_subscriptions_loyalty.sql`.
+- **verifyTransaction returns providerTxRef** — `verifyTransaction()` now returns the actual `tx_ref` from Flutterwave's response (`providerTxRef` field). `processFlutterwaveRenewal` cross-checks this against the expected `attemptRef` — mismatch returns `verification_tx_ref_mismatch` error. File: `flutterwave-recurring.ts`, `flutterwave-renewal.ts`.
+- **SHA-256 idempotency key** — `chargeToken()` now sends `X-Idempotency-Key: SHA-256(reference)` instead of the raw reference. Deterministic, non-leaking, 64-char lowercase hex. File: `flutterwave-recurring.ts`.
+- **Executable idempotency tests** — 2 new tests: (17) verifies SHA-256 output format and structural correctness, (18) integration test mocks global `fetch`, calls real `chargeToken()`, inspects actual outgoing headers. File: `flutterwave-renewal-executable.test.ts`.
+- **Verification tx_ref mismatch test** — Test 16 now verifies that mismatched `providerTxRef` from verification is detected and blocked.
+- Could break: Any code that passes a `p_provider_attempt_ref` to `finalize_token_recurring_charge` that doesn't match the claim's stored attempt ref will be rejected. Any code that relied on `X-Idempotency-Key` being the raw reference string (now it's SHA-256).
+
 ## 2026-08-03
 
 ### feat: Subscription & loyalty hardening

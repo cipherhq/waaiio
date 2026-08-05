@@ -11,6 +11,7 @@
  * Flutterwave API docs: https://developer.flutterwave.com/reference
  */
 
+import { createHash } from 'crypto';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { safeProviderError } from '@/lib/redact';
@@ -258,12 +259,13 @@ export async function verifyTransaction(txRef: string): Promise<{
   amount?: number;
   currency?: string;
   providerStatus?: string;
+  providerTxRef?: string; // actual tx_ref from Flutterwave response for cross-check
 } | null> {
   if (!flutterwaveSecretKey) {
     if (process.env.NODE_ENV === 'production') {
       throw new Error('Payment gateway not configured: missing Flutterwave secret key');
     }
-    return { outcome: 'successful', amount: 0, currency: 'NGN', providerStatus: 'successful' };
+    return { outcome: 'successful', amount: 0, currency: 'NGN', providerStatus: 'successful', providerTxRef: txRef };
   }
 
   try {
@@ -274,19 +276,20 @@ export async function verifyTransaction(txRef: string): Promise<{
     }
     const txData = data.data as Record<string, unknown>;
     const providerStatus = txData.status as string;
+    const actualTxRef = txData.tx_ref as string | undefined;
 
     if (providerStatus === 'successful') {
-      return { outcome: 'successful', amount: txData.amount as number, currency: txData.currency as string, providerStatus };
+      return { outcome: 'successful', amount: txData.amount as number, currency: txData.currency as string, providerStatus, providerTxRef: actualTxRef };
     }
     if (providerStatus === 'pending' || providerStatus === 'processing') {
-      return { outcome: 'pending', providerStatus };
+      return { outcome: 'pending', providerStatus, providerTxRef: actualTxRef };
     }
     const TERMINAL_FAILURES = ['failed', 'declined', 'cancelled', 'error'];
     if (TERMINAL_FAILURES.includes(providerStatus)) {
-      return { outcome: 'failed', providerStatus };
+      return { outcome: 'failed', providerStatus, providerTxRef: actualTxRef };
     }
     // Unrecognized status — unknown, not failed
-    return { outcome: 'unknown', providerStatus: providerStatus || 'missing_status' };
+    return { outcome: 'unknown', providerStatus: providerStatus || 'missing_status', providerTxRef: actualTxRef };
   } catch {
     return null; // network/timeout — truly unknown
   }
@@ -332,7 +335,7 @@ export async function chargeToken(
       amount,
       tx_ref: reference,
       ...(verifiedSplit || {}),
-    }, { 'X-Idempotency-Key': reference }); // Deterministic per provider attempt
+    }, { 'X-Idempotency-Key': createHash('sha256').update(reference).digest('hex') }); // SHA-256 of attempt ref — deterministic, non-leaking
 
     const chargeData = data.data as Record<string, unknown> | undefined;
     const providerStatus = (chargeData?.status as string) || '';

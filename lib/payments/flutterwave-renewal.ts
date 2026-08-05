@@ -121,9 +121,9 @@ export async function processFlutterwaveRenewal(
         return { action: 'error', reason: 'verification_failed' };
       }
 
-      // Bug 3: Verify returned tx_ref matches expected attemptRef
-      if (verification.providerStatus && verification.amount) {
-        // The verification already confirms the correct tx_ref (we queried by attemptRef)
+      // Verify returned tx_ref matches expected attemptRef
+      if (verification.providerTxRef && verification.providerTxRef !== attemptRef) {
+        return { action: 'error', reason: 'verification_tx_ref_mismatch' };
       }
 
       const { data: finResult } = await supabase.rpc('finalize_token_recurring_charge', {

@@ -268,6 +268,18 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'reason', 'claim_subscription_mismatch');
   END IF;
 
+  -- Derive authoritative provider attempt ref from the claim row (stored in last_error).
+  -- The caller's p_provider_attempt_ref must match. This prevents a compromised/buggy caller
+  -- from associating a foreign tx_ref with this billing cycle.
+  IF p_provider_attempt_ref IS NOT NULL AND p_provider_attempt_ref != v_claim.last_error THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'attempt_ref_mismatch',
+      'expected', v_claim.last_error, 'received', p_provider_attempt_ref);
+  END IF;
+  -- Use the authoritative attempt ref from claim if caller didn't provide one
+  IF p_provider_attempt_ref IS NULL THEN
+    p_provider_attempt_ref := v_claim.last_error;
+  END IF;
+
   -- Check idempotency: if already finalized, return success without duplicating
   IF v_claim.status = 'completed' THEN
     -- Already finalized — find payment by either ref
@@ -282,11 +294,6 @@ BEGIN
     UPDATE processed_webhook_events SET status = 'completed', completed_at = v_now WHERE event_id = p_stable_ref;
     SELECT id INTO v_payment_id FROM payments WHERE (gateway_reference = p_stable_ref OR gateway_reference = COALESCE(p_provider_attempt_ref, p_stable_ref)) AND status = 'success' LIMIT 1;
     RETURN jsonb_build_object('success', true, 'already_finalized', true, 'payment_id', v_payment_id);
-  END IF;
-
-  -- Validate claim belongs to this subscription (stable_ref embeds subscription ID)
-  IF p_stable_ref NOT LIKE 'flw-' || p_subscription_id::text || '-%' THEN
-    RETURN jsonb_build_object('success', false, 'reason', 'claim_subscription_mismatch');
   END IF;
 
   -- Load subscription and validate ownership + gateway
