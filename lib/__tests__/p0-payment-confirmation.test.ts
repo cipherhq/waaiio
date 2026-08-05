@@ -155,4 +155,139 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     await sendProactiveConfirmation(s, pay);
     expect(mockRpc).toHaveBeenCalledWith('release_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
   });
+
+  // ── Side-effect tracking: sideEffectsMayHaveOccurred ──
+
+  it('14. flag set BEFORE WhatsApp, not after — source verification', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(path.resolve(__dirname, '../payments/send-confirmation.ts'), 'utf-8');
+    // The flag must be set BEFORE sendText, not after
+    const flagIdx = src.indexOf('sideEffectsMayHaveOccurred = true; // Mark BEFORE attempt');
+    const sendIdx = src.indexOf('resolved.sender.sendText');
+    expect(flagIdx).toBeGreaterThan(-1);
+    expect(sendIdx).toBeGreaterThan(flagIdx);
+    // After initialization, the flag must never be set back to false
+    // Count occurrences — only the initial `let ... = false` is allowed
+    const matches = src.match(/sideEffectsMayHaveOccurred = false/g) || [];
+    expect(matches.length).toBe(1); // only the initial declaration
+  });
+
+  it('15. post-completion throws → no release (side effects may have occurred)', async () => {
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK });
+    // Make post-completion module throw
+    vi.doMock('@/lib/bot/flows/shared/post-completion', () => ({
+      handlePostCompletion: vi.fn().mockRejectedValue(new Error('loyalty crash')),
+    }));
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    // Side effects started (WhatsApp send section entered) → no release
+    expect(mockRpc).not.toHaveBeenCalledWith('release_payment_confirmation', expect.anything());
+  });
+
+  it('16. failure before any side effect → release permitted', async () => {
+    // Claim succeeds but business resolution fails before WhatsApp/post-completion
+    const s = buildMock({
+      claim_payment_confirmation: { ...CLAIM_OK, data: { ...CLAIM_OK.data, booking_id: null } },
+      renew_payment_confirmation_claim: RENEW_OK,
+      release_payment_confirmation: REL_OK,
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, { ...pay, booking_id: null });
+    // No business found → release called (before any side effects)
+    expect(mockRpc).toHaveBeenCalledWith('release_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
+  });
+
+  // ── Five checkpoint structure ──
+
+  it('17. renewal at checkpoint 3 fails → no owner notify, no tickets, no finalize', async () => {
+    let renewCount = 0;
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK });
+    mockRpc.mockImplementation((name: string) => {
+      if (name === 'renew_payment_confirmation_claim') {
+        renewCount++;
+        // Checkpoints 1,2 succeed; checkpoint 3 fails
+        if (renewCount <= 2) return Promise.resolve({ data: { renewed: true }, error: null });
+        return Promise.resolve({ data: { renewed: false, reason: 'token_mismatch' }, error: null });
+      }
+      if (name === 'claim_payment_confirmation') return Promise.resolve(CLAIM_OK);
+      return Promise.resolve({ data: null, error: null });
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
+    expect(renewCount).toBe(3); // stopped at checkpoint 3
+  });
+
+  it('18. renewal at checkpoint 4 fails → no tickets/emails, no finalize', async () => {
+    let renewCount = 0;
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK });
+    mockRpc.mockImplementation((name: string) => {
+      if (name === 'renew_payment_confirmation_claim') {
+        renewCount++;
+        if (renewCount <= 3) return Promise.resolve({ data: { renewed: true }, error: null });
+        return Promise.resolve({ data: { renewed: false, reason: 'token_mismatch' }, error: null });
+      }
+      if (name === 'claim_payment_confirmation') return Promise.resolve(CLAIM_OK);
+      return Promise.resolve({ data: null, error: null });
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
+    expect(renewCount).toBe(4);
+  });
+
+  it('19. renewal at checkpoint 5 fails → no session mutation, no finalize', async () => {
+    let renewCount = 0;
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK });
+    mockRpc.mockImplementation((name: string) => {
+      if (name === 'renew_payment_confirmation_claim') {
+        renewCount++;
+        if (renewCount <= 4) return Promise.resolve({ data: { renewed: true }, error: null });
+        return Promise.resolve({ data: { renewed: false, reason: 'token_mismatch' }, error: null });
+      }
+      if (name === 'claim_payment_confirmation') return Promise.resolve(CLAIM_OK);
+      return Promise.resolve({ data: null, error: null });
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
+    expect(renewCount).toBe(5);
+  });
+
+  it('20. successful flow reaches all 5 checkpoints + finalize', async () => {
+    let renewCount = 0;
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, finalize_payment_confirmation: FIN_OK });
+    mockRpc.mockImplementation((name: string) => {
+      if (name === 'renew_payment_confirmation_claim') {
+        renewCount++;
+        return Promise.resolve({ data: { renewed: true }, error: null });
+      }
+      const map: Record<string, any> = { claim_payment_confirmation: CLAIM_OK, finalize_payment_confirmation: FIN_OK };
+      return Promise.resolve({ data: map[name]?.data ?? null, error: map[name]?.error ?? null });
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    expect(renewCount).toBe(5);
+    expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
+  });
+
+  it('21. lost ownership never releases/finalizes replacement claim', async () => {
+    // Checkpoint 2 fails → stale worker stops, does NOT release or finalize
+    let renewCount = 0;
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK });
+    mockRpc.mockImplementation((name: string) => {
+      if (name === 'renew_payment_confirmation_claim') {
+        renewCount++;
+        if (renewCount === 1) return Promise.resolve({ data: { renewed: true }, error: null });
+        return Promise.resolve({ data: { renewed: false, reason: 'token_mismatch' }, error: null });
+      }
+      if (name === 'claim_payment_confirmation') return Promise.resolve(CLAIM_OK);
+      return Promise.resolve({ data: null, error: null });
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    expect(mockRpc).not.toHaveBeenCalledWith('release_payment_confirmation', expect.anything());
+    expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
+  });
 });

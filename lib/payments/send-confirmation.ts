@@ -156,7 +156,9 @@ export async function sendProactiveConfirmation(
   };
 
   // Track whether any external sends have occurred (affects release safety)
-  let externalSendsOccurred = false;
+  // Conservative: set BEFORE attempting any external/non-idempotent operation.
+  // Once true, never returns to false. Prevents claim release after indeterminate sends.
+  let sideEffectsMayHaveOccurred = false;
 
   try {
   // ── Post-claim processing: any failure releases the claim for retry ──
@@ -469,9 +471,9 @@ export async function sendProactiveConfirmation(
 
     // Send WhatsApp confirmation if channel is available and we have a phone
     if (resolved && customerPhone) {
+      sideEffectsMayHaveOccurred = true; // Mark BEFORE attempt — timeout/disconnect after provider accepts is indeterminate
       const phone = stripPlus(customerPhone);
       await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
-      externalSendsOccurred = true;
     } else {
       logger.info(`${logPrefix} No WhatsApp channel resolved — will attempt email-only confirmation`);
     }
@@ -484,6 +486,7 @@ export async function sendProactiveConfirmation(
     }
 
     // ── 6. Post-completion (loyalty, feedback, referral, customer profile) ──
+    sideEffectsMayHaveOccurred = true; // loyalty points, referral codes, feedback — non-idempotent
     if (customerPhone) {
       try {
         const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
@@ -502,7 +505,7 @@ export async function sendProactiveConfirmation(
       }
     }
 
-    // ── Renew ownership before owner notifications and tickets ──
+    // ── CHECKPOINT 3: Renew before owner notifications and email ──
     const preOwnerNotify = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!preOwnerNotify.ok) {
       logger.warn(`${logPrefix} Ownership lost before owner notify: ${preOwnerNotify.reason}`);
@@ -510,6 +513,7 @@ export async function sendProactiveConfirmation(
     }
 
     // ── 7. Owner notification ──
+    sideEffectsMayHaveOccurred = true; // owner WhatsApp + email
     try {
       if (payment.booking_id && resolved) {
         const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
@@ -609,6 +613,14 @@ export async function sendProactiveConfirmation(
     } catch (notifyErr) {
       logSafeError(logPrefix, 'owner-notification', notifyErr);
     }
+
+    // ── CHECKPOINT 4: Renew before tickets, customer emails, donation receipt ──
+    const preTickets = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    if (!preTickets.ok) {
+      logger.warn(`${logPrefix} Ownership lost before tickets/emails: ${preTickets.reason}`);
+      return;
+    }
+    sideEffectsMayHaveOccurred = true; // tickets, customer email, donation receipt
 
     // ── 8. Send tickets for ticketing bookings ──
     try {
@@ -751,6 +763,13 @@ export async function sendProactiveConfirmation(
       }
     }
 
+    // ── CHECKPOINT 5: Renew before session mutation and finalization ──
+    const preFinalize = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    if (!preFinalize.ok) {
+      logger.warn(`${logPrefix} Ownership lost before session/finalize: ${preFinalize.reason}`);
+      return;
+    }
+
     // ── 9. Deactivate the payment-waiting session (webhook confirmed — user doesn't need to tap "I've Paid") ──
     if (customerPhone) {
       await supabase
@@ -772,7 +791,7 @@ export async function sendProactiveConfirmation(
     // Release only if no external sends occurred yet.
     // After external sends, releasing guarantees a duplicate retry → unsafe.
     // Leave the claim for stale recovery instead.
-    if (!externalSendsOccurred) {
+    if (!sideEffectsMayHaveOccurred) {
       await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     } else {
       logger.warn(`${logPrefix} External sends occurred — leaving claim for stale recovery, not releasing`);
