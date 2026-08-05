@@ -41,18 +41,37 @@ export async function sendProactiveConfirmation(
   payment: PaymentForConfirmation,
   logPrefix = '[WEBHOOK]',
 ): Promise<void> {
-  // Dedup: only the first caller sends confirmation.
-  // Atomic: UPDATE ... WHERE confirmation_sent_at IS NULL — only one path can claim it.
-  const { count } = await supabase
-    .from('payments')
-    .update({ confirmation_sent_at: new Date().toISOString() })
-    .eq('id', payment.id)
-    .is('confirmation_sent_at', null);
+  // ── Atomic claim: only one concurrent caller wins processing rights ──
+  // Uses FOR UPDATE row lock in the RPC to serialize webhook, redirect, and bot paths.
+  // Stale claims (>5 min) are recoverable. Completed confirmations are idempotent.
+  const { data: claim } = await supabase.rpc('claim_payment_confirmation', {
+    p_payment_id: payment.id,
+  });
 
-  if (!count || count === 0) {
-    logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
+  if (!claim?.claimed) {
+    if (claim?.already_completed) {
+      logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
+    } else {
+      logger.info(`${logPrefix} Confirmation claim not granted for payment ${payment.id}: ${claim?.reason || 'unknown'}`);
+    }
     return;
   }
+
+  // Use the claim's authoritative payment data (from the locked row)
+  const claimedPayment: PaymentForConfirmation = {
+    id: claim.payment_id,
+    amount: claim.amount,
+    booking_id: claim.booking_id || null,
+    invoice_id: claim.invoice_id || null,
+    campaign_id: claim.campaign_id || null,
+    reservation_id: claim.reservation_id || null,
+    order_id: claim.order_id || null,
+  };
+  // Use claimed data for downstream processing
+  payment = claimedPayment;
+
+  try {
+  // ── Post-claim processing: any failure releases the claim for retry ──
 
   let customerPhone: string | null = null;
   let businessId: string | null = null;
@@ -186,6 +205,8 @@ export async function sendProactiveConfirmation(
 
   if (!businessId) {
     logger.warn(`${logPrefix} Proactive confirmation skipped — no business`);
+    // Release claim so retry can succeed if business data is later available
+    await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id }).catch(() => {});
     return;
   }
 
@@ -211,6 +232,7 @@ export async function sendProactiveConfirmation(
     }
     if (!guestEmail) {
       logger.warn(`${logPrefix} Proactive confirmation skipped — no phone or email`);
+      await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id }).catch(() => {});
       return;
     }
     // We have email but no phone — send email-only below
@@ -630,8 +652,36 @@ export async function sendProactiveConfirmation(
         .eq('is_active', true)
         .in('current_step', ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking']);
     }
+
+    // ── 10. Finalize: mark confirmation as successfully completed ──
+    // confirmation_sent_at is set NOW (after all sends succeeded), not at claim time.
+    await supabase.rpc('finalize_payment_confirmation', { p_payment_id: payment.id });
+    logger.info(`${logPrefix} Confirmation finalized for payment ${payment.id}`);
+
   } catch (err) {
     logSafeError(logPrefix, 'send-confirmation', err);
     Sentry.captureException(err, { tags: { component: 'send-confirmation', operation: 'send-confirmation' } });
+
+    // Release the processing claim so a future retry can succeed.
+    // Do NOT finalize — confirmation was not fully sent.
+    try {
+      await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id });
+      logger.info(`${logPrefix} Confirmation claim released for retry — payment ${payment.id}`);
+    } catch (releaseErr) {
+      logSafeError(logPrefix, 'release-claim', releaseErr);
+    }
+  }
+
+  } catch (outerErr) {
+    // Catch errors from business resolution (before the inner try/catch)
+    logSafeError(logPrefix, 'confirmation-outer', outerErr);
+    Sentry.captureException(outerErr, { tags: { component: 'send-confirmation', operation: 'confirmation-outer' } });
+
+    try {
+      await supabase.rpc('release_payment_confirmation', { p_payment_id: payment.id });
+      logger.info(`${logPrefix} Confirmation claim released after outer error — payment ${payment.id}`);
+    } catch (releaseErr) {
+      logSafeError(logPrefix, 'release-claim-outer', releaseErr);
+    }
   }
 }
