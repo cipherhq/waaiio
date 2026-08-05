@@ -7,12 +7,18 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-04
 
-### fix: Provider identity integrity — Flutterwave recurring billing
+### fix: Provider identity integrity — final closeout
 
-- **Finalizer validates providerAttemptRef against claim** — `finalize_token_recurring_charge` now reads the authoritative attempt ref from the claim row (`last_error` column) and validates that the caller's `p_provider_attempt_ref` matches. If NULL, derives it from the claim. Prevents a buggy/compromised caller from associating a foreign tx_ref with a billing cycle. Migration: `305_annual_subscriptions_loyalty.sql`.
-- **verifyTransaction returns providerTxRef** — `verifyTransaction()` now returns the actual `tx_ref` from Flutterwave's response (`providerTxRef` field). `processFlutterwaveRenewal` cross-checks this against the expected `attemptRef` — mismatch returns `verification_tx_ref_mismatch` error. File: `flutterwave-recurring.ts`, `flutterwave-renewal.ts`.
-- **SHA-256 idempotency key** — `chargeToken()` now sends `X-Idempotency-Key: SHA-256(reference)` instead of the raw reference. Deterministic, non-leaking, 64-char lowercase hex. File: `flutterwave-recurring.ts`.
-- **Executable idempotency tests** — 2 new tests: (17) verifies SHA-256 output format and structural correctness, (18) integration test mocks global `fetch`, calls real `chargeToken()`, inspects actual outgoing headers. File: `flutterwave-renewal-executable.test.ts`.
+- **Fail closed on missing tx_ref** — `processFlutterwaveRenewal` now REQUIRES `verification.providerTxRef` to exist AND match `attemptRef`. Missing tx_ref → `verification_tx_ref_missing` (not finalized, not failed, recoverable). Mismatch → `verification_tx_ref_mismatch`. Neither condition increments failure_count. File: `flutterwave-renewal.ts`.
+- **Database rejects missing authoritative attempt ref** — `finalize_token_recurring_charge` now rejects with `missing_authoritative_attempt_ref` if the claim row has no stored attempt ref (last_error=NULL). New finalization never silently falls back to billingCycleRef as gateway_reference. Historical completed records use backwards-compatible dual-ref lookup. File: `305_annual_subscriptions_loyalty.sql`.
+- **Finalizer validates caller attempt ref against claim** — Caller-supplied `p_provider_attempt_ref` must match claim's stored ref. Wrong ref → `attempt_ref_mismatch`. NULL → auto-derived from claim. Caller can never override.
+- **verifyTransaction returns providerTxRef** — Actual `tx_ref` from Flutterwave response for cross-check.
+- **SHA-256 idempotency key** — `chargeToken()` sends `X-Idempotency-Key: SHA-256(reference)` (deterministic, non-leaking).
+- **Dual-identity PostgreSQL test** — Test 3 now proves: `payments.gateway_reference == providerAttemptRef`, `payments.metadata.billing_cycle_ref == billingCycleRef`, `payments.metadata.provider_attempt_ref == providerAttemptRef`, `subscription_charges.gateway_reference == providerAttemptRef`, exactly one payment and charge, idempotent duplicate returns same payment.
+- **Database identity tests F-I** — F: correct caller attempt → success. G: wrong caller attempt → `attempt_ref_mismatch`. H: corrupted claim (NULL attempt ref) → `missing_authoritative_attempt_ref`. I: completed → idempotent, same payment returned.
+- **Executable identity tests A-E** — A: matching tx_ref → finalize once. B: wrong tx_ref → no finalize. C: missing tx_ref → no finalize. D: recovered provider_success + missing tx_ref → no finalize. E: missing/mismatched tx_ref → failure_count unchanged.
+- **Executable idempotency tests** — Test 17: SHA-256 determinism + structural. Test 18: mocked fetch integration — same ref → same key, different ref → different key.
+- Could break: Any code that passes a wrong `p_provider_attempt_ref` to the finalizer. Any verification where Flutterwave omits `tx_ref` from response (blocked safely — will retry next cron).
 - **Verification tx_ref mismatch test** — Test 16 now verifies that mismatched `providerTxRef` from verification is detected and blocked.
 - Could break: Any code that passes a `p_provider_attempt_ref` to `finalize_token_recurring_charge` that doesn't match the claim's stored attempt ref will be rejected. Any code that relied on `X-Idempotency-Key` being the raw reference string (now it's SHA-256).
 

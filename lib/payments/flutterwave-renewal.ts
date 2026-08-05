@@ -121,8 +121,14 @@ export async function processFlutterwaveRenewal(
         return { action: 'error', reason: 'verification_failed' };
       }
 
-      // Verify returned tx_ref matches expected attemptRef
-      if (verification.providerTxRef && verification.providerTxRef !== attemptRef) {
+      // INVARIANT: provider tx_ref must EXIST and MATCH the authoritative attemptRef.
+      // Missing tx_ref is NOT success evidence — identity is unproven.
+      // Mismatch is NOT success evidence — could be a different transaction.
+      // Neither condition is a customer payment failure (failure_count unchanged).
+      if (!verification.providerTxRef) {
+        return { action: 'error', reason: 'verification_tx_ref_missing' };
+      }
+      if (verification.providerTxRef !== attemptRef) {
         return { action: 'error', reason: 'verification_tx_ref_mismatch' };
       }
 

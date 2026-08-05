@@ -280,20 +280,28 @@ BEGIN
     p_provider_attempt_ref := v_claim.last_error;
   END IF;
 
-  -- Check idempotency: if already finalized, return success without duplicating
+  -- Check idempotency: if already finalized, return success without duplicating.
+  -- Historical completed records may have been finalized before dual-identity was added,
+  -- so the idempotent read path searches by EITHER ref for backwards compatibility.
   IF v_claim.status = 'completed' THEN
-    -- Already finalized — find payment by either ref
     SELECT id INTO v_payment_id FROM payments
-      WHERE (gateway_reference = p_stable_ref OR gateway_reference = COALESCE(p_provider_attempt_ref, p_stable_ref))
+      WHERE (gateway_reference = p_stable_ref OR gateway_reference = p_provider_attempt_ref)
       AND status = 'success' LIMIT 1;
     RETURN jsonb_build_object('success', true, 'already_finalized', true, 'payment_id', v_payment_id);
   END IF;
 
   -- Check payment doesn't already exist (belt + suspenders)
-  IF EXISTS (SELECT 1 FROM payments WHERE (gateway_reference = p_stable_ref OR gateway_reference = COALESCE(p_provider_attempt_ref, p_stable_ref)) AND status = 'success') THEN
+  IF EXISTS (SELECT 1 FROM payments WHERE (gateway_reference = p_stable_ref OR gateway_reference = p_provider_attempt_ref) AND status = 'success') THEN
     UPDATE processed_webhook_events SET status = 'completed', completed_at = v_now WHERE event_id = p_stable_ref;
-    SELECT id INTO v_payment_id FROM payments WHERE (gateway_reference = p_stable_ref OR gateway_reference = COALESCE(p_provider_attempt_ref, p_stable_ref)) AND status = 'success' LIMIT 1;
+    SELECT id INTO v_payment_id FROM payments WHERE (gateway_reference = p_stable_ref OR gateway_reference = p_provider_attempt_ref) AND status = 'success' LIMIT 1;
     RETURN jsonb_build_object('success', true, 'already_finalized', true, 'payment_id', v_payment_id);
+  END IF;
+
+  -- INVARIANT: For new finalization, the claim MUST contain a valid authoritative attempt ref.
+  -- Do NOT silently fall back to billingCycleRef as gateway_reference — that conflates
+  -- Waaiio's internal billing identity with the provider's transaction identity.
+  IF p_provider_attempt_ref IS NULL OR p_provider_attempt_ref = '' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'missing_authoritative_attempt_ref');
   END IF;
 
   -- Load subscription and validate ownership + gateway

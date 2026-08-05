@@ -236,17 +236,99 @@ describe('Flutterwave renewal — executable production tests', () => {
     expect(result.reason).toBe('provider_ref_mismatch');
   });
 
-  it('16. verification tx_ref mismatch → error', async () => {
+  // ── PROVIDER IDENTITY INVARIANT TESTS ──
+
+  it('A. successful verification + matching tx_ref → finalize once', async () => {
+    const deps = mockDeps({
+      chargeOutcome: 'successful',
+      verifyTxRef: 'flw-sub-001-2026-08-04-a1',
+    });
+    const result = await processFlutterwaveRenewal(deps, mockSub());
+
+    expect(result.action).toBe('finalized');
+    expect(result.paymentId).toBe('pay-001');
+    // finalize called exactly once
+    const finCalls = (deps.supabase as any).rpc.mock.calls.filter(
+      (c: any[]) => c[0] === 'finalize_token_recurring_charge',
+    );
+    expect(finCalls).toHaveLength(1);
+    // failure RPC NOT called
+    expect((deps.supabase as any).rpc).not.toHaveBeenCalledWith('record_flutterwave_definitive_failure', expect.anything());
+  });
+
+  it('B. successful verification + wrong tx_ref → no finalize', async () => {
     const deps = mockDeps({ chargeOutcome: 'successful' });
-    // verifyTransaction returns a different providerTxRef than expected
     deps.verifyTransactionFn = vi.fn().mockResolvedValue({
       outcome: 'successful', amount: 50, currency: 'NGN',
-      providerStatus: 'successful', providerTxRef: 'DIFFERENT-TX-REF',
+      providerStatus: 'successful', providerTxRef: 'WRONG-TX-REF',
     });
     const result = await processFlutterwaveRenewal(deps, mockSub());
 
     expect(result.action).toBe('error');
     expect(result.reason).toBe('verification_tx_ref_mismatch');
+    // finalize NOT called
+    expect((deps.supabase as any).rpc).not.toHaveBeenCalledWith('finalize_token_recurring_charge', expect.anything());
+    // failure NOT called (this is not a customer payment failure)
+    expect((deps.supabase as any).rpc).not.toHaveBeenCalledWith('record_flutterwave_definitive_failure', expect.anything());
+  });
+
+  it('C. successful verification + missing tx_ref → no finalize', async () => {
+    const deps = mockDeps({ chargeOutcome: 'successful' });
+    deps.verifyTransactionFn = vi.fn().mockResolvedValue({
+      outcome: 'successful', amount: 50, currency: 'NGN',
+      providerStatus: 'successful', providerTxRef: undefined,
+    });
+    const result = await processFlutterwaveRenewal(deps, mockSub());
+
+    expect(result.action).toBe('error');
+    expect(result.reason).toBe('verification_tx_ref_missing');
+    // finalize NOT called
+    expect((deps.supabase as any).rpc).not.toHaveBeenCalledWith('finalize_token_recurring_charge', expect.anything());
+    // failure NOT called
+    expect((deps.supabase as any).rpc).not.toHaveBeenCalledWith('record_flutterwave_definitive_failure', expect.anything());
+  });
+
+  it('D. recovered provider_success + missing tx_ref → no finalize', async () => {
+    const deps = mockDeps({
+      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a1', reconcile_required: false, provider_verified: true },
+    });
+    // provider_verified skips charge, goes straight to verify+finalize
+    deps.verifyTransactionFn = vi.fn().mockResolvedValue({
+      outcome: 'successful', amount: 50, currency: 'NGN',
+      providerStatus: 'successful', providerTxRef: undefined,
+    });
+    const result = await processFlutterwaveRenewal(deps, mockSub());
+
+    expect(result.action).toBe('error');
+    expect(result.reason).toBe('verification_tx_ref_missing');
+    // chargeToken NOT called (provider already verified)
+    expect(deps.chargeTokenFn).not.toHaveBeenCalled();
+    // finalize NOT called
+    expect((deps.supabase as any).rpc).not.toHaveBeenCalledWith('finalize_token_recurring_charge', expect.anything());
+  });
+
+  it('E. missing/mismatched tx_ref → failure_count unchanged', async () => {
+    // Missing tx_ref case
+    const deps1 = mockDeps({ chargeOutcome: 'successful' });
+    deps1.verifyTransactionFn = vi.fn().mockResolvedValue({
+      outcome: 'successful', amount: 50, currency: 'NGN',
+      providerStatus: 'successful', providerTxRef: undefined,
+    });
+    const result1 = await processFlutterwaveRenewal(deps1, mockSub());
+    expect(result1.action).toBe('error');
+    expect(result1.failureCount).toBeUndefined();
+    expect((deps1.supabase as any).rpc).not.toHaveBeenCalledWith('record_flutterwave_definitive_failure', expect.anything());
+
+    // Mismatched tx_ref case
+    const deps2 = mockDeps({ chargeOutcome: 'successful' });
+    deps2.verifyTransactionFn = vi.fn().mockResolvedValue({
+      outcome: 'successful', amount: 50, currency: 'NGN',
+      providerStatus: 'successful', providerTxRef: 'WRONG-REF',
+    });
+    const result2 = await processFlutterwaveRenewal(deps2, mockSub());
+    expect(result2.action).toBe('error');
+    expect(result2.failureCount).toBeUndefined();
+    expect((deps2.supabase as any).rpc).not.toHaveBeenCalledWith('record_flutterwave_definitive_failure', expect.anything());
   });
 });
 
@@ -333,6 +415,19 @@ describe('Flutterwave chargeToken — idempotency key (executable)', () => {
       // tx_ref in body must be the raw reference (not hashed)
       expect(capturedBodies[0].tx_ref).toBe(ref);
       expect(capturedBodies[1].tx_ref).toBe(ref);
+
+      // Different providerAttemptRef → different tx_ref → different idempotency key
+      capturedHeaders.length = 0;
+      capturedBodies.length = 0;
+      const ref2 = 'flw-sub-001-2026-08-04-a2';
+      const expectedKey2 = createHash('sha256').update(ref2).digest('hex');
+
+      await mod.chargeToken('tok-123', 50, 'test@example.com', ref2, 'NGN');
+
+      expect(capturedHeaders.length).toBe(1);
+      expect(capturedHeaders[0]['X-Idempotency-Key']).toBe(expectedKey2);
+      expect(capturedHeaders[0]['X-Idempotency-Key']).not.toBe(expectedKey); // different from a1
+      expect(capturedBodies[0].tx_ref).toBe(ref2);
     } finally {
       globalThis.fetch = originalFetch;
       delete process.env.FLUTTERWAVE_SECRET_KEY;
