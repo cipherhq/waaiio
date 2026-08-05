@@ -254,6 +254,7 @@ DECLARE
   v_fee_total        NUMERIC(12,2);
   v_is_in_trial      BOOLEAN;
   v_tier             TEXT;
+  v_authoritative_attempt_ref TEXT;  -- claim-derived, never caller-supplied
 BEGIN
   -- Require a valid claim with correct ownership
   SELECT * INTO v_claim FROM processed_webhook_events WHERE event_id = p_stable_ref;
@@ -268,39 +269,48 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'reason', 'claim_subscription_mismatch');
   END IF;
 
-  -- Derive authoritative provider attempt ref from the claim row (stored in last_error).
-  -- The caller's p_provider_attempt_ref must match. This prevents a compromised/buggy caller
-  -- from associating a foreign tx_ref with this billing cycle.
-  IF p_provider_attempt_ref IS NOT NULL AND p_provider_attempt_ref != v_claim.last_error THEN
+  -- Extract the AUTHORITATIVE provider attempt ref from the claim row.
+  -- This is the sole source of truth — caller input NEVER substitutes.
+  v_authoritative_attempt_ref := v_claim.last_error;
+
+  -- If caller supplied a ref, it must exactly equal the authoritative ref.
+  -- IS DISTINCT FROM is NULL-safe: 'FOREIGN-REF' IS DISTINCT FROM NULL → TRUE.
+  -- This closes the NULL-semantics bypass where ('X' != NULL) evaluates to NULL.
+  IF p_provider_attempt_ref IS NOT NULL
+     AND p_provider_attempt_ref IS DISTINCT FROM v_authoritative_attempt_ref THEN
     RETURN jsonb_build_object('success', false, 'reason', 'attempt_ref_mismatch',
-      'expected', v_claim.last_error, 'received', p_provider_attempt_ref);
-  END IF;
-  -- Use the authoritative attempt ref from claim if caller didn't provide one
-  IF p_provider_attempt_ref IS NULL THEN
-    p_provider_attempt_ref := v_claim.last_error;
+      'expected', v_authoritative_attempt_ref, 'received', p_provider_attempt_ref);
   END IF;
 
   -- Check idempotency: if already finalized, return success without duplicating.
   -- Historical completed records may have been finalized before dual-identity was added,
-  -- so the idempotent read path searches by EITHER ref for backwards compatibility.
+  -- so the idempotent lookup uses ONLY identities authoritative for this billing cycle:
+  -- the stableRef (always authoritative) and the claim's own attempt ref (if it exists).
+  -- Caller-supplied ref is NEVER used for lookup — prevents returning unrelated payments.
   IF v_claim.status = 'completed' THEN
     SELECT id INTO v_payment_id FROM payments
-      WHERE (gateway_reference = p_stable_ref OR gateway_reference = p_provider_attempt_ref)
+      WHERE (gateway_reference = p_stable_ref
+             OR (v_authoritative_attempt_ref IS NOT NULL AND gateway_reference = v_authoritative_attempt_ref))
       AND status = 'success' LIMIT 1;
     RETURN jsonb_build_object('success', true, 'already_finalized', true, 'payment_id', v_payment_id);
   END IF;
 
-  -- Check payment doesn't already exist (belt + suspenders)
-  IF EXISTS (SELECT 1 FROM payments WHERE (gateway_reference = p_stable_ref OR gateway_reference = p_provider_attempt_ref) AND status = 'success') THEN
+  -- Check payment doesn't already exist (belt + suspenders) — same scoped lookup
+  IF EXISTS (SELECT 1 FROM payments
+     WHERE (gateway_reference = p_stable_ref
+            OR (v_authoritative_attempt_ref IS NOT NULL AND gateway_reference = v_authoritative_attempt_ref))
+     AND status = 'success') THEN
     UPDATE processed_webhook_events SET status = 'completed', completed_at = v_now WHERE event_id = p_stable_ref;
-    SELECT id INTO v_payment_id FROM payments WHERE (gateway_reference = p_stable_ref OR gateway_reference = p_provider_attempt_ref) AND status = 'success' LIMIT 1;
+    SELECT id INTO v_payment_id FROM payments
+      WHERE (gateway_reference = p_stable_ref
+             OR (v_authoritative_attempt_ref IS NOT NULL AND gateway_reference = v_authoritative_attempt_ref))
+      AND status = 'success' LIMIT 1;
     RETURN jsonb_build_object('success', true, 'already_finalized', true, 'payment_id', v_payment_id);
   END IF;
 
-  -- INVARIANT: For new finalization, the claim MUST contain a valid authoritative attempt ref.
-  -- Do NOT silently fall back to billingCycleRef as gateway_reference — that conflates
-  -- Waaiio's internal billing identity with the provider's transaction identity.
-  IF p_provider_attempt_ref IS NULL OR p_provider_attempt_ref = '' THEN
+  -- INVARIANT: For new finalization, the claim MUST contain a non-null, non-empty
+  -- authoritative attempt ref. Caller input can NEVER substitute for a missing claim ref.
+  IF v_authoritative_attempt_ref IS NULL OR v_authoritative_attempt_ref = '' THEN
     RETURN jsonb_build_object('success', false, 'reason', 'missing_authoritative_attempt_ref');
   END IF;
 
@@ -348,9 +358,9 @@ BEGIN
     card_last_four, card_brand, paid_at, metadata
   ) VALUES (
     v_sub.business_id, v_sub.user_id, v_booking_id, p_verified_amount, p_verified_currency, p_gateway,
-    COALESCE(p_provider_attempt_ref, p_stable_ref), 'success', 'success', 'card',
+    v_authoritative_attempt_ref, 'success', 'success', 'card',
     v_sub.card_last_four, v_sub.card_brand,
-    v_now, jsonb_build_object('recurring', true, 'subscription_id', v_sub.id, 'billing_cycle_ref', p_stable_ref, 'provider_attempt_ref', COALESCE(p_provider_attempt_ref, p_stable_ref))
+    v_now, jsonb_build_object('recurring', true, 'subscription_id', v_sub.id, 'billing_cycle_ref', p_stable_ref, 'provider_attempt_ref', v_authoritative_attempt_ref)
   ) RETURNING id INTO v_payment_id;
 
   -- Log subscription charge
@@ -359,7 +369,7 @@ BEGIN
     status, gateway, gateway_reference, payment_id, booking_id, charged_at
   ) VALUES (
     v_sub.id, v_sub.business_id, v_sub.user_id, p_verified_amount, p_verified_currency,
-    'success', p_gateway, COALESCE(p_provider_attempt_ref, p_stable_ref), v_payment_id, v_booking_id, v_now
+    'success', p_gateway, v_authoritative_attempt_ref, v_payment_id, v_booking_id, v_now
   );
 
   -- Platform fee (same logic as process_recurring_charge)

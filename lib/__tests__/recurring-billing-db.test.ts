@@ -612,4 +612,141 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const chargeCount = psql(`SELECT COUNT(*) FROM subscription_charges;`);
     expect(chargeCount).toBe('1');
   });
+
+  // ── NULL-SEMANTICS BYPASS PROOF ──
+
+  it('J. NULL claim attempt + caller FOREIGN-REF → rejected, zero financial records', () => {
+    psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings; DELETE FROM subscription_charges; DELETE FROM platform_fees;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, charge_count = 0, total_charged = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+
+    // Corrupt the claim: set last_error to NULL (simulates missing attempt ref)
+    psql(`UPDATE processed_webhook_events SET last_error = NULL WHERE event_id = '${claim.stable_ref}';`);
+
+    // Caller supplies a foreign ref — must NOT be accepted
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claim.stable_ref}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave', 'FOREIGN-REF');`);
+    expect(r.success).toBe(false);
+    // Must reject — either attempt_ref_mismatch or missing_authoritative_attempt_ref
+    expect(['attempt_ref_mismatch', 'missing_authoritative_attempt_ref']).toContain(r.reason);
+
+    // Zero financial records
+    const payments = psql(`SELECT COUNT(*) FROM payments;`);
+    expect(payments).toBe('0');
+    const charges = psql(`SELECT COUNT(*) FROM subscription_charges;`);
+    expect(charges).toBe('0');
+    const fees = psql(`SELECT COUNT(*) FROM platform_fees;`);
+    expect(fees).toBe('0');
+
+    // Subscription totals unchanged
+    const sub = psqlJson(`SELECT charge_count, total_charged::text FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
+    expect(sub.charge_count).toBe(0);
+    expect(parseFloat(sub.total_charged)).toBe(0);
+  });
+
+  it('K. empty string claim attempt + caller FOREIGN-REF → rejected, zero financial mutation', () => {
+    psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings; DELETE FROM subscription_charges; DELETE FROM platform_fees;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, charge_count = 0, total_charged = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+
+    // Corrupt the claim: set last_error to empty string
+    psql(`UPDATE processed_webhook_events SET last_error = '' WHERE event_id = '${claim.stable_ref}';`);
+
+    // Caller supplies a foreign ref — must NOT be accepted
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claim.stable_ref}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave', 'FOREIGN-REF');`);
+    expect(r.success).toBe(false);
+    expect(['attempt_ref_mismatch', 'missing_authoritative_attempt_ref']).toContain(r.reason);
+
+    // Zero financial mutation
+    const payments = psql(`SELECT COUNT(*) FROM payments;`);
+    expect(payments).toBe('0');
+    const charges = psql(`SELECT COUNT(*) FROM subscription_charges;`);
+    expect(charges).toBe('0');
+  });
+
+  it('L. authoritative attempt exists + caller supplies different ref → attempt_ref_mismatch', () => {
+    psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings; DELETE FROM subscription_charges;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+    expect(claim.attempt_ref).toBeDefined();
+
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claim.stable_ref}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave', 'different-attempt-ref');`);
+    expect(r.success).toBe(false);
+    expect(r.reason).toBe('attempt_ref_mismatch');
+    expect(r.expected).toBe(claim.attempt_ref);
+    expect(r.received).toBe('different-attempt-ref');
+  });
+
+  it('M. authoritative attempt exists + caller NULL → claim authority used, success', () => {
+    psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings; DELETE FROM subscription_charges; DELETE FROM platform_fees;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, charge_count = 0, total_charged = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+
+    // Caller omits p_provider_attempt_ref (uses default NULL) — claim authority should be used
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claim.stable_ref}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
+    expect(r.success).toBe(true);
+    expect(r.already_finalized).toBe(false);
+
+    // Payment uses the claim's authoritative attempt ref
+    const gwRef = psql(`SELECT gateway_reference FROM payments WHERE id = '${r.payment_id}';`);
+    expect(gwRef).toBe(claim.attempt_ref);
+  });
+
+  it('N. completed claim with NULL attempt + caller supplies unrelated payment ref → MUST NOT return it', () => {
+    psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings; DELETE FROM subscription_charges; DELETE FROM platform_fees;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, charge_count = 0, total_charged = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    // Create an unrelated successful payment with a known gateway_reference
+    psql(`INSERT INTO payments (business_id, amount, currency, gateway, gateway_reference, status, paid_at)
+          VALUES ('${BIZ_ID}', 999, 'USD', 'flutterwave', 'UNRELATED-PAYMENT-REF', 'success', NOW());`);
+
+    // Create a claim and mark it completed, but corrupt the attempt ref
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+    psql(`UPDATE processed_webhook_events SET status = 'completed', last_error = NULL WHERE event_id = '${claim.stable_ref}';`);
+
+    // Caller supplies the unrelated payment's gateway_reference
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claim.stable_ref}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave', 'UNRELATED-PAYMENT-REF');`);
+
+    // The idempotent path should NOT return the unrelated payment
+    // Either: already_finalized=true with payment_id=null (no matching payment for this cycle)
+    // Or: attempt_ref_mismatch (caller ref doesn't match NULL claim ref)
+    if (r.success) {
+      // If it returns success, the payment_id must NOT be the unrelated payment
+      const unrelatedId = psql(`SELECT id FROM payments WHERE gateway_reference = 'UNRELATED-PAYMENT-REF';`);
+      expect(r.payment_id).not.toBe(unrelatedId);
+    }
+    // Clean up
+    psql(`DELETE FROM payments WHERE gateway_reference = 'UNRELATED-PAYMENT-REF';`);
+  });
+
+  it('O. completed historical claim using stableRef as legacy gateway_reference → idempotent lookup works', () => {
+    psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings; DELETE FROM subscription_charges; DELETE FROM platform_fees;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, charge_count = 0, total_charged = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+
+    // Simulate a historical payment that used stableRef as gateway_reference (pre-dual-identity)
+    psql(`INSERT INTO payments (business_id, amount, currency, gateway, gateway_reference, status, paid_at)
+          VALUES ('${BIZ_ID}', 50, 'NGN', 'flutterwave', '${claim.stable_ref}', 'success', NOW());`);
+    psql(`UPDATE processed_webhook_events SET status = 'completed' WHERE event_id = '${claim.stable_ref}';`);
+
+    // Idempotent finalization should find the legacy payment via stableRef lookup
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claim.stable_ref}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');`);
+    expect(r.success).toBe(true);
+    expect(r.already_finalized).toBe(true);
+    expect(r.payment_id).toBeDefined();
+
+    // Verify it found the legacy payment
+    const gwRef = psql(`SELECT gateway_reference FROM payments WHERE id = '${r.payment_id}';`);
+    expect(gwRef).toBe(claim.stable_ref);
+  });
 });

@@ -7,6 +7,13 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-04
 
+### fix: Close NULL-semantics provider identity bypass in finalizer
+
+- **Root cause:** `p_provider_attempt_ref != v_claim.last_error` where `last_error` is NULL evaluates to NULL in PostgreSQL, not TRUE. A caller-supplied `'FOREIGN-REF'` passed the mismatch check, survived into financial records, and the later `IS NULL` guard checked the *caller's* non-null ref, not the claim's missing ref.
+- **Fix:** Separate `v_authoritative_attempt_ref` variable holds claim-derived ref. `IS DISTINCT FROM` for NULL-safe comparison. Authoritative ref checked for NULL/empty before financial mutation. Caller input never substitutes for missing claim identity. All downstream INSERTs use `v_authoritative_attempt_ref` exclusively.
+- **Idempotent completed lookup:** Scoped to claim-authoritative identities only — `stableRef` always, `v_authoritative_attempt_ref` only when non-null. Caller-supplied ref never used for payment lookup, preventing unrelated payment returns.
+- **Tests J-O:** J: NULL claim + FOREIGN-REF → rejected, zero financial records. K: empty claim + FOREIGN-REF → rejected. L: valid claim + different ref → mismatch. M: valid claim + NULL caller → claim authority used, success. N: completed claim + NULL attempt + unrelated payment ref → must NOT return it. O: completed legacy record using stableRef → idempotent lookup works.
+
 ### fix: Provider identity integrity — final closeout
 
 - **Fail closed on missing tx_ref** — `processFlutterwaveRenewal` now REQUIRES `verification.providerTxRef` to exist AND match `attemptRef`. Missing tx_ref → `verification_tx_ref_missing` (not finalized, not failed, recoverable). Mismatch → `verification_tx_ref_mismatch`. Neither condition increments failure_count. File: `flutterwave-renewal.ts`.
