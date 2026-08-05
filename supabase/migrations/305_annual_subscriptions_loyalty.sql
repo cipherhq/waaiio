@@ -256,8 +256,13 @@ DECLARE
   v_tier             TEXT;
   v_authoritative_attempt_ref TEXT;  -- claim-derived, never caller-supplied
 BEGIN
-  -- Require a valid claim with correct ownership
-  SELECT * INTO v_claim FROM processed_webhook_events WHERE event_id = p_stable_ref;
+  -- Lock the claim row to serialize concurrent finalizers.
+  -- Without FOR UPDATE, two workers reading status='claimed' simultaneously could both
+  -- proceed to INSERT, with the second hitting a uniqueness exception on gateway_reference.
+  -- FOR UPDATE makes Worker B wait until Worker A commits, then B re-reads the committed
+  -- status='completed' and returns clean idempotent behavior.
+  -- This matches claim_recurring_billing_cycle and record_flutterwave_definitive_failure.
+  SELECT * INTO v_claim FROM processed_webhook_events WHERE event_id = p_stable_ref FOR UPDATE;
   IF NOT FOUND OR v_claim.status NOT IN ('claimed', 'completed', 'provider_success') THEN
     RETURN jsonb_build_object('success', false, 'reason', 'no_valid_claim');
   END IF;

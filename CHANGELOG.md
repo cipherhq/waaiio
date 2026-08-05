@@ -5,6 +5,15 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-05
+
+### fix: Concurrent finalizer hardening — FOR UPDATE on claim row
+
+- **Root cause:** `finalize_token_recurring_charge` read the claim row (`processed_webhook_events`) without `FOR UPDATE`. Two concurrent workers could both see `status='claimed'`, both proceed to INSERT, with the second hitting a `gateway_reference UNIQUE` violation (23505) as the only safety net.
+- **Fix:** Added `FOR UPDATE` to the claim row SELECT. Worker B now blocks until Worker A commits, then re-reads committed `status='completed'` and returns clean idempotent behavior. Matches `claim_recurring_billing_cycle` and `record_flutterwave_definitive_failure` patterns. Migration: `305_annual_subscriptions_loyalty.sql`.
+- **Test P:** Two real PostgreSQL sessions finalize the SAME claimed charge concurrently. Proves: exactly 1 payment, 1 subscription_charge, 1 booking, ≤1 platform_fee, charge_count=1, total_charged=50, both callers return success with same payment_id, no uniqueness violation leaks.
+- Could break: Nothing — `FOR UPDATE` only adds serialization to an already-serialized logical operation.
+
 ## 2026-08-04
 
 ### fix: Completed billing cycle fails closed when payment record missing

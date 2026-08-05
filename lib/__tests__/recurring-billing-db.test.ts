@@ -858,4 +858,85 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const gwRef = psql(`SELECT gateway_reference FROM payments WHERE id = '${r.payment_id}';`);
     expect(gwRef).toBe(claim.stable_ref);
   });
+
+  // ── CONCURRENT FINALIZATION ──
+
+  it('P. two concurrent finalizers → exactly one wins, other gets idempotent result', async () => {
+    psql(`DELETE FROM processed_webhook_events; DELETE FROM payments; DELETE FROM bookings; DELETE FROM subscription_charges; DELETE FROM platform_fees;`);
+    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', amount = 50, currency = 'NGN', charge_count = 0, total_charged = 0, failure_count = 0, next_charge_at = NOW() - INTERVAL '1 hour' WHERE id = '${SUB_ID}';`);
+
+    // Claim the billing cycle (single worker — claim is already serialized)
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SUB_ID}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+    const stableRef = claim.stable_ref;
+
+    // Two independent PostgreSQL sessions finalize the SAME claimed charge concurrently.
+    // Session A holds the FOR UPDATE lock (pg_sleep simulates work under lock).
+    // Session B starts concurrently and blocks on the lock until A commits.
+    const sqlA = `
+      BEGIN;
+      SELECT finalize_token_recurring_charge('${stableRef}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');
+      SELECT pg_sleep(1);
+      COMMIT;
+    `;
+    const sqlB = `
+      SELECT finalize_token_recurring_charge('${stableRef}', '${SUB_ID}'::uuid, 50, 'NGN', 'flutterwave');
+    `;
+
+    const { a, b } = await runTwoSessions(sqlA, sqlB);
+
+    // Parse results — each session returns JSON from finalize_token_recurring_charge
+    const resultLines = (output: string) => output.split('\n').filter(l => l.trim().startsWith('{'));
+    const rA = JSON.parse(resultLines(a.stdout)[0]);
+    const rB = JSON.parse(resultLines(b.stdout)[0]);
+
+    // Both must succeed
+    expect(rA.success).toBe(true);
+    expect(rB.success).toBe(true);
+
+    // Exactly one is the original finalization, the other is idempotent
+    const finalized = [rA, rB].filter(r => r.already_finalized === false);
+    const idempotent = [rA, rB].filter(r => r.already_finalized === true);
+    expect(finalized).toHaveLength(1);
+    expect(idempotent).toHaveLength(1);
+
+    // Both return the SAME payment_id
+    expect(rA.payment_id).toBeDefined();
+    expect(rB.payment_id).toBeDefined();
+    expect(rA.payment_id).toBe(rB.payment_id);
+
+    // ── FINANCIAL EXACTNESS ──
+
+    // Exactly one payment
+    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE status = 'success';`);
+    expect(paymentCount).toBe('1');
+
+    // Exactly one subscription_charge
+    const chargeCount = psql(`SELECT COUNT(*) FROM subscription_charges;`);
+    expect(chargeCount).toBe('1');
+
+    // Exactly one booking
+    const bookingCount = psql(`SELECT COUNT(*) FROM bookings;`);
+    expect(bookingCount).toBe('1');
+
+    // Platform fee recorded exactly once (or zero if trial — test uses non-trial business)
+    const feeCount = psql(`SELECT COUNT(*) FROM platform_fees;`);
+    expect(parseInt(feeCount)).toBeLessThanOrEqual(1);
+
+    // charge_count incremented exactly once
+    const subChargeCount = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
+    expect(subChargeCount).toBe('1');
+
+    // total_charged incremented exactly once
+    const totalCharged = psql(`SELECT total_charged FROM customer_subscriptions WHERE id = '${SUB_ID}';`);
+    expect(parseFloat(totalCharged)).toBe(50);
+
+    // Event status is completed
+    const eventStatus = psql(`SELECT status FROM processed_webhook_events WHERE event_id = '${stableRef}';`);
+    expect(eventStatus).toBe('completed');
+
+    // No uniqueness violation escaped — both returned clean JSON, not errors
+    expect(a.stdout).toContain('"success"');
+    expect(b.stdout).toContain('"success"');
+  });
 });
