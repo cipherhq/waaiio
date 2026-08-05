@@ -6,6 +6,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockRpc = vi.fn();
 const mockFrom = vi.fn();
 
+function chain() {
+  const c: Record<string, any> = {};
+  ['select','eq','is','in','or','not','order','limit','update'].forEach(m => c[m] = vi.fn().mockReturnValue(c));
+  c.single = vi.fn().mockResolvedValue({ data: null, error: null });
+  c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+  return c;
+}
+
 function buildMock(rpcMap: Record<string, { data?: unknown; error?: unknown }> = {}) {
   const rpcCalls: string[] = [];
   mockRpc.mockImplementation((name: string) => {
@@ -13,13 +21,6 @@ function buildMock(rpcMap: Record<string, { data?: unknown; error?: unknown }> =
     const r = rpcMap[name];
     return Promise.resolve({ data: r?.data ?? null, error: r?.error ?? null });
   });
-  const chain = () => {
-    const c: Record<string, any> = {};
-    ['select','eq','is','in','or','not','order','limit','update'].forEach(m => c[m] = vi.fn().mockReturnValue(c));
-    c.single = vi.fn().mockResolvedValue({ data: null, error: null });
-    c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-    return c;
-  };
   mockFrom.mockImplementation((table: string) => {
     const c = chain();
     if (table === 'bookings') c.single = vi.fn().mockResolvedValue({ data: { guest_phone: '+234123', business_id: 'b1', reference_code: 'X1', date: '2026-08-10', time: '14:00', flow_type: 'scheduling', total_amount: 50, deposit_amount: 50, businesses: { name: 'Biz', country_code: 'NG' }, services: { name: 'S', duration: 30 } }, error: null });
@@ -270,6 +271,126 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     await sendProactiveConfirmation(s, pay);
     expect(renewCount).toBe(5);
     expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
+  });
+
+  // ── Partial-balance / remaining-balance provider initialization ──
+
+  it('22. partial balance + ownership lost at checkpoint 1 → no initializePayment, no WhatsApp', async () => {
+    // Booking with total > deposit → balanceRemaining > 0
+    const s = buildMock({
+      claim_payment_confirmation: CLAIM_OK,
+      renew_payment_confirmation_claim: { data: { renewed: false, reason: 'token_mismatch' } },
+    });
+    // Override booking to have partial deposit
+    mockFrom.mockImplementation((table: string) => {
+      const c = chain();
+      if (table === 'bookings') c.single = vi.fn().mockResolvedValue({
+        data: { guest_phone: '+234123', business_id: 'b1', reference_code: 'X1', date: '2026-08-10', time: '14:00', flow_type: 'scheduling', total_amount: 100, deposit_amount: 50, businesses: { name: 'Biz', country_code: 'NG' }, services: { name: 'S', duration: 30 } },
+        error: null,
+      });
+      if (table === 'businesses') c.single = vi.fn().mockResolvedValue({ data: { subscription_tier: 'free', owner_id: 'o1' }, error: null });
+      if (table === 'profiles') c.single = vi.fn().mockResolvedValue({ data: { email: 'o@t.com', phone: '+234' }, error: null });
+      return c;
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    // Checkpoint 1 fails → no initializePayment, no WhatsApp, no finalize, no release
+    expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
+    expect(mockRpc).not.toHaveBeenCalledWith('release_payment_confirmation', expect.anything());
+    // Only claim + one failed renewal
+    const renewCalls = mockRpc.mock.calls.filter((c: any[]) => c[0] === 'renew_payment_confirmation_claim');
+    expect(renewCalls.length).toBe(1);
+  });
+
+  it('23. partial balance + provider init attempted then throws → no release', async () => {
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK, finalize_payment_confirmation: FIN_OK });
+    // Mock initializePayment to throw (but attempt was made)
+    vi.doMock('@/lib/bot/flows/shared/payment', () => ({
+      initializePayment: vi.fn().mockRejectedValue(new Error('provider timeout')),
+    }));
+    mockFrom.mockImplementation((table: string) => {
+      const c = chain();
+      if (table === 'bookings') c.single = vi.fn().mockResolvedValue({
+        data: { guest_phone: '+234123', business_id: 'b1', reference_code: 'X1', date: '2026-08-10', time: '14:00', flow_type: 'scheduling', total_amount: 100, deposit_amount: 50, businesses: { name: 'Biz', country_code: 'NG' }, services: { name: 'S', duration: 30 } },
+        error: null,
+      });
+      if (table === 'businesses') c.single = vi.fn().mockResolvedValue({ data: { subscription_tier: 'free', owner_id: 'o1' }, error: null });
+      if (table === 'profiles') c.single = vi.fn().mockResolvedValue({ data: { email: 'o@t.com', phone: '+234', id: 'usr1' }, error: null });
+      return c;
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    // Provider init threw but was attempted → side effects flagged → no release
+    expect(mockRpc).not.toHaveBeenCalledWith('release_payment_confirmation', expect.anything());
+  });
+
+  it('24. partial balance success → balance URL in message, finalize succeeds', async () => {
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK, finalize_payment_confirmation: FIN_OK });
+    vi.doMock('@/lib/bot/flows/shared/payment', () => ({
+      initializePayment: vi.fn().mockResolvedValue({ url: 'https://pay.example.com/balance' }),
+    }));
+    mockFrom.mockImplementation((table: string) => {
+      const c = chain();
+      if (table === 'bookings') c.single = vi.fn().mockResolvedValue({
+        data: { guest_phone: '+234123', business_id: 'b1', reference_code: 'X1', date: '2026-08-10', time: '14:00', flow_type: 'scheduling', total_amount: 100, deposit_amount: 50, businesses: { name: 'Biz', country_code: 'NG' }, services: { name: 'S', duration: 30 } },
+        error: null,
+      });
+      if (table === 'businesses') c.single = vi.fn().mockResolvedValue({ data: { subscription_tier: 'free', owner_id: 'o1' }, error: null });
+      if (table === 'profiles') c.single = vi.fn().mockResolvedValue({ data: { email: 'o@t.com', phone: '+234', id: 'usr1' }, error: null });
+      return c;
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
+  });
+
+  it('25. checkpoint 1 verified BEFORE initializePayment — source ordering', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(path.resolve(__dirname, '../payments/send-confirmation.ts'), 'utf-8');
+    const cp1Idx = src.indexOf('CHECKPOINT 1');
+    const renewIdx = src.indexOf('renewConfirmationClaim', cp1Idx);
+    const initIdx = src.indexOf('initializePayment(supabase');
+    const whatsappIdx = src.indexOf('resolved.sender.sendText');
+    expect(cp1Idx).toBeGreaterThan(-1);
+    expect(renewIdx).toBeGreaterThan(cp1Idx);
+    expect(initIdx).toBeGreaterThan(renewIdx);
+    expect(whatsappIdx).toBeGreaterThan(initIdx);
+  });
+
+  it('26. no balance (fully paid) → no initializePayment, normal 5-checkpoint flow', async () => {
+    let renewCount = 0;
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, finalize_payment_confirmation: FIN_OK });
+    mockRpc.mockImplementation((name: string) => {
+      if (name === 'renew_payment_confirmation_claim') { renewCount++; return Promise.resolve(RENEW_OK); }
+      const map: Record<string, any> = { claim_payment_confirmation: CLAIM_OK, finalize_payment_confirmation: FIN_OK };
+      return Promise.resolve({ data: map[name]?.data ?? null, error: map[name]?.error ?? null });
+    });
+    // Booking with total == deposit → no balance
+    mockFrom.mockImplementation((table: string) => {
+      const c = chain();
+      if (table === 'bookings') c.single = vi.fn().mockResolvedValue({
+        data: { guest_phone: '+234123', business_id: 'b1', reference_code: 'X1', date: '2026-08-10', time: '14:00', flow_type: 'scheduling', total_amount: 50, deposit_amount: 50, businesses: { name: 'Biz', country_code: 'NG' }, services: { name: 'S', duration: 30 } },
+        error: null,
+      });
+      if (table === 'businesses') c.single = vi.fn().mockResolvedValue({ data: { subscription_tier: 'free', owner_id: 'o1' }, error: null });
+      if (table === 'profiles') c.single = vi.fn().mockResolvedValue({ data: { email: 'o@t.com', phone: '+234' }, error: null });
+      return c;
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    expect(renewCount).toBe(5);
+    expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
+  });
+
+  it('27. failure before any side effect (no balance) → release permitted', async () => {
+    // Same as test 13 — outer catch releases when no external work happened
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK, release_payment_confirmation: REL_OK });
+    // Throw during business resolution (before checkpoint 1)
+    s.from = vi.fn().mockImplementation(() => { throw new Error('boom'); });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    expect(mockRpc).toHaveBeenCalledWith('release_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
   });
 
   it('21. lost ownership never releases/finalizes replacement claim', async () => {

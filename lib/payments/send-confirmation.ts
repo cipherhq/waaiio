@@ -330,7 +330,7 @@ export async function sendProactiveConfirmation(
 
   logger.info(`${logPrefix} Sending proactive confirmation for ${businessName}`);
 
-  // ── 4. Build confirmation message ──
+  // ── 4. Build confirmation message (local string work — no external calls) ──
   const lines = [
     `✅ *Payment Confirmed!*`,
     '',
@@ -342,13 +342,21 @@ export async function sendProactiveConfirmation(
     'Thank you for your payment! 🙏',
   ].filter(Boolean);
 
+  // ── CHECKPOINT 1: Renew ownership before ANY external/non-idempotent operation ──
+  // This must happen before balance-payment initialization (which contacts a payment provider)
+  // and before the customer WhatsApp send.
+  const preExternal = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+  if (!preExternal.ok) {
+    logger.warn(`${logPrefix} Ownership lost before external operations: ${preExternal.reason}`);
+    return; // Do NOT release — claim may belong to another worker
+  }
+
   // Add balance info if deposit was partial
   if (balanceRemaining > 0) {
     lines.push('', `💳 Remaining balance: *${formatCurrency(balanceRemaining, countryCode)}*`);
 
-    // Generate payment link for the balance (non-blocking, best-effort)
+    // Generate payment link for the balance — contacts the payment provider
     try {
-      // Find user profile for payment initialization
       const phoneForLookup = customerPhone || '';
       const phoneP = phoneForLookup.startsWith('+') ? phoneForLookup : `+${phoneForLookup}`;
       const phoneN = phoneForLookup.startsWith('+') ? phoneForLookup.slice(1) : phoneForLookup;
@@ -360,6 +368,7 @@ export async function sendProactiveConfirmation(
         .maybeSingle();
 
       if (profile && businessId) {
+        sideEffectsMayHaveOccurred = true; // Provider initialization — indeterminate on failure
         const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
         const result = await initializePayment(supabase, {
           bookingId: balanceBookingId || undefined,
@@ -377,7 +386,8 @@ export async function sendProactiveConfirmation(
         }
       }
     } catch {
-      // Non-critical — balance info still shown without link
+      // Non-critical — balance info still shown without link.
+      // sideEffectsMayHaveOccurred remains true — provider may have accepted the request.
     }
   }
 
@@ -429,14 +439,7 @@ export async function sendProactiveConfirmation(
     lines.push('💳 Type *save card* to save this card for faster checkout next time');
   }
 
-  // ── 5. Resolve channel + send ──
-  // Renew ownership before the first external send
-  const preWhatsApp = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
-  if (!preWhatsApp.ok) {
-    logger.warn(`${logPrefix} Ownership lost before WhatsApp send: ${preWhatsApp.reason}`);
-    return; // Do NOT release — claim may belong to another worker
-  }
-
+  // ── 5. Resolve channel + send (protected by checkpoint 1 above) ──
   try {
     const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
     const resolver = new ChannelResolver(supabase);
