@@ -8,6 +8,10 @@ import { logger } from '@/lib/logger';
  * POST /api/recurring/manage
  * Pause, resume, or cancel a customer subscription.
  * Calls the gateway API (Paystack/Stripe) then updates DB.
+ *
+ * IMPORTANT: DB status is updated ONLY after provider success.
+ * If the provider call fails, the local status is NOT changed
+ * to avoid local/provider state divergence.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -22,10 +26,10 @@ export async function POST(request: NextRequest) {
 
     const service = createServiceClient();
 
-    // Fetch the subscription + verify business ownership
+    // Fetch the subscription + metadata (contains Paystack email_token) + verify business ownership
     const { data: sub } = await service
       .from('customer_subscriptions')
-      .select('id, business_id, gateway, gateway_subscription_code, gateway_customer_code, status, customer_email')
+      .select('id, business_id, gateway, gateway_subscription_code, gateway_customer_code, status, customer_email, metadata')
       .eq('id', subscriptionId)
       .single();
 
@@ -49,34 +53,61 @@ export async function POST(request: NextRequest) {
 
     const now = new Date().toISOString();
 
-    // Call gateway API
-    if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
-      const emailToken = sub.customer_email || '';
+    // ── Provider operation (must succeed before DB update) ──
+    let providerSuccess = true;
 
-      if (action === 'pause') {
+    if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
+      // Paystack requires the subscription's email_token (returned at creation),
+      // NOT the customer's email address. The token is stored in metadata.email_token.
+      const metadata = (sub.metadata as Record<string, string>) || {};
+      const emailToken = metadata.email_token || '';
+
+      if (!emailToken) {
+        // Legacy subscriptions created before email_token storage may lack this field.
+        // Fail closed rather than sending an empty token to Paystack.
+        logger.warn('[RECURRING] Paystack subscription missing email_token', {
+          subscriptionId, action, gateway: 'paystack',
+        });
+        return NextResponse.json({
+          error: 'Subscription is missing the Paystack email token required for this operation. Please contact support.',
+          code: 'MISSING_EMAIL_TOKEN',
+        }, { status: 422 });
+      }
+
+      if (action === 'pause' || action === 'cancel') {
+        // Paystack uses the same disable endpoint for both pause and cancel
         const { cancelSubscription } = await import('@/lib/payments/paystack-recurring');
-        await cancelSubscription(sub.gateway_subscription_code, emailToken);
+        providerSuccess = await cancelSubscription(sub.gateway_subscription_code, emailToken);
       } else if (action === 'resume') {
         const { enableSubscription } = await import('@/lib/payments/paystack-recurring');
-        await enableSubscription(sub.gateway_subscription_code, emailToken);
-      } else if (action === 'cancel') {
-        const { cancelSubscription } = await import('@/lib/payments/paystack-recurring');
-        await cancelSubscription(sub.gateway_subscription_code, emailToken);
+        providerSuccess = await enableSubscription(sub.gateway_subscription_code, emailToken);
       }
     } else if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
       if (action === 'pause') {
         const { pauseSubscription } = await import('@/lib/payments/stripe-recurring');
-        await pauseSubscription(sub.gateway_subscription_code);
+        providerSuccess = await pauseSubscription(sub.gateway_subscription_code);
       } else if (action === 'resume') {
         const { resumeSubscription } = await import('@/lib/payments/stripe-recurring');
-        await resumeSubscription(sub.gateway_subscription_code);
+        providerSuccess = await resumeSubscription(sub.gateway_subscription_code);
       } else if (action === 'cancel') {
         const { cancelSubscription } = await import('@/lib/payments/stripe-recurring');
-        await cancelSubscription(sub.gateway_subscription_code);
+        providerSuccess = await cancelSubscription(sub.gateway_subscription_code);
       }
     }
+    // Flutterwave: DB-only — no provider call needed (Waaiio manages scheduling via cron)
 
-    // Update DB status
+    // ── Fail closed: do NOT update DB if provider operation failed ──
+    if (!providerSuccess) {
+      logger.error('[RECURRING] Provider operation failed — local status NOT changed', {
+        subscriptionId, action, gateway: sub.gateway,
+      });
+      return NextResponse.json({
+        error: `Failed to ${action} subscription at payment provider. Local status was not changed.`,
+        code: 'PROVIDER_OPERATION_FAILED',
+      }, { status: 502 });
+    }
+
+    // ── Update DB status (only after confirmed provider success) ──
     const updates: Record<string, unknown> = {};
     if (action === 'pause') {
       updates.status = 'paused';
