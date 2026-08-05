@@ -117,12 +117,13 @@ Each P0 has a concrete financial or provider-state-divergence consequence.
 **Consequence:** If the customer abandons checkout, a phantom `active` subscription exists with no `authorization_code`. The daily `retry-failed-charges` cron (line 45) skips Paystack subs without `authorization_code`, but only for the charge path — the subscription still appears as "active" in the business dashboard and counts toward MRR metrics. More critically, if the webhook fires but fails to correlate (timing race), the cron will eventually attempt to charge and fail, incrementing `failure_count` toward auto-cancellation — generating false failure notifications to the business.
 **Why P0:** Creates phantom active subscriptions that pollute business metrics and generate false alerts. The financial state is inconsistent from creation.
 
-### P0-CONFIRM-1 — Webhook payment confirmations never sent
+### P0-CONFIRM-1 — Payment confirmations never sent (all paths)
 
 **Path:** `lib/payments/send-confirmation.ts` lines 46-55
 **Verified behavior:** `.update({ confirmation_sent_at: ... })` is called without `{ count: 'exact' }` as second argument. Supabase returns `count: null` without this option. The guard `if (!count || count === 0)` always evaluates true (null is falsy). Function returns at line 53 before sending any message.
-**Consequence:** ALL webhook-triggered payment confirmations are silently skipped. This affects all 5 payment gateways + BYO. Customers who pay via mobile payment apps (which don't redirect to the success page) never receive a WhatsApp confirmation. The cascading skip also prevents: ticket delivery for events, `handlePostCompletion` (loyalty points, feedback requests, referral code generation), and owner notifications for webhook-path payments. The "I've Paid" bot path and the payment-success redirect page are unaffected (they call different code paths).
-**Why P0:** Customers paying via any gateway webhook path receive no confirmation, no tickets, no loyalty points. This affects the core customer experience for every payment that doesn't redirect to the success page.
+**All callers affected:** The same `sendProactiveConfirmation()` function is called from every confirmation path — webhook handlers (Paystack, Stripe, Flutterwave, Square, PayPal, BYO) AND the post-redirect payment-success page (`app/payment-success/page.tsx` line 230, which passes the payment object to the same function). The "I've Paid" bot path also calls this function via `processSuccessfulPayment`. No confirmation path is unaffected.
+**Consequence:** ALL payment confirmations are silently skipped regardless of how the payment completes. No customer receives a WhatsApp confirmation, no event tickets are delivered, `handlePostCompletion` never runs (no loyalty points, no feedback requests, no referral code generation), and no owner notifications are sent for any payment.
+**Why P0:** The entire payment confirmation pipeline is broken. Every customer payment across every gateway and every completion path (webhook, redirect, bot "I've Paid") results in zero confirmation messages.
 
 ### P0-INVOICE-1 — Bot invoice flow queries nonexistent column
 
