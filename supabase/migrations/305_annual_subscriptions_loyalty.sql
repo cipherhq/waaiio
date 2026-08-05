@@ -292,6 +292,12 @@ BEGIN
       WHERE (gateway_reference = p_stable_ref
              OR (v_authoritative_attempt_ref IS NOT NULL AND gateway_reference = v_authoritative_attempt_ref))
       AND status = 'success' LIMIT 1;
+    -- Fail closed: "completed" event without a matching payment is an accounting inconsistency.
+    -- Do NOT return success — surface for investigation/recovery.
+    IF v_payment_id IS NULL THEN
+      RETURN jsonb_build_object('success', false, 'reason', 'completed_payment_missing',
+        'stable_ref', p_stable_ref, 'authoritative_attempt_ref', v_authoritative_attempt_ref);
+    END IF;
     RETURN jsonb_build_object('success', true, 'already_finalized', true, 'payment_id', v_payment_id);
   END IF;
 

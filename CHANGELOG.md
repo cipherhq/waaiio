@@ -7,6 +7,13 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-04
 
+### fix: Completed billing cycle fails closed when payment record missing
+
+- **Root cause:** `finalize_token_recurring_charge` returned `success=true, already_finalized=true, payment_id=NULL` when a billing event was marked `completed` but no matching payment existed. This masked an accounting inconsistency — the caller treated it as "done" and moved on.
+- **Fix:** After looking up the payment in the completed path, check `IF v_payment_id IS NULL` and return `success=false, reason='completed_payment_missing'`. No new payment created. No financial records modified. Surfaces the condition for investigation.
+- **Legacy support preserved:** stableRef lookup for pre-dual-identity payments continues to work.
+- **Tests N1-N6:** N1: unrelated payment never returned. N2: no matching payment → `completed_payment_missing`. N3: authoritative payment found → exact payment returned. N4: legacy stableRef payment → found. N5: repeated calls → same payment every time. N6: `completed_payment_missing` → zero bookings/payments/charges/fees, subscription totals unchanged.
+
 ### fix: Close NULL-semantics provider identity bypass in finalizer
 
 - **Root cause:** `p_provider_attempt_ref != v_claim.last_error` where `last_error` is NULL evaluates to NULL in PostgreSQL, not TRUE. A caller-supplied `'FOREIGN-REF'` passed the mismatch check, survived into financial records, and the later `IS NULL` guard checked the *caller's* non-null ref, not the claim's missing ref.
