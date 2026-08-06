@@ -185,15 +185,39 @@ export async function POST(request: NextRequest) {
         if (metadata?.type === 'customer_recurring') {
           const stripeSubId = data.subscription as string;
           if (stripeSubId && sessionId) {
-            // Activate the pending subscription
-            await supabase
+            // Activate the pending subscription — conditional on status=pending for idempotency
+            const { data: activated, error: activateError } = await supabase
               .from('customer_subscriptions')
               .update({
                 status: 'active',
                 gateway_subscription_code: stripeSubId,
               })
               .eq('gateway_subscription_code', sessionId)
-              .eq('status', 'pending');
+              .eq('status', 'pending')
+              .select('id');
+
+            if (activateError) {
+              logger.error('[STRIPE WEBHOOK] Recurring activation DB error — webhook should retry', { op: 'stripe-recurring-activation' });
+              return NextResponse.json({ error: 'Activation failed' }, { status: 500 });
+            }
+
+            if (activated && activated.length > 0) {
+              logger.info(`[STRIPE WEBHOOK] Recurring subscription activated: ${stripeSubId} (session ${sessionId})`);
+            } else {
+              // Idempotent: check if already activated with this sub ID
+              const { data: existing } = await supabase
+                .from('customer_subscriptions')
+                .select('id, status')
+                .eq('gateway_subscription_code', stripeSubId)
+                .eq('status', 'active')
+                .maybeSingle();
+
+              if (existing) {
+                logger.info(`[STRIPE WEBHOOK] Recurring subscription already active: ${stripeSubId}`);
+              } else {
+                logger.warn(`[STRIPE WEBHOOK] No pending subscription found for session ${sessionId}`);
+              }
+            }
 
             // Also update the payment record
             await supabase
@@ -201,8 +225,6 @@ export async function POST(request: NextRequest) {
               .update({ status: 'success', payment_method: 'card', paid_at: new Date().toISOString() })
               .eq('gateway_reference', sessionId)
               .neq('status', 'success');
-
-            logger.info(`[STRIPE WEBHOOK] Recurring subscription activated: ${stripeSubId} (session ${sessionId})`);
           }
         }
       }
@@ -223,6 +245,14 @@ export async function POST(request: NextRequest) {
           .update({ status: 'failed', gateway_status: 'expired' })
           .eq('gateway_reference', sessionId)
           .neq('status', 'success');
+
+        // Cancel any pending subscription created during this checkout.
+        // Only affects pending rows — already-active rows are not touched.
+        await supabase
+          .from('customer_subscriptions')
+          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .eq('gateway_subscription_code', sessionId)
+          .eq('status', 'pending');
 
         if (expiredPayment?.business_id) {
           await createAlert(supabase, {
@@ -670,7 +700,7 @@ export async function POST(request: NextRequest) {
           .from('customer_subscriptions')
           .select('*')
           .eq('gateway_subscription_code', subscriptionId)
-          .in('status', ['active', 'pending']);
+          .in('status', ['active', 'past_due']); // NOT pending — unactivated subscriptions must not enter renewal processing
 
         const sub = subs?.[0];
         if (sub) {

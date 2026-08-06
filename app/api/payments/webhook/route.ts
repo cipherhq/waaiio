@@ -129,27 +129,54 @@ export async function POST(request: NextRequest) {
       await processPaystackChargeFailed(data, reference, supabase);
     }
 
-    // ── Capture authorization code for customer recurring subscriptions ──
-    // When a first payment succeeds, capture the card auth for future auto-charges.
-    // This fixes web-initiated subscriptions where auth code wasn't captured at setup.
+    // ── Capture authorization code + activate pending Paystack subscriptions ──
+    // When the initial setup payment succeeds, capture the card auth and activate the subscription.
+    // Uses exact reference correlation first (metadata.payment_reference), then broad phone/email fallback.
     if (event === 'charge.success') {
       const chargeAuth = data.authorization as Record<string, string> | undefined;
       const chargeCustomer = data.customer as Record<string, string> | undefined;
+      const chargeReference = data.reference as string | undefined;
+
       if (chargeAuth?.authorization_code) {
+        const authUpdate = {
+          authorization_code: chargeAuth.authorization_code,
+          card_last_four: chargeAuth.last4 || null,
+          card_brand: chargeAuth.brand || null,
+          gateway_customer_code: chargeCustomer?.customer_code || null,
+        };
+
+        // 1. Exact reference activation: find the ONE pending subscription whose setup reference matches
+        if (chargeReference && chargeAuth.reusable) {
+          const { data: exactMatch } = await supabase
+            .from('customer_subscriptions')
+            .select('id')
+            .eq('gateway', 'paystack')
+            .eq('status', 'pending')
+            .is('authorization_code', null)
+            .contains('metadata', { payment_reference: chargeReference })
+            .limit(1);
+
+          if (exactMatch && exactMatch.length === 1) {
+            await supabase
+              .from('customer_subscriptions')
+              .update({ ...authUpdate, status: 'active' })
+              .eq('id', exactMatch[0].id)
+              .eq('status', 'pending'); // Conditional — safe for duplicate webhooks
+
+            logger.info(`[PAYSTACK WEBHOOK] Activated pending subscription via exact reference: ${exactMatch[0].id}`);
+          }
+        }
+
+        // 2. Legacy broad match: capture auth for any remaining subscriptions missing it
+        // This does NOT activate — it only enriches auth data for already-active subs
         const custPhone = chargeCustomer?.phone || '';
         const custEmail = chargeCustomer?.email || '';
-        // Find subscriptions missing authorization_code for this customer
         const phoneVariants = custPhone ? [custPhone, custPhone.startsWith('+') ? custPhone.slice(1) : `+${custPhone}`] : [];
         let subQuery = supabase
           .from('customer_subscriptions')
-          .update({
-            authorization_code: chargeAuth.authorization_code,
-            card_last_four: chargeAuth.last4 || null,
-            card_brand: chargeAuth.brand || null,
-            gateway_customer_code: chargeCustomer?.customer_code || null,
-          })
+          .update(authUpdate)
           .is('authorization_code', null)
-          .in('status', ['active', 'pending']);
+          .eq('status', 'active'); // Only active — pending activation is handled above via exact reference
 
         if (phoneVariants.length > 0) {
           subQuery = subQuery.or(phoneVariants.map(p => `customer_phone.eq.${sanitizeFilterValue(p)}`).join(','));
@@ -159,7 +186,7 @@ export async function POST(request: NextRequest) {
 
         const { data: updated } = await subQuery.select('id');
         if (updated && updated.length > 0) {
-          logger.info(`[PAYSTACK WEBHOOK] Captured auth code for ${updated.length} subscription(s)`);
+          logger.info(`[PAYSTACK WEBHOOK] Captured auth code for ${updated.length} active subscription(s)`);
         }
       }
     }

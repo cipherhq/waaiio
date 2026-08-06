@@ -96,14 +96,14 @@ export async function POST(request: NextRequest) {
       if (frequency === 'weekly') nextCharge.setDate(nextCharge.getDate() + 7);
       else nextCharge.setMonth(nextCharge.getMonth() + 1);
 
-      await supabase.from('customer_subscriptions').insert({
+      const { error: insertError } = await supabase.from('customer_subscriptions').insert({
         business_id: businessId,
         user_id: '00000000-0000-0000-0000-000000000000', // Placeholder, will be updated
         service_id: serviceId,
         amount: parseFloat(amount),
         currency: currencyCode,
         frequency,
-        status: 'active',
+        status: 'pending', // NOT active — activated only after authoritative charge.success with reusable auth
         gateway: 'paystack',
         next_charge_at: nextCharge.toISOString(),
         customer_name: customerName,
@@ -112,6 +112,11 @@ export async function POST(request: NextRequest) {
         setup_channel: channel || 'web',
         metadata: { payment_reference: result.reference, pending_auth_capture: true },
       });
+
+      if (insertError) {
+        logger.error('[RECURRING] Paystack subscription insert failed:', { op: 'recurring-setup' });
+        return NextResponse.json({ error: 'Failed to create subscription record' }, { status: 500 });
+      }
 
       return NextResponse.json({ url: result.url, reference: result.reference });
     } else {
@@ -141,22 +146,27 @@ export async function POST(request: NextRequest) {
       if (frequency === 'weekly') nextCharge.setDate(nextCharge.getDate() + 7);
       else nextCharge.setMonth(nextCharge.getMonth() + 1);
 
-      await supabase.from('customer_subscriptions').insert({
+      const { error: insertError } = await supabase.from('customer_subscriptions').insert({
         business_id: businessId,
         user_id: '00000000-0000-0000-0000-000000000000',
         service_id: serviceId,
         amount: parseFloat(amount),
         currency: currencyCode,
         frequency,
-        status: 'active',
+        status: 'pending', // NOT active — activated only after Stripe checkout.session.completed
         gateway: 'stripe',
-        gateway_subscription_code: checkout.sessionId,
+        gateway_subscription_code: checkout.sessionId, // Temporary cs_... — replaced with sub_... on activation
         next_charge_at: nextCharge.toISOString(),
         customer_name: customerName,
         customer_phone: customerPhone,
         customer_email: customerEmail,
         setup_channel: channel || 'web',
       });
+
+      if (insertError) {
+        logger.error('[RECURRING] Stripe subscription insert failed:', { op: 'recurring-setup' });
+        return NextResponse.json({ error: 'Failed to create subscription record' }, { status: 500 });
+      }
 
       return NextResponse.json({ url: checkout.url, sessionId: checkout.sessionId });
     }
