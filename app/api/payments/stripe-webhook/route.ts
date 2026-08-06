@@ -185,49 +185,11 @@ export async function POST(request: NextRequest) {
         if (metadata?.type === 'customer_recurring') {
           const stripeSubId = data.subscription as string;
           if (stripeSubId && sessionId) {
-            // Activate the pending subscription — conditional on status=pending for idempotency
-            const { data: activated, error: activateError } = await supabase
-              .from('customer_subscriptions')
-              .update({
-                status: 'active',
-                gateway_subscription_code: stripeSubId,
-              })
-              .eq('gateway_subscription_code', sessionId)
-              .eq('status', 'pending')
-              .select('id');
+            const { activateStripeSubscription } = await import('@/lib/recurring/activate-subscription');
+            const activation = await activateStripeSubscription(supabase, sessionId, stripeSubId);
 
-            if (activateError) {
-              logger.error('[STRIPE WEBHOOK] Recurring activation DB error — webhook should retry', { op: 'stripe-recurring-activation' });
-              return NextResponse.json({ error: 'Activation failed' }, { status: 500 });
-            }
-
-            if (activated && activated.length > 0) {
-              logger.info(`[STRIPE WEBHOOK] Recurring subscription activated: ${stripeSubId} (session ${sessionId})`);
-            } else {
-              // Zero rows affected — check if already activated with this sub ID (idempotent replay)
-              const { data: existing, error: lookupError } = await supabase
-                .from('customer_subscriptions')
-                .select('id, status')
-                .eq('gateway_subscription_code', stripeSubId)
-                .eq('status', 'active')
-                .maybeSingle();
-
-              if (lookupError) {
-                logger.error('[STRIPE WEBHOOK] Already-active lookup DB error — webhook should retry', { op: 'stripe-recurring-idempotent-check' });
-                return NextResponse.json({ error: 'Activation lookup failed' }, { status: 500 });
-              }
-
-              if (existing) {
-                logger.info(`[STRIPE WEBHOOK] Recurring subscription already active: ${stripeSubId}`);
-                // Idempotent — proceed to update payment record below
-              } else {
-                // No pending row was transitioned AND no valid already-active row exists.
-                // This is an inconsistent state — do NOT mark webhook as processed.
-                logger.error('[STRIPE WEBHOOK] No pending or active subscription for session — inconsistent state', {
-                  op: 'stripe-recurring-activation', sessionId,
-                });
-                return NextResponse.json({ error: 'No subscription found for activation' }, { status: 500 });
-              }
+            if (activation.result === 'db_error' || activation.result === 'inconsistent') {
+              return NextResponse.json({ error: activation.detail || 'Activation failed' }, { status: 500 });
             }
 
             // Also update the payment record
