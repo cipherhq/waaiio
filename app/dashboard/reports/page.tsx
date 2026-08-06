@@ -124,7 +124,7 @@ export default function DocumentSharePage() {
       await fetch('/api/reports/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reportIds: [reportId] }),
+        body: JSON.stringify({ reportIds: [reportId], businessId: business.id }),
       });
       fetchDocuments();
     } finally {
@@ -155,7 +155,7 @@ export default function DocumentSharePage() {
       await fetch('/api/reports/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reportIds: Array.from(selectedIds) }),
+        body: JSON.stringify({ reportIds: Array.from(selectedIds), businessId: business.id }),
       });
       setSelectedIds(new Set());
       fetchDocuments();
