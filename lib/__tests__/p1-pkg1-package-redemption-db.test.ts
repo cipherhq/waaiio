@@ -9,7 +9,6 @@ import { execSync } from 'child_process';
 import * as path from 'path';
 
 const MIGRATION_154 = path.resolve('supabase/migrations/154_service_packages.sql');
-const MIGRATION_304 = path.resolve('supabase/migrations/304_session_resilience.sql');
 const MIGRATION_308 = path.resolve('supabase/migrations/308_package_redemption.sql');
 const dbUrl = process.env.TEST_DATABASE_URL;
 
@@ -85,23 +84,79 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
       BEGIN IF NEW.reference_code IS NULL THEN NEW.reference_code := 'BW-T' || LPAD(FLOOR(RANDOM()*100000)::TEXT,5,'0'); END IF; RETURN NEW; END; $t$ LANGUAGE plpgsql;
       DROP TRIGGER IF EXISTS trg_booking_ref ON bookings;
       CREATE TRIGGER trg_booking_ref BEFORE INSERT ON bookings FOR EACH ROW EXECUTE FUNCTION generate_booking_reference();
-      -- bot_sessions stub (needed by migration 304's deactivate_session_atomic)
-      CREATE TABLE IF NOT EXISTS bot_sessions (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        is_active BOOLEAN DEFAULT true,
-        version INT DEFAULT 1,
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
       INSERT INTO businesses (id) VALUES ('${BIZ}') ON CONFLICT DO NOTHING;
     `);
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_154}"`, { encoding: 'utf-8', timeout: 15000 });
-    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_304}"`, { encoding: 'utf-8', timeout: 15000 });
+    // Apply only book_slot_atomic from migration 304 (full migration needs tables not in test DB)
+    psql(`
+      CREATE OR REPLACE FUNCTION public.book_slot_atomic(
+        p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid,
+        p_date date, p_time text, p_party_size int, p_max_capacity int,
+        p_flow_type text, p_deposit_amount int, p_deposit_status text, p_status text,
+        p_guest_name text, p_guest_phone text, p_guest_email text,
+        p_special_requests text, p_venue_address text, p_end_date date,
+        p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount int, p_staff_name text,
+        p_location_id uuid DEFAULT NULL,
+        p_appointment_id uuid DEFAULT NULL,
+        p_buffer_minutes integer DEFAULT 0,
+        p_duration integer DEFAULT 30,
+        p_bot_session_id uuid DEFAULT NULL
+      ) RETURNS TABLE(booking_id uuid, reference_code text, slot_available boolean)
+      LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+      DECLARE v_count int; v_buffer_count int; v_booking_id uuid; v_ref text;
+        v_lock_key bigint;
+      BEGIN
+        v_lock_key := abs(hashtext(p_business_id::text || '|' || p_date::text || '|' || p_time));
+        PERFORM pg_advisory_xact_lock(v_lock_key);
+        IF p_bot_session_id IS NOT NULL THEN
+          SELECT id, bookings.reference_code INTO v_booking_id, v_ref
+          FROM bookings WHERE bot_session_id = p_bot_session_id AND status IN ('pending', 'confirmed') LIMIT 1;
+          IF FOUND THEN RETURN QUERY SELECT v_booking_id, v_ref, true; RETURN; END IF;
+        END IF;
+        SELECT COUNT(*) INTO v_count FROM bookings
+        WHERE business_id = p_business_id AND date = p_date AND time = p_time::time
+          AND status IN ('confirmed', 'pending', 'in_progress')
+          AND (p_staff_id IS NULL OR staff_id = p_staff_id);
+        IF v_count >= p_max_capacity THEN
+          RETURN QUERY SELECT NULL::uuid, NULL::text, false; RETURN;
+        END IF;
+        INSERT INTO bookings (
+          business_id, user_id, service_id, appointment_id, staff_id, staff_name,
+          date, time, party_size, flow_type, channel,
+          deposit_amount, deposit_status, status,
+          guest_name, guest_phone, guest_email,
+          special_requests, venue_address, end_date,
+          addons_snapshot, promo_code_id, total_amount, quantity,
+          location_id, bot_session_id
+        ) VALUES (
+          p_business_id, p_user_id,
+          CASE WHEN p_appointment_id IS NOT NULL THEN NULL ELSE p_service_id END,
+          p_appointment_id,
+          p_staff_id, p_staff_name,
+          p_date, p_time::time, p_party_size,
+          p_flow_type::flow_type, 'whatsapp'::booking_channel,
+          p_deposit_amount, p_deposit_status::deposit_status, p_status::reservation_status,
+          p_guest_name, p_guest_phone, p_guest_email,
+          p_special_requests, p_venue_address, p_end_date,
+          p_addons_snapshot, p_promo_code_id, p_total_amount, p_party_size,
+          p_location_id, p_bot_session_id
+        )
+        RETURNING id, bookings.reference_code INTO v_booking_id, v_ref;
+        RETURN QUERY SELECT v_booking_id, v_ref, true;
+      END;
+      $$;
+      DO $$ BEGIN
+        REVOKE ALL ON FUNCTION public.book_slot_atomic FROM PUBLIC;
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.book_slot_atomic TO service_role';
+      EXCEPTION WHEN undefined_object THEN NULL;
+      END $$;
+    `);
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_308}"`, { encoding: 'utf-8', timeout: 15000 });
   });
 
   afterAll(() => {
     if (!dbUrl) return;
-    psql(`DROP TABLE IF EXISTS package_redemptions, package_enrollments, service_packages, bookings, bot_sessions, payments, businesses CASCADE;`);
+    psql(`DROP TABLE IF EXISTS package_redemptions, package_enrollments, service_packages, bookings, payments, businesses CASCADE;`);
   });
 
   function reset(sessionsTotal = 10, sessionsUsed = 0) {
