@@ -1,4 +1,4 @@
--- 308: Atomic package session redemption
+-- 308: Atomic package session redemption (P1-PKG-1)
 --
 -- book_with_package_atomic: wraps canonical book_slot_atomic + package claim
 -- cancel_booking_with_release: atomic cancellation + package session release
