@@ -42,13 +42,15 @@ export async function activateStripeSubscription(
     return { result: 'ambiguous', count: pendingRows.length };
   }
 
+  // Track which pending row was selected — used to validate replay identity
+  let selectedPendingId: string | null = null;
+
   if (pendingRows && pendingRows.length === 1) {
-    // Exactly one pending row — conditionally activate by ID + session ID + status
-    const targetId = pendingRows[0].id;
+    selectedPendingId = pendingRows[0].id;
     const { data: activated, error: activateError } = await supabase
       .from('customer_subscriptions')
       .update({ status: 'active', gateway_subscription_code: stripeSubId })
-      .eq('id', targetId)
+      .eq('id', selectedPendingId)
       .eq('gateway_subscription_code', sessionId)
       .eq('status', 'pending')
       .select('id');
@@ -62,12 +64,10 @@ export async function activateStripeSubscription(
       logger.info(`[STRIPE ACTIVATION] Subscription activated: ${stripeSubId}`);
       return { result: 'activated', subscriptionId: activated[0].id };
     }
-
-    // Zero rows after selecting one — race condition or state changed
-    // Fall through to already-active check below
+    // Zero rows after selecting one — fall through to replay check
   }
 
-  // Step 3: Zero pending rows — check for idempotent replay
+  // Step 3: Replay check — find an active row with the real Stripe subscription ID
   const { data: existing, error: lookupError } = await supabase
     .from('customer_subscriptions')
     .select('id, status')
@@ -81,6 +81,14 @@ export async function activateStripeSubscription(
   }
 
   if (existing) {
+    // Validate the replay is the SAME row we originally selected (if we selected one).
+    // If selectedPendingId is null, this is a pure duplicate-delivery replay (zero pending found).
+    // If selectedPendingId matches existing.id, the row was activated by a concurrent worker.
+    // If selectedPendingId DIFFERS from existing.id, a DIFFERENT row is active — inconsistent.
+    if (selectedPendingId && selectedPendingId !== existing.id) {
+      logger.error('[STRIPE ACTIVATION] Active row differs from selected pending — inconsistent', { op: 'stripe-activation-row-mismatch' });
+      return { result: 'inconsistent', detail: 'active subscription does not match selected pending row' };
+    }
     logger.info(`[STRIPE ACTIVATION] Already active (idempotent): ${stripeSubId}`);
     return { result: 'idempotent', subscriptionId: existing.id };
   }

@@ -215,15 +215,77 @@ describe('P0-SUB-2: Executable activation tests', () => {
     });
 
     it('SJ. UPDATE payload contains real Stripe sub ID and status=active', async () => {
+      let capturedUpdatePayload: Record<string, unknown> | null = null;
       const sb = mockStripeSupabase({
         pendingLookupResult: { data: [{ id: 'sub-001' }], error: null },
         updateResult: { data: [{ id: 'sub-001' }], error: null },
       });
-      await activateStripeSubscription(sb, 'cs_session', 'sub_real789');
+      // Intercept the update call to capture the payload
+      const origFrom = (sb.from as any).getMockImplementation();
+      let fromIdx = 0;
+      (sb.from as any).mockImplementation((...args: unknown[]) => {
+        fromIdx++;
+        const chain = origFrom(...args);
+        if (fromIdx === 2) {
+          // This is the update from() call
+          const origUpdate = chain.update;
+          chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+            capturedUpdatePayload = payload;
+            return origUpdate(payload);
+          });
+        }
+        return chain;
+      });
 
-      // The second from() call is the update — inspect its chain
-      const updateFromCall = (sb.from as any).mock.calls[1];
-      expect(updateFromCall[0]).toBe('customer_subscriptions');
+      await activateStripeSubscription(sb, 'cs_session', 'sub_real789');
+      expect(capturedUpdatePayload).not.toBeNull();
+      expect(capturedUpdatePayload!.status).toBe('active');
+      expect(capturedUpdatePayload!.gateway_subscription_code).toBe('sub_real789');
+    });
+
+    // ── Same-row replay enforcement ──
+
+    it('SK. selected row A + UPDATE zero + replay finds row A active → idempotent', async () => {
+      const sb = mockStripeSupabase({
+        pendingLookupResult: { data: [{ id: 'row-A' }], error: null },
+        updateResult: { data: [], error: null }, // zero — row changed concurrently
+        replayLookupResult: { data: { id: 'row-A', status: 'active' }, error: null }, // SAME row
+      });
+      const result = await activateStripeSubscription(sb, 'cs_x', 'sub_real');
+      expect(result.result).toBe('idempotent');
+      expect(result).toHaveProperty('subscriptionId', 'row-A');
+    });
+
+    it('SL. selected row A + UPDATE zero + replay finds DIFFERENT row B → inconsistent', async () => {
+      const sb = mockStripeSupabase({
+        pendingLookupResult: { data: [{ id: 'row-A' }], error: null },
+        updateResult: { data: [], error: null },
+        replayLookupResult: { data: { id: 'row-B', status: 'active' }, error: null }, // DIFFERENT row
+      });
+      const result = await activateStripeSubscription(sb, 'cs_x', 'sub_real');
+      expect(result.result).toBe('inconsistent');
+      expect(result.result).not.toBe('idempotent');
+    });
+
+    it('SM. zero pending + one active → ordinary duplicate replay idempotent', async () => {
+      // No selectedPendingId — pure duplicate delivery
+      const sb = mockStripeSupabase({
+        pendingLookupResult: { data: [], error: null },
+        replayLookupResult: { data: { id: 'row-C', status: 'active' }, error: null },
+      });
+      const result = await activateStripeSubscription(sb, 'cs_x', 'sub_real');
+      expect(result.result).toBe('idempotent');
+      expect(result).toHaveProperty('subscriptionId', 'row-C');
+    });
+
+    it('SN. selected row A + UPDATE zero + no active → inconsistent', async () => {
+      const sb = mockStripeSupabase({
+        pendingLookupResult: { data: [{ id: 'row-A' }], error: null },
+        updateResult: { data: [], error: null },
+        replayLookupResult: { data: null, error: null },
+      });
+      const result = await activateStripeSubscription(sb, 'cs_x', 'sub_real');
+      expect(result.result).toBe('inconsistent');
     });
   });
 
