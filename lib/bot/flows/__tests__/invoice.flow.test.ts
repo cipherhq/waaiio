@@ -51,7 +51,7 @@ describe('Invoice Flow', () => {
           data: [
             {
               id: 'inv-1',
-              invoice_number: 'BW-I0042',
+              reference_code: 'BW-I0042',
               total_amount: 15000,
               due_date: '2026-01-30',
               status: 'overdue',
@@ -59,7 +59,7 @@ describe('Invoice Flow', () => {
             },
             {
               id: 'inv-2',
-              invoice_number: 'BW-I0045',
+              reference_code: 'BW-I0045',
               total_amount: 8500,
               due_date: '2026-02-15',
               status: 'sent',
