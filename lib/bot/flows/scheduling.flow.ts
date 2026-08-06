@@ -2284,7 +2284,7 @@ export const schedulingFlow: FlowDefinition = {
                 p_flow_type: 'scheduling',
                 p_deposit_amount: totalDeposit,
                 p_deposit_status: totalDeposit > 0 ? 'pending' : 'none',
-                p_status: totalDeposit > 0 ? 'pending' : 'confirmed',
+                p_status: totalDeposit > 0 ? 'pending' : (d._auto_approve !== false ? 'confirmed' : 'pending'),
                 p_guest_name: guestName,
                 p_guest_phone: guestPhone,
                 p_guest_email: (d.email as string) || null,
@@ -2293,11 +2293,14 @@ export const schedulingFlow: FlowDefinition = {
                 p_end_date: (d.end_date as string) || null,
                 p_addons_snapshot: d._selected_addons || null,
                 p_promo_code_id: (d._promo_id as string) || null,
-                p_bot_session_id: ctx.session.id,
+                p_total_amount: totalDeposit,
+                p_staff_name: (d.staff_name as string) || null,
+                p_location_id: (d.location_id as string) || null,
                 p_appointment_id: isAppointment ? ((d.service_id as string) || null) : null,
                 p_buffer_minutes: (d._service_buffer_minutes as number) || 0,
+                p_duration: (d.service_duration as number) || 30,
+                p_bot_session_id: ctx.session.id,
                 p_enrollment_id: packageEnrollmentId,
-                p_uncovered_amount: totalDeposit,
               });
 
             if (pkgError || !pkgResult?.success) {

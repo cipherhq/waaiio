@@ -428,17 +428,26 @@ export async function handleModifyBooking(
       return;
     }
 
-    await supabase
-      .from('bookings')
-      .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'diner' })
-      .eq('id', bookingId)
-      .in('status', ['pending', 'confirmed']);
-
-    // Release package session if one was used for this booking
+    // Atomic cancellation + package session release in ONE transaction
     try {
-      const { data: releaseResult } = await supabase.rpc('release_package_session', { p_booking_id: bookingId });
-      if (releaseResult?.released) logger.info(`[BOOKING] Package session released for cancelled booking ${bookingId}`);
-    } catch { /* Non-fatal — session release is best-effort on cancellation */ }
+      const { data: cancelResult } = await supabase.rpc('cancel_booking_with_release', {
+        p_booking_id: bookingId,
+        p_cancelled_by: 'guest',
+      });
+      if (cancelResult?.session_released) {
+        logger.info(`[BOOKING] Package session released for cancelled booking ${bookingId}`);
+      }
+      if (!cancelResult?.cancelled) {
+        logger.error('[BOOKING] Atomic cancel failed', { bookingId, reason: cancelResult?.reason });
+      }
+    } catch {
+      // Fallback: direct cancel if RPC not available (e.g. migration not applied)
+      await supabase
+        .from('bookings')
+        .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'guest' })
+        .eq('id', bookingId)
+        .in('status', ['pending', 'confirmed']);
+    }
 
     // Notify assigned staff member about cancellation
     if (cancelledBooking?.staff_id && cancelledBooking.business_id) {

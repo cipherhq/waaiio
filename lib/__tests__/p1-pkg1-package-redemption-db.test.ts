@@ -1,6 +1,7 @@
 /**
  * P1-PKG-1 — Real PostgreSQL tests for package redemption
- * Tests the atomic book_with_package_atomic RPC and release_package_session.
+ * Tests the atomic book_with_package_atomic, cancel_booking_with_release,
+ * and release_package_session RPCs.
  * Requires TEST_DATABASE_URL.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -8,6 +9,7 @@ import { execSync } from 'child_process';
 import * as path from 'path';
 
 const MIGRATION_154 = path.resolve('supabase/migrations/154_service_packages.sql');
+const MIGRATION_304 = path.resolve('supabase/migrations/304_session_resilience.sql');
 const MIGRATION_308 = path.resolve('supabase/migrations/308_package_redemption.sql');
 const dbUrl = process.env.TEST_DATABASE_URL;
 
@@ -68,27 +70,38 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
       CREATE TABLE IF NOT EXISTS bookings (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), reference_code TEXT UNIQUE,
         business_id UUID, user_id UUID, service_id UUID, appointment_id UUID,
-        staff_id UUID, date DATE, time TEXT,
+        staff_id UUID, staff_name TEXT, date DATE, time TEXT,
         party_size INT DEFAULT 1, flow_type flow_type DEFAULT 'scheduling',
         channel booking_channel DEFAULT 'whatsapp', deposit_amount NUMERIC(12,2) DEFAULT 0,
         deposit_status deposit_status DEFAULT 'none', status reservation_status DEFAULT 'pending',
         total_amount NUMERIC(12,2) DEFAULT 0, quantity INT DEFAULT 1,
         guest_name TEXT, guest_phone TEXT, guest_email TEXT,
-        special_requests TEXT, payment_source payment_source DEFAULT 'whatsapp'
+        special_requests TEXT, venue_address TEXT, end_date DATE,
+        addons_snapshot JSONB, promo_code_id UUID, location_id UUID,
+        bot_session_id UUID, cancelled_at TIMESTAMPTZ, cancelled_by TEXT,
+        payment_source payment_source DEFAULT 'whatsapp'
       );
       CREATE OR REPLACE FUNCTION generate_booking_reference() RETURNS TRIGGER AS $t$
       BEGIN IF NEW.reference_code IS NULL THEN NEW.reference_code := 'BW-T' || LPAD(FLOOR(RANDOM()*100000)::TEXT,5,'0'); END IF; RETURN NEW; END; $t$ LANGUAGE plpgsql;
       DROP TRIGGER IF EXISTS trg_booking_ref ON bookings;
       CREATE TRIGGER trg_booking_ref BEFORE INSERT ON bookings FOR EACH ROW EXECUTE FUNCTION generate_booking_reference();
+      -- bot_sessions stub (needed by migration 304's deactivate_session_atomic)
+      CREATE TABLE IF NOT EXISTS bot_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        is_active BOOLEAN DEFAULT true,
+        version INT DEFAULT 1,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
       INSERT INTO businesses (id) VALUES ('${BIZ}') ON CONFLICT DO NOTHING;
     `);
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_154}"`, { encoding: 'utf-8', timeout: 15000 });
+    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_304}"`, { encoding: 'utf-8', timeout: 15000 });
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_308}"`, { encoding: 'utf-8', timeout: 15000 });
   });
 
   afterAll(() => {
     if (!dbUrl) return;
-    psql(`DROP TABLE IF EXISTS package_redemptions, package_enrollments, service_packages, bookings, payments, businesses CASCADE;`);
+    psql(`DROP TABLE IF EXISTS package_redemptions, package_enrollments, service_packages, bookings, bot_sessions, payments, businesses CASCADE;`);
   });
 
   function reset(sessionsTotal = 10, sessionsUsed = 0) {
@@ -97,12 +110,13 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
     psql(`INSERT INTO package_enrollments (id, business_id, customer_phone, package_id, sessions_total, sessions_used, is_active) VALUES ('${ENR}', '${BIZ}', '+234123', '${PKG}', ${sessionsTotal}, ${sessionsUsed}, true);`);
   }
 
-  function bookPkg(enrollmentId = ENR, phone = '+234123', serviceId = 'NULL') {
+  function bookPkg(enrollmentId = ENR, phone = '+234123', serviceId = 'NULL', status = 'confirmed') {
     return `SELECT book_with_package_atomic(
       '${BIZ}'::uuid, '${USR}'::uuid, ${serviceId === 'NULL' ? 'NULL' : `'${serviceId}'::uuid`},
-      NULL, '2026-09-01', '14:00', 1, 10, 'scheduling', 0, 'none', 'confirmed',
-      'Test', '${phone}', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0,
-      '${enrollmentId}'::uuid, 0
+      NULL, '2026-09-01', '14:00', 1, 10, 'scheduling', 0, 'none', '${status}',
+      'Test', '${phone}', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL,
+      NULL, NULL, 0, 30, NULL,
+      '${enrollmentId}'::uuid
     );`;
   }
 
@@ -169,8 +183,9 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
     const r = psqlJson(`SELECT book_with_package_atomic(
       '99999999-9999-9999-9999-999999999999'::uuid, '${USR}'::uuid, NULL,
       NULL, '2026-09-01', '14:00', 1, 10, 'scheduling', 0, 'none', 'confirmed',
-      'Test', '+234123', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0,
-      '${ENR}'::uuid, 0
+      'Test', '+234123', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL,
+      NULL, NULL, 0, 30, NULL,
+      '${ENR}'::uuid
     );`);
     expect(r.success).toBe(false);
     expect(r.reason).toBe('wrong_business');
@@ -196,7 +211,6 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
   });
 
   it('10. duplicate release is safe', () => {
-    // Previous test released — try again
     reset(10, 0);
     const booking = psqlJson(bookPkg());
     psqlJson(`SELECT release_package_session('${booking.booking_id}'::uuid);`);
@@ -207,13 +221,9 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
 
   it('11. booking-level uniqueness: same booking cannot use two enrollments', () => {
     reset(10, 0);
-    // Create a second enrollment
     psql(`INSERT INTO package_enrollments (id, business_id, customer_phone, package_id, sessions_total, sessions_used, is_active) VALUES ('77dddddd-dddd-dddd-dddd-dddddddddddd', '${BIZ}', '+234123', '${PKG}', 10, 0, true);`);
-    // First booking succeeds
     const r1 = psqlJson(bookPkg());
     expect(r1.success).toBe(true);
-    // Try to redeem a second enrollment for the SAME booking — UNIQUE(booking_id) blocks it
-    // (This tests the constraint — in practice the RPC creates the booking, so same booking_id won't be reused)
     const bookingId = r1.booking_id;
     const count = psql(`SELECT COUNT(*) FROM package_redemptions WHERE booking_id = '${bookingId}';`);
     expect(count).toBe('1');
@@ -233,5 +243,66 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
     expect(r.success).toBe(false);
     const used = psql(`SELECT sessions_used FROM package_enrollments WHERE id = '${ENR}';`);
     expect(used).toBe('2');
+  });
+
+  it('14. cancel_booking_with_release atomically cancels + releases session', () => {
+    reset(10, 0);
+    const booking = psqlJson(bookPkg());
+    expect(booking.success).toBe(true);
+    expect(psql(`SELECT sessions_used FROM package_enrollments WHERE id = '${ENR}';`)).toBe('1');
+
+    const cancel = psqlJson(`SELECT cancel_booking_with_release('${booking.booking_id}'::uuid, 'guest');`);
+    expect(cancel.cancelled).toBe(true);
+    expect(cancel.session_released).toBe(true);
+
+    // Booking is cancelled
+    const status = psql(`SELECT status FROM bookings WHERE id = '${booking.booking_id}';`);
+    expect(status).toBe('cancelled');
+    // Session returned
+    expect(psql(`SELECT sessions_used FROM package_enrollments WHERE id = '${ENR}';`)).toBe('0');
+    // Redemption marked released
+    const redemptionStatus = psql(`SELECT status FROM package_redemptions WHERE booking_id = '${booking.booking_id}';`);
+    expect(redemptionStatus).toBe('released');
+  });
+
+  it('15. cancel non-cancellable booking rejected', () => {
+    reset(10, 0);
+    const booking = psqlJson(bookPkg());
+    // Complete the booking first
+    psql(`UPDATE bookings SET status = 'completed' WHERE id = '${booking.booking_id}';`);
+    const cancel = psqlJson(`SELECT cancel_booking_with_release('${booking.booking_id}'::uuid);`);
+    expect(cancel.cancelled).toBe(false);
+    expect(cancel.reason).toBe('not_cancellable');
+  });
+
+  it('16. auto-approval preserved: pending status passes through to booking', () => {
+    reset(10, 0);
+    const r = psqlJson(bookPkg(ENR, '+234123', 'NULL', 'pending'));
+    expect(r.success).toBe(true);
+    const status = psql(`SELECT status FROM bookings WHERE id = '${r.booking_id}';`);
+    expect(status).toBe('pending');
+  });
+
+  it('17. no-show does NOT release package session', () => {
+    reset(10, 0);
+    const booking = psqlJson(bookPkg());
+    expect(booking.success).toBe(true);
+    // Mark as no-show directly (no-show is a business action, not a cancellation)
+    psql(`UPDATE bookings SET status = 'no_show' WHERE id = '${booking.booking_id}';`);
+    // Package session should still be consumed
+    const used = psql(`SELECT sessions_used FROM package_enrollments WHERE id = '${ENR}';`);
+    expect(used).toBe('1');
+    // Redemption still active
+    const redemptionStatus = psql(`SELECT status FROM package_redemptions WHERE booking_id = '${booking.booking_id}';`);
+    expect(redemptionStatus).toBe('active');
+  });
+
+  it('18. cancel booking without package — no session release needed', () => {
+    reset(10, 0);
+    // Insert a plain booking (no package redemption)
+    psql(`INSERT INTO bookings (id, business_id, status, date, time) VALUES ('77aaaaaa-0000-0000-0000-000000000001', '${BIZ}', 'confirmed', '2026-09-01', '15:00');`);
+    const cancel = psqlJson(`SELECT cancel_booking_with_release('77aaaaaa-0000-0000-0000-000000000001'::uuid, 'business');`);
+    expect(cancel.cancelled).toBe(true);
+    expect(cancel.session_released).toBe(false);
   });
 });

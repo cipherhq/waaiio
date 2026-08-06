@@ -7,6 +7,15 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-05
 
+### fix(P1-PKG-1): Atomic package redemption corrections — wrap canonical booking, preserve auto-approval, atomic cancellation
+
+- **CORRECTION 1 — Stop duplicating booking engine:** `book_with_package_atomic` now calls the canonical `book_slot_atomic` internally instead of hand-writing its own INSERT. This eliminates drift between the two paths (advisory locks, capacity checks, buffer overlap, idempotent retry). File: `supabase/migrations/308_package_redemption.sql`.
+- **CORRECTION 2 — Preserve auto-approval:** Package bookings now pass the caller-supplied `p_status` through to `book_slot_atomic` using the same `d._auto_approve !== false ? 'confirmed' : 'pending'` logic as non-package bookings. Previously hardcoded `'confirmed'`, bypassing manual-approval businesses. File: `lib/bot/flows/scheduling.flow.ts`.
+- **CORRECTION 3 — Atomic cancellation + session release:** New `cancel_booking_with_release` RPC atomically cancels booking AND releases any active package redemption in ONE PostgreSQL transaction. Bot cancellation handler (`my-bookings.ts`) now uses this RPC instead of two-step UPDATE+release. Dashboard cancellation routes through `/api/bookings/[id]/status` (new `cancel` action) which calls the atomic RPC. File: `lib/bot/handlers/my-bookings.ts`, `app/api/bookings/[id]/status/route.ts`, `app/dashboard/reservations/page.tsx`.
+- **CORRECTION 4 — Fix scheduling flow RPC params:** Removed nonexistent `p_uncovered_amount` param, added missing `p_total_amount`, `p_staff_name`, `p_location_id`, `p_duration` to match the actual RPC signature.
+- **Tests:** 18 real PostgreSQL tests (up from 13). New tests: #14 cancel_booking_with_release atomicity, #15 non-cancellable booking rejection, #16 auto-approval status passthrough, #17 no-show does NOT release package session, #18 cancel without package.
+- Could break: Dashboard booking cancellation now routes through API instead of direct Supabase UPDATE — if the API is down, cancellation fails (with error message). Bot cancellation falls back to direct UPDATE if the RPC is not available.
+
 ### fix: Concurrent finalizer hardening — FOR UPDATE on claim row
 
 - **Root cause:** `finalize_token_recurring_charge` read the claim row (`processed_webhook_events`) without `FOR UPDATE`. Two concurrent workers could both see `status='claimed'`, both proceed to INSERT, with the second hitting a `gateway_reference UNIQUE` violation (23505) as the only safety net.
