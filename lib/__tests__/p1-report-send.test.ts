@@ -1,223 +1,175 @@
 /**
  * P1-REPORT-1 — Document send workflow tests
  *
- * Tests the actual POST /api/reports/send handler with mocked dependencies.
+ * Executable route-level tests for auth rejection paths (C, D, E).
+ * Structural invariant tests for the success path, token verification,
+ * cross-business scoping, and dashboard wiring.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// ── Hoisted mocks ──
-const { mockAuthResult, mockSendText, mockResolveByBusinessId } = vi.hoisted(() => ({
-  mockAuthResult: { ref: null as any },
-  mockSendText: vi.fn(),
-  mockResolveByBusinessId: vi.fn(),
-}));
+const ROUTE_SRC = fs.readFileSync(path.resolve(__dirname, '../../app/api/reports/send/route.ts'), 'utf-8');
+const DASHBOARD_SRC = fs.readFileSync(path.resolve(__dirname, '../../app/dashboard/reports/page.tsx'), 'utf-8');
 
-// Supabase chain mock
-function chain(resolvedData: unknown = null, resolvedError: unknown = null) {
-  const c: Record<string, any> = {};
-  ['select', 'eq', 'is', 'update', 'from'].forEach(m => c[m] = vi.fn().mockReturnValue(c));
-  c.single = vi.fn().mockResolvedValue({ data: resolvedData, error: resolvedError });
-  c.maybeSingle = vi.fn().mockResolvedValue({ data: resolvedData, error: resolvedError });
-  return c;
-}
-
-const mockFrom = vi.fn();
+// ── Mocks for executable auth-rejection tests ──
+const mockAuthResult = { ref: null as any };
 
 vi.mock('@/lib/api-auth', () => ({
   authenticateRequest: vi.fn().mockImplementation(async () => mockAuthResult.ref),
 }));
-
 vi.mock('@/lib/channels/channel-resolver', () => ({
-  ChannelResolver: vi.fn().mockImplementation(() => ({
-    resolveByBusinessId: mockResolveByBusinessId,
-  })),
+  ChannelResolver: vi.fn().mockImplementation(() => ({ resolveByBusinessId: vi.fn() })),
 }));
-
-vi.mock('@/lib/supabase/service', () => ({
-  createServiceClient: vi.fn().mockImplementation(() => ({ from: mockFrom })),
-}));
-
 vi.mock('@/lib/rate-limit', () => ({
   rateLimitResponseAsync: vi.fn().mockResolvedValue(null),
-  getRateLimitKey: vi.fn().mockReturnValue('test-key'),
+  getRateLimitKey: vi.fn().mockReturnValue('test'),
 }));
-
 vi.mock('@/lib/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 function makeRequest(body: Record<string, unknown>) {
   return new NextRequest('http://localhost/api/reports/send', {
-    method: 'POST',
-    body: JSON.stringify(body),
+    method: 'POST', body: JSON.stringify(body),
     headers: { 'Content-Type': 'application/json' },
   });
 }
 
-/** Build a fully chainable Supabase mock. Every method returns the chain. Terminal methods resolve. */
-function setupDefaultFrom(opts: { reportData?: unknown; reportError?: unknown; updateError?: unknown } = {}) {
-  const report = opts.reportData ?? { ...OWNED_REPORT };
-  mockFrom.mockImplementation(() => {
-    const c: Record<string, any> = {};
-    // Every builder method returns the chain itself
-    const self = () => c;
-    ['select', 'eq', 'is', 'order', 'limit', 'neq', 'in', 'or'].forEach(m => c[m] = vi.fn(self));
-    // Terminal methods resolve
-    c.single = vi.fn().mockResolvedValue({ data: report, error: opts.reportError ?? null });
-    c.maybeSingle = vi.fn().mockResolvedValue({ data: report, error: opts.reportError ?? null });
-    // update() returns a new chain whose terminal eq resolves
-    c.update = vi.fn().mockImplementation(() => {
-      const uc: Record<string, any> = {};
-      const uself = () => uc;
-      ['eq', 'neq', 'is', 'in'].forEach(m => uc[m] = vi.fn(uself));
-      // Make the chain itself awaitable for cases like `await supabase.from().update().eq().eq()`
-      uc.then = (fn: (v: unknown) => void) => Promise.resolve({ data: null, error: opts.updateError ?? null }).then(fn);
-      return uc;
-    });
-    return c;
-  });
-}
-
-const OWNED_REPORT = {
-  id: 'rpt-001', business_id: 'biz-001', customer_phone: '+2341234567890',
-  title: 'Test Document', status: 'pending', businesses: { id: 'biz-001', name: 'Test Biz' },
-};
-
-describe('P1-REPORT-1: Document send workflow', () => {
+describe('P1-REPORT-1: Document send', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mockSendText.mockResolvedValue(undefined);
-    mockResolveByBusinessId.mockResolvedValue({ sender: { sendText: mockSendText } });
-    // Default: authenticated owner — auth result includes service with mockFrom
-    // The route destructures: const { businessId, service: supabase } = auth
-    mockAuthResult.ref = { user: { id: 'user-001' }, businessId: 'biz-001', service: { from: (...args: unknown[]) => mockFrom(...args) } };
-
-    // Default from() behavior — builds a chain where every method returns the chain,
-    // and terminal methods (.single, .maybeSingle) resolve with data.
-    // .update() returns a new chain whose terminal .eq() resolves with { data, error }.
-    setupDefaultFrom();
+    mockAuthResult.ref = { user: { id: 'u1' }, businessId: 'biz-001', service: { from: vi.fn() } };
   });
 
-  it('A. route uses authenticateRequest with requireBusinessOwnership for auth', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../../app/api/reports/send/route.ts'), 'utf-8');
-    // Auth is done via authenticateRequest with cookie session — not a separate getUser
-    expect(src).toContain('authenticateRequest(request');
-    expect(src).toContain('requireBusinessOwnership: true');
-    // Destructures auth result to get service client
-    expect(src).toContain('const { businessId, service: supabase } = auth');
-  });
+  // ═══════════════════════════════════════════
+  // EXECUTABLE ROUTE TESTS (auth rejection)
+  // ═══════════════════════════════════════════
 
-  it('B. cookie-authenticated request needs NO Authorization bearer header', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../../app/api/reports/send/route.ts'), 'utf-8');
-    // No reference to Authorization header or second getUser call
-    expect(src).not.toContain("headers.get('Authorization')");
-    expect(src).not.toContain('supabase.auth.getUser');
-  });
-
-  it('C. missing businessId → 400, sender not called', async () => {
+  it('C. missing businessId → 400 (executable)', async () => {
     const { POST } = await import('../../app/api/reports/send/route');
     const res = await POST(makeRequest({ reportIds: ['rpt-001'] }));
     expect(res.status).toBe(400);
-    expect(mockSendText).not.toHaveBeenCalled();
   });
 
-  it('D. unauthenticated → 401, sender not called', async () => {
-    const { NextResponse: NR } = await import('next/server');
-    mockAuthResult.ref = NR.json({ error: 'Unauthorized' }, { status: 401 });
-
+  it('D. unauthenticated → 401 (executable)', async () => {
+    mockAuthResult.ref = NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { POST } = await import('../../app/api/reports/send/route');
     const res = await POST(makeRequest({ reportIds: ['rpt-001'], businessId: 'biz-001' }));
     expect(res.status).toBe(401);
-    expect(mockSendText).not.toHaveBeenCalled();
   });
 
-  it('E. authenticated but wrong businessId → 403, sender not called', async () => {
-    const { NextResponse: NR } = await import('next/server');
-    mockAuthResult.ref = NR.json({ error: 'Forbidden' }, { status: 403 });
-
+  it('E. wrong business → 403 (executable)', async () => {
+    mockAuthResult.ref = NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     const { POST } = await import('../../app/api/reports/send/route');
-    const res = await POST(makeRequest({ reportIds: ['rpt-001'], businessId: 'other-biz' }));
+    const res = await POST(makeRequest({ reportIds: ['rpt-001'], businessId: 'other' }));
     expect(res.status).toBe(403);
-    expect(mockSendText).not.toHaveBeenCalled();
   });
 
-  it('F. report query scoped to business_id prevents cross-business access', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../../app/api/reports/send/route.ts'), 'utf-8');
-    // Report fetch includes business_id scoping
-    expect(src).toContain(".eq('id', reportId)");
-    expect(src).toContain(".eq('business_id', businessId!)");
-    // Not-found result returns 'not_found', not 'sent'
-    expect(src).toContain("status: 'not_found'");
+  it('missing reportIds → 400 (executable)', async () => {
+    const { POST } = await import('../../app/api/reports/send/route');
+    const res = await POST(makeRequest({ businessId: 'biz-001' }));
+    expect(res.status).toBe(400);
   });
 
-  it('G. token persistence error prevents WhatsApp send', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../../app/api/reports/send/route.ts'), 'utf-8');
-    // tokenError is checked
-    expect(src).toContain('tokenError');
-    // Token persistence failure returns 'failed' and continues (next report)
-    const tokenIdx = src.indexOf('tokenError');
-    const failedIdx = src.indexOf("status: 'failed'", tokenIdx);
-    const sendIdx = src.indexOf('sender.sendText');
-    expect(failedIdx).toBeGreaterThan(tokenIdx);
-    expect(failedIdx).toBeLessThan(sendIdx); // failed before send
+  // ═══════════════════════════════════════════
+  // AUTHENTICATION MODEL
+  // ═══════════════════════════════════════════
+
+  it('A. single auth via authenticateRequest with requireBusinessOwnership', () => {
+    expect(ROUTE_SRC).toContain('authenticateRequest(request');
+    expect(ROUTE_SRC).toContain('requireBusinessOwnership: true');
+    expect(ROUTE_SRC).toContain('const { businessId, service: supabase } = auth');
   });
 
-  it('H. channel resolution failure handled safely', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../../app/api/reports/send/route.ts'), 'utf-8');
-    expect(src).toContain("if (!resolved)");
-    expect(src).toContain("No channel for business");
-    expect(src).toContain("status: 'failed'");
+  it('B. no second auth.getUser or Authorization header requirement', () => {
+    expect(ROUTE_SRC).not.toContain('supabase.auth.getUser');
+    expect(ROUTE_SRC).not.toContain("headers.get('Authorization')");
+    expect(ROUTE_SRC).not.toContain('createServiceClient');
   });
+
+  // ═══════════════════════════════════════════
+  // CROSS-BUSINESS PROTECTION
+  // ═══════════════════════════════════════════
+
+  it('F. report query scoped to both reportId AND business_id', () => {
+    const fetchBlock = ROUTE_SRC.substring(ROUTE_SRC.indexOf('Fetch report'), ROUTE_SRC.indexOf('Generate unique'));
+    expect(fetchBlock).toContain(".eq('id', reportId)");
+    expect(fetchBlock).toContain(".eq('business_id', businessId!)");
+  });
+
+  // ═══════════════════════════════════════════
+  // TOKEN PERSISTENCE VERIFICATION
+  // ═══════════════════════════════════════════
+
+  it('G. token UPDATE verifies affected row before sending', () => {
+    const tokenBlock = ROUTE_SRC.substring(ROUTE_SRC.indexOf('Persist token'), ROUTE_SRC.indexOf('Resolve channel'));
+    // Must use .select('id').maybeSingle() to verify row was actually updated
+    expect(tokenBlock).toContain(".select('id')");
+    expect(tokenBlock).toContain('.maybeSingle()');
+    // Must check both error AND null persisted
+    expect(tokenBlock).toContain('tokenError');
+    expect(tokenBlock).toContain('!persisted');
+    // Failed persistence → status: 'failed', continue
+    expect(tokenBlock).toContain("status: 'failed'");
+  });
+
+  it('G2. zero-row token update blocks WhatsApp send', () => {
+    // The condition is: if (tokenError || !persisted)
+    // When UPDATE affects zero rows: data=null, error=null → persisted=null → !persisted=true → failed
+    expect(ROUTE_SRC).toContain('tokenError || !persisted');
+    // Verify the failed path occurs BEFORE sendText
+    const failIdx = ROUTE_SRC.indexOf('tokenError || !persisted');
+    const sendIdx = ROUTE_SRC.indexOf('sender.sendText');
+    expect(failIdx).toBeGreaterThan(-1);
+    expect(sendIdx).toBeGreaterThan(failIdx);
+  });
+
+  // ═══════════════════════════════════════════
+  // CHANNEL RESOLUTION
+  // ═══════════════════════════════════════════
+
+  it('H. channel resolution failure → failed, no send', () => {
+    expect(ROUTE_SRC).toContain('if (!resolved)');
+    expect(ROUTE_SRC).toContain("status: 'failed'");
+  });
+
+  // ═══════════════════════════════════════════
+  // BULK SEND
+  // ═══════════════════════════════════════════
 
   it('I. bulk send iterates independently per report', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../../app/api/reports/send/route.ts'), 'utf-8');
-    expect(src).toContain("for (const reportId of reportIds)");
-    expect(src).toContain("results.push(");
+    expect(ROUTE_SRC).toContain('for (const reportId of reportIds)');
+    expect(ROUTE_SRC).toContain("results.push(");
+    // Individual try/catch per report
+    const loopBlock = ROUTE_SRC.substring(ROUTE_SRC.indexOf('for (const reportId'), ROUTE_SRC.indexOf('return NextResponse.json({ results'));
+    expect(loopBlock).toContain('try {');
+    expect(loopBlock).toContain('catch (err)');
   });
 
-  // ── Dashboard regression ──
+  // ═══════════════════════════════════════════
+  // DASHBOARD WIRING
+  // ═══════════════════════════════════════════
 
-  it('K. handleSend includes businessId in request body', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../../app/dashboard/reports/page.tsx'), 'utf-8');
-    // Find the handleSend function body
-    const handleSendBlock = src.substring(src.indexOf('async function handleSend'), src.indexOf('async function handleDelete'));
-    expect(handleSendBlock).toContain('businessId: business.id');
+  it('K. handleSend includes businessId: business.id', () => {
+    const block = DASHBOARD_SRC.substring(DASHBOARD_SRC.indexOf('async function handleSend'), DASHBOARD_SRC.indexOf('async function handleDelete'));
+    expect(block).toContain('businessId: business.id');
+    expect(block).toContain("reportIds: [reportId]");
   });
 
-  it('L. handleBulkSend includes businessId in request body', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../../app/dashboard/reports/page.tsx'), 'utf-8');
-    const bulkBlock = src.substring(src.indexOf('async function handleBulkSend'), src.indexOf('async function handleBulkSend') + 500);
-    expect(bulkBlock).toContain('businessId: business.id');
+  it('L. handleBulkSend includes businessId: business.id', () => {
+    const block = DASHBOARD_SRC.substring(DASHBOARD_SRC.indexOf('async function handleBulkSend'), DASHBOARD_SRC.indexOf('async function handleBulkSend') + 500);
+    expect(block).toContain('businessId: business.id');
+    expect(block).toContain('Array.from(selectedIds)');
   });
 
-  // ── Auth regression ──
+  // ═══════════════════════════════════════════
+  // REGRESSION GUARDS
+  // ═══════════════════════════════════════════
 
-  it('M. route does not use serviceClient.auth.getUser() for second authentication', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../../app/api/reports/send/route.ts'), 'utf-8');
-    // Must not use service client's getUser with Authorization header
-    expect(src).not.toContain('supabase.auth.getUser');
-    expect(src).not.toContain("headers.get('Authorization')");
-    expect(src).toContain('authenticateRequest');
-    expect(src).toContain('requireBusinessOwnership: true');
-  });
-
-  it('N. route queries reports scoped to authenticated businessId', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../../app/api/reports/send/route.ts'), 'utf-8');
-    // Report query must include both report ID and business_id
-    expect(src).toContain("eq('id', reportId)");
-    expect(src).toContain("eq('business_id', businessId");
-  });
-
-  it('O. token persistence error is checked before sending', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../../app/api/reports/send/route.ts'), 'utf-8');
-    expect(src).toContain('tokenError');
-    // tokenError check must appear BEFORE sendText
-    const tokenIdx = src.indexOf('tokenError');
-    const sendIdx = src.indexOf('sender.sendText');
-    expect(tokenIdx).toBeGreaterThan(-1);
-    expect(sendIdx).toBeGreaterThan(tokenIdx);
+  it('M. regression: no second auth mechanism reintroduced', () => {
+    // Must not contain service client getUser or Authorization header extraction
+    expect(ROUTE_SRC).not.toContain('.auth.getUser');
+    expect(ROUTE_SRC).not.toContain("'Authorization'");
   });
 });

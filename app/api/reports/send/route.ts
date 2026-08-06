@@ -51,13 +51,16 @@ export async function POST(request: NextRequest) {
         const secureLink = `${appUrl}/doc/${accessToken}`;
 
         // Persist token BEFORE sending the link — must succeed for the link to be valid
-        const { error: tokenError } = await supabase
+        // Persist token and VERIFY the row was actually updated before sending
+        const { data: persisted, error: tokenError } = await supabase
           .from('customer_reports')
           .update({ access_token: accessToken })
           .eq('id', reportId)
-          .eq('business_id', businessId!);
+          .eq('business_id', businessId!)
+          .select('id')
+          .maybeSingle();
 
-        if (tokenError) {
+        if (tokenError || !persisted) {
           logger.error('[DOCUMENTS] Token persistence failed — not sending link', { op: 'reports-send' });
           results.push({ id: reportId, status: 'failed' });
           continue;
