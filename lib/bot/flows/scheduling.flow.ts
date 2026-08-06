@@ -2157,10 +2157,14 @@ export const schedulingFlow: FlowDefinition = {
         ]);
         const isPrepay = prepayMode === 'full' || (prepayMode === 'auto' && prepayCategories.has(ctx.business?.category || ''));
 
+        // Calculate add-on total for package scenarios
+        const selectedAddons = d._selected_addons as Array<{ price: number }> | undefined;
+        const addonTotal = selectedAddons?.reduce((sum, a) => sum + (a.price || 0), 0) || 0;
+
         let totalDeposit: number;
         if (packageEnrollmentId && packageCoveredAmount > 0) {
-          // Package covers the base service price — no deposit needed for covered amount
-          totalDeposit = 0;
+          // Package covers base service price — only charge uncovered add-ons
+          totalDeposit = addonTotal;
         } else if (prepayMode === 'free') {
           totalDeposit = 0;
         } else if (serviceDeposit > 0) {
@@ -2259,90 +2263,114 @@ export const schedulingFlow: FlowDefinition = {
             return [{ type: 'text' as const, text: await ctx.t(capGuard.customerMessage) }];
           }
 
-          // Use atomic booking function to prevent double-booking race condition
           const svcMetaBooking = d._service_metadata as Record<string, unknown> | undefined;
           const maxCapacity = svcMetaBooking?.is_dropoff ? 9999 : ((d._service_max_capacity as number) || 1);
           const isAppointment = d._is_appointment === true;
-          const { data: slotResult, error: slotError } = await ctx.supabase
-            .rpc('book_slot_atomic' as string, {
-              p_business_id: ctx.business!.id,
-              p_user_id: userId,
-              p_service_id: isAppointment ? null : ((d.service_id as string) || null),
-              p_staff_id: (d.staff_id as string) || null,
-              p_date: d.date as string,
-              p_time: d.time as string,
-              p_party_size: partySize,
-              p_max_capacity: maxCapacity,
-              p_flow_type: 'scheduling',
-              p_deposit_amount: totalDeposit,
-              p_deposit_status: totalDeposit > 0 ? 'pending' : 'none',
-              p_status: totalDeposit > 0 ? 'pending' : (d._auto_approve !== false ? 'confirmed' : 'pending'),
-              p_guest_name: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-              p_guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-              p_guest_email: (d.email as string) || null,
-              p_special_requests: (d.special_requests as string) || null,
-              p_venue_address: (d.venue_address as string) || null,
-              p_end_date: (d.end_date as string) || null,
-              p_addons_snapshot: d._selected_addons || null,
-              p_promo_code_id: (d._promo_id as string) || null,
-              p_total_amount: totalDeposit,
-              p_staff_name: (d.staff_name as string) || null,
-              p_location_id: (d.location_id as string) || null,
-              p_appointment_id: isAppointment ? ((d.service_id as string) || null) : null,
-              p_buffer_minutes: (d._service_buffer_minutes as number) || 0,
-              p_duration: (d.service_duration as number) || 30,
-              p_bot_session_id: ctx.session.id,
-            })
-            .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
+          const guestName = d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim();
+          const guestPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
 
-          if (slotError || !slotResult) {
-            logger.withContext({ op: 'scheduling.create-booking', ...safeLogErrorContext(slotError) }).error('[SCHEDULING] Failed to create booking');
-            return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
-          }
-
-          if (!slotResult.slot_available) {
-            // For classes, offer waitlist if capability enabled
-            const isClassBooking = d._service_is_class === true;
-            if (isClassBooking) {
-              const caps = await getEnabledCapabilities(ctx.supabase, ctx.business!.id);
-              if (caps.includes('waitlist')) {
-                return [{
-                  type: 'buttons',
-                  body: 'This class is full! Would you like to join the waitlist? We\'ll notify you if a spot opens up.',
-                  buttons: [
-                    { id: 'wl_join', title: 'Join Waitlist' },
-                    { id: 'go_back', title: 'No Thanks' },
-                  ],
-                }];
-              }
-              return [{ type: 'text', text: 'Sorry, this class is full. Send *Hi* to try a different class or time.' }];
-            }
-            return [{ type: 'text', text: 'Sorry, that slot was just taken by another customer. Send *Hi* to pick a different time.' }];
-          }
-
-          booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
-
-          // ── Claim package session atomically (after booking succeeds) ──
           if (packageEnrollmentId) {
-            const { data: claimResult, error: claimError } = await ctx.supabase.rpc('claim_package_session', {
-              p_enrollment_id: packageEnrollmentId,
-              p_booking_id: booking.id,
-              p_business_id: ctx.business!.id,
-              p_service_id: (d.service_id as string) || null,
-            });
+            // ── Atomic package booking: booking + claim in ONE PostgreSQL transaction ──
+            const { data: pkgResult, error: pkgError } = await ctx.supabase
+              .rpc('book_with_package_atomic' as string, {
+                p_business_id: ctx.business!.id,
+                p_user_id: userId,
+                p_service_id: isAppointment ? null : ((d.service_id as string) || null),
+                p_staff_id: (d.staff_id as string) || null,
+                p_date: d.date as string,
+                p_time: d.time as string,
+                p_party_size: partySize,
+                p_max_capacity: maxCapacity,
+                p_flow_type: 'scheduling',
+                p_deposit_amount: totalDeposit,
+                p_deposit_status: totalDeposit > 0 ? 'pending' : 'none',
+                p_status: totalDeposit > 0 ? 'pending' : 'confirmed',
+                p_guest_name: guestName,
+                p_guest_phone: guestPhone,
+                p_guest_email: (d.email as string) || null,
+                p_special_requests: (d.special_requests as string) || null,
+                p_venue_address: (d.venue_address as string) || null,
+                p_end_date: (d.end_date as string) || null,
+                p_addons_snapshot: d._selected_addons || null,
+                p_promo_code_id: (d._promo_id as string) || null,
+                p_bot_session_id: ctx.session.id,
+                p_appointment_id: isAppointment ? ((d.service_id as string) || null) : null,
+                p_buffer_minutes: (d._service_buffer_minutes as number) || 0,
+                p_enrollment_id: packageEnrollmentId,
+                p_uncovered_amount: totalDeposit,
+              });
 
-            if (claimError || !claimResult?.claimed) {
-              // Package claim failed — the booking was already created with totalDeposit=0.
-              // We must NOT leave a free booking without entitlement.
-              // Cancel the booking and tell the customer.
-              logger.error('[SCHEDULING] Package claim failed after booking — cancelling booking', { op: 'package-claim' });
-              await ctx.supabase.from('bookings').update({ status: 'cancelled', cancelled_at: new Date().toISOString() }).eq('id', booking.id);
-              return [{ type: 'text', text: await ctx.t('Sorry, your package session could not be reserved. The booking has been cancelled. Please try again or contact the business.') }];
+            if (pkgError || !pkgResult?.success) {
+              const reason = pkgResult?.reason || 'unknown';
+              if (reason === 'slot_full') {
+                return [{ type: 'text', text: await ctx.t('Sorry, that slot was just taken. Send *Hi* to pick a different time.') }];
+              }
+              logger.error('[SCHEDULING] Package booking failed', { op: 'package-booking', reason });
+              return [{ type: 'text', text: await ctx.t('Sorry, your package session could not be reserved. Please try again or contact the business.') }];
             }
 
-            // Store enrollment association in session for reference
+            booking = { id: pkgResult.booking_id, reference_code: pkgResult.reference_code };
             d._package_enrollment_id = packageEnrollmentId;
             d._package_covered = true;
+          } else {
+            // ── Standard non-package booking ──
+            const { data: slotResult, error: slotError } = await ctx.supabase
+              .rpc('book_slot_atomic' as string, {
+                p_business_id: ctx.business!.id,
+                p_user_id: userId,
+                p_service_id: isAppointment ? null : ((d.service_id as string) || null),
+                p_staff_id: (d.staff_id as string) || null,
+                p_date: d.date as string,
+                p_time: d.time as string,
+                p_party_size: partySize,
+                p_max_capacity: maxCapacity,
+                p_flow_type: 'scheduling',
+                p_deposit_amount: totalDeposit,
+                p_deposit_status: totalDeposit > 0 ? 'pending' : 'none',
+                p_status: totalDeposit > 0 ? 'pending' : (d._auto_approve !== false ? 'confirmed' : 'pending'),
+                p_guest_name: guestName,
+                p_guest_phone: guestPhone,
+                p_guest_email: (d.email as string) || null,
+                p_special_requests: (d.special_requests as string) || null,
+                p_venue_address: (d.venue_address as string) || null,
+                p_end_date: (d.end_date as string) || null,
+                p_addons_snapshot: d._selected_addons || null,
+                p_promo_code_id: (d._promo_id as string) || null,
+                p_total_amount: totalDeposit,
+                p_staff_name: (d.staff_name as string) || null,
+                p_location_id: (d.location_id as string) || null,
+                p_appointment_id: isAppointment ? ((d.service_id as string) || null) : null,
+                p_buffer_minutes: (d._service_buffer_minutes as number) || 0,
+                p_duration: (d.service_duration as number) || 30,
+                p_bot_session_id: ctx.session.id,
+              })
+              .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
+
+            if (slotError || !slotResult) {
+              logger.withContext({ op: 'scheduling.create-booking', ...safeLogErrorContext(slotError) }).error('[SCHEDULING] Failed to create booking');
+              return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+            }
+
+            if (!slotResult.slot_available) {
+              const isClassBooking = d._service_is_class === true;
+              if (isClassBooking) {
+                const caps = await getEnabledCapabilities(ctx.supabase, ctx.business!.id);
+                if (caps.includes('waitlist')) {
+                  return [{
+                    type: 'buttons',
+                    body: 'This class is full! Would you like to join the waitlist? We\'ll notify you if a spot opens up.',
+                    buttons: [
+                      { id: 'wl_join', title: 'Join Waitlist' },
+                      { id: 'go_back', title: 'No Thanks' },
+                    ],
+                  }];
+                }
+                return [{ type: 'text', text: 'Sorry, this class is full. Send *Hi* to try a different class or time.' }];
+              }
+              return [{ type: 'text', text: 'Sorry, that slot was just taken by another customer. Send *Hi* to pick a different time.' }];
+            }
+
+            booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
           }
 
           // Save pre-booking question answers if any
@@ -2351,7 +2379,7 @@ export const schedulingFlow: FlowDefinition = {
             await ctx.supabase
               .from('bookings')
               .update({ metadata: { custom_answers: pbqAnswers } })
-              .eq('id', slotResult.booking_id);
+              .eq('id', booking.id);
           }
         }
 
