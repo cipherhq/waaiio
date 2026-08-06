@@ -185,15 +185,15 @@ export async function POST(request: NextRequest) {
         if (metadata?.type === 'customer_recurring') {
           const stripeSubId = data.subscription as string;
           if (stripeSubId && sessionId) {
-            // Activate the pending subscription
-            await supabase
-              .from('customer_subscriptions')
-              .update({
-                status: 'active',
-                gateway_subscription_code: stripeSubId,
-              })
-              .eq('gateway_subscription_code', sessionId)
-              .eq('status', 'pending');
+            const { activateStripeSubscription } = await import('@/lib/recurring/activate-subscription');
+            const activation = await activateStripeSubscription(supabase, sessionId, stripeSubId);
+
+            if (activation.result === 'db_error' || activation.result === 'inconsistent') {
+              return NextResponse.json({ error: activation.detail || 'Activation failed' }, { status: 500 });
+            }
+            if (activation.result === 'ambiguous') {
+              return NextResponse.json({ error: 'Ambiguous pending subscriptions for session' }, { status: 500 });
+            }
 
             // Also update the payment record
             await supabase
@@ -201,8 +201,6 @@ export async function POST(request: NextRequest) {
               .update({ status: 'success', payment_method: 'card', paid_at: new Date().toISOString() })
               .eq('gateway_reference', sessionId)
               .neq('status', 'success');
-
-            logger.info(`[STRIPE WEBHOOK] Recurring subscription activated: ${stripeSubId} (session ${sessionId})`);
           }
         }
       }
@@ -223,6 +221,14 @@ export async function POST(request: NextRequest) {
           .update({ status: 'failed', gateway_status: 'expired' })
           .eq('gateway_reference', sessionId)
           .neq('status', 'success');
+
+        // Cancel any pending subscription created during this checkout.
+        // Only affects pending rows — already-active rows are not touched.
+        await supabase
+          .from('customer_subscriptions')
+          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .eq('gateway_subscription_code', sessionId)
+          .eq('status', 'pending');
 
         if (expiredPayment?.business_id) {
           await createAlert(supabase, {
@@ -670,7 +676,7 @@ export async function POST(request: NextRequest) {
           .from('customer_subscriptions')
           .select('*')
           .eq('gateway_subscription_code', subscriptionId)
-          .in('status', ['active', 'pending']);
+          .in('status', ['active', 'past_due']); // NOT pending — unactivated subscriptions must not enter renewal processing
 
         const sub = subs?.[0];
         if (sub) {
