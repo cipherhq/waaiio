@@ -191,6 +191,9 @@ export async function POST(request: NextRequest) {
             if (activation.result === 'db_error' || activation.result === 'inconsistent') {
               return NextResponse.json({ error: activation.detail || 'Activation failed' }, { status: 500 });
             }
+            if (activation.result === 'ambiguous') {
+              return NextResponse.json({ error: 'Ambiguous pending subscriptions for session' }, { status: 500 });
+            }
 
             // Also update the payment record
             await supabase

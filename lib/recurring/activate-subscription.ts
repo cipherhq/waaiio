@@ -24,25 +24,50 @@ export async function activateStripeSubscription(
   sessionId: string,
   stripeSubId: string,
 ): Promise<ActivationOutcome> {
-  // Step 1: Conditional pending→active update
-  const { data: activated, error: activateError } = await supabase
+  // Step 1: Query pending rows by Checkout Session ID BEFORE mutating
+  const { data: pendingRows, error: pendingLookupError } = await supabase
     .from('customer_subscriptions')
-    .update({ status: 'active', gateway_subscription_code: stripeSubId })
+    .select('id')
     .eq('gateway_subscription_code', sessionId)
-    .eq('status', 'pending')
-    .select('id');
+    .eq('status', 'pending');
 
-  if (activateError) {
-    logger.error('[STRIPE ACTIVATION] DB error on pending→active update', { op: 'stripe-activation' });
-    return { result: 'db_error', detail: 'activation update failed' };
+  if (pendingLookupError) {
+    logger.error('[STRIPE ACTIVATION] DB error on pending lookup', { op: 'stripe-activation-lookup' });
+    return { result: 'db_error', detail: 'pending lookup failed' };
   }
 
-  if (activated && activated.length > 0) {
-    logger.info(`[STRIPE ACTIVATION] Subscription activated: ${stripeSubId}`);
-    return { result: 'activated', subscriptionId: activated[0].id };
+  // Step 2: Handle cardinality explicitly
+  if (pendingRows && pendingRows.length > 1) {
+    logger.error('[STRIPE ACTIVATION] Ambiguous: multiple pending rows for same session', { op: 'stripe-activation-ambiguous', count: pendingRows.length });
+    return { result: 'ambiguous', count: pendingRows.length };
   }
 
-  // Step 2: Zero rows — check for idempotent replay
+  if (pendingRows && pendingRows.length === 1) {
+    // Exactly one pending row — conditionally activate by ID + session ID + status
+    const targetId = pendingRows[0].id;
+    const { data: activated, error: activateError } = await supabase
+      .from('customer_subscriptions')
+      .update({ status: 'active', gateway_subscription_code: stripeSubId })
+      .eq('id', targetId)
+      .eq('gateway_subscription_code', sessionId)
+      .eq('status', 'pending')
+      .select('id');
+
+    if (activateError) {
+      logger.error('[STRIPE ACTIVATION] DB error on pending→active update', { op: 'stripe-activation' });
+      return { result: 'db_error', detail: 'activation update failed' };
+    }
+
+    if (activated && activated.length > 0) {
+      logger.info(`[STRIPE ACTIVATION] Subscription activated: ${stripeSubId}`);
+      return { result: 'activated', subscriptionId: activated[0].id };
+    }
+
+    // Zero rows after selecting one — race condition or state changed
+    // Fall through to already-active check below
+  }
+
+  // Step 3: Zero pending rows — check for idempotent replay
   const { data: existing, error: lookupError } = await supabase
     .from('customer_subscriptions')
     .select('id, status')

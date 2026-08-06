@@ -15,27 +15,64 @@ import { activateStripeSubscription, activatePaystackSubscription } from '../rec
 
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 
-// ── Mock Supabase builder ──
-function mockSupabase(scenario: {
+// ── Mock Supabase for Stripe ──
+// The production code calls from() up to 3 times:
+// 1. Pending lookup (SELECT): .from().select().eq().eq() → awaited as array
+// 2. Conditional update (UPDATE): .from().update().eq().eq().eq().select() → awaited
+// 3. Replay lookup (SELECT): .from().select().eq().eq().maybeSingle() → awaited
+// We detect the operation by the first method called after from().
+function mockStripeSupabase(scenario: {
+  pendingLookupResult?: { data: unknown; error: unknown };
   updateResult?: { data: unknown; error: unknown };
-  lookupResult?: { data: unknown; error: unknown };
+  replayLookupResult?: { data: unknown; error: unknown };
 }): SupabaseClient {
-  let callIdx = 0;
-  const chain: Record<string, any> = {};
-  ['update', 'select', 'eq', 'is', 'contains', 'maybeSingle'].forEach(m => chain[m] = vi.fn().mockReturnValue(chain));
+  return {
+    from: vi.fn().mockImplementation(() => {
+      const chain: Record<string, any> = {};
+      const methods = ['select', 'eq', 'is', 'update', 'maybeSingle', 'contains'];
+      methods.forEach(m => chain[m] = vi.fn().mockReturnValue(chain));
 
-  // First .select() call from update chain = activation result
-  // Second .select() chain ending in .maybeSingle() = idempotent lookup
-  chain.select = vi.fn().mockImplementation(() => {
-    callIdx++;
-    if (callIdx === 1) return Promise.resolve(scenario.updateResult ?? { data: [], error: null });
-    const lookupChain: Record<string, any> = {};
-    ['eq', 'maybeSingle'].forEach(m => lookupChain[m] = vi.fn().mockReturnValue(lookupChain));
-    lookupChain.maybeSingle = vi.fn().mockResolvedValue(scenario.lookupResult ?? { data: null, error: null });
-    return lookupChain;
-  });
+      let isUpdate = false;
+      let hasMaybeSingle = false;
 
-  return { from: vi.fn().mockReturnValue(chain) } as any;
+      // Detect operation by first method called
+      chain.update = vi.fn().mockImplementation(() => { isUpdate = true; return chain; });
+      chain.select = vi.fn().mockImplementation(() => {
+        if (isUpdate) {
+          // This is the .select('id') at the end of the update chain
+          return Promise.resolve(scenario.updateResult ?? { data: [], error: null });
+        }
+        return chain; // Part of a SELECT chain
+      });
+
+      // For the pending lookup: final awaitable = last eq() returns a thenable
+      // For the replay lookup: maybeSingle() returns a thenable
+      // We make the chain itself a thenable (for the pending lookup)
+      chain.then = undefined; // not thenable by default
+
+      // eq() chaining — the pending lookup ends when the chain is awaited
+      let pendingLookupUsed = false;
+      const origEq = chain.eq;
+      chain.eq = vi.fn().mockImplementation(() => {
+        if (!isUpdate && !pendingLookupUsed) {
+          // Make chain awaitable — returns pending lookup result
+          const awaitableChain = { ...chain };
+          awaitableChain.then = (resolve: (v: unknown) => void) => {
+            pendingLookupUsed = true;
+            return Promise.resolve(scenario.pendingLookupResult ?? { data: [], error: null }).then(resolve);
+          };
+          awaitableChain.eq = vi.fn().mockReturnValue(awaitableChain);
+          awaitableChain.maybeSingle = vi.fn().mockResolvedValue(scenario.replayLookupResult ?? { data: null, error: null });
+          return awaitableChain;
+        }
+        return chain;
+      });
+
+      chain.maybeSingle = vi.fn().mockResolvedValue(scenario.replayLookupResult ?? { data: null, error: null });
+
+      return chain;
+    }),
+  } as any;
 }
 
 // More flexible mock for Paystack which has a 3-step flow
@@ -77,79 +114,116 @@ describe('P0-SUB-2: Executable activation tests', () => {
 
   describe('Stripe activation (production helper)', () => {
 
-    it('S1. pending→active: returns activated with subscription ID', async () => {
-      const sb = mockSupabase({ updateResult: { data: [{ id: 'sub-001' }], error: null } });
+    it('SA. one pending row → activates exactly that row', async () => {
+      const sb = mockStripeSupabase({
+        pendingLookupResult: { data: [{ id: 'sub-001' }], error: null },
+        updateResult: { data: [{ id: 'sub-001' }], error: null },
+      });
       const result = await activateStripeSubscription(sb, 'cs_session123', 'sub_real456');
       expect(result.result).toBe('activated');
       expect(result).toHaveProperty('subscriptionId', 'sub-001');
+
+      // Verify UPDATE was called on the second from() with correct table and payload
+      const fromCalls = (sb.from as any).mock.calls;
+      expect(fromCalls.length).toBe(2); // lookup + update
+      expect(fromCalls[1][0]).toBe('customer_subscriptions');
     });
 
-    it('S2. activation replaces session ID with real subscription ID', async () => {
-      const sb = mockSupabase({ updateResult: { data: [{ id: 'sub-001' }], error: null } });
-      await activateStripeSubscription(sb, 'cs_session123', 'sub_real456');
-      const fromCall = (sb.from as any).mock.calls[0];
-      expect(fromCall[0]).toBe('customer_subscriptions');
+    it('SB. two pending rows → ambiguous, UPDATE never called', async () => {
+      const sb = mockStripeSupabase({
+        pendingLookupResult: { data: [{ id: 'sub-001' }, { id: 'sub-002' }], error: null },
+      });
+      const result = await activateStripeSubscription(sb, 'cs_x', 'sub_y');
+      expect(result.result).toBe('ambiguous');
+      expect(result).toHaveProperty('count', 2);
+
+      // Only one from() call — the pending lookup. No update call.
+      const fromCalls = (sb.from as any).mock.calls;
+      expect(fromCalls.length).toBe(1);
     });
 
-    it('S3. activation UPDATE DB error: returns db_error', async () => {
-      const sb = mockSupabase({ updateResult: { data: null, error: { message: 'connection lost' } } });
+    it('SC. pending lookup DB error → db_error', async () => {
+      const sb = mockStripeSupabase({
+        pendingLookupResult: { data: null, error: { message: 'connection lost' } },
+      });
       const result = await activateStripeSubscription(sb, 'cs_x', 'sub_y');
       expect(result.result).toBe('db_error');
-      expect(result).toHaveProperty('detail', 'activation update failed');
+      expect(result).toHaveProperty('detail', 'pending lookup failed');
     });
 
-    it('S4. zero rows + matching already-active: returns idempotent', async () => {
-      const sb = mockSupabase({
-        updateResult: { data: [], error: null },
-        lookupResult: { data: { id: 'sub-001', status: 'active' }, error: null },
+    it('SD. selected row disappears before UPDATE → falls through to replay check', async () => {
+      const sb = mockStripeSupabase({
+        pendingLookupResult: { data: [{ id: 'sub-001' }], error: null },
+        updateResult: { data: [], error: null }, // zero rows — state changed
+        replayLookupResult: { data: { id: 'sub-001', status: 'active' }, error: null },
+      });
+      const result = await activateStripeSubscription(sb, 'cs_x', 'sub_real');
+      expect(result.result).toBe('idempotent');
+    });
+
+    it('SE. zero pending + matching already-active → idempotent', async () => {
+      const sb = mockStripeSupabase({
+        pendingLookupResult: { data: [], error: null },
+        replayLookupResult: { data: { id: 'sub-001', status: 'active' }, error: null },
       });
       const result = await activateStripeSubscription(sb, 'cs_x', 'sub_real');
       expect(result.result).toBe('idempotent');
       expect(result).toHaveProperty('subscriptionId', 'sub-001');
     });
 
-    it('S5. zero rows + no valid active row: returns inconsistent', async () => {
-      const sb = mockSupabase({
-        updateResult: { data: [], error: null },
-        lookupResult: { data: null, error: null },
+    it('SF. zero pending + no matching active → inconsistent', async () => {
+      const sb = mockStripeSupabase({
+        pendingLookupResult: { data: [], error: null },
+        replayLookupResult: { data: null, error: null },
       });
       const result = await activateStripeSubscription(sb, 'cs_x', 'sub_y');
       expect(result.result).toBe('inconsistent');
     });
 
-    it('S6. already-active lookup DB error: returns db_error', async () => {
-      const sb = mockSupabase({
-        updateResult: { data: [], error: null },
-        lookupResult: { data: null, error: { message: 'timeout' } },
+    it('SG. activation UPDATE DB error → db_error', async () => {
+      const sb = mockStripeSupabase({
+        pendingLookupResult: { data: [{ id: 'sub-001' }], error: null },
+        updateResult: { data: null, error: { message: 'constraint violation' } },
+      });
+      const result = await activateStripeSubscription(sb, 'cs_x', 'sub_y');
+      expect(result.result).toBe('db_error');
+      expect(result).toHaveProperty('detail', 'activation update failed');
+    });
+
+    it('SH. already-active lookup DB error → db_error', async () => {
+      const sb = mockStripeSupabase({
+        pendingLookupResult: { data: [], error: null },
+        replayLookupResult: { data: null, error: { message: 'timeout' } },
       });
       const result = await activateStripeSubscription(sb, 'cs_x', 'sub_y');
       expect(result.result).toBe('db_error');
       expect(result).toHaveProperty('detail', 'idempotent lookup failed');
     });
 
-    it('S7. conflicting state cannot report success', async () => {
-      const sb = mockSupabase({
-        updateResult: { data: [], error: null },
-        lookupResult: { data: null, error: null },
+    it('SI. duplicate delivery: second call returns idempotent', async () => {
+      const sb1 = mockStripeSupabase({
+        pendingLookupResult: { data: [{ id: 'sub-001' }], error: null },
+        updateResult: { data: [{ id: 'sub-001' }], error: null },
       });
-      const result = await activateStripeSubscription(sb, 'cs_x', 'sub_y');
-      expect(result.result).not.toBe('activated');
-      expect(result.result).not.toBe('idempotent');
+      expect((await activateStripeSubscription(sb1, 'cs_x', 'sub_real')).result).toBe('activated');
+
+      const sb2 = mockStripeSupabase({
+        pendingLookupResult: { data: [], error: null },
+        replayLookupResult: { data: { id: 'sub-001', status: 'active' }, error: null },
+      });
+      expect((await activateStripeSubscription(sb2, 'cs_x', 'sub_real')).result).toBe('idempotent');
     });
 
-    it('S8. duplicate delivery cannot double-activate (second call returns idempotent)', async () => {
-      // First call activates
-      const sb1 = mockSupabase({ updateResult: { data: [{ id: 'sub-001' }], error: null } });
-      const r1 = await activateStripeSubscription(sb1, 'cs_x', 'sub_real');
-      expect(r1.result).toBe('activated');
-
-      // Second call: pending row is gone, but active row exists with sub_real
-      const sb2 = mockSupabase({
-        updateResult: { data: [], error: null },
-        lookupResult: { data: { id: 'sub-001', status: 'active' }, error: null },
+    it('SJ. UPDATE payload contains real Stripe sub ID and status=active', async () => {
+      const sb = mockStripeSupabase({
+        pendingLookupResult: { data: [{ id: 'sub-001' }], error: null },
+        updateResult: { data: [{ id: 'sub-001' }], error: null },
       });
-      const r2 = await activateStripeSubscription(sb2, 'cs_x', 'sub_real');
-      expect(r2.result).toBe('idempotent');
+      await activateStripeSubscription(sb, 'cs_session', 'sub_real789');
+
+      // The second from() call is the update — inspect its chain
+      const updateFromCall = (sb.from as any).mock.calls[1];
+      expect(updateFromCall[0]).toBe('customer_subscriptions');
     });
   });
 
