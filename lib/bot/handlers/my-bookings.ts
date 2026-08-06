@@ -434,6 +434,12 @@ export async function handleModifyBooking(
       .eq('id', bookingId)
       .in('status', ['pending', 'confirmed']);
 
+    // Release package session if one was used for this booking
+    try {
+      const { data: releaseResult } = await supabase.rpc('release_package_session', { p_booking_id: bookingId });
+      if (releaseResult?.released) logger.info(`[BOOKING] Package session released for cancelled booking ${bookingId}`);
+    } catch { /* Non-fatal — session release is best-effort on cancellation */ }
+
     // Notify assigned staff member about cancellation
     if (cancelledBooking?.staff_id && cancelledBooking.business_id) {
       import('../flows/shared/notify-staff').then(({ notifyStaffBookingCancelled }) => {

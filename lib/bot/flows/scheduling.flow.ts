@@ -2097,6 +2097,42 @@ export const schedulingFlow: FlowDefinition = {
         const promoDiscount = (d._promo_discount as number) || 0;
         const finalServicePrice = Math.max(0, servicePrice - promoDiscount);
 
+        // ── Package session check: cover base service price if eligible ──
+        let packageEnrollmentId: string | null = null;
+        let packageCoveredAmount = 0;
+        if (finalServicePrice > 0 && ctx.business?.id) {
+          const customerPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+          const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
+          const serviceId = (d.service_id as string) || null;
+
+          // Find the first active, non-expired enrollment with remaining sessions
+          const { data: enrollments } = await ctx.supabase
+            .from('package_enrollments')
+            .select('id, package_id, sessions_total, sessions_used, expires_at, is_active, service_packages!inner(id, service_ids, is_active)')
+            .eq('business_id', ctx.business.id)
+            .eq('is_active', true)
+            .or(`customer_phone.eq.${sanitizeFilterValue(customerPhone)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
+            .order('purchased_at', { ascending: true }); // FIFO: oldest first
+
+          if (enrollments && enrollments.length > 0) {
+            for (const enrollment of enrollments) {
+              // Check sessions remaining
+              if (enrollment.sessions_used >= enrollment.sessions_total) continue;
+              // Check expiry
+              if (enrollment.expires_at && new Date(enrollment.expires_at) < new Date()) continue;
+              // Check package active
+              const pkg = enrollment.service_packages as unknown as { id: string; service_ids: string[] | null; is_active: boolean };
+              if (!pkg?.is_active) continue;
+              // Check service eligibility (empty = all services)
+              if (serviceId && pkg.service_ids && pkg.service_ids.length > 0 && !pkg.service_ids.includes(serviceId)) continue;
+              // Eligible!
+              packageEnrollmentId = enrollment.id;
+              packageCoveredAmount = finalServicePrice; // Package covers base service price
+              break;
+            }
+          }
+        }
+
         // For restaurants: check business deposit_per_guest
         let depositPerGuest = 0;
         if (ctx.business) {
@@ -2124,7 +2160,10 @@ export const schedulingFlow: FlowDefinition = {
         const isPrepay = prepayMode === 'full' || (prepayMode === 'auto' && prepayCategories.has(ctx.business?.category || ''));
 
         let totalDeposit: number;
-        if (prepayMode === 'free') {
+        if (packageEnrollmentId && packageCoveredAmount > 0) {
+          // Package covers the base service price — no deposit needed for covered amount
+          totalDeposit = 0;
+        } else if (prepayMode === 'free') {
           totalDeposit = 0;
         } else if (serviceDeposit > 0) {
           // Explicit deposit set on the service (not discounted — deposit is a fixed amount)
@@ -2284,6 +2323,29 @@ export const schedulingFlow: FlowDefinition = {
           }
 
           booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
+
+          // ── Claim package session atomically (after booking succeeds) ──
+          if (packageEnrollmentId) {
+            const { data: claimResult, error: claimError } = await ctx.supabase.rpc('claim_package_session', {
+              p_enrollment_id: packageEnrollmentId,
+              p_booking_id: booking.id,
+              p_business_id: ctx.business!.id,
+              p_service_id: (d.service_id as string) || null,
+            });
+
+            if (claimError || !claimResult?.claimed) {
+              // Package claim failed — the booking was already created with totalDeposit=0.
+              // We must NOT leave a free booking without entitlement.
+              // Cancel the booking and tell the customer.
+              logger.error('[SCHEDULING] Package claim failed after booking — cancelling booking', { op: 'package-claim' });
+              await ctx.supabase.from('bookings').update({ status: 'cancelled', cancelled_at: new Date().toISOString() }).eq('id', booking.id);
+              return [{ type: 'text', text: await ctx.t('Sorry, your package session could not be reserved. The booking has been cancelled. Please try again or contact the business.') }];
+            }
+
+            // Store enrollment association in session for reference
+            d._package_enrollment_id = packageEnrollmentId;
+            d._package_covered = true;
+          }
 
           // Save pre-booking question answers if any
           const pbqAnswers = d._pbq_answers as Record<string, string> | undefined;
