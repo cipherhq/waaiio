@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-06
 
+### fix(P1-PROP-1): correct property occupancy status — checked_in instead of in_progress
+
+- **Root cause:** `app/dashboard/properties/page.tsx` line 125 checked `r.status === 'in_progress'` to determine occupancy, but the canonical check-in API (`app/api/reservations/verify/[code]/route.ts`) sets status to `'checked_in'` (added in migration 132). Additionally, the reservation query on line 112 did not include `'checked_in'` or `'checked_out'` in the status filter, so checked-in reservations were never even fetched.
+- **Fix:** (1) Added `'checked_in'` and `'checked_out'` to the reservation status query filter. (2) Extracted `getOccupancyStatus()` helper into `lib/properties/occupancy.ts` that checks both `'checked_in'` (canonical) and `'in_progress'` (legacy). (3) Replaced inline occupancy logic with the extracted helper.
+- **Files changed:** `app/dashboard/properties/page.tsx`, `lib/properties/occupancy.ts` (new), `lib/properties/__tests__/occupancy.test.ts` (new, 17 tests)
+- **Affects:** Properties dashboard occupancy badges. No changes to reservation creation, check-in API, bot flows, or any other domain.
+- **Could break:** Nothing — the fix is additive (recognizes more statuses as occupied). Legacy `in_progress` reservations still show as occupied.
+
 ### fix(P1-REPORT-2): Support advertised document image uploads
 
 - **Root cause:** Document upload UI (`app/dashboard/reports/page.tsx`) advertises `accept=".pdf,.png,.jpg,.jpeg"` and labels "PDF, PNG, JPG — max 10MB", but the upload API (`app/api/reports/upload/route.ts`) validated only `%PDF` magic bytes, rejected all images with "Only PDF files are allowed", and hardcoded `.pdf` extension and `application/pdf` content type for all uploads.
@@ -30,6 +38,10 @@ If something breaks, check this log to find what changed and when.
 - **CORRECTION 3 — Atomic cancellation + session release:** New `cancel_booking_with_release` RPC atomically cancels booking AND releases any active package redemption in ONE PostgreSQL transaction. Bot cancellation handler (`my-bookings.ts`) now uses this RPC instead of two-step UPDATE+release. Dashboard cancellation routes through `/api/bookings/[id]/status` (new `cancel` action) which calls the atomic RPC. File: `lib/bot/handlers/my-bookings.ts`, `app/api/bookings/[id]/status/route.ts`, `app/dashboard/reservations/page.tsx`.
 - **CORRECTION 4 — Fix scheduling flow RPC params:** Removed nonexistent `p_uncovered_amount` param, added missing `p_total_amount`, `p_staff_name`, `p_location_id`, `p_duration` to match the actual RPC signature.
 - **Tests:** 18 real PostgreSQL tests (up from 13). New tests: #14 cancel_booking_with_release atomicity, #15 non-cancellable booking rejection, #16 auto-approval status passthrough, #17 no-show does NOT release package session, #18 cancel without package.
+
+---
+
+## 2026-08-05
 
 ### fix: Concurrent finalizer hardening — FOR UPDATE on claim row
 
