@@ -69,7 +69,7 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
       CREATE TABLE IF NOT EXISTS bookings (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), reference_code TEXT UNIQUE,
         business_id UUID, user_id UUID, service_id UUID, appointment_id UUID,
-        staff_id UUID, staff_name TEXT, date DATE, time TEXT,
+        staff_id UUID, staff_name TEXT, date DATE, time TIME,
         party_size INT DEFAULT 1, flow_type flow_type DEFAULT 'scheduling',
         channel booking_channel DEFAULT 'whatsapp', deposit_amount NUMERIC(12,2) DEFAULT 0,
         deposit_status deposit_status DEFAULT 'none', status reservation_status DEFAULT 'pending',
