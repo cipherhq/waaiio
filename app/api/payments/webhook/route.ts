@@ -145,26 +145,61 @@ export async function POST(request: NextRequest) {
           gateway_customer_code: chargeCustomer?.customer_code || null,
         };
 
-        // 1. Exact reference activation: find the ONE pending subscription whose setup reference matches
+        // 1. Exact reference activation: find pending subscriptions matching the setup reference
         if (chargeReference && chargeAuth.reusable) {
-          const { data: exactMatch } = await supabase
+          const { data: exactMatch, error: lookupError } = await supabase
             .from('customer_subscriptions')
             .select('id')
             .eq('gateway', 'paystack')
             .eq('status', 'pending')
             .is('authorization_code', null)
-            .contains('metadata', { payment_reference: chargeReference })
-            .limit(1);
+            .contains('metadata', { payment_reference: chargeReference });
+
+          if (lookupError) {
+            logger.error('[PAYSTACK WEBHOOK] Pending subscription lookup DB error — webhook should retry', { op: 'paystack-activation-lookup' });
+            return NextResponse.json({ error: 'Activation lookup failed' }, { status: 500 });
+          }
 
           if (exactMatch && exactMatch.length === 1) {
-            await supabase
+            // Exactly one matching pending subscription — activate it
+            const { data: activated, error: activateError } = await supabase
               .from('customer_subscriptions')
               .update({ ...authUpdate, status: 'active' })
               .eq('id', exactMatch[0].id)
-              .eq('status', 'pending'); // Conditional — safe for duplicate webhooks
+              .eq('status', 'pending') // Conditional — safe for duplicate webhooks
+              .select('id');
 
-            logger.info(`[PAYSTACK WEBHOOK] Activated pending subscription via exact reference: ${exactMatch[0].id}`);
+            if (activateError) {
+              logger.error('[PAYSTACK WEBHOOK] Activation UPDATE DB error — webhook should retry', { op: 'paystack-activation-update' });
+              return NextResponse.json({ error: 'Activation update failed' }, { status: 500 });
+            }
+
+            if (activated && activated.length > 0) {
+              logger.info(`[PAYSTACK WEBHOOK] Activated pending subscription via exact reference: ${activated[0].id}`);
+            } else {
+              // Zero rows — may be a duplicate webhook (row already activated)
+              const { data: alreadyActive } = await supabase
+                .from('customer_subscriptions')
+                .select('id')
+                .eq('id', exactMatch[0].id)
+                .eq('status', 'active')
+                .maybeSingle();
+
+              if (alreadyActive) {
+                logger.info(`[PAYSTACK WEBHOOK] Subscription already active (idempotent replay): ${alreadyActive.id}`);
+              } else {
+                logger.error('[PAYSTACK WEBHOOK] Activation finalization inconsistent — webhook should retry', { op: 'paystack-activation-inconsistent' });
+                return NextResponse.json({ error: 'Activation inconsistent' }, { status: 500 });
+              }
+            }
+          } else if (exactMatch && exactMatch.length > 1) {
+            // Ambiguous: multiple pending subscriptions for the same reference — do not pick one
+            logger.error('[PAYSTACK WEBHOOK] Multiple pending subscriptions match setup reference — inconsistent', {
+              op: 'paystack-activation-ambiguous', count: exactMatch.length,
+            });
+            return NextResponse.json({ error: 'Ambiguous pending subscriptions' }, { status: 500 });
           }
+          // exactMatch.length === 0: no pending subscription for this reference — skip activation (may be a non-recurring charge)
         }
 
         // 2. Legacy broad match: capture auth for any remaining subscriptions missing it
