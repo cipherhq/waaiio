@@ -2101,35 +2101,33 @@ export const schedulingFlow: FlowDefinition = {
         let packageEnrollmentId: string | null = null;
         let packageCoveredAmount = 0;
         if (finalServicePrice > 0 && ctx.business?.id) {
-          const customerPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
-          const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
-          const serviceId = (d.service_id as string) || null;
+          try {
+            const customerPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+            const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
+            const serviceId = (d.service_id as string) || null;
 
-          // Find the first active, non-expired enrollment with remaining sessions
-          const { data: enrollments } = await ctx.supabase
-            .from('package_enrollments')
-            .select('id, package_id, sessions_total, sessions_used, expires_at, is_active, service_packages!inner(id, service_ids, is_active)')
-            .eq('business_id', ctx.business.id)
-            .eq('is_active', true)
-            .or(`customer_phone.eq.${sanitizeFilterValue(customerPhone)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
-            .order('purchased_at', { ascending: true }); // FIFO: oldest first
+            const { data: enrollments } = await ctx.supabase
+              .from('package_enrollments')
+              .select('id, package_id, sessions_total, sessions_used, expires_at, is_active, service_packages!inner(id, service_ids, is_active)')
+              .eq('business_id', ctx.business.id)
+              .eq('is_active', true)
+              .or(`customer_phone.eq.${sanitizeFilterValue(customerPhone)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
+              .order('purchased_at', { ascending: true });
 
-          if (enrollments && enrollments.length > 0) {
-            for (const enrollment of enrollments) {
-              // Check sessions remaining
-              if (enrollment.sessions_used >= enrollment.sessions_total) continue;
-              // Check expiry
-              if (enrollment.expires_at && new Date(enrollment.expires_at) < new Date()) continue;
-              // Check package active
-              const pkg = enrollment.service_packages as unknown as { id: string; service_ids: string[] | null; is_active: boolean };
-              if (!pkg?.is_active) continue;
-              // Check service eligibility (empty = all services)
-              if (serviceId && pkg.service_ids && pkg.service_ids.length > 0 && !pkg.service_ids.includes(serviceId)) continue;
-              // Eligible!
-              packageEnrollmentId = enrollment.id;
-              packageCoveredAmount = finalServicePrice; // Package covers base service price
-              break;
+            if (enrollments && enrollments.length > 0) {
+              for (const enrollment of enrollments) {
+                if (enrollment.sessions_used >= enrollment.sessions_total) continue;
+                if (enrollment.expires_at && new Date(enrollment.expires_at) < new Date()) continue;
+                const pkg = enrollment.service_packages as unknown as { id: string; service_ids: string[] | null; is_active: boolean };
+                if (!pkg?.is_active) continue;
+                if (serviceId && pkg.service_ids && pkg.service_ids.length > 0 && !pkg.service_ids.includes(serviceId)) continue;
+                packageEnrollmentId = enrollment.id;
+                packageCoveredAmount = finalServicePrice;
+                break;
+              }
             }
+          } catch {
+            // Package lookup failed — proceed with normal payment (non-fatal)
           }
         }
 
