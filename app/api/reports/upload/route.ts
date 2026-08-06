@@ -2,7 +2,23 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { validateUploadedFile } from '@/lib/security/validate-file';
 import { logger } from '@/lib/logger';
+
+/** MIME types accepted for document uploads (PDF + images the UI advertises) */
+const ALLOWED_DOCUMENT_MIMES = [
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/jpg',   // some browsers send image/jpg
+];
+
+/** Map detected MIME to file extension */
+const MIME_TO_EXT: Record<string, string> = {
+  'application/pdf': 'pdf',
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+};
 
 // Storage quotas per tier (in bytes)
 const STORAGE_QUOTAS: Record<string, number> = {
@@ -38,12 +54,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'File too large. Maximum size is 10MB.' }, { status: 413 });
     }
 
-    // Validate file type (check magic bytes for PDF: %PDF)
-    const headerBytes = new Uint8Array(await file.slice(0, 5).arrayBuffer());
-    const header = String.fromCharCode(...headerBytes);
-    if (!header.startsWith('%PDF')) {
-      return NextResponse.json({ error: 'Only PDF files are allowed.' }, { status: 400 });
+    // Validate file type via magic-byte signature (not just extension/MIME header)
+    const validation = await validateUploadedFile(file, ALLOWED_DOCUMENT_MIMES);
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
+    const detectedMime = validation.detectedMime;
+    const fileExt = MIME_TO_EXT[detectedMime] || 'pdf';
 
     // Verify business ownership and get tier
     const { data: biz } = await supabase
@@ -75,16 +92,16 @@ export async function POST(request: NextRequest) {
       }, { status: 413 });
     }
 
-    // Upload file to Supabase Storage
+    // Upload file to Supabase Storage with correct extension and MIME
     const fileId = crypto.randomUUID();
-    const filePath = `${businessId}/${fileId}.pdf`;
+    const filePath = `${businessId}/${fileId}.${fileExt}`;
     const arrayBuffer = await file.arrayBuffer();
     const buffer = new Uint8Array(arrayBuffer);
 
     const { error: uploadError } = await supabase.storage
       .from('customer-reports')
       .upload(filePath, buffer, {
-        contentType: 'application/pdf',
+        contentType: detectedMime,
         upsert: false,
       });
 
