@@ -25,14 +25,14 @@ export async function PATCH(
 
     const body = await request.json();
     const { action, notes, reason, staff_id, notify_customer } = body as {
-      action: 'check_in' | 'check_out' | 'no_show';
+      action: 'check_in' | 'check_out' | 'no_show' | 'cancel';
       notes?: string;
       reason?: string;
       staff_id?: string;
       notify_customer?: boolean;
     };
 
-    if (!action || !['check_in', 'check_out', 'no_show'].includes(action)) {
+    if (!action || !['check_in', 'check_out', 'no_show', 'cancel'].includes(action)) {
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
 
@@ -150,9 +150,67 @@ export async function PATCH(
           'Please contact us to reschedule. Type *Hi* to book again.',
         ].filter(Boolean).join('\n');
       }
+    } else if (action === 'cancel') {
+      // Atomic cancellation + package session release via RPC
+      if (!['pending', 'confirmed'].includes(booking.status)) {
+        return NextResponse.json({ error: 'Booking cannot be cancelled', status: booking.status }, { status: 400 });
+      }
+
+      const { data: cancelResult, error: cancelError } = await service
+        .rpc('cancel_booking_with_release', {
+          p_booking_id: id,
+          p_cancelled_by: 'business',
+        });
+
+      if (cancelError) {
+        logger.error('[BOOKING-STATUS] Atomic cancel error:', cancelError);
+        return NextResponse.json({ error: 'Failed to cancel booking' }, { status: 500 });
+      }
+
+      if (!cancelResult?.cancelled) {
+        return NextResponse.json({ error: cancelResult?.reason || 'Cancel failed' }, { status: 400 });
+      }
+
+      // Notify customer about cancellation
+      if (notify_customer !== false && booking.guest_phone) {
+        customerMessage = `Your booking at ${biz.name} on ${booking.date} has been cancelled. Contact us if you have questions.`;
+      }
+
+      // Auto-notify waitlisted customers when cancellation frees a slot
+      if (biz?.metadata?.waitlist_auto_notify !== false) {
+        try {
+          await notifyWaitlistOnSlotOpen({
+            supabase: service,
+            businessId: booking.business_id,
+            businessName: biz?.name || 'the business',
+            date: booking.date,
+            serviceId: booking.service_id,
+          });
+        } catch (err) {
+          logger.error('[BOOKING-STATUS] Waitlist auto-notify error:', err);
+        }
+      }
+
+      // Send WhatsApp notification (non-blocking)
+      if (customerMessage && booking.guest_phone) {
+        try {
+          const resolver = new ChannelResolver(service);
+          const resolved = await resolver.resolveByBusinessId(booking.business_id);
+          if (resolved) {
+            const phone = booking.guest_phone.startsWith('+')
+              ? booking.guest_phone.slice(1)
+              : booking.guest_phone;
+            await resolved.sender.sendText({ to: phone, text: customerMessage });
+          }
+        } catch (err) {
+          logger.error('[BOOKING-STATUS] Cancel notification error:', err);
+        }
+      }
+
+      return NextResponse.json({ success: true, action, session_released: cancelResult.session_released });
     }
 
-    // Update booking
+    // Update booking (for non-cancel actions — cancel uses atomic RPC above)
     const { error: updateError } = await service
       .from('bookings')
       .update(updateData)

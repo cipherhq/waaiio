@@ -5,7 +5,23 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
-## 2026-08-05
+## 2026-08-06
+
+### fix(P1-PKG-1): Atomic package redemption — final corrections
+
+- **Remove unsafe bot cancellation fallback:** Bot cancellation handler no longer falls back to direct `bookings UPDATE` if the atomic RPC fails. RPC failure means cancellation did not succeed — customer gets a safe retry message, no staff notification is emitted, no false cancellation state is created. Files: `lib/bot/handlers/my-bookings.ts`.
+- **Remove add-on monetization:** Removed P1-PKG-1-invented add-on billing (`totalDeposit = addonTotal`) from the package path. Package-covered bookings now set `totalDeposit = 0`, matching the pre-existing canonical behavior where add-ons are not charged separately. Add-on snapshots are preserved. File: `lib/bot/flows/scheduling.flow.ts`.
+- **Appointment eligibility:** Packages now skip appointment bookings entirely. `service_packages.service_ids` references the `services` table; appointments are a separate `appointments` table with different UUIDs. No evidence packages are designed to cover appointments. Safe behavior: appointment bookings proceed normally without package redemption. File: `lib/bot/flows/scheduling.flow.ts`.
+- **Dashboard cancellation failure safety:** Dashboard now returns early on cancellation API failure without emitting staff cancellation notifications. Staff notification only fires after confirmed cancellation success. File: `app/dashboard/reservations/page.tsx`.
+- **Bot cancellation regression tests (5):** A: success → message + staff ok. B: RPC error → no fallback, no success msg. C: cancelled:false → no success msg. D: package cancel → session_released logged. E: failure → no booking state change. File: `lib/__tests__/p1-pkg1-bot-cancellation.test.ts`.
+
+### fix(P1-PKG-1): Atomic package redemption corrections — wrap canonical booking, preserve auto-approval, atomic cancellation
+
+- **CORRECTION 1 — Stop duplicating booking engine:** `book_with_package_atomic` now calls the canonical `book_slot_atomic` internally instead of hand-writing its own INSERT. This eliminates drift between the two paths (advisory locks, capacity checks, buffer overlap, idempotent retry). File: `supabase/migrations/308_package_redemption.sql`.
+- **CORRECTION 2 — Preserve auto-approval:** Package bookings now pass the caller-supplied `p_status` through to `book_slot_atomic` using the same `d._auto_approve !== false ? 'confirmed' : 'pending'` logic as non-package bookings. Previously hardcoded `'confirmed'`, bypassing manual-approval businesses. File: `lib/bot/flows/scheduling.flow.ts`.
+- **CORRECTION 3 — Atomic cancellation + session release:** New `cancel_booking_with_release` RPC atomically cancels booking AND releases any active package redemption in ONE PostgreSQL transaction. Bot cancellation handler (`my-bookings.ts`) now uses this RPC instead of two-step UPDATE+release. Dashboard cancellation routes through `/api/bookings/[id]/status` (new `cancel` action) which calls the atomic RPC. File: `lib/bot/handlers/my-bookings.ts`, `app/api/bookings/[id]/status/route.ts`, `app/dashboard/reservations/page.tsx`.
+- **CORRECTION 4 — Fix scheduling flow RPC params:** Removed nonexistent `p_uncovered_amount` param, added missing `p_total_amount`, `p_staff_name`, `p_location_id`, `p_duration` to match the actual RPC signature.
+- **Tests:** 18 real PostgreSQL tests (up from 13). New tests: #14 cancel_booking_with_release atomicity, #15 non-cancellable booking rejection, #16 auto-approval status passthrough, #17 no-show does NOT release package session, #18 cancel without package.
 
 ### fix: Concurrent finalizer hardening — FOR UPDATE on claim row
 

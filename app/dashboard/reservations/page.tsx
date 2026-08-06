@@ -509,6 +509,43 @@ export default function BookingsPage() {
       if (newStatus === 'completed') extra.completed_at = now;
     }
 
+    // For booking cancellations, use the atomic API (handles package session release)
+    if (newStatus === 'cancelled' && !isThisReservation) {
+      try {
+        const res = await fetch(`/api/bookings/${id}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'cancel' }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          console.error('[DASHBOARD] Cancel API error:', err);
+          // Cancellation failed — refresh UI without emitting downstream notifications
+          fetchBookings();
+          return;
+        }
+      } catch {
+        // Network error — cancellation did not succeed, refresh and return
+        fetchBookings();
+        return;
+      }
+
+      // Only notify staff AFTER confirmed cancellation success
+      if (booking?.staff_id) {
+        fetch('/api/bookings/notify-staff-cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bookingId: booking.id,
+            businessId: business.id,
+          }),
+        }).catch(() => {});
+      }
+
+      fetchBookings();
+      return;
+    }
+
     const table = isThisReservation ? 'reservations' : 'bookings';
     await supabase.from(table).update({ status: newStatus, ...extra }).eq('id', id);
 

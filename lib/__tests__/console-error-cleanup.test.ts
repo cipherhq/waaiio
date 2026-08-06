@@ -76,7 +76,7 @@ describe('Production console.error allowlist (exact counts)', () => {
     'app/dashboard/page.tsx': { count: 1, client: true, reason: 'Browser error debugging for dashboard load failure' },
     'app/dashboard/products/page.tsx': { count: 1, client: true, reason: 'Browser error debugging for product save' },
     'app/dashboard/properties/page.tsx': { count: 2, client: true, reason: 'Browser error debugging for property CRUD' },
-    'app/dashboard/reservations/page.tsx': { count: 2, client: true, reason: 'Browser error debugging for reservation queries' },
+    'app/dashboard/reservations/page.tsx': { count: 3, client: true, reason: 'Browser error debugging for reservation queries + atomic cancel API failure' },
     'app/dashboard/staff/page.tsx': { count: 3, client: true, reason: 'Browser error debugging for staff operations' },
     'app/dashboard/settings/tabs/AccountTab.tsx': { count: 2, client: true, reason: 'Browser error debugging for subscription downgrade' },
     'app/get-started/OnboardingWizard.tsx': { count: 2, client: true, reason: 'Browser error debugging for signup/onboarding' },

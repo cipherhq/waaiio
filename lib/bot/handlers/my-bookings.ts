@@ -428,13 +428,26 @@ export async function handleModifyBooking(
       return;
     }
 
-    await supabase
-      .from('bookings')
-      .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'diner' })
-      .eq('id', bookingId)
-      .in('status', ['pending', 'confirmed']);
+    // Atomic cancellation + package session release in ONE transaction
+    const { data: cancelResult, error: cancelError } = await supabase.rpc('cancel_booking_with_release', {
+      p_booking_id: bookingId,
+      p_cancelled_by: 'guest',
+    });
 
-    // Notify assigned staff member about cancellation
+    if (cancelError || !cancelResult?.cancelled) {
+      // Cancellation failed — do NOT tell customer it succeeded, do NOT notify staff
+      const reason = cancelResult?.reason || cancelError?.message || 'unknown';
+      logger.error('[BOOKING] Atomic cancel failed', { op: 'my-bookings.cancel', bookingId, reason });
+      await sendText(from, 'Sorry, we couldn\'t cancel this booking right now. Please try again or contact the business directly.');
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
+      return;
+    }
+
+    if (cancelResult.session_released) {
+      logger.info(`[BOOKING] Package session released for cancelled booking ${bookingId}`);
+    }
+
+    // Only notify staff AFTER confirmed cancellation
     if (cancelledBooking?.staff_id && cancelledBooking.business_id) {
       import('../flows/shared/notify-staff').then(({ notifyStaffBookingCancelled }) => {
         const dateLabel = new Date(cancelledBooking.date + 'T00:00').toLocaleDateString('en-US', {
