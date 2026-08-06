@@ -520,10 +520,17 @@ export default function BookingsPage() {
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           console.error('[DASHBOARD] Cancel API error:', err);
+          // Cancellation failed — refresh UI without emitting downstream notifications
+          fetchBookings();
+          return;
         }
-      } catch { /* Network error — will show stale state */ }
+      } catch {
+        // Network error — cancellation did not succeed, refresh and return
+        fetchBookings();
+        return;
+      }
 
-      // Notify assigned staff member about cancellation (non-blocking)
+      // Only notify staff AFTER confirmed cancellation success
       if (booking?.staff_id) {
         fetch('/api/bookings/notify-staff-cancel', {
           method: 'POST',

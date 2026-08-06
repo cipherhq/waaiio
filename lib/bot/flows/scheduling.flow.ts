@@ -2098,9 +2098,11 @@ export const schedulingFlow: FlowDefinition = {
         const finalServicePrice = Math.max(0, servicePrice - promoDiscount);
 
         // ── Package session check: cover base service price if eligible ──
+        // Packages only apply to service bookings, NOT appointment bookings
+        // (service_packages.service_ids references the services table; appointments are a separate table)
         let packageEnrollmentId: string | null = null;
-        let packageCoveredAmount = 0;
-        if (finalServicePrice > 0 && ctx.business?.id) {
+        const isAppointmentBooking = d._is_appointment === true;
+        if (!isAppointmentBooking && finalServicePrice > 0 && ctx.business?.id) {
           try {
             const customerPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
             const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
@@ -2122,7 +2124,6 @@ export const schedulingFlow: FlowDefinition = {
                 if (!pkg?.is_active) continue;
                 if (serviceId && pkg.service_ids && pkg.service_ids.length > 0 && !pkg.service_ids.includes(serviceId)) continue;
                 packageEnrollmentId = enrollment.id;
-                packageCoveredAmount = finalServicePrice;
                 break;
               }
             }
@@ -2157,14 +2158,10 @@ export const schedulingFlow: FlowDefinition = {
         ]);
         const isPrepay = prepayMode === 'full' || (prepayMode === 'auto' && prepayCategories.has(ctx.business?.category || ''));
 
-        // Calculate add-on total for package scenarios
-        const selectedAddons = d._selected_addons as Array<{ price: number }> | undefined;
-        const addonTotal = selectedAddons?.reduce((sum, a) => sum + (a.price || 0), 0) || 0;
-
         let totalDeposit: number;
-        if (packageEnrollmentId && packageCoveredAmount > 0) {
-          // Package covers base service price — only charge uncovered add-ons
-          totalDeposit = addonTotal;
+        if (packageEnrollmentId) {
+          // Package covers this booking — no upfront charge (matches canonical non-package free behavior)
+          totalDeposit = 0;
         } else if (prepayMode === 'free') {
           totalDeposit = 0;
         } else if (serviceDeposit > 0) {
