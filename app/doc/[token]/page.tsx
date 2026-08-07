@@ -4,6 +4,16 @@ import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 
+/** Check if a signed URL points to an image file (by path before query params) */
+function isImageUrl(url: string): boolean {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    return /\.(png|jpe?g)$/.test(path);
+  } catch {
+    return false;
+  }
+}
+
 export default function DocumentViewerPage() {
   const { token } = useParams<{ token: string }>();
   const [digits, setDigits] = useState('');
@@ -55,11 +65,15 @@ export default function DocumentViewerPage() {
             </div>
             <a href={docUrl} target="_blank" rel="noopener noreferrer"
               className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600">
-              Download PDF
+              Download
             </a>
           </div>
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-            <iframe src={docUrl} className="h-[80vh] w-full" title={docTitle} />
+            {isImageUrl(docUrl) ? (
+              <img src={docUrl} alt={docTitle} className="mx-auto max-h-[80vh] w-auto object-contain" />
+            ) : (
+              <iframe src={docUrl} className="h-[80vh] w-full" title={docTitle} />
+            )}
           </div>
           <div className="mt-4 text-center">
             <ReturnToWhatsApp />

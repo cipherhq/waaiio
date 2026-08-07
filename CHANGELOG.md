@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-06
 
+### fix(P1-REPORT-2): Support advertised document image uploads
+
+- **Root cause:** Document upload UI (`app/dashboard/reports/page.tsx`) advertises `accept=".pdf,.png,.jpg,.jpeg"` and labels "PDF, PNG, JPG — max 10MB", but the upload API (`app/api/reports/upload/route.ts`) validated only `%PDF` magic bytes, rejected all images with "Only PDF files are allowed", and hardcoded `.pdf` extension and `application/pdf` content type for all uploads.
+- **Fix:** Replaced inline `%PDF` magic-byte check with existing `validateUploadedFile()` from `lib/security/validate-file.ts`, accepting `application/pdf`, `image/png`, `image/jpeg`. File extension and content type now derived from detected MIME. Document viewer (`app/doc/[token]/page.tsx`) updated to render images with `<img>` tag instead of iframe.
+- **Files changed:** `app/api/reports/upload/route.ts`, `app/doc/[token]/page.tsx`, new test `lib/__tests__/p1-report-2-upload.test.ts`
+- **Security preserved:** Magic-byte validation (not extension/MIME trust), file size limit (10MB), rate limiting, business ownership verification, storage quota checks. Executable files with image extensions are rejected.
+- **Could break:** Nothing — downstream send/view/delete routes are file-type agnostic (signed URLs). No DB schema changes needed.
+
 ### fix(P1-PKG-1): Atomic package redemption — final corrections
 
 - **Remove unsafe bot cancellation fallback:** Bot cancellation handler no longer falls back to direct `bookings UPDATE` if the atomic RPC fails. RPC failure means cancellation did not succeed — customer gets a safe retry message, no staff notification is emitted, no false cancellation state is created. Files: `lib/bot/handlers/my-bookings.ts`.
