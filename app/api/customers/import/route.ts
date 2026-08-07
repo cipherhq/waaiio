@@ -13,6 +13,7 @@ interface ContactInput {
   phone: string;
   email?: string;
   tags?: string[];
+  date_of_birth?: string;
 }
 
 export async function POST(request: NextRequest) {
@@ -69,6 +70,16 @@ export async function POST(request: NextRequest) {
     const name = (c.name || '').trim() || null;
     const tags = Array.isArray(c.tags) ? c.tags.filter(Boolean) : [];
 
+    // Validate date_of_birth if provided (must parse to a valid date)
+    let dateOfBirth: string | undefined;
+    if (c.date_of_birth) {
+      const parsed = new Date(c.date_of_birth);
+      if (!isNaN(parsed.getTime())) {
+        dateOfBirth = parsed.toISOString().split('T')[0]; // YYYY-MM-DD
+      }
+      // Invalid dates are silently ignored (not a row-level error)
+    }
+
     try {
       // Upsert into customer_profiles — phone + business_id is the natural key
       const { error: upsertError } = await service
@@ -80,6 +91,7 @@ export async function POST(request: NextRequest) {
             name: name || undefined,
             email: email || undefined,
             tags: tags.length > 0 ? tags : undefined,
+            date_of_birth: dateOfBirth,
           },
           { onConflict: 'business_id,phone' },
         );

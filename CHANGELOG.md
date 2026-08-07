@@ -7,6 +7,16 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-07
 
+### fix(DEAD-001): connect Growth contact import to canonical customer endpoint
+
+- **Root cause:** Growth → Import Contacts page (`app/dashboard/growth/import/page.tsx`) called a nonexistent `/api/growth/contacts/import` endpoint. The canonical endpoint exists at `/api/customers/import` but the frontend and backend contracts disagreed on field names, phone requirements, tags format, birthday mapping, and error response shape.
+- **Fix:** (1) Pointed fetch to `/api/customers/import`. (2) Concatenate `first_name` + `last_name` → canonical single `name` field. (3) Phone is required (not phone-or-email) matching DB constraint `phone NOT NULL` + unique key. (4) Tags string split to `string[]`. (5) `birthday` UI field → `date_of_birth` DB column (date type, migration 031). (6) API now accepts `date_of_birth` with date validation. (7) API `errors` array counted correctly as `errors.length` not treated as number.
+- **Files changed:** `app/dashboard/growth/import/page.tsx`, `app/api/customers/import/route.ts`
+- **Tests:** `lib/__tests__/dead-001-growth-contact-import.test.ts` — 36 tests.
+- **No migration required.** `date_of_birth` column already exists on `customer_profiles` (migration 031).
+- **Affects:** Growth Import page only. Existing customers page import unchanged.
+- **Could break:** Nothing — the Growth import was completely non-functional before this fix.
+
 ### fix(P1-REF-1): add missing `refer` keyword handler for referral code retrieval
 
 - **Root cause:** After booking completion, `post-completion.ts` generates a referral code silently and the bot tells customers "Type *refer* to invite friends and earn rewards" (`scheduling.flow.ts:2804`). However, no handler existed for the `refer` keyword — it fell through the entire bot pipeline (unified keywords, canonical understanding, smart intent) and produced a confused response.
