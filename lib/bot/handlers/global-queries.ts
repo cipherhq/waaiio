@@ -111,6 +111,12 @@ export function isRemoveCardQuery(text: string): boolean {
   return /^remove\s+card$/i.test(text) || /^delete\s+card$/i.test(text) || /^remove\s+my\s+card$/i.test(text);
 }
 
+export function isReferralQuery(text: string): boolean {
+  return /^refer$/i.test(text)
+    || /^(my\s+)?referral(\s+code)?$/i.test(text)
+    || /^(refer\s+a\s+friend|invite\s+a?\s*friend)$/i.test(text);
+}
+
 export function isReorderQuery(text: string): boolean {
   return /^(reorder|re-order|same\s+again|order\s+(the\s+)?same(\s+thing)?|repeat\s+order|last\s+order)$/i.test(text);
 }
@@ -510,6 +516,47 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
 
     await flowExecutor.execute(from, '', newSession as unknown as BotSession, biz as BusinessRecord | null);
     return { handled: true, session: newSession as BotSession };
+  }
+
+  // ── Referral code retrieval ──
+  if (isReferralQuery(text) && session?.business_id) {
+    // CAS-007: Use session's effective capabilities (tier-aware), not tier-blind getEnabledCapabilities
+    const caps = (session.session_data?.capabilities as string[]) || [];
+    if (!caps.includes('referral')) {
+      await sendText(from, "This business doesn't have a referral program. Send *Hi* to start over.");
+      return { handled: true, session };
+    }
+
+    // Look up existing pending referral code for THIS customer + THIS business only
+    const { data: referral } = await supabase
+      .from('referrals')
+      .select('referral_code, reward_type, reward_amount')
+      .eq('business_id', session.business_id)
+      .or(`referrer_phone.eq.${sanitizeFilterValue(phoneP)},referrer_phone.eq.${sanitizeFilterValue(phoneN)}`)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (referral) {
+      const rewardDesc = referral.reward_type === 'points'
+        ? `${referral.reward_amount || 50} loyalty points`
+        : referral.reward_type === 'discount'
+          ? `a discount of ${referral.reward_amount || ''}`
+          : 'a reward';
+      const bizName = (session.session_data?.business_name as string) || 'this business';
+      await sendText(from, [
+        `🎁 *Your Referral Code*`,
+        '',
+        `*${referral.referral_code}*`,
+        '',
+        `Share this code with friends! When they use it during their booking at ${bizName}, you'll earn ${rewardDesc}.`,
+      ].join('\n'));
+    } else {
+      await sendText(from, "You don't have a referral code yet. Complete a booking or purchase to earn one!");
+    }
+
+    return { handled: true, session };
   }
 
   // ── Invoices ──
