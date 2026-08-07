@@ -196,7 +196,7 @@ export async function POST(request: NextRequest) {
       // Check if all signers have signed
       const { data: allSigners } = await supabase
         .from('contract_signers')
-        .select('id, status, signing_order, signer_phone, signer_email, signer_name, token')
+        .select('id, status, signing_order, signer_phone, signer_email, signer_name, token, signature_data, signed_at, signature_reference')
         .eq('contract_id', activeContract.id)
         .order('signing_order');
 
@@ -205,6 +205,13 @@ export async function POST(request: NextRequest) {
 
       if (allSigned) {
         // All signed — generate final PDF and mark parent as signed
+        // Build per-signer entries using each signer's stored signature data
+        const signerEntries = (allSigners || []).map(s => ({
+          signerName: s.signer_name || 'Signer',
+          signatureData: s.id === signerRow!.id ? signature_data : (s.signature_data || ''),
+          signedAt: s.id === signerRow!.id ? auditTrail.signed_at : (s.signed_at || auditTrail.signed_at),
+          signatureReference: s.id === signerRow!.id ? signatureReference : (s.signature_reference || undefined),
+        }));
 
         if (activeContract.template_url) {
           try {
@@ -215,12 +222,13 @@ export async function POST(request: NextRequest) {
 
             if (originalFile) {
               const originalBuffer = Buffer.from(await originalFile.arrayBuffer());
+
               const pdfBuffer = await appendSignatureToUploadedPdf({
                 originalFileBuffer: originalBuffer,
                 originalFileType: ext === 'pdf' ? 'pdf' : 'image',
                 businessName,
                 title: activeContract.title,
-                signerName: (allSigners || []).map(s => s.signer_name || 'Signer').join(', '),
+                signerName: signerEntries.map(s => s.signerName).join(', '),
                 signatureData: signature_data,
                 signedAt: auditTrail.signed_at,
                 auditTrail,
@@ -228,6 +236,7 @@ export async function POST(request: NextRequest) {
                 referenceCode: activeContract.reference_code || undefined,
                 signatureReference: signatureReference,
                 verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
+                signers: signerEntries,
               });
 
               pdfPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;
@@ -247,7 +256,7 @@ export async function POST(request: NextRequest) {
               businessName,
               title: activeContract.title,
               documentContent: activeContract.document_content,
-              signerName: (allSigners || []).map(s => s.signer_name || 'Signer').join(', '),
+              signerName: signerEntries.map(s => s.signerName).join(', '),
               signatureData: signature_data,
               signedAt: auditTrail.signed_at,
               auditTrail,
@@ -255,6 +264,7 @@ export async function POST(request: NextRequest) {
               referenceCode: activeContract.reference_code || undefined,
               signatureReference: signatureReference,
               verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
+              signers: signerEntries,
             });
 
             pdfPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;

@@ -1,6 +1,13 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import QRCode from 'qrcode';
 
+interface SignerEntry {
+  signerName: string;
+  signatureData: string; // base64 data URI
+  signedAt: string;
+  signatureReference?: string;
+}
+
 interface AppendSignatureData {
   originalFileBuffer: Buffer;
   originalFileType: 'pdf' | 'image';
@@ -20,6 +27,8 @@ interface AppendSignatureData {
   referenceCode?: string;
   signatureReference?: string;
   verifyUrl?: string;
+  /** When provided, renders a signature block per signer (multi-signer flow) */
+  signers?: SignerEntry[];
 }
 
 function formatDate(iso: string): string {
@@ -152,78 +161,86 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
   y -= 30;
 
   // ── Confirmation text ──
+  const signerEntries: SignerEntry[] = data.signers && data.signers.length > 0
+    ? data.signers
+    : [{ signerName: data.signerName, signatureData: data.signatureData, signedAt: data.signedAt, signatureReference: data.signatureReference }];
+
+  const partyWord = signerEntries.length === 1 ? 'party' : 'parties';
+
   sigPage.drawText('This document confirms that the attached document has been electronically', {
     x: 50, y, size: 10, font, color: black,
   });
   y -= 16;
-  sigPage.drawText('reviewed and signed by the following party:', {
+  sigPage.drawText(`reviewed and signed by the following ${partyWord}:`, {
     x: 50, y, size: 10, font, color: black,
   });
   y -= 40;
 
-  // ── Signer details ──
-  sigPage.drawText('SIGNED BY', {
-    x: 50, y, size: 9, font: fontBold, color: gray,
-  });
-  y -= 18;
+  // ── Render a signature block per signer ──
+  for (const signer of signerEntries) {
+    sigPage.drawText('SIGNED BY', {
+      x: 50, y, size: 9, font: fontBold, color: gray,
+    });
+    y -= 18;
 
-  sigPage.drawText(data.signerName, {
-    x: 50, y, size: 14, font: fontBold, color: black,
-  });
-  y -= 20;
+    sigPage.drawText(signer.signerName, {
+      x: 50, y, size: 14, font: fontBold, color: black,
+    });
+    y -= 20;
 
-  sigPage.drawText(`Date & Time: ${formatDate(data.signedAt)}`, {
-    x: 50, y, size: 10, font, color: gray,
-  });
-  y -= 16;
+    sigPage.drawText(`Date & Time: ${formatDate(signer.signedAt)}`, {
+      x: 50, y, size: 10, font, color: gray,
+    });
+    y -= 16;
 
-  if (data.signatureReference) {
-    sigPage.drawText(`Signature Ref: ${data.signatureReference}`, {
-      x: 50, y, size: 8, font, color: lightGray,
+    if (signer.signatureReference) {
+      sigPage.drawText(`Signature Ref: ${signer.signatureReference}`, {
+        x: 50, y, size: 8, font, color: lightGray,
+      });
+      y -= 14;
+    }
+    y -= 5;
+
+    // ── Embed signature image ──
+    sigPage.drawText('Signature:', {
+      x: 50, y, size: 9, font: fontBold, color: gray,
+    });
+    y -= 10;
+
+    try {
+      const base64 = signer.signatureData.replace(/^data:image\/\w+;base64,/, '');
+      const sigBytes = Buffer.from(base64, 'base64');
+      const sigImage = await pdfDoc.embedPng(sigBytes);
+
+      const sigScale = Math.min(220 / sigImage.width, 90 / sigImage.height);
+      const sigW = sigImage.width * sigScale;
+      const sigH = sigImage.height * sigScale;
+
+      sigPage.drawImage(sigImage, {
+        x: 50, y: y - sigH, width: sigW, height: sigH,
+      });
+      y -= sigH + 10;
+    } catch {
+      sigPage.drawText('[Signature on file]', {
+        x: 50, y: y - 15, size: 10, font, color: lightGray,
+      });
+      y -= 25;
+    }
+
+    // Signature line
+    sigPage.drawLine({
+      start: { x: 50, y },
+      end: { x: 270, y },
+      thickness: 1,
+      color: black,
     });
     y -= 14;
-  }
-  y -= 5;
 
-  // ── Embed signature image ──
-  sigPage.drawText('Signature:', {
-    x: 50, y, size: 9, font: fontBold, color: gray,
-  });
-  y -= 10;
-
-  try {
-    const base64 = data.signatureData.replace(/^data:image\/\w+;base64,/, '');
-    const sigBytes = Buffer.from(base64, 'base64');
-    const sigImage = await pdfDoc.embedPng(sigBytes);
-
-    const sigScale = Math.min(220 / sigImage.width, 90 / sigImage.height);
-    const sigW = sigImage.width * sigScale;
-    const sigH = sigImage.height * sigScale;
-
-    sigPage.drawImage(sigImage, {
-      x: 50, y: y - sigH, width: sigW, height: sigH,
+    sigPage.drawText(signer.signerName, {
+      x: 50, y, size: 8, font, color: gray,
     });
-    y -= sigH + 10;
-  } catch {
-    sigPage.drawText('[Signature on file]', {
-      x: 50, y: y - 15, size: 10, font, color: lightGray,
-    });
-    y -= 25;
+    y -= 30;
   }
-
-  // Signature line
-  sigPage.drawLine({
-    start: { x: 50, y },
-    end: { x: 270, y },
-    thickness: 1,
-    color: black,
-  });
-  y -= 14;
-
-  sigPage.drawText(data.signerName, {
-    x: 50, y, size: 8, font, color: gray,
-  });
-  y -= 50;
 
   // ── Waaiio verification footer ──
   sigPage.drawLine({

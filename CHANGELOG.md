@@ -5,6 +5,20 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-07
+
+### fix(P1-ESIG-1): preserve all signer signatures in generated PDF
+
+- **Root cause:** When all signers completed a multi-signer contract, the submit route (`app/api/contracts/submit/route.ts`) passed only the current HTTP request's `signature_data` (the last signer's) to the PDF generators. Each signer's signature was correctly stored in `contract_signers.signature_data` and Supabase storage, but the PDF generation call used only the request body value — not the stored data for earlier signers. Both PDF generators (`lib/pdf/append-signature.ts`, `lib/pdf/contract-pdf-generator.ts`) accepted a single `signatureData` string, rendering one signature block.
+- **Fix:** (1) Added optional `signers` array to both PDF generator interfaces. When present, renders a signature block per signer with their individual name, signature image, timestamp, and reference. When absent, falls back to existing single-signer behavior. (2) In the submit route, when `allSigned` is true, constructs `signerEntries` from the DB query (which now also selects `signature_data`, `signed_at`, `signature_reference`) and passes it to the PDF generators. The current signer's data comes from the request; earlier signers' data comes from their stored DB rows.
+- **Files changed:** `lib/pdf/append-signature.ts`, `lib/pdf/contract-pdf-generator.ts`, `app/api/contracts/submit/route.ts`
+- **Tests added:** `lib/__tests__/p1-esig-1-multi-signer-pdf.test.ts` — 17 tests covering single-signer backward compatibility, 2-signer, 3-signer, image documents, data assembly logic, signer isolation/authorization, incomplete document behavior, and finalization failure handling.
+- **No migration required.** All needed columns (`signature_data`, `signed_at`, `signature_reference`) already exist on `contract_signers`.
+- **Affects:** Multi-signer e-signature PDF generation only. Single-signer flow is completely unchanged.
+- **Could break:** Nothing — the `signers` field is optional and additive. Single-signer path does not pass it.
+
+---
+
 ## 2026-08-06
 
 ### fix(P1-PROP-1): correct property occupancy status — checked_in instead of in_progress

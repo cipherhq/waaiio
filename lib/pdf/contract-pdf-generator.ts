@@ -1,6 +1,13 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 
+interface SignerEntry {
+  signerName: string;
+  signatureData: string; // base64 data URI
+  signedAt: string;
+  signatureReference?: string;
+}
+
 interface ContractPdfData {
   businessName: string;
   title: string;
@@ -19,6 +26,8 @@ interface ContractPdfData {
   referenceCode?: string;
   signatureReference?: string;
   verifyUrl?: string;
+  /** When provided, renders a signature block per signer (multi-signer flow) */
+  signers?: SignerEntry[];
 }
 
 function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
@@ -163,7 +172,11 @@ export async function generateSignedContractPdf(data: ContractPdfData): Promise<
     }
   }
 
-  // ── Signature Block ──
+  // ── Signature Block(s) ──
+  const signerEntries: SignerEntry[] = data.signers && data.signers.length > 0
+    ? data.signers
+    : [{ signerName: data.signerName, signatureData: data.signatureData, signedAt: data.signedAt, signatureReference: data.signatureReference }];
+
   y += 20;
   if (y + 180 > doc.page.height - 80) {
     doc.addPage();
@@ -174,43 +187,53 @@ export async function generateSignedContractPdf(data: ContractPdfData): Promise<
   doc.moveTo(50, y).lineTo(pageWidth - 50, y).strokeColor('#cccccc').stroke();
   y += 15;
 
+  const sigLabel = signerEntries.length === 1 ? 'SIGNATURE' : 'SIGNATURES';
   doc.fontSize(12).font('Helvetica-Bold').fillColor('#000000')
-    .text('SIGNATURE', 50, y, { width: contentWidth });
+    .text(sigLabel, 50, y, { width: contentWidth });
   y += 22;
 
-  doc.fontSize(10).font('Helvetica').fillColor('#333333')
-    .text(`Signed by: ${data.signerName}`, 50, y);
-  y += 18;
+  for (const signer of signerEntries) {
+    // Check if we need a new page for this signer block (~160px needed)
+    if (y + 160 > doc.page.height - 80) {
+      doc.addPage();
+      drawWaaiioBranding(doc, pageWidth);
+      y = 50;
+    }
 
-  doc.fontSize(9).font('Helvetica').fillColor('#666666')
-    .text(`Date & Time: ${formatDate(data.signedAt)}`, 50, y);
-  y += 14;
-
-  if (data.signatureReference) {
-    doc.fontSize(8).font('Helvetica').fillColor('#999999')
-      .text(`Signature Ref: ${data.signatureReference}`, 50, y);
-    y += 14;
-  }
-  y += 6;
-
-  // Embed signature image
-  try {
-    const base64 = data.signatureData.replace(/^data:image\/\w+;base64,/, '');
-    const sigBuffer = Buffer.from(base64, 'base64');
-    (doc as any).image(sigBuffer, 50, y, { width: 200, height: 80 });
-    y += 90;
-  } catch {
-    doc.fontSize(10).font('Helvetica-Oblique').fillColor('#999999')
-      .text('[Signature on file]', 50, y);
+    doc.fontSize(10).font('Helvetica').fillColor('#333333')
+      .text(`Signed by: ${signer.signerName}`, 50, y);
     y += 18;
-  }
 
-  // Signature line
-  doc.moveTo(50, y).lineTo(250, y).strokeColor('#000000').stroke();
-  y += 5;
-  doc.fontSize(8).font('Helvetica').fillColor('#666666')
-    .text(data.signerName, 50, y);
-  y += 25;
+    doc.fontSize(9).font('Helvetica').fillColor('#666666')
+      .text(`Date & Time: ${formatDate(signer.signedAt)}`, 50, y);
+    y += 14;
+
+    if (signer.signatureReference) {
+      doc.fontSize(8).font('Helvetica').fillColor('#999999')
+        .text(`Signature Ref: ${signer.signatureReference}`, 50, y);
+      y += 14;
+    }
+    y += 6;
+
+    // Embed signature image
+    try {
+      const base64 = signer.signatureData.replace(/^data:image\/\w+;base64,/, '');
+      const sigBuffer = Buffer.from(base64, 'base64');
+      (doc as any).image(sigBuffer, 50, y, { width: 200, height: 80 });
+      y += 90;
+    } catch {
+      doc.fontSize(10).font('Helvetica-Oblique').fillColor('#999999')
+        .text('[Signature on file]', 50, y);
+      y += 18;
+    }
+
+    // Signature line
+    doc.moveTo(50, y).lineTo(250, y).strokeColor('#000000').stroke();
+    y += 5;
+    doc.fontSize(8).font('Helvetica').fillColor('#666666')
+      .text(signer.signerName, 50, y);
+    y += 25;
+  }
 
   // ── Waaiio Verification Footer ──
   if (y + 100 > doc.page.height - 40) {
