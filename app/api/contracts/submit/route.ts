@@ -199,7 +199,7 @@ export async function POST(request: NextRequest) {
 
       // Update the signer row (skip on finalization retry — already signed)
       if (!isFinalizationRetry) {
-        await supabase
+        const { error: signerUpdateError } = await supabase
           .from('contract_signers')
           .update({
             status: 'signed',
@@ -209,24 +209,46 @@ export async function POST(request: NextRequest) {
             signature_reference: signatureReference,
           })
           .eq('id', signerRow!.id);
+
+        if (signerUpdateError) {
+          logger.error('Failed to persist signer signature:', signerUpdateError);
+          return NextResponse.json({ error: 'Failed to save signature' }, { status: 500 });
+        }
       }
 
-      // Check if all signers have signed
-      const { data: allSigners } = await supabase
+      // Reload all signers from DB — this is the authoritative state
+      const { data: allSigners, error: signersQueryError } = await supabase
         .from('contract_signers')
         .select('id, status, signing_order, signer_phone, signer_email, signer_name, token, signature_data, signed_at, signature_reference')
         .eq('contract_id', activeContract.id)
         .order('signing_order');
 
-      const allSigned = (allSigners || []).every(s => s.id === signerRow!.id || s.status === 'signed');
+      if (signersQueryError || !allSigners) {
+        logger.error('Failed to reload signers after update:', signersQueryError);
+        return NextResponse.json({ error: 'Failed to verify signing status' }, { status: 500 });
+      }
+
+      if (allSigners.length === 0) {
+        logger.error(`No signers found for contract ${activeContract.id} after update`);
+        return NextResponse.json({ error: 'Failed to verify signing status' }, { status: 500 });
+      }
+
+      // Determine completion only from persisted signer statuses — no special-casing
+      const allSigned = allSigners.every(s => s.status === 'signed');
       let pdfPath: string | null = null;
 
       if (allSigned) {
-        // All signed — generate final PDF and mark parent as signed
+        // Verify every signer has the required persisted signature data for PDF generation
+        const missingData = allSigners.find(s => !s.signature_data);
+        if (missingData) {
+          logger.error(`Signer ${missingData.id} has status 'signed' but no signature_data`);
+          return NextResponse.json({ error: 'Incomplete signer data — cannot finalize document' }, { status: 500 });
+        }
+
         // Build per-signer entries from stored DB data (works for both first-pass and retry)
-        const signerEntries = (allSigners || []).map(s => ({
+        const signerEntries = allSigners.map(s => ({
           signerName: s.signer_name || 'Signer',
-          signatureData: s.signature_data || '',
+          signatureData: s.signature_data!,
           signedAt: s.signed_at || auditTrail.signed_at,
           signatureReference: s.signature_reference || undefined,
         }));
@@ -344,7 +366,7 @@ export async function POST(request: NextRequest) {
         }
       } else if (activeContract.signing_mode === 'sequential') {
         // Advance next signer from 'waiting' to 'pending'
-        const nextSigner = (allSigners || []).find(s => s.status === 'waiting');
+        const nextSigner = allSigners.find(s => s.status === 'waiting');
         if (nextSigner) {
           await supabase
             .from('contract_signers')
