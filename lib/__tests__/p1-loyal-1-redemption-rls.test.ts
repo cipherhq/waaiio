@@ -1,15 +1,15 @@
 /**
- * P1-LOYAL-1 — Real PostgreSQL RLS tests for loyalty_transactions UPDATE policy
+ * P1-LOYAL-1 — Loyalty transactions RLS boundary tests
  * Requires TEST_DATABASE_URL.
  *
- * Proves:
- * 1. Service-role can UPDATE loyalty_transactions
- * 2. Business owner can UPDATE their own loyalty_transactions
- * 3. Different business owner cannot UPDATE another business's transactions
- * 4. Anonymous cannot UPDATE loyalty_transactions
- * 5. Existing SELECT behavior remains correct
- * 6. Owner UPDATE WITH CHECK prevents changing business_id to another tenant
- * 7. RLS remains enabled on loyalty_transactions
+ * Proves existing restrictive RLS is preserved:
+ * 1. Owner can SELECT their own loyalty_transactions
+ * 2. Owner cannot SELECT another business's transactions
+ * 3. Owner can INSERT into their own business
+ * 4. Owner cannot INSERT into another business
+ * 5. No UPDATE policy exists — owner cannot UPDATE transactions
+ * 6. Anonymous cannot SELECT, INSERT, or UPDATE
+ * 7. RLS remains enabled
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
@@ -21,12 +21,20 @@ function psql(sql: string): string {
   return raw.split('\n').filter(l => { const t = l.trim(); return t !== '' && !/^(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE|DO|SET|COMMENT)\b/.test(t); }).join('\n').trim();
 }
 
+function psqlMayFail(sql: string): string {
+  try {
+    return execSync(`psql "${dbUrl}" -tAXq`, { input: sql, encoding: 'utf-8', timeout: 15000 }).trim();
+  } catch (e: any) {
+    return (e.stderr || e.stdout || '').toString().trim();
+  }
+}
+
 const BIZ_A = '88aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const BIZ_B = '88bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const OWNER_A = '88cccccc-cccc-cccc-cccc-aaaaaaaaaaaa';
 const OWNER_B = '88cccccc-cccc-cccc-cccc-bbbbbbbbbbbb';
 
-describe.skipIf(!dbUrl)('P1-LOYAL-1: loyalty_transactions UPDATE RLS', () => {
+describe.skipIf(!dbUrl)('P1-LOYAL-1: loyalty_transactions RLS boundaries', () => {
   beforeAll(() => {
     if (!dbUrl) return;
     psql(`
@@ -57,7 +65,7 @@ describe.skipIf(!dbUrl)('P1-LOYAL-1: loyalty_transactions UPDATE RLS', () => {
       ALTER TABLE loyalty_transactions ENABLE ROW LEVEL SECURITY;
       GRANT ALL ON loyalty_transactions TO authenticated, service_role;
 
-      -- Existing policies from migration 020
+      -- Existing policies from migrations 020 + 023 (production state)
       CREATE POLICY "loyalty_transactions_owner_select" ON loyalty_transactions
         FOR SELECT USING (business_id IN (SELECT id FROM businesses WHERE owner_id = auth.uid()));
       CREATE POLICY "loyalty_transactions_owner_insert" ON loyalty_transactions
@@ -65,13 +73,11 @@ describe.skipIf(!dbUrl)('P1-LOYAL-1: loyalty_transactions UPDATE RLS', () => {
       CREATE POLICY "loyalty_transactions_service_insert" ON loyalty_transactions
         FOR INSERT WITH CHECK (auth.role() = 'service_role');
 
-      -- NEW policies from migration 309
-      CREATE POLICY "loyalty_transactions_service_update" ON loyalty_transactions
-        FOR UPDATE USING (auth.role() = 'service_role');
-      CREATE POLICY "loyalty_transactions_owner_update" ON loyalty_transactions
-        FOR UPDATE
-        USING (business_id IN (SELECT id FROM businesses WHERE owner_id = auth.uid()))
-        WITH CHECK (business_id IN (SELECT id FROM businesses WHERE owner_id = auth.uid()));
+      -- Seed data
+      INSERT INTO loyalty_transactions (business_id, customer_phone, points_change, reason, reference_type)
+        VALUES ('${BIZ_A}', '+234111', -10, 'redemption', 'code:RW-TEST01');
+      INSERT INTO loyalty_transactions (business_id, customer_phone, points_change, reason, reference_type)
+        VALUES ('${BIZ_B}', '+234222', -5, 'redemption', 'code:RW-TEST02');
     `);
   });
 
@@ -80,63 +86,7 @@ describe.skipIf(!dbUrl)('P1-LOYAL-1: loyalty_transactions UPDATE RLS', () => {
     psql(`DROP TABLE IF EXISTS loyalty_transactions, businesses CASCADE;`);
   });
 
-  function resetTxns() {
-    psql(`DELETE FROM loyalty_transactions;`);
-    psql(`INSERT INTO loyalty_transactions (business_id, customer_phone, points_change, reason, reference_type) VALUES ('${BIZ_A}', '+234111', -10, 'redemption', 'loyalty_points');`);
-    psql(`INSERT INTO loyalty_transactions (business_id, customer_phone, points_change, reason, reference_type) VALUES ('${BIZ_B}', '+234222', -5, 'redemption', 'loyalty_points');`);
-  }
-
-  it('1. service_role can UPDATE loyalty_transactions', () => {
-    resetTxns();
-    // service_role bypasses RLS, but the policy should still exist
-    const count = psql(`
-      SET ROLE service_role;
-      SET app.current_user_id = '00000000-0000-0000-0000-000000000000';
-      UPDATE loyalty_transactions SET reference_type = 'code:RW-TEST01' WHERE business_id = '${BIZ_A}' AND reason = 'redemption';
-      SELECT COUNT(*) FROM loyalty_transactions WHERE reference_type = 'code:RW-TEST01';
-    `);
-    psql(`RESET ROLE;`);
-    expect(count).toBe('1');
-  });
-
-  it('2. business owner can UPDATE their own loyalty_transactions', () => {
-    resetTxns();
-    const count = psql(`
-      SET ROLE authenticated;
-      SET app.current_user_id = '${OWNER_A}';
-      UPDATE loyalty_transactions SET reference_type = 'code:RW-OWNRA' WHERE business_id = '${BIZ_A}';
-      SELECT COUNT(*) FROM loyalty_transactions WHERE reference_type = 'code:RW-OWNRA';
-    `);
-    psql(`RESET ROLE;`);
-    expect(count).toBe('1');
-  });
-
-  it('3. different business owner cannot UPDATE another business transactions', () => {
-    resetTxns();
-    // Owner B tries to update business A's transactions
-    const count = psql(`
-      SET ROLE authenticated;
-      SET app.current_user_id = '${OWNER_B}';
-      UPDATE loyalty_transactions SET reference_type = 'code:STOLEN' WHERE business_id = '${BIZ_A}';
-      RESET ROLE;
-      SELECT COUNT(*) FROM loyalty_transactions WHERE reference_type = 'code:STOLEN';
-    `);
-    expect(count).toBe('0');
-  });
-
-  it('4. anonymous cannot UPDATE loyalty_transactions', () => {
-    resetTxns();
-    const count = psql(`
-      SET ROLE anon;
-      UPDATE loyalty_transactions SET reference_type = 'code:ANON' WHERE business_id = '${BIZ_A}';
-      RESET ROLE;
-      SELECT COUNT(*) FROM loyalty_transactions WHERE reference_type = 'code:ANON';
-    `);
-    expect(count).toBe('0');
-  });
-
-  it('5. existing SELECT behavior: owner can read own transactions', () => {
-    resetTxns();
+  it('1. owner can SELECT their own loyalty_transactions', () => {
     const count = psql(`
       SET ROLE authenticated;
       SET app.current_user_id = '${OWNER_A}';
@@ -146,18 +96,66 @@ describe.skipIf(!dbUrl)('P1-LOYAL-1: loyalty_transactions UPDATE RLS', () => {
     expect(count).toBe('1');
   });
 
-  it('6. owner UPDATE WITH CHECK prevents changing business_id to another tenant', () => {
-    resetTxns();
-    // Owner A tries to move their transaction to business B
+  it('2. owner cannot SELECT another business transactions', () => {
     const count = psql(`
       SET ROLE authenticated;
       SET app.current_user_id = '${OWNER_A}';
-      UPDATE loyalty_transactions SET business_id = '${BIZ_B}' WHERE business_id = '${BIZ_A}';
-      RESET ROLE;
       SELECT COUNT(*) FROM loyalty_transactions WHERE business_id = '${BIZ_B}';
     `);
-    // Should still be 1 (the original BIZ_B row), not 2
-    expect(count).toBe('1');
+    psql(`RESET ROLE;`);
+    expect(count).toBe('0');
+  });
+
+  it('3. owner can INSERT into their own business', () => {
+    const result = psqlMayFail(`
+      SET ROLE authenticated;
+      SET app.current_user_id = '${OWNER_A}';
+      INSERT INTO loyalty_transactions (business_id, customer_phone, points_change, reason, reference_type)
+        VALUES ('${BIZ_A}', '+234333', 10, 'visit', 'test');
+      SELECT 'ok';
+    `);
+    psql(`RESET ROLE;`);
+    expect(result).toContain('ok');
+  });
+
+  it('4. owner cannot INSERT into another business', () => {
+    const result = psqlMayFail(`
+      SET ROLE authenticated;
+      SET app.current_user_id = '${OWNER_A}';
+      INSERT INTO loyalty_transactions (business_id, customer_phone, points_change, reason, reference_type)
+        VALUES ('${BIZ_B}', '+234333', 10, 'visit', 'stolen');
+    `);
+    psql(`RESET ROLE;`);
+    expect(result).toContain('violates row-level security');
+  });
+
+  it('5. no UPDATE policy — owner cannot UPDATE transactions', () => {
+    const result = psqlMayFail(`
+      SET ROLE authenticated;
+      SET app.current_user_id = '${OWNER_A}';
+      UPDATE loyalty_transactions SET reference_type = 'tampered' WHERE business_id = '${BIZ_A}';
+    `);
+    psql(`RESET ROLE;`);
+    // Verify no rows were actually changed
+    const count = psql(`SELECT COUNT(*) FROM loyalty_transactions WHERE reference_type = 'tampered';`);
+    expect(count).toBe('0');
+  });
+
+  it('6. anonymous cannot access loyalty_transactions', () => {
+    const selectResult = psql(`
+      SET ROLE anon;
+      SELECT COUNT(*) FROM loyalty_transactions;
+    `);
+    psql(`RESET ROLE;`);
+    expect(selectResult).toBe('0');
+
+    const insertResult = psqlMayFail(`
+      SET ROLE anon;
+      INSERT INTO loyalty_transactions (business_id, customer_phone, points_change, reason)
+        VALUES ('${BIZ_A}', '+234444', 10, 'visit');
+    `);
+    psql(`RESET ROLE;`);
+    expect(insertResult).toContain('violates row-level security');
   });
 
   it('7. RLS remains enabled on loyalty_transactions', () => {
