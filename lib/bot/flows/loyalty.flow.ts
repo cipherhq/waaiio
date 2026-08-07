@@ -226,29 +226,24 @@ const loyaltyRedeemStep: FlowStepConfig = {
         throw new Error('Redemption failed');
       }
 
-      // Insert redemption transaction only after RPC succeeds
-      await ctx.supabase.from('loyalty_transactions').insert({
+      const balance = (ctx.session.session_data.loyalty_balance as number) || 0;
+      const rewardDesc = (meta.loyalty_reward_description as string) || 'a free reward';
+      const redemptionCode = generateRedemptionCode();
+
+      // Insert redemption transaction with code atomically (no separate UPDATE needed)
+      const { error: txnError } = await ctx.supabase.from('loyalty_transactions').insert({
         business_id: businessId,
         customer_phone: phone,
         points_change: -threshold,
         reason: 'redemption',
         reference_id: loyaltyId,
-        reference_type: 'loyalty_points',
+        reference_type: `code:${redemptionCode}`,
       });
 
-      const balance = (ctx.session.session_data.loyalty_balance as number) || 0;
-
-      const rewardDesc = (meta.loyalty_reward_description as string) || 'a free reward';
-      const redemptionCode = generateRedemptionCode();
-
-      // Store redemption code in the transaction for staff verification
-      await ctx.supabase.from('loyalty_transactions')
-        .update({ reference_type: `code:${redemptionCode}` })
-        .eq('business_id', businessId)
-        .eq('customer_phone', phone)
-        .eq('reason', 'redemption')
-        .order('created_at', { ascending: false })
-        .limit(1);
+      if (txnError) {
+        logger.error('[LOYALTY] Failed to persist redemption transaction', { op: 'loyalty.redeem-txn', error: txnError.message });
+        throw new Error('Redemption transaction failed');
+      }
 
       await ctx.sender.sendText({
         to: ctx.from,

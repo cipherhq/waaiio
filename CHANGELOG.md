@@ -5,6 +5,17 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-07
+
+### fix(P1-LOYAL-1): loyalty redemption code persistence + missing UPDATE RLS policy
+
+- **Root cause:** Bot loyalty redemption flow inserted a transaction with `reference_type: 'loyalty_points'` then attempted a separate `.update()` using `.order().limit(1)` (PostgREST does not support order/limit on UPDATE) to overwrite it with the redemption code. The update result was not checked — if it failed, the customer was shown the redemption code but it was never persisted, making staff verification impossible.
+- **Fix:** Generate the redemption code BEFORE the INSERT. Include it directly in the INSERT as `reference_type: 'code:RW-XXXXXX'`. No separate UPDATE needed. Check the INSERT result — if persistence fails, throw into the existing error handler (no success message sent).
+- **RLS policy:** Added `loyalty_transactions_service_update` and `loyalty_transactions_owner_update` policies. The table previously had zero UPDATE policies for any role. While the bot's service client bypasses RLS, these policies provide defense-in-depth and enable future authenticated-client update paths. Owner policy includes `WITH CHECK` to prevent cross-tenant ownership changes.
+- **Concurrency:** `redeem_loyalty_points` RPC uses `FOR UPDATE` row lock on `loyalty_points`. Transaction INSERT occurs after the RPC succeeds, so concurrent redemptions are serialized at the points level. No double-redemption risk.
+- **Files:** `lib/bot/flows/loyalty.flow.ts`, `supabase/migrations/309_loyalty_transaction_update_policy.sql`
+- Could break: Nothing — the old UPDATE pattern was already unreliable. The new INSERT-with-code pattern is strictly more correct.
+
 ## 2026-08-06
 
 ### fix(P1-PROP-1): correct property occupancy status — checked_in instead of in_progress
