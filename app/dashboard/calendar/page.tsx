@@ -505,23 +505,47 @@ export default function CalendarPage() {
   }, [bookings]);
 
   async function updateStatus(id: string, newStatus: string, notes?: string) {
-    // Use the status API for check-in/check-out/no-show (captures timestamps, notes, notifications)
-    if (['check_in', 'check_out', 'no_show'].includes(newStatus)) {
+    // Use the canonical status API for check-in/check-out/no-show/cancel
+    // (captures timestamps, notifications, package release, waitlist promotion)
+    // Map 'cancelled' (UI status) → 'cancel' (API action)
+    const apiAction = newStatus === 'cancelled' ? 'cancel' : newStatus;
+    if (['check_in', 'check_out', 'no_show', 'cancel'].includes(apiAction)) {
       setActionLoading(true);
       try {
         const res = await fetch(`/api/bookings/${id}/status`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            action: newStatus,
-            notes: newStatus !== 'no_show' ? notes : undefined,
-            reason: newStatus === 'no_show' ? notes : undefined,
+            action: apiAction,
+            notes: apiAction !== 'no_show' && apiAction !== 'cancel' ? notes : undefined,
+            reason: apiAction === 'no_show' ? notes : undefined,
             notify_customer: true,
           }),
         });
         if (!res.ok) {
           const data = await res.json();
           alert(data.error || 'Failed to update');
+          setActionLoading(false);
+          return;
+        }
+
+        // Staff cancellation notification (non-blocking, only after successful cancel)
+        if (apiAction === 'cancel') {
+          let booking: Booking | undefined;
+          for (const arr of Object.values(bookingsByDate)) {
+            booking = arr.find(b => b.id === id);
+            if (booking) break;
+          }
+          if (booking?.staff_id) {
+            fetch('/api/bookings/notify-staff-cancel', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                bookingId: booking.id,
+                businessId: business.id,
+              }),
+            }).catch(() => {});
+          }
         }
       } catch { alert('Something went wrong'); }
       setActionLoading(false);
@@ -532,60 +556,12 @@ export default function CalendarPage() {
       return;
     }
 
-    // Direct update for simple status changes (confirm, cancel)
+    // Direct update for simple status changes (confirm)
     const supabase = createClient();
     const extra: Record<string, unknown> = {};
     if (newStatus === 'confirmed') extra.confirmed_at = new Date().toISOString();
-    if (newStatus === 'cancelled') {
-      extra.cancelled_at = new Date().toISOString();
-      extra.cancelled_by = 'business';
-    }
 
     await supabase.from('bookings').update({ status: newStatus, ...extra }).eq('id', id);
-
-    // Release slot + notify customer on cancel/no_show
-    if (newStatus === 'cancelled' || newStatus === 'no_show') {
-      // Find booking from all dates
-      let booking: Booking | undefined;
-      for (const arr of Object.values(bookingsByDate)) {
-        booking = arr.find(b => b.id === id);
-        if (booking) break;
-      }
-      if (booking) {
-        try {
-          await supabase.rpc('release_booking_slot', {
-            p_business_id: business.id,
-            p_date: booking.date,
-            p_start_time: booking.time,
-            p_staff_id: booking.staff_id || null,
-          });
-        } catch { /* Non-critical */ }
-
-        if (newStatus === 'cancelled' && booking.guest_phone) {
-          fetch('/api/notifications/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              business_id: business.id,
-              phone: booking.guest_phone,
-              message: `Your booking at ${business.name} on ${booking.date} has been cancelled. Contact us if you have questions.`,
-            }),
-          }).catch(() => {});
-        }
-
-        // Notify assigned staff member about cancellation (non-blocking)
-        if (newStatus === 'cancelled' && booking.staff_id) {
-          fetch('/api/bookings/notify-staff-cancel', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              bookingId: booking.id,
-              businessId: business.id,
-            }),
-          }).catch(() => {});
-        }
-      }
-    }
 
     setSelectedEntry(null);
     fetchData();

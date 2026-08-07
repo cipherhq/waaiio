@@ -14,6 +14,26 @@ If something breaks, check this log to find what changed and when.
 - **Files:** `app/api/reservations/notify-cancel/route.ts` (new), `app/dashboard/reservations/page.tsx` (replaced dead fetch call)
 - Could break: Nothing — the old call always 404'd silently.
 
+### fix(DEAD-001): connect Growth contact import to canonical customer endpoint
+
+- **Root cause:** Growth → Import Contacts page (`app/dashboard/growth/import/page.tsx`) called a nonexistent `/api/growth/contacts/import` endpoint. The canonical endpoint exists at `/api/customers/import` but the frontend and backend contracts disagreed on field names, phone requirements, tags format, birthday mapping, and error response shape.
+- **Fix:** (1) Pointed fetch to `/api/customers/import`. (2) Concatenate `first_name` + `last_name` → canonical single `name` field. (3) Phone is required (not phone-or-email) matching DB constraint `phone NOT NULL` + unique key. (4) Tags string split to `string[]`. (5) `birthday` UI field → `date_of_birth` DB column (date type, migration 031). (6) API now accepts `date_of_birth` with date validation. (7) API `errors` array counted correctly as `errors.length` not treated as number.
+- **Files changed:** `app/dashboard/growth/import/page.tsx`, `app/api/customers/import/route.ts`
+- **Tests:** `lib/__tests__/dead-001-growth-contact-import.test.ts` — 36 tests.
+- **No migration required.** `date_of_birth` column already exists on `customer_profiles` (migration 031).
+- **Affects:** Growth Import page only. Existing customers page import unchanged.
+- **Could break:** Nothing — the Growth import was completely non-functional before this fix.
+
+### fix(DEAD-003): calendar booking cancellation bypasses canonical cancel API
+
+- **Root cause:** `app/dashboard/calendar/page.tsx` `updateStatus()` directly updated booking status via browser Supabase client for cancellation, bypassing the canonical `PATCH /api/bookings/[id]/status` route. This caused: (1) package-covered cancelled bookings retained their package redemption — `cancel_booking_with_release` RPC was never called, so `package_redemptions` stayed `active` and `sessions_used` was never decremented; (2) customer cancellation notification called nonexistent `/api/notifications/send` (always 404); (3) waitlist auto-promotion was never triggered; (4) the separate `release_booking_slot` RPC was called instead, which only decrements booking slots — not package sessions.
+- **Fix:** (1) Routed calendar `cancel` action through the canonical `PATCH /api/bookings/[id]/status` API (same path as `check_in`/`check_out`/`no_show`). Added `apiAction` mapping from UI status `'cancelled'` to API action `'cancel'`. Removed direct Supabase update, `release_booking_slot` call, and `/api/notifications/send` call for the cancel path. Staff notification preserved after successful API response only. (2) Extended `cancel_booking_with_release` RPC (migration 309) to also release booking slot capacity — `UPDATE booking_slots SET current_bookings = GREATEST(0, current_bookings - 1)` using the locked booking row's own `business_id/date/time/staff_id/location_id`. This ensures ALL callers of the canonical cancellation path (calendar, reservations, bot) get both package session release AND slot capacity release atomically. Used explicit `v_session_released` variable to prevent the slot UPDATE from overwriting the `FOUND` flag needed for `session_released` reporting.
+- **Files changed:** `app/dashboard/calendar/page.tsx`, `supabase/migrations/309_cancel_releases_slot.sql` (new)
+- **Tests added:** `lib/__tests__/dead-003-calendar-cancel.test.ts` — 35 tests: canonical RPC call, package session release, double-release prevention, non-package cancellation, customer notification, API failure handling, staff notification gating, status protection, waitlist notification, source verification (no direct update, no dead endpoint, action mapping), migration verification (slot release in RPC, locked-row fields, COALESCE matching, v_session_released variable, guards preserved), reservations page canonical API verification.
+- **Migration required:** `309_cancel_releases_slot.sql` — replaces `cancel_booking_with_release` to add slot release.
+- **Affects:** Calendar page booking cancellation only. Confirm/check-in/check-out/no-show paths unchanged.
+- **Could break:** Nothing — the canonical route already handles all cancellation logic. The calendar page was the only bypasser.
+
 ### fix(P1-REF-1): add missing `refer` keyword handler for referral code retrieval
 
 - **Root cause:** After booking completion, `post-completion.ts` generates a referral code silently and the bot tells customers "Type *refer* to invite friends and earn rewards" (`scheduling.flow.ts:2804`). However, no handler existed for the `refer` keyword — it fell through the entire bot pipeline (unified keywords, canonical understanding, smart intent) and produced a confused response.

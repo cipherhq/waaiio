@@ -124,26 +124,63 @@ export default function GrowthImportPage() {
     setResult(null);
 
     try {
-      // Build mapped contacts
-      const contacts = rows.map((row) => {
-        const contact: Record<string, string> = {};
+      // Build mapped contacts — transform to canonical API shape
+      const contacts: Array<{
+        name?: string;
+        phone: string;
+        email?: string;
+        tags?: string[];
+        date_of_birth?: string;
+      }> = [];
+
+      let clientSkipped = 0;
+
+      for (const row of rows) {
+        const raw: Record<string, string> = {};
         mappings.forEach((mapping, i) => {
           if (mapping !== 'skip' && row[i]) {
-            contact[mapping] = row[i];
+            raw[mapping] = row[i];
           }
         });
-        return contact;
-      });
 
-      // Filter out rows with no phone or email
-      const validContacts = contacts.filter((c) => c.phone || c.email);
+        // Phone is required — skip rows without it
+        if (!raw.phone) {
+          clientSkipped++;
+          continue;
+        }
 
-      const res = await fetch('/api/growth/contacts/import', {
+        // Concatenate first_name + last_name → canonical single 'name' field
+        const nameParts = [raw.first_name, raw.last_name].filter(Boolean);
+        const name = nameParts.join(' ').trim() || undefined;
+
+        // Tags: split comma-separated string into array
+        const tags = raw.tags
+          ? raw.tags.split(',').map((t) => t.trim()).filter(Boolean)
+          : undefined;
+
+        // Birthday → date_of_birth (pass as-is; API will validate date format)
+        const date_of_birth = raw.birthday || undefined;
+
+        contacts.push({
+          name,
+          phone: raw.phone,
+          email: raw.email || undefined,
+          tags: tags && tags.length > 0 ? tags : undefined,
+          date_of_birth,
+        });
+      }
+
+      if (contacts.length === 0) {
+        setResult({ imported: 0, skipped: rows.length, errors: 0 });
+        return;
+      }
+
+      const res = await fetch('/api/customers/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           businessId: business.id,
-          contacts: validContacts,
+          contacts,
         }),
       });
 
@@ -153,10 +190,11 @@ export default function GrowthImportPage() {
       }
 
       const data = await res.json();
+      const serverErrors = Array.isArray(data.errors) ? data.errors.length : 0;
       setResult({
         imported: data.imported ?? 0,
-        skipped: data.skipped ?? 0,
-        errors: data.errors ?? 0,
+        skipped: (data.skipped ?? 0) + clientSkipped,
+        errors: serverErrors,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
@@ -167,7 +205,7 @@ export default function GrowthImportPage() {
 
   const previewRows = rows.slice(0, 5);
   const hasMappedField = mappings.some((m) => m !== 'skip');
-  const hasPhoneOrEmail = mappings.includes('phone') || mappings.includes('email');
+  const hasPhone = mappings.includes('phone');
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
@@ -187,7 +225,7 @@ export default function GrowthImportPage() {
         <PageHelp
           pageKey="growth-import"
           title="Contact Import"
-          description="Upload a CSV file with your contacts. Map each column to the correct field, then import. Contacts must have a phone number or email."
+          description="Upload a CSV file with your contacts. Map each column to the correct field, then import. Each contact must have a phone number."
         />
       </div>
 
@@ -302,14 +340,14 @@ export default function GrowthImportPage() {
           <div className="flex items-center gap-3">
             <button
               type="button"
-              disabled={importing || !hasMappedField || !hasPhoneOrEmail}
+              disabled={importing || !hasMappedField || !hasPhone}
               onClick={handleImport}
               className="rounded-lg bg-brand-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50 transition-colors"
             >
               {importing ? 'Importing...' : `Import ${rows.length} Contact${rows.length !== 1 ? 's' : ''}`}
             </button>
-            {!hasPhoneOrEmail && hasMappedField && (
-              <p className="text-sm text-amber-600 dark:text-amber-400">Map at least a Phone or Email column</p>
+            {!hasPhone && hasMappedField && (
+              <p className="text-sm text-amber-600 dark:text-amber-400">A Phone column mapping is required</p>
             )}
           </div>
         </>
