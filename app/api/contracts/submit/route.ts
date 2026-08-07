@@ -68,6 +68,7 @@ export async function POST(request: NextRequest) {
       id: string; contract_id: string; signer_name: string | null;
       signer_phone: string; signer_email: string | null; status: string;
       token_expires_at: string; signing_order: number; otp_verified: boolean;
+      signature_reference: string | null;
     } | null = null;
     let parentContract: typeof contract = null;
 
@@ -75,7 +76,7 @@ export async function POST(request: NextRequest) {
       // Look up in contract_signers
       const { data: signer } = await supabase
         .from('contract_signers')
-        .select('id, contract_id, signer_name, signer_phone, signer_email, status, token_expires_at, signing_order, otp_verified')
+        .select('id, contract_id, signer_name, signer_phone, signer_email, status, token_expires_at, signing_order, otp_verified, signature_reference')
         .eq('token', token)
         .single();
 
@@ -117,8 +118,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'This signing link has expired' }, { status: 410 });
     }
 
+    // Allow finalization retry: signer already signed but parent contract not yet finalized
+    // (e.g. PDF generation or storage failed on the first attempt)
+    let isFinalizationRetry = false;
     if (signerStatus !== 'pending') {
-      return NextResponse.json({ error: 'This document has already been signed or is no longer valid' }, { status: 410 });
+      if (isMultiSigner && signerStatus === 'signed' && activeContract.status === 'pending') {
+        isFinalizationRetry = true;
+      } else {
+        return NextResponse.json({ error: 'This document has already been signed or is no longer valid' }, { status: 410 });
+      }
     }
 
     // OTP guard
@@ -143,17 +151,23 @@ export async function POST(request: NextRequest) {
       signed_at: new Date().toISOString(),
     };
 
-    // Upload signature as image to storage
-    const signatureBuffer = Buffer.from(signature_data.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+    // Upload signature as image to storage (skip on finalization retry — already stored)
     const sigSuffix = isMultiSigner ? `signer-${signerRow!.signing_order}` : 'signature';
     const signaturePath = `${activeContract.business_id}/${activeContract.id}/${sigSuffix}.png`;
 
-    await supabase.storage
-      .from('contracts')
-      .upload(signaturePath, signatureBuffer, {
-        contentType: 'image/png',
-        upsert: true,
-      });
+    if (!isFinalizationRetry) {
+      const signatureBuffer = Buffer.from(signature_data.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+      const { error: sigUploadError } = await supabase.storage
+        .from('contracts')
+        .upload(signaturePath, signatureBuffer, {
+          contentType: 'image/png',
+          upsert: true,
+        });
+      if (sigUploadError) {
+        logger.error('Signature image upload failed:', sigUploadError);
+        return NextResponse.json({ error: 'Failed to store signature' }, { status: 500 });
+      }
+    }
 
     // Get business info
     const { data: biz } = await supabase
@@ -178,33 +192,66 @@ export async function POST(request: NextRequest) {
     }
 
     if (isMultiSigner) {
-      // Generate signature reference for this signer
-      const signatureReference = generateSigRef();
+      // Generate or reuse signature reference
+      const signatureReference = isFinalizationRetry
+        ? (signerRow!.signature_reference || generateSigRef())
+        : generateSigRef();
 
-      // Update the signer row
-      await supabase
-        .from('contract_signers')
-        .update({
-          status: 'signed',
-          signature_data,
-          signed_at: new Date().toISOString(),
-          audit_trail: { ...auditTrail, signature_reference: signatureReference },
-          signature_reference: signatureReference,
-        })
-        .eq('id', signerRow!.id);
+      // Update the signer row (skip on finalization retry — already signed)
+      if (!isFinalizationRetry) {
+        const { error: signerUpdateError } = await supabase
+          .from('contract_signers')
+          .update({
+            status: 'signed',
+            signature_data,
+            signed_at: new Date().toISOString(),
+            audit_trail: { ...auditTrail, signature_reference: signatureReference },
+            signature_reference: signatureReference,
+          })
+          .eq('id', signerRow!.id);
 
-      // Check if all signers have signed
-      const { data: allSigners } = await supabase
+        if (signerUpdateError) {
+          logger.error('Failed to persist signer signature:', signerUpdateError);
+          return NextResponse.json({ error: 'Failed to save signature' }, { status: 500 });
+        }
+      }
+
+      // Reload all signers from DB — this is the authoritative state
+      const { data: allSigners, error: signersQueryError } = await supabase
         .from('contract_signers')
-        .select('id, status, signing_order, signer_phone, signer_email, signer_name, token')
+        .select('id, status, signing_order, signer_phone, signer_email, signer_name, token, signature_data, signed_at, signature_reference')
         .eq('contract_id', activeContract.id)
         .order('signing_order');
 
-      const allSigned = (allSigners || []).every(s => s.id === signerRow!.id || s.status === 'signed');
+      if (signersQueryError || !allSigners) {
+        logger.error('Failed to reload signers after update:', signersQueryError);
+        return NextResponse.json({ error: 'Failed to verify signing status' }, { status: 500 });
+      }
+
+      if (allSigners.length === 0) {
+        logger.error(`No signers found for contract ${activeContract.id} after update`);
+        return NextResponse.json({ error: 'Failed to verify signing status' }, { status: 500 });
+      }
+
+      // Determine completion only from persisted signer statuses — no special-casing
+      const allSigned = allSigners.every(s => s.status === 'signed');
       let pdfPath: string | null = null;
 
       if (allSigned) {
-        // All signed — generate final PDF and mark parent as signed
+        // Verify every signer has the required persisted signature data for PDF generation
+        const missingData = allSigners.find(s => !s.signature_data);
+        if (missingData) {
+          logger.error(`Signer ${missingData.id} has status 'signed' but no signature_data`);
+          return NextResponse.json({ error: 'Incomplete signer data — cannot finalize document' }, { status: 500 });
+        }
+
+        // Build per-signer entries from stored DB data (works for both first-pass and retry)
+        const signerEntries = allSigners.map(s => ({
+          signerName: s.signer_name || 'Signer',
+          signatureData: s.signature_data!,
+          signedAt: s.signed_at || auditTrail.signed_at,
+          signatureReference: s.signature_reference || undefined,
+        }));
 
         if (activeContract.template_url) {
           try {
@@ -215,12 +262,13 @@ export async function POST(request: NextRequest) {
 
             if (originalFile) {
               const originalBuffer = Buffer.from(await originalFile.arrayBuffer());
+
               const pdfBuffer = await appendSignatureToUploadedPdf({
                 originalFileBuffer: originalBuffer,
                 originalFileType: ext === 'pdf' ? 'pdf' : 'image',
                 businessName,
                 title: activeContract.title,
-                signerName: (allSigners || []).map(s => s.signer_name || 'Signer').join(', '),
+                signerName: signerEntries.map(s => s.signerName).join(', '),
                 signatureData: signature_data,
                 signedAt: auditTrail.signed_at,
                 auditTrail,
@@ -228,13 +276,18 @@ export async function POST(request: NextRequest) {
                 referenceCode: activeContract.reference_code || undefined,
                 signatureReference: signatureReference,
                 verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
+                signers: signerEntries,
               });
 
-              pdfPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;
-              await supabase.storage.from('contracts').upload(pdfPath, pdfBuffer, {
+              const targetPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;
+              const { error: uploadError } = await supabase.storage.from('contracts').upload(targetPath, pdfBuffer, {
                 contentType: 'application/pdf',
                 upsert: true,
               });
+              if (uploadError) {
+                throw new Error(`Storage upload failed: ${uploadError.message}`);
+              }
+              pdfPath = targetPath;
             }
           } catch (pdfErr) {
             logger.error('Multi-signer PDF generation failed:', pdfErr);
@@ -247,7 +300,7 @@ export async function POST(request: NextRequest) {
               businessName,
               title: activeContract.title,
               documentContent: activeContract.document_content,
-              signerName: (allSigners || []).map(s => s.signer_name || 'Signer').join(', '),
+              signerName: signerEntries.map(s => s.signerName).join(', '),
               signatureData: signature_data,
               signedAt: auditTrail.signed_at,
               auditTrail,
@@ -255,26 +308,50 @@ export async function POST(request: NextRequest) {
               referenceCode: activeContract.reference_code || undefined,
               signatureReference: signatureReference,
               verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
+              signers: signerEntries,
             });
 
-            pdfPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;
-            await supabase.storage.from('contracts').upload(pdfPath, pdfBuffer, {
+            const targetPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;
+            const { error: uploadError } = await supabase.storage.from('contracts').upload(targetPath, pdfBuffer, {
               contentType: 'application/pdf',
               upsert: true,
             });
+            if (uploadError) {
+              throw new Error(`Storage upload failed: ${uploadError.message}`);
+            }
+            pdfPath = targetPath;
           } catch (pdfErr) {
             logger.error('Multi-signer PDF generation failed:', pdfErr);
           }
         }
 
-        await supabase
+        // Contract must NOT transition to signed without a finalized PDF
+        if (!pdfPath) {
+          logger.error(`Multi-signer finalization failed for contract ${activeContract.id}: no signed PDF generated or stored`);
+          return NextResponse.json({
+            error: 'Document finalization failed. Your signature has been captured — please try again.',
+            signature_captured: true,
+            contract_id: activeContract.id,
+          }, { status: 500 });
+        }
+
+        const { error: contractUpdateError } = await supabase
           .from('contracts')
           .update({
             status: 'signed',
-            signed_url: pdfPath || signaturePath,
+            signed_url: pdfPath,
             signed_at: new Date().toISOString(),
           })
           .eq('id', activeContract.id);
+
+        if (contractUpdateError) {
+          logger.error('Failed to finalize contract status:', contractUpdateError);
+          return NextResponse.json({
+            error: 'Document finalization failed. Your signature has been captured — please try again.',
+            signature_captured: true,
+            contract_id: activeContract.id,
+          }, { status: 500 });
+        }
 
         // Notify owner (email + WhatsApp)
         {
@@ -289,7 +366,7 @@ export async function POST(request: NextRequest) {
         }
       } else if (activeContract.signing_mode === 'sequential') {
         // Advance next signer from 'waiting' to 'pending'
-        const nextSigner = (allSigners || []).find(s => s.status === 'waiting');
+        const nextSigner = allSigners.find(s => s.status === 'waiting');
         if (nextSigner) {
           await supabase
             .from('contract_signers')
