@@ -7,6 +7,16 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-07
 
+### fix(P1-REF-1): add missing `refer` keyword handler for referral code retrieval
+
+- **Root cause:** After booking completion, `post-completion.ts` generates a referral code silently and the bot tells customers "Type *refer* to invite friends and earn rewards" (`scheduling.flow.ts:2804`). However, no handler existed for the `refer` keyword — it fell through the entire bot pipeline (unified keywords, canonical understanding, smart intent) and produced a confused response.
+- **Fix:** Added `isReferralQuery()` regex matcher and a referral handler to `handleGlobalQuery()` in `lib/bot/handlers/global-queries.ts`. The handler: (1) checks referral capability on the session's effective capabilities (CAS-007 compliant), (2) queries the `referrals` table scoped to the current business_id AND the current customer's phone (both `+` and non-`+` formats via `.or()`), filtering to `status = 'pending'`, (3) returns the code with a share prompt if found, or a deterministic "complete a booking first" message if not. Does NOT deactivate or modify the active session — the handler is read-only like the loyalty handler.
+- **Files changed:** `lib/bot/handlers/global-queries.ts`
+- **Tests added:** `lib/bot/__tests__/referral-global-query.test.ts` — 31 tests covering: code retrieval, cross-customer isolation, cross-business isolation, no-code message, capability gating, mid-flow safety, unrelated keyword isolation, session integrity, phone normalization, status scoping, reward type rendering.
+- **No migration required.** Uses existing `referrals` table, existing RLS policies, existing phone format conventions.
+- **Affects:** WhatsApp bot `refer` / `my referral` / `referral code` / `refer a friend` / `invite a friend` commands. No changes to referral code generation, redemption, validation API, dashboard page, or any other flow.
+- **Could break:** Nothing — additive handler in the global query chain. Falls through cleanly when business_id is absent or referral capability is disabled.
+
 ### fix(P1-ESIG-1): preserve all signer signatures in generated PDF
 
 - **Root cause:** When all signers completed a multi-signer contract, the submit route (`app/api/contracts/submit/route.ts`) passed only the current HTTP request's `signature_data` (the last signer's) to the PDF generators. Each signer's signature was correctly stored in `contract_signers.signature_data` and Supabase storage, but the PDF generation call used only the request body value — not the stored data for earlier signers. Both PDF generators (`lib/pdf/append-signature.ts`, `lib/pdf/contract-pdf-generator.ts`) accepted a single `signatureData` string, rendering one signature block.
