@@ -10,6 +10,7 @@ import { formatCurrency, type CountryCode, CATEGORY_LABELS } from '@/lib/constan
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
+import { getOccupancyStatus } from '@/lib/properties/occupancy';
 
 interface Property {
   id: string;
@@ -109,7 +110,7 @@ export default function PropertiesPage() {
       .from('reservations')
       .select('id, property_id, status, check_in, check_out')
       .eq('business_id', business.id)
-      .in('status', ['pending', 'confirmed', 'in_progress', 'completed']);
+      .in('status', ['pending', 'confirmed', 'in_progress', 'checked_in', 'checked_out', 'completed']);
 
     const { data: blocked } = await supabase
       .from('property_blocked_dates')
@@ -121,9 +122,13 @@ export default function PropertiesPage() {
       const propReservations = (reservations || []).filter(r => r.property_id === p.id);
       const propBlocked = (blocked || []).filter(b => b.property_id === p.id);
 
-      // Current status
-      const isOccupied = propReservations.some(r => r.status === 'in_progress');
+      // Current status — checked_in is the canonical "occupied" status;
+      // in_progress kept for legacy backward compatibility
       const isBlocked = propBlocked.some(b => b.date_from <= today && b.date_to >= today);
+      const currentStatus = getOccupancyStatus({
+        reservations: propReservations,
+        isDateBlocked: isBlocked,
+      });
 
       // Next check-in
       const upcoming = propReservations
@@ -132,7 +137,7 @@ export default function PropertiesPage() {
 
       info[p.id] = {
         count: propReservations.length,
-        currentStatus: isOccupied ? 'occupied' : isBlocked ? 'blocked' : 'vacant',
+        currentStatus,
         nextCheckIn: upcoming.length > 0 ? upcoming[0].check_in : null,
       };
     }
