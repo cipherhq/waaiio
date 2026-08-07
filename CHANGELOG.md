@@ -7,6 +7,13 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-07
 
+### fix(DEAD-002): reservation cancellation notification — replace dead endpoint with domain-specific route
+
+- **Root cause:** Dashboard reservation cancellation called nonexistent `/api/notifications/send` to notify guests. The 404 was silently swallowed — customers were never notified of cancelled reservations.
+- **Fix:** Created `/api/reservations/notify-cancel` modeled on existing `notify-checkin` pattern. Authenticates user, verifies business ownership, loads reservation server-side (scoped to business), verifies reservation is actually cancelled, derives guest phone from DB (not request body), uses ChannelResolver. Dashboard now calls this endpoint instead of the dead one.
+- **Files:** `app/api/reservations/notify-cancel/route.ts` (new), `app/dashboard/reservations/page.tsx` (replaced dead fetch call)
+- Could break: Nothing — the old call always 404'd silently.
+
 ### fix(P1-REF-1): add missing `refer` keyword handler for referral code retrieval
 
 - **Root cause:** After booking completion, `post-completion.ts` generates a referral code silently and the bot tells customers "Type *refer* to invite friends and earn rewards" (`scheduling.flow.ts:2804`). However, no handler existed for the `refer` keyword — it fell through the entire bot pipeline (unified keywords, canonical understanding, smart intent) and produced a confused response.
