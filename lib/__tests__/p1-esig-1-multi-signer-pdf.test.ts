@@ -8,7 +8,7 @@
  *   - appendSignatureToUploadedPdf (pdf-lib, for uploaded documents)
  *   - generateSignedContractPdf   (pdfkit, for text-content documents)
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
 import { appendSignatureToUploadedPdf } from '@/lib/pdf/append-signature';
 import { generateSignedContractPdf } from '@/lib/pdf/contract-pdf-generator';
@@ -281,28 +281,23 @@ describe('generateSignedContractPdf', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Multi-signer data assembly logic', () => {
-  it('signerEntries uses stored signature_data for earlier signers, not the current request', () => {
-    // This simulates the logic from submit/route.ts
-    const currentSignerId = 'signer-3';
-    const currentSignatureData = 'data:image/png;base64,CURRENT_SIG';
-    const currentSignedAt = '2026-08-07T12:00:00Z';
-    const currentSigRef = 'SIG-CCC';
-
+  it('signerEntries uses each signer stored DB data — not the current request', () => {
+    // Simulates the simplified logic from submit/route.ts: always use stored data
     const allSigners = [
       { id: 'signer-1', signer_name: 'Alice', signature_data: 'data:image/png;base64,ALICE_SIG', signed_at: '2026-08-07T10:00:00Z', signature_reference: 'SIG-AAA', status: 'signed' },
       { id: 'signer-2', signer_name: 'Bob', signature_data: 'data:image/png;base64,BOB_SIG', signed_at: '2026-08-07T11:00:00Z', signature_reference: 'SIG-BBB', status: 'signed' },
-      { id: 'signer-3', signer_name: 'Carol', signature_data: currentSignatureData, signed_at: currentSignedAt, signature_reference: currentSigRef, status: 'signed' },
+      { id: 'signer-3', signer_name: 'Carol', signature_data: 'data:image/png;base64,CAROL_SIG', signed_at: '2026-08-07T12:00:00Z', signature_reference: 'SIG-CCC', status: 'signed' },
     ];
 
+    const fallbackSignedAt = '2026-08-07T12:00:00Z';
     const signerEntries = allSigners.map(s => ({
       signerName: s.signer_name || 'Signer',
-      signatureData: s.id === currentSignerId ? currentSignatureData : (s.signature_data || ''),
-      signedAt: s.id === currentSignerId ? currentSignedAt : (s.signed_at || currentSignedAt),
-      signatureReference: s.id === currentSignerId ? currentSigRef : (s.signature_reference || undefined),
+      signatureData: s.signature_data || '',
+      signedAt: s.signed_at || fallbackSignedAt,
+      signatureReference: s.signature_reference || undefined,
     }));
 
     expect(signerEntries).toHaveLength(3);
-    // Each signer has their OWN signature data, not the current signer's
     expect(signerEntries[0].signatureData).toBe('data:image/png;base64,ALICE_SIG');
     expect(signerEntries[0].signerName).toBe('Alice');
     expect(signerEntries[0].signatureReference).toBe('SIG-AAA');
@@ -311,32 +306,54 @@ describe('Multi-signer data assembly logic', () => {
     expect(signerEntries[1].signerName).toBe('Bob');
     expect(signerEntries[1].signatureReference).toBe('SIG-BBB');
 
-    expect(signerEntries[2].signatureData).toBe(currentSignatureData);
+    expect(signerEntries[2].signatureData).toBe('data:image/png;base64,CAROL_SIG');
     expect(signerEntries[2].signerName).toBe('Carol');
     expect(signerEntries[2].signatureReference).toBe('SIG-CCC');
   });
 
   it('completing final signer does not overwrite earlier signer data', () => {
-    const currentSignerId = 'signer-2';
-    const lastSignatureData = 'data:image/png;base64,LAST_SIG';
-
     const allSigners = [
       { id: 'signer-1', signer_name: 'Alice', signature_data: 'data:image/png;base64,FIRST_SIG', signed_at: '2026-08-07T10:00:00Z', signature_reference: 'SIG-AAA', status: 'signed' },
-      { id: 'signer-2', signer_name: 'Bob', signature_data: lastSignatureData, signed_at: '2026-08-07T11:00:00Z', signature_reference: 'SIG-BBB', status: 'signed' },
+      { id: 'signer-2', signer_name: 'Bob', signature_data: 'data:image/png;base64,LAST_SIG', signed_at: '2026-08-07T11:00:00Z', signature_reference: 'SIG-BBB', status: 'signed' },
     ];
 
     const signerEntries = allSigners.map(s => ({
       signerName: s.signer_name || 'Signer',
-      signatureData: s.id === currentSignerId ? lastSignatureData : (s.signature_data || ''),
-      signedAt: s.id === currentSignerId ? '2026-08-07T11:00:00Z' : (s.signed_at || ''),
-      signatureReference: s.id === currentSignerId ? 'SIG-BBB' : (s.signature_reference || undefined),
+      signatureData: s.signature_data || '',
+      signedAt: s.signed_at || '',
+      signatureReference: s.signature_reference || undefined,
     }));
 
-    // Alice's signature must NOT be the last signer's data
+    // Alice's signature is her own stored data, not Bob's
     expect(signerEntries[0].signatureData).toBe('data:image/png;base64,FIRST_SIG');
-    expect(signerEntries[0].signatureData).not.toBe(lastSignatureData);
-    // Bob's signature is the current request data
-    expect(signerEntries[1].signatureData).toBe(lastSignatureData);
+    expect(signerEntries[0].signatureData).not.toBe('data:image/png;base64,LAST_SIG');
+    expect(signerEntries[1].signatureData).toBe('data:image/png;base64,LAST_SIG');
+  });
+
+  it('retry produces identical signerEntries from stored data', () => {
+    // On retry, no signer row is updated — data comes entirely from DB
+    const allSigners = [
+      { id: 's1', signer_name: 'Alice', signature_data: 'data:image/png;base64,ALICE', signed_at: '2026-08-07T10:00:00Z', signature_reference: 'SIG-AAA', status: 'signed' },
+      { id: 's2', signer_name: 'Bob', signature_data: 'data:image/png;base64,BOB', signed_at: '2026-08-07T11:00:00Z', signature_reference: 'SIG-BBB', status: 'signed' },
+    ];
+
+    const fallback = '2026-08-07T12:00:00Z';
+
+    // First pass and retry use the same logic
+    const firstPass = allSigners.map(s => ({
+      signerName: s.signer_name || 'Signer',
+      signatureData: s.signature_data || '',
+      signedAt: s.signed_at || fallback,
+      signatureReference: s.signature_reference || undefined,
+    }));
+    const retry = allSigners.map(s => ({
+      signerName: s.signer_name || 'Signer',
+      signatureData: s.signature_data || '',
+      signedAt: s.signed_at || fallback,
+      signatureReference: s.signature_reference || undefined,
+    }));
+
+    expect(retry).toEqual(firstPass);
   });
 
   it('handles missing signer_name gracefully (falls back to "Signer")', () => {
@@ -405,36 +422,91 @@ describe('Signer isolation and authorization', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Incomplete document behavior
+// Finalization invariants (contract tests against source code)
 // ═══════════════════════════════════════════════════════════════════════
 
-describe('Incomplete document behavior', () => {
-  it('submit route only generates final PDF when allSigned is true', async () => {
+describe('Finalization invariants', () => {
+  let routeSource: string;
+
+  beforeAll(async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const routeSource = fs.readFileSync(
+    routeSource = fs.readFileSync(
       path.resolve(__dirname, '../../app/api/contracts/submit/route.ts'),
       'utf-8',
     );
+  });
 
-    // PDF generation is guarded by allSigned check
+  it('contract transition to signed is gated on successful PDF (no fallback to signature image)', () => {
+    // The multi-signer path must NOT contain `pdfPath || signaturePath` for signed_url
+    // Instead, pdfPath must be truthy before the contract update
+    expect(routeSource).toContain('if (!pdfPath)');
+    expect(routeSource).toContain("'Document finalization failed.");
+
+    // In the multi-signer finalization section, signed_url must use pdfPath alone
+    // Extract the section between "if (allSigned)" and "Single signer flow"
+    const allSignedSection = routeSource.split('if (allSigned)')[1].split('// ── Single signer flow')[0];
+    expect(allSignedSection).toContain('signed_url: pdfPath,');
+    expect(allSignedSection).not.toContain('pdfPath || signaturePath');
+  });
+
+  it('PDF generation failure returns 500, not success', () => {
+    expect(routeSource).toContain("'Document finalization failed.");
+    expect(routeSource).toContain('status: 500');
+    expect(routeSource).toContain('signature_captured: true');
+  });
+
+  it('storage upload errors are explicitly checked for final PDF', () => {
+    // Both template_url and document_content paths must check upload errors
+    const uploadCalls = routeSource.match(/const \{ error: uploadError \} = await supabase\.storage\.from\('contracts'\)\.upload/g);
+    expect(uploadCalls).not.toBeNull();
+    expect(uploadCalls!.length).toBeGreaterThanOrEqual(2);
+    // Upload errors throw (caught by outer try/catch, preventing pdfPath from being set)
+    expect(routeSource).toContain("throw new Error(`Storage upload failed:");
+  });
+
+  it('signature image upload errors are explicitly checked', () => {
+    expect(routeSource).toContain('const { error: sigUploadError }');
+    expect(routeSource).toContain("if (sigUploadError)");
+    expect(routeSource).toContain("'Failed to store signature'");
+  });
+
+  it('finalization retry is allowed when signer already signed but contract not finalized', () => {
+    expect(routeSource).toContain('let isFinalizationRetry = false');
+    expect(routeSource).toContain("signerStatus === 'signed' && activeContract.status === 'pending'");
+    expect(routeSource).toContain('isFinalizationRetry = true');
+  });
+
+  it('retry skips signature re-capture and signer row update', () => {
+    expect(routeSource).toContain('if (!isFinalizationRetry)');
+    // Signature upload and signer update are inside the guard
+    const guardBlocks = routeSource.match(/if \(!isFinalizationRetry\)/g);
+    // At least 2 guards: one for signature upload, one for signer row update
+    expect(guardBlocks).not.toBeNull();
+    expect(guardBlocks!.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('retry reuses stored signature reference, does not generate a new one', () => {
+    expect(routeSource).toContain('signerRow!.signature_reference || generateSigRef()');
+  });
+
+  it('contract status update error is checked and blocks success response', () => {
+    expect(routeSource).toContain('const { error: contractUpdateError }');
+    expect(routeSource).toContain('if (contractUpdateError)');
+  });
+
+  it('PDF generation is guarded by allSigned check', () => {
     expect(routeSource).toContain("const allSigned = (allSigners || []).every(s => s.id === signerRow!.id || s.status === 'signed')");
     expect(routeSource).toContain('if (allSigned)');
-    // PDF path is null until generation succeeds
     expect(routeSource).toContain('let pdfPath: string | null = null');
   });
 
-  it('PDF generation failure does not falsely report success — signed_url falls back to signature image path', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const routeSource = fs.readFileSync(
-      path.resolve(__dirname, '../../app/api/contracts/submit/route.ts'),
-      'utf-8',
-    );
-
-    // signed_url falls back to signaturePath when pdfPath is null
-    expect(routeSource).toContain('signed_url: pdfPath || signaturePath');
-    // PDF errors are caught, not thrown
-    expect(routeSource).toContain("logger.error('Multi-signer PDF generation failed:'");
+  it('single-signer flow is not affected by finalization retry logic', () => {
+    // The single-signer path should still have the original fallback behavior
+    // (unchanged by this fix — single-signer is after `if (isMultiSigner) {...}`)
+    const singleSignerSection = routeSource.split('// ── Single signer flow')[1];
+    expect(singleSignerSection).toBeDefined();
+    // Single-signer still uses pdfPath || signaturePath (original behavior preserved)
+    expect(singleSignerSection).toContain('pdfPath || signaturePath');
   });
 });
