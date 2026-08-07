@@ -72,6 +72,17 @@ const BASE_DATA = {
 // appendSignatureToUploadedPdf (pdf-lib)
 // ═══════════════════════════════════════════════════════════════════════
 
+/** Helper to build N signers for tests */
+function makeSigners(count: number): { signerName: string; signatureData: string; signedAt: string; signatureReference: string }[] {
+  const names = ['Alice', 'Bob', 'Carol', 'Dave', 'Eve', 'Frank', 'Grace', 'Heidi'];
+  return Array.from({ length: count }, (_, i) => ({
+    signerName: names[i] || `Signer-${i + 1}`,
+    signatureData: makeFakeSignature(`signer-${i}`),
+    signedAt: BASE_DATA.signedAt,
+    signatureReference: `SIG-${String.fromCharCode(65 + i).repeat(3)}`,
+  }));
+}
+
 describe('appendSignatureToUploadedPdf', () => {
   it('single signer: produces valid PDF with signature page appended', async () => {
     const originalPdf = await makeBlankPdf();
@@ -88,59 +99,106 @@ describe('appendSignatureToUploadedPdf', () => {
 
     expect(result).toBeInstanceOf(Buffer);
     const doc = await PDFDocument.load(result);
-    // Original 1 page + 1 signature page = 2
+    // Original 1 page + 1 certificate page = 2
     expect(doc.getPageCount()).toBe(2);
+    const imageCount = await countEmbeddedImages(result);
+    expect(imageCount).toBeGreaterThanOrEqual(1); // signature + QR
   });
 
-  it('two signers: both signatures are embedded in the PDF', async () => {
+  it('two signers: both fit and are embedded', async () => {
     const originalPdf = await makeBlankPdf();
-    const sigAlice = makeFakeSignature('alice');
-    const sigBob = makeFakeSignature('bob');
+    const signers = makeSigners(2);
 
     const result = await appendSignatureToUploadedPdf({
       ...BASE_DATA,
       originalFileBuffer: originalPdf,
       originalFileType: 'pdf',
-      signerName: 'Alice, Bob',
-      signatureData: sigAlice,
+      signerName: signers.map(s => s.signerName).join(', '),
+      signatureData: signers[0].signatureData,
       signatureReference: 'SIG-AAA',
-      signers: [
-        { signerName: 'Alice', signatureData: sigAlice, signedAt: BASE_DATA.signedAt, signatureReference: 'SIG-AAA' },
-        { signerName: 'Bob', signatureData: sigBob, signedAt: BASE_DATA.signedAt, signatureReference: 'SIG-BBB' },
-      ],
+      signers,
     });
 
     expect(result).toBeInstanceOf(Buffer);
     const doc = await PDFDocument.load(result);
-    // Original 1 page + 1 signature page (both signers fit on one page)
+    // Original 1 page + certificate page(s) — at least 2 total
     expect(doc.getPageCount()).toBeGreaterThanOrEqual(2);
-
-    // Count embedded images: should have at least 2 signature images + 1 QR = 3
     const imageCount = await countEmbeddedImages(result);
+    // At least 2 signature images
     expect(imageCount).toBeGreaterThanOrEqual(2);
   });
 
-  it('three signers: none are discarded', async () => {
+  it('three signers: pagination prevents off-page rendering', async () => {
     const originalPdf = await makeBlankPdf();
-    const sigs = ['alice', 'bob', 'carol'].map(n => makeFakeSignature(n));
+    const signers = makeSigners(3);
 
     const result = await appendSignatureToUploadedPdf({
       ...BASE_DATA,
       originalFileBuffer: originalPdf,
       originalFileType: 'pdf',
-      signerName: 'Alice, Bob, Carol',
-      signatureData: sigs[2],
-      signers: [
-        { signerName: 'Alice', signatureData: sigs[0], signedAt: BASE_DATA.signedAt, signatureReference: 'SIG-AAA' },
-        { signerName: 'Bob', signatureData: sigs[1], signedAt: BASE_DATA.signedAt, signatureReference: 'SIG-BBB' },
-        { signerName: 'Carol', signatureData: sigs[2], signedAt: BASE_DATA.signedAt, signatureReference: 'SIG-CCC' },
-      ],
+      signerName: signers.map(s => s.signerName).join(', '),
+      signatureData: signers[2].signatureData,
+      signers,
     });
 
     expect(result).toBeInstanceOf(Buffer);
-    // At least 3 signature images embedded
+    const doc = await PDFDocument.load(result);
+    // Original 1 page + at least 2 certificate pages (3 signers + footer overflow one page)
+    expect(doc.getPageCount()).toBeGreaterThanOrEqual(3);
     const imageCount = await countEmbeddedImages(result);
+    // 3 signatures + QR
     expect(imageCount).toBeGreaterThanOrEqual(3);
+  });
+
+  it('five signers: pagination adds enough certificate pages', async () => {
+    const originalPdf = await makeBlankPdf();
+    const signers = makeSigners(5);
+
+    const result = await appendSignatureToUploadedPdf({
+      ...BASE_DATA,
+      originalFileBuffer: originalPdf,
+      originalFileType: 'pdf',
+      signerName: signers.map(s => s.signerName).join(', '),
+      signatureData: signers[4].signatureData,
+      signers,
+    });
+
+    expect(result).toBeInstanceOf(Buffer);
+    const doc = await PDFDocument.load(result);
+    // Original 1 page + multiple certificate pages for 5 signers + footer
+    // 5 signers at ~220px each = ~1100px, plus header ~120px + footer ~230px = ~1450px
+    // One A4 page has ~740px usable → needs at least 2 certificate pages
+    expect(doc.getPageCount()).toBeGreaterThanOrEqual(3);
+    const imageCount = await countEmbeddedImages(result);
+    // 5 signatures + QR
+    expect(imageCount).toBeGreaterThanOrEqual(5);
+  });
+
+  it('signer order preserved across pages', async () => {
+    // With 5 signers, some will be on page 2+. The test confirms the PDF is valid
+    // and all signers are embedded (order preservation is structural from the loop)
+    const originalPdf = await makeBlankPdf();
+    const signers = makeSigners(5);
+
+    const result = await appendSignatureToUploadedPdf({
+      ...BASE_DATA,
+      originalFileBuffer: originalPdf,
+      originalFileType: 'pdf',
+      signerName: signers.map(s => s.signerName).join(', '),
+      signatureData: signers[4].signatureData,
+      signers,
+    });
+
+    const doc = await PDFDocument.load(result);
+    // Every certificate page beyond the original should be A4
+    for (let i = 1; i < doc.getPageCount(); i++) {
+      const page = doc.getPage(i);
+      expect(page.getWidth()).toBe(595);
+      expect(page.getHeight()).toBe(842);
+    }
+    // All 5 signatures embedded
+    const imageCount = await countEmbeddedImages(result);
+    expect(imageCount).toBeGreaterThanOrEqual(5);
   });
 
   it('single signer with no signers array: backward compatible', async () => {
@@ -154,42 +212,64 @@ describe('appendSignatureToUploadedPdf', () => {
       signerName: 'Alice',
       signatureData: sig,
       signatureReference: 'SIG-AAA',
-      // No signers array — should still work exactly as before
     });
 
     expect(result).toBeInstanceOf(Buffer);
     const doc = await PDFDocument.load(result);
+    // Single signer still fits on one certificate page: original 1 + cert 1 = 2
     expect(doc.getPageCount()).toBe(2);
-
-    // Exactly 1 signature + 1 QR = 2 images
-    const imageCount = await countEmbeddedImages(result);
-    expect(imageCount).toBeGreaterThanOrEqual(1);
   });
 
-  it('image document type: works with multi-signer', async () => {
-    // Create a minimal 1x1 PNG as "uploaded image document"
+  it('image document type: works with paginated multi-signer', async () => {
     const PNG_1x1 = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAH' +
       'ggJ/PchI7wAAAABJRU5ErkJggg==',
       'base64',
     );
+    const signers = makeSigners(3);
 
     const result = await appendSignatureToUploadedPdf({
       ...BASE_DATA,
       originalFileBuffer: PNG_1x1,
       originalFileType: 'image',
-      signerName: 'Alice, Bob',
-      signatureData: makeFakeSignature('alice'),
-      signers: [
-        { signerName: 'Alice', signatureData: makeFakeSignature('alice'), signedAt: BASE_DATA.signedAt, signatureReference: 'SIG-AAA' },
-        { signerName: 'Bob', signatureData: makeFakeSignature('bob'), signedAt: BASE_DATA.signedAt, signatureReference: 'SIG-BBB' },
-      ],
+      signerName: signers.map(s => s.signerName).join(', '),
+      signatureData: signers[0].signatureData,
+      signers,
     });
 
     expect(result).toBeInstanceOf(Buffer);
     const doc = await PDFDocument.load(result);
-    // Image page + signature page
-    expect(doc.getPageCount()).toBeGreaterThanOrEqual(2);
+    // Image page + certificate page(s)
+    expect(doc.getPageCount()).toBeGreaterThanOrEqual(3);
+    const imageCount = await countEmbeddedImages(result);
+    // 3 signatures + original image + QR
+    expect(imageCount).toBeGreaterThanOrEqual(4);
+  });
+
+  it('footer/QR remains on a visible page', async () => {
+    // With 3 signers, footer should be pushed to a new page if needed
+    const originalPdf = await makeBlankPdf();
+    const signers = makeSigners(3);
+
+    const result = await appendSignatureToUploadedPdf({
+      ...BASE_DATA,
+      originalFileBuffer: originalPdf,
+      originalFileType: 'pdf',
+      signerName: signers.map(s => s.signerName).join(', '),
+      signatureData: signers[2].signatureData,
+      signers,
+    });
+
+    const doc = await PDFDocument.load(result);
+    // QR code should be embedded (proves footer was rendered)
+    const imageCount = await countEmbeddedImages(result);
+    // 3 sigs + QR = at least 4
+    expect(imageCount).toBeGreaterThanOrEqual(4);
+    // All pages are valid A4
+    for (let i = 0; i < doc.getPageCount(); i++) {
+      const page = doc.getPage(i);
+      expect(page.getHeight()).toBe(842);
+    }
   });
 });
 

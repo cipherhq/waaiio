@@ -86,8 +86,13 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
     });
   }
 
-  // Add signature page
-  const sigPage = pdfDoc.addPage([595, 842]); // A4
+  // ── Constants ──
+  const A4_WIDTH = 595;
+  const A4_HEIGHT = 842;
+  const PAGE_BOTTOM = 40; // minimum y before content goes off-page
+  const SIGNER_BLOCK_HEIGHT = 220; // conservative estimate per signer block
+  const FOOTER_HEIGHT = 230; // verification footer + QR code
+
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
@@ -96,15 +101,20 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
   const gray = rgb(0.4, 0.4, 0.4);
   const lightGray = rgb(0.6, 0.6, 0.6);
 
-  let y = 780;
+  /** Add a new certificate page with Waaiio branding and return it with starting y */
+  function addCertPage(): { page: ReturnType<typeof pdfDoc.addPage>; y: number } {
+    const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
+    page.drawText('waaiio', {
+      x: 440, y: 800, size: 18, font: fontBold, color: brandColor,
+    });
+    page.drawText('Electronic Signature', {
+      x: 440, y: 785, size: 7, font, color: lightGray,
+    });
+    return { page, y: 780 };
+  }
 
-  // ── Waaiio branding (top-right) ──
-  sigPage.drawText('waaiio', {
-    x: 440, y: 800, size: 18, font: fontBold, color: brandColor,
-  });
-  sigPage.drawText('Electronic Signature', {
-    x: 440, y: 785, size: 7, font, color: lightGray,
-  });
+  // Add first signature certificate page
+  let { page: currentPage, y } = addCertPage();
 
   // ── Business logo (if provided) ──
   if (data.logoBuffer) {
@@ -114,7 +124,7 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
         ? await pdfDoc.embedPng(data.logoBuffer)
         : await pdfDoc.embedJpg(data.logoBuffer);
       const logoScale = Math.min(40 / logoImage.width, 40 / logoImage.height, 1);
-      sigPage.drawImage(logoImage, {
+      currentPage.drawImage(logoImage, {
         x: 50, y: y - 30, width: logoImage.width * logoScale, height: logoImage.height * logoScale,
       });
     } catch {
@@ -123,36 +133,36 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
   }
 
   // ── Header ──
-  sigPage.drawText(data.businessName, {
+  currentPage.drawText(data.businessName, {
     x: data.logoBuffer ? 100 : 50, y, size: 10, font, color: gray,
   });
   y -= 22;
 
-  sigPage.drawText(data.title, {
+  currentPage.drawText(data.title, {
     x: 50, y, size: 18, font: fontBold, color: black,
   });
   y -= 18;
 
-  sigPage.drawText('Signature Certificate', {
+  currentPage.drawText('Signature Certificate', {
     x: 50, y, size: 12, font, color: gray,
   });
   y -= 20;
 
   // Document ID
   if (data.referenceCode) {
-    sigPage.drawText(`Document ID: ${data.referenceCode}`, {
+    currentPage.drawText(`Document ID: ${data.referenceCode}`, {
       x: 50, y, size: 8, font, color: lightGray,
     });
     y -= 12;
   }
 
-  sigPage.drawText(`Date: ${formatDate(data.signedAt)}  |  Ref: ${data.contractId}`, {
+  currentPage.drawText(`Date: ${formatDate(data.signedAt)}  |  Ref: ${data.contractId}`, {
     x: 50, y, size: 9, font, color: lightGray,
   });
   y -= 15;
 
   // Divider
-  sigPage.drawLine({
+  currentPage.drawLine({
     start: { x: 50, y },
     end: { x: 545, y },
     thickness: 0.5,
@@ -167,34 +177,40 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
 
   const partyWord = signerEntries.length === 1 ? 'party' : 'parties';
 
-  sigPage.drawText('This document confirms that the attached document has been electronically', {
+  currentPage.drawText('This document confirms that the attached document has been electronically', {
     x: 50, y, size: 10, font, color: black,
   });
   y -= 16;
-  sigPage.drawText(`reviewed and signed by the following ${partyWord}:`, {
+  currentPage.drawText(`reviewed and signed by the following ${partyWord}:`, {
     x: 50, y, size: 10, font, color: black,
   });
   y -= 40;
 
-  // ── Render a signature block per signer ──
+  // ── Render a signature block per signer (with pagination) ──
   for (const signer of signerEntries) {
-    sigPage.drawText('SIGNED BY', {
+    // Check if the next signer block fits on the current page
+    if (y - SIGNER_BLOCK_HEIGHT < PAGE_BOTTOM) {
+      ({ page: currentPage, y } = addCertPage());
+      y -= 20; // small top margin on continuation pages
+    }
+
+    currentPage.drawText('SIGNED BY', {
       x: 50, y, size: 9, font: fontBold, color: gray,
     });
     y -= 18;
 
-    sigPage.drawText(signer.signerName, {
+    currentPage.drawText(signer.signerName, {
       x: 50, y, size: 14, font: fontBold, color: black,
     });
     y -= 20;
 
-    sigPage.drawText(`Date & Time: ${formatDate(signer.signedAt)}`, {
+    currentPage.drawText(`Date & Time: ${formatDate(signer.signedAt)}`, {
       x: 50, y, size: 10, font, color: gray,
     });
     y -= 16;
 
     if (signer.signatureReference) {
-      sigPage.drawText(`Signature Ref: ${signer.signatureReference}`, {
+      currentPage.drawText(`Signature Ref: ${signer.signatureReference}`, {
         x: 50, y, size: 8, font, color: lightGray,
       });
       y -= 14;
@@ -202,7 +218,7 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
     y -= 5;
 
     // ── Embed signature image ──
-    sigPage.drawText('Signature:', {
+    currentPage.drawText('Signature:', {
       x: 50, y, size: 9, font: fontBold, color: gray,
     });
     y -= 10;
@@ -216,19 +232,19 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
       const sigW = sigImage.width * sigScale;
       const sigH = sigImage.height * sigScale;
 
-      sigPage.drawImage(sigImage, {
+      currentPage.drawImage(sigImage, {
         x: 50, y: y - sigH, width: sigW, height: sigH,
       });
       y -= sigH + 10;
     } catch {
-      sigPage.drawText('[Signature on file]', {
+      currentPage.drawText('[Signature on file]', {
         x: 50, y: y - 15, size: 10, font, color: lightGray,
       });
       y -= 25;
     }
 
     // Signature line
-    sigPage.drawLine({
+    currentPage.drawLine({
       start: { x: 50, y },
       end: { x: 270, y },
       thickness: 1,
@@ -236,14 +252,19 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
     });
     y -= 14;
 
-    sigPage.drawText(signer.signerName, {
+    currentPage.drawText(signer.signerName, {
       x: 50, y, size: 8, font, color: gray,
     });
     y -= 30;
   }
 
-  // ── Waaiio verification footer ──
-  sigPage.drawLine({
+  // ── Waaiio verification footer (with overflow check) ──
+  if (y - FOOTER_HEIGHT < PAGE_BOTTOM) {
+    ({ page: currentPage, y } = addCertPage());
+    y -= 20;
+  }
+
+  currentPage.drawLine({
     start: { x: 50, y },
     end: { x: 545, y },
     thickness: 0.5,
@@ -251,33 +272,33 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
   });
   y -= 18;
 
-  sigPage.drawText('Verified by waaiio', {
+  currentPage.drawText('Verified by waaiio', {
     x: 50, y, size: 10, font: fontBold, color: brandColor,
   });
   y -= 16;
 
-  sigPage.drawText(
+  currentPage.drawText(
     'This document was electronically signed and verified through waaiio\'s secure signing platform.',
     { x: 50, y, size: 8, font, color: lightGray },
   );
   y -= 14;
 
-  sigPage.drawText(`Document ID: ${data.contractId}`, {
+  currentPage.drawText(`Document ID: ${data.contractId}`, {
     x: 50, y, size: 7, font, color: lightGray,
   });
   y -= 12;
 
-  sigPage.drawText(`IP Address: ${data.auditTrail.ip}  |  Device: ${data.auditTrail.device_type}`, {
+  currentPage.drawText(`IP Address: ${data.auditTrail.ip}  |  Device: ${data.auditTrail.device_type}`, {
     x: 50, y, size: 7, font, color: lightGray,
   });
   y -= 12;
 
-  sigPage.drawText(`User Agent: ${data.auditTrail.user_agent.slice(0, 100)}`, {
+  currentPage.drawText(`User Agent: ${data.auditTrail.user_agent.slice(0, 100)}`, {
     x: 50, y, size: 6, font, color: rgb(0.75, 0.75, 0.75),
   });
   y -= 20;
 
-  sigPage.drawText('waaiio.com  |  Legally binding electronic signature', {
+  currentPage.drawText('waaiio.com  |  Legally binding electronic signature', {
     x: 180, y, size: 7, font, color: rgb(0.75, 0.75, 0.75),
   });
   y -= 25;
@@ -287,12 +308,11 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
     try {
       const qrBuffer = await QRCode.toBuffer(data.verifyUrl, { width: 100, margin: 1 });
       const qrImage = await pdfDoc.embedPng(qrBuffer);
-      const qrY = Math.max(y - 110, 40);
-      sigPage.drawImage(qrImage, {
-        x: 50, y: qrY, width: 100, height: 100,
+      currentPage.drawImage(qrImage, {
+        x: 50, y: y - 100, width: 100, height: 100,
       });
-      sigPage.drawText('Scan to verify this document', {
-        x: 160, y: qrY + 45, size: 7, font, color: lightGray,
+      currentPage.drawText('Scan to verify this document', {
+        x: 160, y: y - 55, size: 7, font, color: lightGray,
       });
     } catch {
       // Skip QR code if generation fails
