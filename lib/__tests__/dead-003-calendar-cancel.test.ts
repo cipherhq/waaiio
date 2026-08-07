@@ -1,20 +1,25 @@
 /**
  * DEAD-003: Calendar cancellation must route through canonical booking status API.
+ * The canonical RPC (cancel_booking_with_release) must release BOTH:
+ *   A. package entitlement (package_redemptions + package_enrollments.sessions_used)
+ *   B. booking slot capacity (booking_slots.current_bookings)
  *
  * Tests verify:
  * 1. Calendar cancellation calls PATCH /api/bookings/[id]/status with action: 'cancel'
  * 2. Calendar no longer directly updates booking status for cancellation
  * 3. Package-covered booking cancellation releases the package session (via RPC)
  * 4. sessions_used returns correctly after release
- * 5. Repeated cancellation cannot double-release
- * 6. Regular non-package booking cancellation works
- * 7. Customer notification is emitted through canonical route
+ * 5. Repeated cancellation cannot double-release either resource
+ * 6. Regular non-package booking cancellation still works
+ * 7. Customer notification emitted through canonical route
  * 8. API failure does NOT produce success behavior
  * 9. API failure does NOT trigger staff notification
- * 10. Successful cancel triggers staff notification (calendar behavior)
+ * 10. Successful cancel may trigger staff notification
  * 11. pending/confirmed cancellation semantics remain intact
  * 12. Non-cancellable statuses remain protected
- * 13. Other calendar actions are unchanged
+ * 13. Other calendar actions unchanged
+ * 14. Slot release is in the canonical RPC (migration verification)
+ * 15. Reservations booking cancel uses same canonical API
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -71,9 +76,8 @@ vi.mock('@/lib/channels/channel-resolver', () => {
   };
 });
 
-const mockNotifyWaitlist = vi.fn().mockResolvedValue(undefined);
 vi.mock('@/lib/waitlist/auto-notify', () => ({
-  notifyWaitlistOnSlotOpen: (...args: unknown[]) => mockNotifyWaitlist(...args),
+  notifyWaitlistOnSlotOpen: vi.fn().mockResolvedValue(undefined),
 }));
 
 const { PATCH } = await import('@/app/api/bookings/[id]/status/route');
@@ -225,10 +229,24 @@ describe('Canonical cancel API (DEAD-003)', () => {
 
     expect(res.status).toBe(400);
   });
+
+  // Test 10 / waitlist: waitlist notification is called after successful cancel
+  it('calls waitlist auto-notify after successful cancellation', async () => {
+    setupBooking({
+      id: 'b-wl', status: 'confirmed', reference_code: 'REF-WL',
+      date: '2026-08-10', service_id: 'svc-1', guest_phone: '+2348007',
+    });
+    mockServiceRpc.mockResolvedValue({ data: { cancelled: true, session_released: false }, error: null });
+
+    const { notifyWaitlistOnSlotOpen } = await import('@/lib/waitlist/auto-notify');
+    await PATCH(makeRequest('b-wl', { action: 'cancel' }), { params: Promise.resolve({ id: 'b-wl' }) });
+
+    expect(notifyWaitlistOnSlotOpen).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ══════════════════════════════════════════════════════════
-// Part B: Calendar page source verification (DEAD-003 bypass removal)
+// Part B: Calendar page source verification
 // ══════════════════════════════════════════════════════════
 
 describe('Calendar page cancel bypass removal (DEAD-003)', () => {
@@ -276,15 +294,93 @@ describe('Calendar page cancel bypass removal (DEAD-003)', () => {
     expect(calendarSource).toContain("if (newStatus === 'confirmed') extra.confirmed_at");
   });
 
-  it('still routes check_in through API', () => {
+  it('still routes check_in/check_out/no_show through API', () => {
     expect(calendarSource).toContain("'check_in'");
-  });
-
-  it('still routes check_out through API', () => {
     expect(calendarSource).toContain("'check_out'");
+    expect(calendarSource).toContain("'no_show'");
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// Part C: Migration verification — slot release in canonical RPC
+// ══════════════════════════════════════════════════════════
+
+describe('Migration 309: cancel_booking_with_release includes slot release (DEAD-003)', () => {
+  const migrationSource = readFileSync('supabase/migrations/309_cancel_releases_slot.sql', 'utf-8');
+
+  it('redefines cancel_booking_with_release', () => {
+    expect(migrationSource).toContain('CREATE OR REPLACE FUNCTION cancel_booking_with_release');
   });
 
-  it('still routes no_show through API', () => {
-    expect(calendarSource).toContain("'no_show'");
+  // Test: slot release is included in the RPC
+  it('updates booking_slots to release capacity', () => {
+    expect(migrationSource).toContain('UPDATE booking_slots');
+    expect(migrationSource).toContain('GREATEST(0, current_bookings - 1)');
+  });
+
+  // Test: uses booking row data, not browser-supplied values
+  it('uses locked booking row fields for slot lookup', () => {
+    expect(migrationSource).toContain('v_booking.business_id');
+    expect(migrationSource).toContain('v_booking.date');
+    expect(migrationSource).toContain('v_booking.time');
+    expect(migrationSource).toContain('v_booking.staff_id');
+    expect(migrationSource).toContain('v_booking.location_id');
+  });
+
+  // Test: fetches required fields in the initial lock query
+  it('selects date, time, staff_id, location_id in the FOR UPDATE query', () => {
+    expect(migrationSource).toMatch(/SELECT\s+id,\s*status,\s*business_id,\s*date,\s*time,\s*staff_id,\s*location_id/);
+  });
+
+  // Test: package session release is preserved
+  it('still releases package redemption', () => {
+    expect(migrationSource).toContain('package_redemptions');
+    expect(migrationSource).toContain("status = 'released'");
+  });
+
+  it('still decrements sessions_used', () => {
+    expect(migrationSource).toContain('sessions_used = GREATEST(0, sessions_used - 1)');
+  });
+
+  // Test: session_released uses explicit variable, not FOUND
+  it('uses v_session_released variable to avoid FOUND overwrite by slot update', () => {
+    expect(migrationSource).toContain('v_session_released boolean := false');
+    expect(migrationSource).toContain('v_session_released := true');
+    expect(migrationSource).toContain("'session_released', v_session_released");
+  });
+
+  // Test: COALESCE null-safe matching for staff/location
+  it('uses COALESCE for null-safe staff_id and location_id matching', () => {
+    const coalesceCount = (migrationSource.match(/COALESCE/g) || []).length;
+    expect(coalesceCount).toBeGreaterThanOrEqual(4); // 2 for staff, 2 for location
+  });
+
+  // Test: cancellation guard preserved
+  it('preserves pending/confirmed guard', () => {
+    expect(migrationSource).toContain("v_booking.status NOT IN ('pending', 'confirmed')");
+  });
+
+  // Test: not_found guard preserved
+  it('preserves not_found guard', () => {
+    expect(migrationSource).toContain("'not_found'");
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// Part D: Reservations page verification
+// ══════════════════════════════════════════════════════════
+
+describe('Reservations page booking cancel uses canonical API (DEAD-003)', () => {
+  const reservationsSource = readFileSync('app/dashboard/reservations/page.tsx', 'utf-8');
+
+  // Test 12: Reservations booking cancellation uses canonical API
+  it('routes booking cancellations through /api/bookings/[id]/status', () => {
+    expect(reservationsSource).toContain("/api/bookings/${id}/status");
+    expect(reservationsSource).toContain("action: 'cancel'");
+  });
+
+  it('checks for non-reservation before using canonical API', () => {
+    // The reservations page guards with !isThisReservation
+    expect(reservationsSource).toContain("!isThisReservation");
   });
 });
