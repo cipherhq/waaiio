@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
       .from('businesses')
       .select('id, name, slug, country_code, operating_hours, payment_gateway, subscription_tier, metadata, owner_id')
       .eq('slug', businessSlug)
-      .eq('is_active', true)
+      .eq('status', 'active')
       .single();
 
     if (bizError || !business) {
