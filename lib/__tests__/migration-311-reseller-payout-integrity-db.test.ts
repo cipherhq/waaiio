@@ -90,21 +90,23 @@ describeIfDb('Migration 311: RLS behavioral authorization', () => {
   });
 
   afterAll(() => {
+    // Restore auth.uid() to original CI stub
+    runSQL(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;`);
     runSQL(`DELETE FROM reseller_payouts WHERE reseller_id = '${RESELLER_ID}';`);
     runSQL(`DELETE FROM resellers WHERE id = '${RESELLER_ID}';`);
     runSQL(`ALTER TABLE auth.users DISABLE TRIGGER ALL; DELETE FROM auth.users WHERE id IN ('${ADMIN_USER}','${FINANCE_USER}','${SUPPORT_USER}','${OPS_USER}','${RESELLER_USER}'); ALTER TABLE auth.users ENABLE TRIGGER ALL;`);
   });
 
   // Helper: run SQL as a specific role identity
-  // Temporarily redefines auth.uid() within a transaction to return the test user
+  // Redefines auth.uid() as postgres (has schema auth permission), then SET ROLE
   function asRole(userId: string, sql: string): string {
     return runSQL(`
       BEGIN;
+      -- Override auth.uid() as postgres (before role switch)
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$ SELECT '${userId}'::UUID; $fn$ LANGUAGE SQL STABLE;
+      -- Now switch to authenticated role for RLS evaluation
       SET LOCAL ROLE authenticated;
       ${sql}
-      -- Restore original auth.uid stub
-      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $fn$ LANGUAGE SQL STABLE;
       COMMIT;
     `);
   }
@@ -250,10 +252,12 @@ describeIfDb('Migration 311: mark_reseller_payout_paid RPC', () => {
   const RESELLER_USER = '00000000-0000-0000-0000-000000311005';
   const RESELLER_ID = '00000000-0000-0000-0000-000000000314';
   const PAYOUT_ID = '00000000-0000-0000-0000-00000000031c';
-  const ADMIN_ID = '00000000-0000-0000-0000-000000000001';
+  // Use the ADMIN_USER from behavioral tests (already in auth.users)
+  const ADMIN_ID = '00000000-0000-0000-0000-000000311001';
 
   beforeAll(() => {
-    runSQL(`ALTER TABLE auth.users DISABLE TRIGGER ALL; INSERT INTO auth.users (id) VALUES ('${RESELLER_USER}') ON CONFLICT DO NOTHING; ALTER TABLE auth.users ENABLE TRIGGER ALL;`);
+    // Ensure auth.users exist for both reseller owner and admin (approved_by FK)
+    runSQL(`ALTER TABLE auth.users DISABLE TRIGGER ALL; INSERT INTO auth.users (id, raw_app_meta_data) VALUES ('${RESELLER_USER}', '{}'::jsonb), ('${ADMIN_ID}', '{"role":"admin"}'::jsonb) ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = EXCLUDED.raw_app_meta_data; ALTER TABLE auth.users ENABLE TRIGGER ALL;`);
     runSQL(`DELETE FROM reseller_payouts WHERE reseller_id = '${RESELLER_ID}';`);
     runSQL(`DELETE FROM platform_fees WHERE reseller_id = '${RESELLER_ID}';`);
     runSQL(`DELETE FROM resellers WHERE id = '${RESELLER_ID}';`);
