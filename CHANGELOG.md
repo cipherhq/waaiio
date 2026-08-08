@@ -7,6 +7,16 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-07
 
+### fix(P0-PAY-1): payment-level idempotency for financial operations
+
+- **Root cause:** `processSuccessfulPayment()` callable from 7 entry points (5 webhooks + cron + payment-success page). Invoice `processInvoicePayment` used non-atomic read-modify-write for `amount_paid`. Campaign `processCampaignDonation` called `increment_campaign_donation` RPC unconditionally — replay = double-count. Platform fee uniqueness was keyed to entity IDs (invoice_id, campaign_id) not payment IDs — blocked legitimate second payments on same invoice/campaign. `recordPlatformFee` used entity `total_amount` instead of actual payment amount for `transaction_amount`.
+- **Fix:** (1) `apply_invoice_payment` RPC: atomic via `SELECT FOR UPDATE` on invoice + `invoice_payment_applications` ledger with `UNIQUE(invoice_id, payment_id)`. Same payment replayed → `ON CONFLICT DO NOTHING` → idempotent. `amount_paid` calculated from `SUM(amount_applied)` — authoritative. (2) `apply_campaign_donation` RPC: donation status transition `pending→success` is the idempotency gate — only increments `raised_amount/donor_count` if transition actually occurred. (3) `platform_fees.payment_id` column + `idx_platform_fees_payment_unique` — one fee per payment. Dropped `idx_platform_fees_invoice_unique` and `idx_platform_fees_campaign_unique` (blocked legitimate second payments). (4) `transaction_amount` now always uses `opts.paymentAmount` (actual collected amount), not entity total.
+- **Migration:** `310_payment_level_idempotency.sql` — creates `invoice_payment_applications` table, `apply_invoice_payment` + `apply_campaign_donation` RPCs, adds `payment_id` to `platform_fees`, updates unique indexes.
+- **Files changed:** `lib/payments/process-success.ts`, `supabase/migrations/310_payment_level_idempotency.sql`, test files
+- **Tests:** 41 focused idempotency tests + existing 119 payment tests pass.
+- **Affects:** Invoice payment, campaign donation, platform fee recording across ALL payment completion surfaces.
+- **Could break:** Nothing — the old non-atomic patterns are strictly replaced by atomic equivalents. Single-payment entities (booking, order, reservation) retain their entity-level UNIQUE indexes as additional safety.
+
 ### fix(DEAD-002): reservation cancellation notification — replace dead endpoint with domain-specific route
 
 - **Root cause:** Dashboard reservation cancellation called nonexistent `/api/notifications/send` to notify guests. The 404 was silently swallowed — customers were never notified of cancelled reservations.

@@ -35,6 +35,7 @@ function mockSupabase(overrides: Record<string, unknown> = {}) {
         }),
       }),
     })),
+    rpc: vi.fn().mockResolvedValue({ data: { applied: true, new_amount_paid: 1000, is_fully_paid: true }, error: null }),
     _insertFn: insertFn,
   };
 }
@@ -64,20 +65,34 @@ describe('processSuccessfulPayment', () => {
 });
 
 describe('processInvoicePayment', () => {
-  it('marks invoice as paid when fully paid', async () => {
+  it('calls apply_invoice_payment RPC', async () => {
     const supabase = mockSupabase();
     await processInvoicePayment(supabase as any, 'inv1', 'pay1', 1000);
 
+    // Should look up invoice business_id
     expect(supabase.from).toHaveBeenCalledWith('invoices');
+    // Should call the atomic RPC
+    expect(supabase.rpc).toHaveBeenCalledWith('apply_invoice_payment', {
+      p_invoice_id: 'inv1',
+      p_payment_id: 'pay1',
+      p_payment_amount: 1000,
+      p_business_id: 'biz1',
+    });
   });
 });
 
 describe('processCampaignDonation', () => {
-  it('updates donation status and increments campaign stats', async () => {
+  it('calls apply_campaign_donation RPC and records fee on success', async () => {
     const supabase = mockSupabase();
     await processCampaignDonation(supabase as any, 'pay1', 'camp1', 500);
 
-    expect(supabase.from).toHaveBeenCalledWith('campaign_donations');
+    // Should call the atomic RPC
+    expect(supabase.rpc).toHaveBeenCalledWith('apply_campaign_donation', {
+      p_campaign_id: 'camp1',
+      p_payment_id: 'pay1',
+      p_amount: 500,
+    });
+    // Should look up campaign business_id for fee recording
     expect(supabase.from).toHaveBeenCalledWith('campaigns');
   });
 });
