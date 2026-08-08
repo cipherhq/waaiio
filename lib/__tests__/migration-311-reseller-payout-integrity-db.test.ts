@@ -11,15 +11,16 @@ import { execSync } from 'child_process';
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
 
-function runSQL(sql: string): string {
+function runSQL(sql: string, expectError = false): string {
   if (!TEST_DB) throw new Error('TEST_DATABASE_URL not set');
   try {
     return execSync(
-      `psql "${TEST_DB}" -t -A`,
+      `psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A`,
       { encoding: 'utf-8', timeout: 15000, input: sql },
     ).trim();
   } catch (err: any) {
-    return `ERROR: ${err.stderr || err.message}`;
+    const msg = err.stderr || err.stdout || err.message || '';
+    return `ERROR: ${msg}`;
   }
 }
 
@@ -158,7 +159,7 @@ describeIfDb('Migration 311: RLS behavioral authorization', () => {
   // ── SUPPORT ──
   it('support SELECT denied (zero rows visible)', () => {
     const r = asRole(SUPPORT_USER, `SELECT COUNT(*) FROM reseller_payouts WHERE id = '${PAYOUT_ID}';`);
-    expect(r).toBe('0');
+    expect(r).toContain('\n0\n');
   });
 
   it('support INSERT denied', () => {
@@ -169,7 +170,7 @@ describeIfDb('Migration 311: RLS behavioral authorization', () => {
   // ── OPERATIONS ──
   it('operations SELECT denied (zero rows visible)', () => {
     const r = asRole(OPS_USER, `SELECT COUNT(*) FROM reseller_payouts WHERE id = '${PAYOUT_ID}';`);
-    expect(r).toBe('0');
+    expect(r).toContain('\n0\n');
   });
 
   // ── ANON ──
@@ -215,14 +216,16 @@ describeIfDb('Migration 311: overlap exclusion constraint', () => {
 
   it('partial overlap rejected', () => {
     runSQL(`DELETE FROM reseller_payouts WHERE reseller_id = '${RESELLER_ID}';`);
-    runSQL(`INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status) VALUES ('${RESELLER_ID}', '2026-08-01', '2026-08-15', 100, 'pending');`);
+    const setup = runSQL(`INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status) VALUES ('${RESELLER_ID}', '2026-08-01', '2026-08-15', 100, 'pending') RETURNING id;`);
+    expect(setup).not.toContain('ERROR'); // verify setup succeeded
     const r = runSQL(`INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status) VALUES ('${RESELLER_ID}', '2026-08-14', '2026-08-20', 100, 'pending');`);
     expect(r).toContain('ERROR');
   });
 
   it('identical period rejected', () => {
     runSQL(`DELETE FROM reseller_payouts WHERE reseller_id = '${RESELLER_ID}';`);
-    runSQL(`INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status) VALUES ('${RESELLER_ID}', '2026-09-01', '2026-09-15', 100, 'pending');`);
+    const setup = runSQL(`INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status) VALUES ('${RESELLER_ID}', '2026-09-01', '2026-09-15', 100, 'pending') RETURNING id;`);
+    expect(setup).not.toContain('ERROR');
     const r = runSQL(`INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status) VALUES ('${RESELLER_ID}', '2026-09-01', '2026-09-15', 100, 'pending');`);
     expect(r).toContain('ERROR');
   });
