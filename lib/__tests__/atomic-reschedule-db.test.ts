@@ -11,8 +11,10 @@
  * 6. Non-reschedulable status rejected
  * 7. Cross-business rejected
  * 8. Booking not found rejected
- * 9. Buffer conflict rejected
+ * 9. Buffer conflict rejected (real DB — service with buffer_minutes=15, duration=60)
+ * 9b. Buffer boundary success (reschedule to slot exactly outside buffer window)
  * 10. Bot path cannot bypass RPC (source verification)
+ * 11. Migration 312 applies cleanly
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
@@ -68,8 +70,8 @@ describe.skipIf(!dbUrl)('Atomic reschedule — real PostgreSQL concurrency', () 
       DO $$ BEGIN CREATE TYPE booking_channel AS ENUM ('whatsapp','web','api','recurring'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE TYPE reservation_status AS ENUM ('pending','confirmed','cancelled','completed','in_progress','no_show'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE TYPE deposit_status AS ENUM ('none','pending','paid','refunded'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      CREATE TABLE IF NOT EXISTS services (id UUID PRIMARY KEY, business_id UUID, max_capacity INT DEFAULT 1, buffer_minutes INT DEFAULT 0, duration INT DEFAULT 30);
-      CREATE TABLE IF NOT EXISTS appointments (id UUID PRIMARY KEY, business_id UUID, max_capacity INT DEFAULT 1, duration INT DEFAULT 30);
+      CREATE TABLE IF NOT EXISTS services (id UUID PRIMARY KEY, business_id UUID, max_capacity INT DEFAULT 1, buffer_minutes INT DEFAULT 0, duration_minutes INT DEFAULT 30);
+      CREATE TABLE IF NOT EXISTS appointments (id UUID PRIMARY KEY, business_id UUID, max_capacity INT DEFAULT 1, duration_minutes INT DEFAULT 30);
       CREATE TABLE IF NOT EXISTS bookings (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), reference_code TEXT,
         business_id UUID, user_id UUID, service_id UUID, appointment_id UUID,
@@ -85,8 +87,9 @@ describe.skipIf(!dbUrl)('Atomic reschedule — real PostgreSQL concurrency', () 
         original_date DATE, original_time TEXT, rescheduled_at TIMESTAMPTZ
       );
       INSERT INTO businesses (id) VALUES ('${BIZ}'), ('${BIZ2}') ON CONFLICT DO NOTHING;
-      INSERT INTO services (id, business_id, max_capacity, buffer_minutes, duration) VALUES ('99dddddd-dddd-dddd-dddd-dddddddddddd', '${BIZ}', 1, 0, 30) ON CONFLICT DO NOTHING;
-      INSERT INTO appointments (id, business_id, max_capacity, duration) VALUES ('99eeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '${BIZ}', 1, 30) ON CONFLICT DO NOTHING;
+      INSERT INTO services (id, business_id, max_capacity, buffer_minutes, duration_minutes) VALUES ('99dddddd-dddd-dddd-dddd-dddddddddddd', '${BIZ}', 1, 0, 30) ON CONFLICT DO NOTHING;
+      INSERT INTO services (id, business_id, max_capacity, buffer_minutes, duration_minutes) VALUES ('99ffffff-ffff-ffff-ffff-ffffffffffff', '${BIZ}', 1, 15, 60) ON CONFLICT DO NOTHING;
+      INSERT INTO appointments (id, business_id, max_capacity, duration_minutes) VALUES ('99eeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '${BIZ}', 1, 30) ON CONFLICT DO NOTHING;
     `);
     // Apply migration 312
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "supabase/migrations/312_atomic_reschedule.sql"`, { encoding: 'utf-8', timeout: 15000 });
@@ -187,6 +190,64 @@ describe.skipIf(!dbUrl)('Atomic reschedule — real PostgreSQL concurrency', () 
     expect(r.reason).toBe('booking_not_found');
   });
 
+  // ── Buffer tests use service '99ffffff-...' with buffer_minutes=15, duration_minutes=60 ──
+  // Existing booking at 10:00-11:00 + 15min buffer → blocked zone [09:45, 11:15)
+  // (symmetric buffer per book_slot_atomic semantics)
+
+  it('9. buffer conflict rejected — reschedule into buffered interval', () => {
+    reset();
+    const SVC_BUF = '99ffffff-ffff-ffff-ffff-ffffffffffff';
+    // Existing confirmed booking at 10:00 (60min + 15min buffer)
+    psql(`INSERT INTO bookings (id, business_id, user_id, service_id, date, time, status)
+      VALUES ('b9000000-0000-0000-0000-000000000001', '${BIZ}', '${USR}', '${SVC_BUF}', '2026-09-10', '10:00', 'confirmed');`);
+    // Booking to reschedule — currently at 16:00 (well away)
+    psql(`INSERT INTO bookings (id, business_id, user_id, service_id, date, time, status)
+      VALUES ('b9000000-0000-0000-0000-000000000002', '${BIZ}', '${USR}', '${SVC_BUF}', '2026-09-10', '16:00', 'confirmed');`);
+
+    // Attempt reschedule to 11:00 — this is inside the buffer window:
+    // 11:00 < 10:00 + 60 + 15 = 11:15 → true
+    // 11:00 + 60 = 12:00 > 10:00 - 15 = 09:45 → true
+    // Both conditions true → buffer_conflict
+    const r = psqlJson(`SELECT reschedule_booking_atomic(
+      'b9000000-0000-0000-0000-000000000002'::uuid, '${BIZ}'::uuid, '2026-09-10'::date, '11:00');`);
+
+    expect(r.rescheduled).toBe(false);
+    expect(r.reason).toBe('buffer_conflict');
+
+    // Verify moving booking stays at original slot
+    const moving = psql(`SELECT date, time FROM bookings WHERE id = 'b9000000-0000-0000-0000-000000000002';`);
+    expect(moving).toContain('2026-09-10');
+    expect(moving).toContain('16:00');
+
+    // Verify existing booking unchanged
+    const existing = psql(`SELECT date, time FROM bookings WHERE id = 'b9000000-0000-0000-0000-000000000001';`);
+    expect(existing).toContain('10:00');
+  });
+
+  it('9b. buffer boundary success — reschedule to slot exactly outside buffer window', () => {
+    reset();
+    const SVC_BUF = '99ffffff-ffff-ffff-ffff-ffffffffffff';
+    // Existing confirmed booking at 10:00 (60min + 15min buffer)
+    psql(`INSERT INTO bookings (id, business_id, user_id, service_id, date, time, status)
+      VALUES ('b9b00000-0000-0000-0000-000000000001', '${BIZ}', '${USR}', '${SVC_BUF}', '2026-09-10', '10:00', 'confirmed');`);
+    // Booking to reschedule
+    psql(`INSERT INTO bookings (id, business_id, user_id, service_id, date, time, status)
+      VALUES ('b9b00000-0000-0000-0000-000000000002', '${BIZ}', '${USR}', '${SVC_BUF}', '2026-09-10', '16:00', 'confirmed');`);
+
+    // Reschedule to 11:15 — exactly at the boundary:
+    // 11:15 < 10:00 + 60 + 15 = 11:15 → false (not strictly less than)
+    // Buffer check condition fails → no conflict → allowed
+    const r = psqlJson(`SELECT reschedule_booking_atomic(
+      'b9b00000-0000-0000-0000-000000000002'::uuid, '${BIZ}'::uuid, '2026-09-10'::date, '11:15');`);
+
+    expect(r.rescheduled).toBe(true);
+    expect(r.new_time).toBe('11:15:00');
+
+    // Verify booking actually moved
+    const moved = psql(`SELECT date, time FROM bookings WHERE id = 'b9b00000-0000-0000-0000-000000000002';`);
+    expect(moved).toContain('11:15');
+  });
+
   it('10. bot path uses RPC (source verification)', () => {
     const fs = require('fs');
     const source = fs.readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
@@ -194,5 +255,17 @@ describe.skipIf(!dbUrl)('Atomic reschedule — real PostgreSQL concurrency', () 
     expect(source).toContain("rpc('reschedule_booking_atomic'");
     // Must NOT contain direct .update for rescheduling
     expect(source).not.toMatch(/reschedule_booking_id[\s\S]{0,500}\.from\(['"]bookings['"]\)\s*\n?\s*\.update/);
+  });
+
+  it('11. migration 312 applies cleanly', () => {
+    // Verify the function exists and is callable (already applied in beforeAll)
+    const r = psql(`SELECT proname FROM pg_proc WHERE proname = 'reschedule_booking_atomic';`);
+    expect(r).toBe('reschedule_booking_atomic');
+
+    // Verify it's restricted to service_role
+    const grants = psql(`SELECT grantee FROM information_schema.routine_privileges
+      WHERE routine_name = 'reschedule_booking_atomic' AND privilege_type = 'EXECUTE';`);
+    expect(grants).not.toContain('anon');
+    expect(grants).not.toContain('authenticated');
   });
 });

@@ -40,11 +40,11 @@ BEGIN
 
   -- 2. Resolve capacity and buffer from service or appointment
   IF v_booking.service_id IS NOT NULL THEN
-    SELECT COALESCE(max_capacity, 1), COALESCE(buffer_minutes, 0), COALESCE(duration, 30)
+    SELECT COALESCE(max_capacity, 1), COALESCE(buffer_minutes, 0), COALESCE(duration_minutes, 30)
     INTO v_max_capacity, v_buffer_minutes, v_duration
     FROM services WHERE id = v_booking.service_id;
   ELSIF v_booking.appointment_id IS NOT NULL THEN
-    SELECT COALESCE(max_capacity, 1), 0, COALESCE(duration, 30)
+    SELECT COALESCE(max_capacity, 1), 0, COALESCE(duration_minutes, 30)
     INTO v_max_capacity, v_buffer_minutes, v_duration
     FROM appointments WHERE id = v_booking.appointment_id;
   ELSE
