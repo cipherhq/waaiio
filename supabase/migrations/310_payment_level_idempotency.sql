@@ -29,9 +29,21 @@ CREATE POLICY "service_role_all_invoice_payment_applications"
   USING (true) WITH CHECK (true);
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 2. Backfill historical successful invoice payments
---    Prevents existing amount_paid from resetting when ledger starts empty.
---    Only inserts for payments that are status='success' and have invoice_id.
+-- 2. Legacy baseline: durable pre-migration recognized balance
+--
+--    legacy_amount_paid_baseline captures any amount_paid that cannot
+--    be explained by known successful payment records. Computed once
+--    at migration time and never recalculated.
+--
+--    Post-migration authoritative amount_paid =
+--      legacy_amount_paid_baseline + SUM(invoice_payment_applications)
+-- ═══════════════════════════════════════════════════════════════════════
+
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS
+  legacy_amount_paid_baseline numeric(12,2) NOT NULL DEFAULT 0;
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- 3. Backfill historical successful invoice payments into ledger
 -- ═══════════════════════════════════════════════════════════════════════
 
 INSERT INTO invoice_payment_applications (invoice_id, payment_id, amount_applied)
@@ -48,8 +60,42 @@ WHERE p.invoice_id IS NOT NULL
   );
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 3. Atomic invoice payment application RPC
+-- 4. Compute legacy baselines per invoice
+--
+--    baseline = MAX(existing_amount_paid - backfilled_ledger_sum, 0)
+--
+--    CASE 1: amount_paid=0, backfill=0 → baseline=0
+--    CASE 2: amount_paid=500, backfill=500 → baseline=0
+--    CASE 3: amount_paid=700, backfill=500 → baseline=200
+--    CASE 4: amount_paid=500, backfill=700 → baseline=0 (anomalous but safe)
+--    CASE 5: already paid → baseline preserves recognized amount
+-- ═══════════════════════════════════════════════════════════════════════
+
+UPDATE invoices i
+SET legacy_amount_paid_baseline = GREATEST(
+  COALESCE(i.amount_paid, 0) - COALESCE(backfill.ledger_sum, 0),
+  0
+)
+FROM (
+  SELECT invoice_id, SUM(amount_applied) AS ledger_sum
+  FROM invoice_payment_applications
+  GROUP BY invoice_id
+) backfill
+WHERE i.id = backfill.invoice_id
+  AND COALESCE(i.amount_paid, 0) > COALESCE(backfill.ledger_sum, 0);
+
+-- Invoices with NO backfilled payments but existing amount_paid: baseline = amount_paid
+UPDATE invoices i
+SET legacy_amount_paid_baseline = COALESCE(i.amount_paid, 0)
+WHERE COALESCE(i.amount_paid, 0) > 0
+  AND NOT EXISTS (
+    SELECT 1 FROM invoice_payment_applications ipa WHERE ipa.invoice_id = i.id
+  );
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- 5. Atomic invoice payment application RPC
 --    Validates payment row from DB — does NOT trust caller amounts.
+--    Authoritative amount = legacy_baseline + SUM(ledger)
 -- ═══════════════════════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION apply_invoice_payment(
@@ -60,10 +106,9 @@ DECLARE
   v_payment record;
   v_invoice record;
   v_amount numeric;
+  v_ledger_total numeric;
   v_new_amount_paid numeric;
   v_is_fully_paid boolean;
-  v_pre_migration_paid numeric;
-  v_ledger_total numeric;
 BEGIN
   -- Load and validate payment from DB (authoritative source of truth)
   SELECT id, amount, invoice_id, status, business_id
@@ -89,7 +134,7 @@ BEGIN
   END IF;
 
   -- Lock invoice row to serialize concurrent applications
-  SELECT total_amount, amount_paid, status, business_id
+  SELECT total_amount, amount_paid, status, business_id, legacy_amount_paid_baseline
   INTO v_invoice
   FROM invoices
   WHERE id = p_invoice_id
@@ -114,15 +159,12 @@ BEGIN
     RETURN jsonb_build_object('applied', false, 'already_applied', true);
   END IF;
 
-  -- Calculate new amount_paid: max of ledger total and pre-existing amount_paid
-  -- This preserves any pre-migration amount_paid that may exceed ledger total
+  -- Authoritative amount_paid = legacy_baseline + SUM(all durable applications)
   SELECT COALESCE(SUM(amount_applied), 0) INTO v_ledger_total
   FROM invoice_payment_applications
   WHERE invoice_id = p_invoice_id;
 
-  v_pre_migration_paid := COALESCE(v_invoice.amount_paid, 0);
-  v_new_amount_paid := GREATEST(v_ledger_total, v_pre_migration_paid);
-
+  v_new_amount_paid := COALESCE(v_invoice.legacy_amount_paid_baseline, 0) + v_ledger_total;
   v_is_fully_paid := v_new_amount_paid >= v_invoice.total_amount;
 
   -- Update invoice with authoritative totals
@@ -143,8 +185,8 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 4. Atomic campaign donation application RPC
---    Validates payment row from DB — does NOT trust caller amounts.
+-- 6. Atomic campaign donation application RPC
+--    Validates payment row from DB including business_id.
 --    No arbitrary fallback — payment_id must match a pending donation.
 -- ═══════════════════════════════════════════════════════════════════════
 
@@ -154,11 +196,12 @@ CREATE OR REPLACE FUNCTION apply_campaign_donation(
 ) RETURNS jsonb AS $$
 DECLARE
   v_payment record;
+  v_campaign record;
   v_amount numeric;
   v_rows_updated integer;
 BEGIN
   -- Load and validate payment from DB (authoritative source of truth)
-  SELECT id, amount, campaign_id, status
+  SELECT id, amount, campaign_id, status, business_id
   INTO v_payment
   FROM payments
   WHERE id = p_payment_id;
@@ -173,6 +216,18 @@ BEGIN
 
   IF v_payment.campaign_id IS NULL OR v_payment.campaign_id != p_campaign_id THEN
     RETURN jsonb_build_object('applied', false, 'reason', 'payment_campaign_mismatch');
+  END IF;
+
+  -- Validate business relationship: payment business must match campaign business
+  SELECT id, business_id INTO v_campaign
+  FROM campaigns WHERE id = p_campaign_id;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('applied', false, 'reason', 'campaign_not_found');
+  END IF;
+
+  IF v_campaign.business_id != v_payment.business_id THEN
+    RETURN jsonb_build_object('applied', false, 'reason', 'business_mismatch');
   END IF;
 
   v_amount := v_payment.amount;
@@ -203,38 +258,32 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 5. Add payment_id to platform_fees for payment-level traceability
+-- 7. Add payment_id to platform_fees for payment-level traceability
 -- ═══════════════════════════════════════════════════════════════════════
 
 ALTER TABLE platform_fees ADD COLUMN IF NOT EXISTS payment_id uuid REFERENCES payments(id);
 
 -- Unconditional payment-level unique index: one fee per payment, period.
--- Using WHERE payment_id IS NOT NULL only (no refunded_at filter).
--- A refunded fee with the same payment_id must NOT allow a second original fee.
+-- No refunded_at filter — a refunded fee still blocks a duplicate original.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_fees_payment_unique
   ON platform_fees(payment_id)
   WHERE payment_id IS NOT NULL;
 
 -- Drop entity-level unique indexes that block legitimate second payments
--- (invoices can have multiple partial payments, campaigns can have many donations)
 DROP INDEX IF EXISTS idx_platform_fees_invoice_unique;
 DROP INDEX IF EXISTS idx_platform_fees_campaign_unique;
 
 -- Keep entity-level indexes for single-payment entities (booking, order, reservation)
--- These are harmless alongside the payment-level index and provide backward safety.
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 6. Security: lock down RPC privileges
---    SECURITY DEFINER functions must not be callable by anon/authenticated.
+-- 8. Security: lock down RPC privileges
 -- ═══════════════════════════════════════════════════════════════════════
 
--- apply_invoice_payment: signature changed to (uuid, uuid) — no caller-supplied amount
 REVOKE ALL ON FUNCTION apply_invoice_payment(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION apply_invoice_payment(uuid, uuid) FROM anon;
 REVOKE ALL ON FUNCTION apply_invoice_payment(uuid, uuid) FROM authenticated;
 GRANT EXECUTE ON FUNCTION apply_invoice_payment(uuid, uuid) TO service_role;
 
--- apply_campaign_donation: signature changed to (uuid, uuid) — no caller-supplied amount
 REVOKE ALL ON FUNCTION apply_campaign_donation(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION apply_campaign_donation(uuid, uuid) FROM anon;
 REVOKE ALL ON FUNCTION apply_campaign_donation(uuid, uuid) FROM authenticated;

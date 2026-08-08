@@ -121,6 +121,17 @@ describe('Migration 310 — payment-level idempotency schema', () => {
     expect(migrationSql).toContain('p.invoice_id IS NOT NULL');
     expect(migrationSql).toContain('NOT EXISTS');
   });
+
+  it('adds legacy_amount_paid_baseline column to invoices', () => {
+    expect(migrationSql).toContain('legacy_amount_paid_baseline');
+    expect(migrationSql).toContain('numeric(12,2) NOT NULL DEFAULT 0');
+  });
+
+  it('computes legacy baseline as MAX(amount_paid - backfilled, 0)', () => {
+    expect(migrationSql).toContain('legacy_amount_paid_baseline = GREATEST');
+    expect(migrationSql).toContain('i.amount_paid');
+    expect(migrationSql).toContain('backfill.ledger_sum');
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════
