@@ -127,10 +127,23 @@ describe('Migration 310 — payment-level idempotency schema', () => {
     expect(migrationSql).toContain('numeric(12,2) NOT NULL DEFAULT 0');
   });
 
-  it('computes legacy baseline as MAX(amount_paid - backfilled, 0)', () => {
-    expect(migrationSql).toContain('legacy_amount_paid_baseline = GREATEST');
-    expect(migrationSql).toContain('i.amount_paid');
-    expect(migrationSql).toContain('backfill.ledger_sum');
+  it('captures exact pre-migration amount_paid as legacy baseline', () => {
+    expect(migrationSql).toContain('legacy_amount_paid_baseline = COALESCE(amount_paid, 0)');
+  });
+
+  it('backfills historical payments as legacy markers (amount_applied=0)', () => {
+    // Legacy markers prevent replay but do NOT add to recognized amount
+    expect(migrationSql).toMatch(/INSERT INTO invoice_payment_applications.*amount_applied.*\n.*0,\n.*true/s);
+    expect(migrationSql).toContain('is_legacy_marker');
+  });
+
+  it('RPCs use SET search_path = public', () => {
+    expect(migrationSql).toContain("SET search_path = public");
+  });
+
+  it('campaign_donations gets payment_id uniqueness constraint', () => {
+    expect(migrationSql).toContain('idx_campaign_donations_payment_unique');
+    expect(migrationSql).toContain('ON campaign_donations(payment_id)');
   });
 });
 
@@ -350,10 +363,10 @@ describe('process-success.ts uses atomic RPCs and payment_id', () => {
     expect(rpcCall![0]).not.toContain('p_business_id');
   });
 
-  it('processInvoicePayment only records fee when RPC returns applied: true', () => {
-    // Find the processInvoicePayment function
-    const fnBody = source.split('processInvoicePayment')[2]; // second occurrence is the definition
-    expect(fnBody).toContain('if (result?.applied)');
+  it('processInvoicePayment attempts fee on any successful RPC (applied or already_applied)', () => {
+    const fnBody = source.split('processInvoicePayment')[2];
+    // Should attempt fee when result exists and has no rejection reason
+    expect(fnBody).toContain('if (result && !result.reason)');
     expect(fnBody).toContain('recordPlatformFee');
   });
 
@@ -367,9 +380,9 @@ describe('process-success.ts uses atomic RPCs and payment_id', () => {
     expect(rpcCall![0]).not.toContain('p_amount');
   });
 
-  it('processCampaignDonation only records fee when RPC returns applied: true', () => {
+  it('processCampaignDonation attempts fee on any successful RPC (applied or already_applied)', () => {
     const fnBody = source.split('processCampaignDonation')[2];
-    expect(fnBody).toContain('if (result?.applied)');
+    expect(fnBody).toContain('if (result && !result.reason)');
     expect(fnBody).toContain('recordPlatformFee');
   });
 

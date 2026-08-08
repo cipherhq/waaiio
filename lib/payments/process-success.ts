@@ -357,8 +357,11 @@ export async function processInvoicePayment(
     return;
   }
 
-  // Only record platform fee if this payment was actually applied (not a replay)
-  if (result?.applied) {
+  // Always attempt fee creation for successful RPC calls (applied or already_applied).
+  // The payment_id UNIQUE constraint on platform_fees prevents duplicates.
+  // This ensures fee is eventually created even if a previous attempt crashed
+  // before fee INSERT after a successful RPC commit.
+  if (result && !result.reason) {
     await recordPlatformFee(supabase, {
       invoiceId,
       paymentId,
@@ -398,8 +401,11 @@ export async function processCampaignDonation(
     return;
   }
 
-  // Only record platform fee if this donation was actually applied (not a replay)
-  if (result?.applied) {
+  // Always attempt fee creation for successful RPC calls (applied or already_applied).
+  // The payment_id UNIQUE constraint on platform_fees prevents duplicates.
+  // Use authoritative amount from RPC result when available, fall back to payment.amount.
+  const feeAmount = result?.amount ? Number(result.amount) : amount;
+  if (result && !result.reason) {
     const { data: campaign } = await supabase
       .from('campaigns')
       .select('business_id')
@@ -411,7 +417,7 @@ export async function processCampaignDonation(
         campaignId,
         paymentId,
         businessId: campaign.business_id,
-        paymentAmount: amount,
+        paymentAmount: feeAmount,
         gatewayFee,
       });
     }
