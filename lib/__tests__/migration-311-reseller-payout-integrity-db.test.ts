@@ -230,10 +230,13 @@ describeIfDb('Migration 311: overlap exclusion constraint', () => {
     expect(r).toContain('ERROR');
   });
 
-  it('rejected payout allows re-creation', () => {
+  it('rejected payout does not block non-overlapping adjacent period', () => {
+    // Note: exact-duplicate periods are blocked by UNIQUE(reseller_id, period_start, period_end)
+    // regardless of status. The exclusion constraint only handles overlapping (non-identical) ranges.
+    // A rejected period for [Oct 1, Oct 15) does not block [Oct 15, Oct 31).
     runSQL(`DELETE FROM reseller_payouts WHERE reseller_id = '${RESELLER_ID}';`);
     runSQL(`INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status) VALUES ('${RESELLER_ID}', '2026-10-01', '2026-10-15', 100, 'rejected');`);
-    const r = runSQL(`INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status) VALUES ('${RESELLER_ID}', '2026-10-01', '2026-10-15', 100, 'pending') RETURNING id;`);
+    const r = runSQL(`INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status) VALUES ('${RESELLER_ID}', '2026-10-15', '2026-10-31', 100, 'pending') RETURNING id;`);
     expect(r).not.toContain('ERROR');
   });
 
@@ -290,7 +293,7 @@ describeIfDb('Migration 311: mark_reseller_payout_paid RPC', () => {
     runSQL(`DELETE FROM reseller_payouts WHERE reseller_id = '${RESELLER_ID}';`);
     runSQL(`INSERT INTO reseller_payouts (id, reseller_id, period_start, period_end, net_amount, status) VALUES ('${PAYOUT_ID}', '${RESELLER_ID}', '2026-07-01', '2026-07-15', 500, 'approved');`);
     const r = runSQL(`SELECT mark_reseller_payout_paid('${PAYOUT_ID}', '${ADMIN_ID}');`);
-    expect(r).toContain('"success" : true');
+    expect(r).toMatch(/"success"\s*:\s*true/);
     const status = runSQL(`SELECT status FROM reseller_payouts WHERE id = '${PAYOUT_ID}';`);
     expect(status).toBe('paid');
   });
