@@ -574,15 +574,14 @@ export default function BookingsPage() {
           });
         } catch { /* Non-critical if slot doesn't exist */ }
 
-        // Notify customer via API (non-blocking)
-        if (newStatus === 'cancelled' && booking.guest_phone) {
-          fetch('/api/notifications/send', {
+        // Notify guest via domain-specific cancellation endpoint (non-blocking)
+        if (newStatus === 'cancelled' && booking.guest_phone && booking._isReservation) {
+          fetch('/api/reservations/notify-cancel', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              business_id: business.id,
-              phone: booking.guest_phone,
-              message: `Your booking at ${business.name} on ${booking.date} has been cancelled. Contact us if you have questions.`,
+              reservationId: booking.id,
+              businessId: business.id,
             }),
           }).catch(() => {});
         }

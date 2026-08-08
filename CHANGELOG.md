@@ -7,6 +7,13 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-07
 
+### fix(DEAD-002): reservation cancellation notification — replace dead endpoint with domain-specific route
+
+- **Root cause:** Dashboard reservation cancellation called nonexistent `/api/notifications/send` to notify guests. The 404 was silently swallowed — customers were never notified of cancelled reservations.
+- **Fix:** Created `/api/reservations/notify-cancel` modeled on existing `notify-checkin` pattern. Authenticates user, verifies business ownership, loads reservation server-side (scoped to business), verifies reservation is actually cancelled, derives guest phone from DB (not request body), uses ChannelResolver. Dashboard now calls this endpoint instead of the dead one.
+- **Files:** `app/api/reservations/notify-cancel/route.ts` (new), `app/dashboard/reservations/page.tsx` (replaced dead fetch call)
+- Could break: Nothing — the old call always 404'd silently.
+
 ### fix(DEAD-001): connect Growth contact import to canonical customer endpoint
 
 - **Root cause:** Growth → Import Contacts page (`app/dashboard/growth/import/page.tsx`) called a nonexistent `/api/growth/contacts/import` endpoint. The canonical endpoint exists at `/api/customers/import` but the frontend and backend contracts disagreed on field names, phone requirements, tags format, birthday mapping, and error response shape.
