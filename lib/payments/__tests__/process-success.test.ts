@@ -65,32 +65,27 @@ describe('processSuccessfulPayment', () => {
 });
 
 describe('processInvoicePayment', () => {
-  it('calls apply_invoice_payment RPC', async () => {
+  it('calls apply_invoice_payment RPC (no caller-supplied amount)', async () => {
     const supabase = mockSupabase();
     await processInvoicePayment(supabase as any, 'inv1', 'pay1', 1000);
 
-    // Should look up invoice business_id
-    expect(supabase.from).toHaveBeenCalledWith('invoices');
-    // Should call the atomic RPC
+    // Should call the atomic RPC with only invoice_id and payment_id
     expect(supabase.rpc).toHaveBeenCalledWith('apply_invoice_payment', {
       p_invoice_id: 'inv1',
       p_payment_id: 'pay1',
-      p_payment_amount: 1000,
-      p_business_id: 'biz1',
     });
   });
 });
 
 describe('processCampaignDonation', () => {
-  it('calls apply_campaign_donation RPC and records fee on success', async () => {
+  it('calls apply_campaign_donation RPC (no caller-supplied amount)', async () => {
     const supabase = mockSupabase();
     await processCampaignDonation(supabase as any, 'pay1', 'camp1', 500);
 
-    // Should call the atomic RPC
+    // Should call the atomic RPC with only campaign_id and payment_id
     expect(supabase.rpc).toHaveBeenCalledWith('apply_campaign_donation', {
       p_campaign_id: 'camp1',
       p_payment_id: 'pay1',
-      p_amount: 500,
     });
     // Should look up campaign business_id for fee recording
     expect(supabase.from).toHaveBeenCalledWith('campaigns');

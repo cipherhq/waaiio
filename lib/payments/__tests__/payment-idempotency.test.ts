@@ -51,32 +51,44 @@ describe('Migration 310 — payment-level idempotency schema', () => {
     expect(migrationSql).toContain('invoice_payment_applications');
   });
 
-  it('apply_invoice_payment validates business ownership', () => {
-    expect(migrationSql).toContain('v_invoice.business_id != p_business_id');
+  it('apply_invoice_payment validates payment-invoice-business relationship from DB', () => {
+    // Loads payment row and validates status, invoice_id, and business match
+    expect(migrationSql).toContain("v_payment.status != 'success'");
+    expect(migrationSql).toContain('v_payment.invoice_id != p_invoice_id');
+    expect(migrationSql).toContain('v_invoice.business_id != v_payment.business_id');
     expect(migrationSql).toContain("'business_mismatch'");
+    expect(migrationSql).toContain("'payment_invoice_mismatch'");
+    expect(migrationSql).toContain("'payment_not_successful'");
   });
 
   it('apply_invoice_payment returns idempotent result on replay', () => {
     expect(migrationSql).toContain("'already_applied', true");
   });
 
-  it('creates apply_campaign_donation RPC with donation status gate', () => {
+  it('creates apply_campaign_donation RPC with payment validation and donation status gate', () => {
     expect(migrationSql).toContain('CREATE OR REPLACE FUNCTION apply_campaign_donation');
     expect(migrationSql).toContain("AND status = 'pending'");
+    // Validates payment from DB
+    expect(migrationSql).toContain("v_payment.status != 'success'");
+    expect(migrationSql).toContain('v_payment.campaign_id != p_campaign_id');
     // Only increments if transition occurred
     expect(migrationSql).toContain('IF v_rows_updated = 0 THEN');
-    expect(migrationSql).toContain('raised_amount = raised_amount + p_amount');
+    expect(migrationSql).toContain('raised_amount = raised_amount + v_amount');
     expect(migrationSql).toContain('donor_count = donor_count + 1');
+    // No arbitrary LIMIT 1 fallback
+    expect(migrationSql).not.toContain('LIMIT 1');
   });
 
   it('adds payment_id column to platform_fees', () => {
     expect(migrationSql).toContain('ALTER TABLE platform_fees ADD COLUMN IF NOT EXISTS payment_id uuid REFERENCES payments(id)');
   });
 
-  it('creates payment-level unique index on platform_fees', () => {
+  it('creates unconditional payment-level unique index on platform_fees', () => {
     expect(migrationSql).toContain('idx_platform_fees_payment_unique');
     expect(migrationSql).toContain('ON platform_fees(payment_id)');
-    expect(migrationSql).toContain('WHERE payment_id IS NOT NULL AND refunded_at IS NULL');
+    // Unconditional: no refunded_at filter — refunded fee still blocks duplicate
+    expect(migrationSql).toContain('WHERE payment_id IS NOT NULL');
+    expect(migrationSql).not.toMatch(/idx_platform_fees_payment_unique[^;]*refunded_at/);
   });
 
   it('drops entity-level unique indexes for multi-payment entities', () => {
@@ -91,9 +103,23 @@ describe('Migration 310 — payment-level idempotency schema', () => {
     expect(migrationSql).not.toContain('DROP INDEX IF EXISTS idx_platform_fees_reservation_unique');
   });
 
-  it('grants execute on new RPCs to service_role', () => {
-    expect(migrationSql).toContain('GRANT EXECUTE ON FUNCTION apply_invoice_payment');
-    expect(migrationSql).toContain('GRANT EXECUTE ON FUNCTION apply_campaign_donation');
+  it('revokes RPC execution from PUBLIC/anon/authenticated and grants to service_role only', () => {
+    expect(migrationSql).toContain('REVOKE ALL ON FUNCTION apply_invoice_payment(uuid, uuid) FROM PUBLIC');
+    expect(migrationSql).toContain('REVOKE ALL ON FUNCTION apply_invoice_payment(uuid, uuid) FROM anon');
+    expect(migrationSql).toContain('REVOKE ALL ON FUNCTION apply_invoice_payment(uuid, uuid) FROM authenticated');
+    expect(migrationSql).toContain('GRANT EXECUTE ON FUNCTION apply_invoice_payment(uuid, uuid) TO service_role');
+
+    expect(migrationSql).toContain('REVOKE ALL ON FUNCTION apply_campaign_donation(uuid, uuid) FROM PUBLIC');
+    expect(migrationSql).toContain('REVOKE ALL ON FUNCTION apply_campaign_donation(uuid, uuid) FROM anon');
+    expect(migrationSql).toContain('REVOKE ALL ON FUNCTION apply_campaign_donation(uuid, uuid) FROM authenticated');
+    expect(migrationSql).toContain('GRANT EXECUTE ON FUNCTION apply_campaign_donation(uuid, uuid) TO service_role');
+  });
+
+  it('backfills historical successful invoice payments', () => {
+    expect(migrationSql).toContain('INSERT INTO invoice_payment_applications');
+    expect(migrationSql).toContain("p.status = 'success'");
+    expect(migrationSql).toContain('p.invoice_id IS NOT NULL');
+    expect(migrationSql).toContain('NOT EXISTS');
   });
 });
 
@@ -302,12 +328,15 @@ describe('process-success.ts uses atomic RPCs and payment_id', () => {
     );
   });
 
-  it('processInvoicePayment calls apply_invoice_payment RPC', () => {
+  it('processInvoicePayment calls apply_invoice_payment RPC (no caller-supplied amount)', () => {
     expect(source).toContain("supabase.rpc('apply_invoice_payment'");
     expect(source).toContain('p_invoice_id');
     expect(source).toContain('p_payment_id');
-    expect(source).toContain('p_payment_amount');
-    expect(source).toContain('p_business_id');
+    // RPC loads amount from payment row — no caller-supplied amount or business_id
+    const rpcCall = source.match(/rpc\('apply_invoice_payment',\s*\{[^}]+\}/s);
+    expect(rpcCall).not.toBeNull();
+    expect(rpcCall![0]).not.toContain('p_payment_amount');
+    expect(rpcCall![0]).not.toContain('p_business_id');
   });
 
   it('processInvoicePayment only records fee when RPC returns applied: true', () => {
@@ -317,11 +346,14 @@ describe('process-success.ts uses atomic RPCs and payment_id', () => {
     expect(fnBody).toContain('recordPlatformFee');
   });
 
-  it('processCampaignDonation calls apply_campaign_donation RPC', () => {
+  it('processCampaignDonation calls apply_campaign_donation RPC (no caller-supplied amount)', () => {
     expect(source).toContain("supabase.rpc('apply_campaign_donation'");
     expect(source).toContain('p_campaign_id');
     expect(source).toContain('p_payment_id');
-    expect(source).toContain('p_amount');
+    // RPC loads amount from payment row — no caller-supplied amount
+    const rpcCall = source.match(/rpc\('apply_campaign_donation',\s*\{[^}]+\}/s);
+    expect(rpcCall).not.toBeNull();
+    expect(rpcCall![0]).not.toContain('p_amount');
   });
 
   it('processCampaignDonation only records fee when RPC returns applied: true', () => {

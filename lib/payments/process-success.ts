@@ -342,27 +342,17 @@ export async function processInvoicePayment(
   paymentAmount: number,
   gatewayFee?: number,
 ): Promise<void> {
-  // Resolve business_id for validation
-  const { data: invoice } = await supabase
-    .from('invoices')
-    .select('business_id')
-    .eq('id', invoiceId)
-    .single();
-
-  if (!invoice?.business_id) return;
-
+  // RPC loads and validates payment + invoice from DB internally
   const { data: result, error: rpcError } = await supabase.rpc('apply_invoice_payment', {
     p_invoice_id: invoiceId,
     p_payment_id: paymentId,
-    p_payment_amount: paymentAmount,
-    p_business_id: invoice.business_id,
   });
 
   if (rpcError) {
     logger.error('[INVOICE-PAYMENT] RPC error:', rpcError.message);
     Sentry.captureException(new Error(`apply_invoice_payment RPC error: ${rpcError.message}`), {
       tags: { component: 'process-success', operation: 'invoice-payment' },
-      extra: { invoiceId, paymentId, paymentAmount },
+      extra: { invoiceId, paymentId },
     });
     return;
   }
@@ -397,7 +387,6 @@ export async function processCampaignDonation(
   const { data: result, error: rpcError } = await supabase.rpc('apply_campaign_donation', {
     p_campaign_id: campaignId,
     p_payment_id: paymentId,
-    p_amount: amount,
   });
 
   if (rpcError) {
