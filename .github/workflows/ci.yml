@@ -804,6 +804,18 @@ jobs:
           if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No Migration 311 DB tests passed."; exit 1; fi
           echo "✅ Migration 311 reseller payout integrity DB tests complete — zero skips, zero failures."
 
+      - name: Migration 311 two-session concurrency tests
+        if: hashFiles('scripts/test-migration-311-concurrency.sh') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          echo "Running Migration 311 two-session concurrency tests..."
+          bash scripts/test-migration-311-concurrency.sh
+
   # ── Engineering Governance ──
   governance:
     name: Engineering governance

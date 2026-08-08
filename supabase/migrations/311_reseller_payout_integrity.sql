@@ -2,16 +2,21 @@
 -- 311: Reseller Payout Financial Integrity
 --
 -- A. Fix RLS: Finance = SELECT only; Admin = full CRUD.
---    Previous "Admin manages reseller payouts" policy used profiles.role
---    which is inconsistent with the post-247 security model.
+-- B. mark_reseller_payout_paid RPC: serialized overspend prevention.
+-- C. Overlapping period prevention: exclusion constraint.
 --
--- B. mark_reseller_payout_paid RPC: serializes on reseller balance domain
---    via advisory lock to prevent cross-payout overspend.
---
--- C. Overlapping period prevention: exclusion constraint using daterange.
---    Convention: period_end is EXCLUSIVE — [period_start, period_end).
---    If existing non-rejected overlapping data exists, migration FAILS.
+-- Convention: period_end is EXCLUSIVE — [period_start, period_end).
+-- If existing non-rejected overlapping data exists, migration FAILS
+-- and rolls back ALL changes (entire file is one transaction).
 -- ═══════════════════════════════════════════════════════
+
+-- btree_gist must be created OUTSIDE the transaction (extension creation
+-- is non-transactional in some PostgreSQL configurations)
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+-- Entire migration is atomic: if the overlap check fails, ALL DDL
+-- (policies, function, grants, constraint) rolls back cleanly.
+BEGIN;
 
 -- ══════════════════════════════════════════════════════════
 -- A. Fix reseller_payouts RLS policies
@@ -138,8 +143,6 @@ GRANT EXECUTE ON FUNCTION mark_reseller_payout_paid(uuid, uuid) TO service_role;
 --    the constraint or silently continues without it installed.
 -- ══════════════════════════════════════════════════════════
 
-CREATE EXTENSION IF NOT EXISTS btree_gist;
-
 -- Fail-closed: RAISE EXCEPTION if existing data has overlapping periods
 DO $$
 BEGIN
@@ -164,3 +167,5 @@ ALTER TABLE reseller_payouts
     reseller_id WITH =,
     daterange(period_start, period_end, '[)') WITH &&
   ) WHERE (status != 'rejected');
+
+COMMIT;

@@ -71,12 +71,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'reseller_id, period_start, and period_end are required' }, { status: 400 });
     }
 
-    // Validate date format and ordering
+    // Strict YYYY-MM-DD date validation (rejects impossible dates like 2026-02-30)
+    function isValidDate(dateStr: string): boolean {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
+      const d = new Date(dateStr + 'T00:00:00Z');
+      if (isNaN(d.getTime())) return false;
+      // Verify round-trip to catch JS auto-normalization (e.g. Feb 30 → Mar 2)
+      return d.toISOString().startsWith(dateStr);
+    }
+
+    if (!isValidDate(period_start) || !isValidDate(period_end)) {
+      return NextResponse.json({ error: 'Invalid date format — use YYYY-MM-DD with valid calendar dates' }, { status: 400 });
+    }
     const startDate = new Date(period_start + 'T00:00:00Z');
     const endDate = new Date(period_end + 'T00:00:00Z');
-    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-      return NextResponse.json({ error: 'Invalid date format for period_start or period_end' }, { status: 400 });
-    }
     if (startDate >= endDate) {
       return NextResponse.json({ error: 'period_start must be before period_end' }, { status: 400 });
     }

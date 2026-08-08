@@ -93,6 +93,16 @@ describe('Migration 311: reseller payout integrity', () => {
     expect(src).toContain('Manual reconciliation required');
   });
 
+  it('is wrapped in BEGIN/COMMIT for atomic rollback', () => {
+    expect(src).toContain('BEGIN;');
+    expect(src).toContain('COMMIT;');
+    const beginIdx = src.indexOf('BEGIN;');
+    const exceptionIdx = src.indexOf('RAISE EXCEPTION');
+    const commitIdx = src.indexOf('COMMIT;');
+    expect(beginIdx).toBeLessThan(exceptionIdx);
+    expect(exceptionIdx).toBeLessThan(commitIdx);
+  });
+
   it('uses exclusive end convention (no +1 — period_end is already exclusive)', () => {
     // daterange(period_start, period_end, '[)') — no period_end + 1
     expect(src).toContain("period_start, period_end, '[)'");
@@ -137,9 +147,10 @@ describe('PATCH route: mark_paid uses atomic RPC', () => {
 describe('POST route: input validation', () => {
   const src = readFileSync('app/api/admin/reseller-payouts/route.ts', 'utf-8');
 
-  it('validates date format', () => {
-    expect(src).toContain('isNaN(startDate.getTime())');
-    expect(src).toContain('Invalid date format');
+  it('validates strict YYYY-MM-DD date format with round-trip check', () => {
+    expect(src).toContain('isValidDate');
+    expect(src).toContain('toISOString().startsWith');
+    expect(src).toContain('valid calendar dates');
   });
 
   it('validates start < end', () => {
@@ -225,6 +236,7 @@ vi.mock('@/lib/logger', () => ({
 }));
 
 const { PATCH } = await import('@/app/api/admin/reseller-payouts/[id]/route');
+const resellerPostModule = await import('@/app/api/admin/reseller-payouts/route');
 import { NextRequest } from 'next/server';
 
 function makeReq(url: string, method = 'PATCH', body?: Record<string, unknown>) {
@@ -382,5 +394,57 @@ describe('Audit failure handling (source verification)', () => {
     const auditIdx = patchSrc.indexOf('admin_audit_logs');
     // Audit is BEFORE the return (so it runs), but if it fails, the return still happens
     expect(auditIdx).toBeLessThan(rpcReturnIdx);
+  });
+});
+
+// ── Executable strict date validation ────────────────────
+
+describe('Strict date validation (executable)', () => {
+  function makePostReq(body: Record<string, unknown>) {
+    return new NextRequest('http://localhost/api/admin/reseller-payouts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it.each([
+    '2026-02-30', // impossible calendar date
+    '2026-13-01', // month 13
+    '2026-00-10', // month 0
+    'not-a-date',
+    '2026/08/01', // wrong format
+    '08-01-2026',
+  ])('rejects invalid date: %s', async (badDate) => {
+    mockAuthRole.current = 'admin';
+    const res = await resellerPostModule.POST(makePostReq({
+      reseller_id: 'r-1', period_start: badDate, period_end: '2026-08-31',
+    }));
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain('date');
+  });
+
+  it.each([
+    ['2026-02-28', '2026-03-01'], // valid Feb
+    ['2028-02-29', '2028-03-01'], // leap year
+  ])('accepts valid dates: %s → %s', async (start, end) => {
+    mockAuthRole.current = 'admin';
+    // Will pass date validation but may fail later on reseller lookup — that's OK
+    const res = await resellerPostModule.POST(makePostReq({
+      reseller_id: 'r-1', period_start: start, period_end: end,
+    }));
+    // Should NOT be 400 for date validation (may be 404 for reseller not found)
+    expect(res.status).not.toBe(400);
+  });
+
+  it('rejects start >= end', async () => {
+    mockAuthRole.current = 'admin';
+    const res = await resellerPostModule.POST(makePostReq({
+      reseller_id: 'r-1', period_start: '2026-08-15', period_end: '2026-08-01',
+    }));
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain('before');
   });
 });
