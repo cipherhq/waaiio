@@ -87,13 +87,16 @@ describe('Migration 311: reseller payout integrity', () => {
     expect(src).toContain("status != 'rejected'");
   });
 
-  it('checks for existing overlaps before adding constraint', () => {
-    expect(src).toContain('Existing overlapping reseller payouts detected');
-    expect(src).toContain('RAISE WARNING');
+  it('FAILS CLOSED on existing overlaps (RAISE EXCEPTION, not WARNING)', () => {
+    expect(src).toContain('RAISE EXCEPTION');
+    expect(src).not.toContain('RAISE WARNING');
+    expect(src).toContain('Manual reconciliation required');
   });
 
-  it('uses exclusive end for daterange (period_end + 1)', () => {
-    expect(src).toContain("period_end + 1, '[)'");
+  it('uses exclusive end convention (no +1 — period_end is already exclusive)', () => {
+    // daterange(period_start, period_end, '[)') — no period_end + 1
+    expect(src).toContain("period_start, period_end, '[)'");
+    expect(src).not.toContain("period_end + 1");
   });
 });
 
@@ -124,9 +127,10 @@ describe('PATCH route: mark_paid uses atomic RPC', () => {
     expect(src).toContain('409');
   });
 
-  it('wraps audit log in try/catch with explicit logger.error', () => {
-    expect(src).toContain('} catch (auditErr)');
+  it('checks audit { error } return and logs failure', () => {
+    expect(src).toContain('error: auditErr');
     expect(src).toContain('Audit log failed');
+    expect(src).toContain('auditErr.message');
   });
 });
 
@@ -159,9 +163,10 @@ describe('POST route: input validation', () => {
     expect(src).toContain('overlaps');
   });
 
-  it('wraps audit log in try/catch', () => {
-    expect(src).toContain('} catch (auditErr)');
+  it('checks audit { error } return and logs failure', () => {
+    expect(src).toContain('error: auditErr');
     expect(src).toContain('Audit log failed');
+    expect(src).toContain('auditErr.message');
   });
 });
 
@@ -337,14 +342,45 @@ describe('approve/reject CAS transitions', () => {
   });
 });
 
-describe('Audit failure handling', () => {
-  it('logs audit failure without crashing on mark_paid', async () => {
-    mockRpcResult.mockResolvedValue({ data: { success: true, available_after: 300 }, error: null });
-    // The test framework mock for service.from().insert() is already set up
-    // We just verify the try/catch pattern exists in source
-    const src = readFileSync('app/api/admin/reseller-payouts/[id]/route.ts', 'utf-8');
-    expect(src).toContain('} catch (auditErr)');
-    expect(src).toContain('logger.error');
-    expect(src).toContain('Audit log failed');
+describe('Audit failure handling (source verification)', () => {
+  const patchSrc = readFileSync('app/api/admin/reseller-payouts/[id]/route.ts', 'utf-8');
+  const postSrc = readFileSync('app/api/admin/reseller-payouts/route.ts', 'utf-8');
+
+  it('PATCH mark_paid uses { error } pattern (not try/catch)', () => {
+    // Must destructure { error: auditErr } from the insert result
+    expect(patchSrc).toContain('error: auditErr');
+    // Must NOT use try/catch for audit
+    expect(patchSrc).not.toContain('} catch (auditErr)');
+  });
+
+  it('PATCH approve/reject uses { error } pattern', () => {
+    // Count occurrences of the correct pattern — should appear twice (mark_paid + approve/reject)
+    const matches = patchSrc.match(/error: auditErr/g) || [];
+    expect(matches.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('PATCH logs audit error with logger.error and safe context', () => {
+    const auditErrSection = patchSrc.slice(patchSrc.indexOf('if (auditErr)'));
+    expect(auditErrSection).toContain('logger.error');
+    expect(auditErrSection).toContain('auditErr.message');
+    expect(auditErrSection).toContain('Audit log failed');
+  });
+
+  it('POST uses { error } pattern for audit (not try/catch)', () => {
+    expect(postSrc).toContain('error: auditErr');
+    expect(postSrc).not.toContain('} catch (auditErr)');
+  });
+
+  it('POST logs audit error with logger.error', () => {
+    expect(postSrc).toContain('auditErr.message');
+    expect(postSrc).toContain('Audit log failed');
+  });
+
+  it('mark_paid payout mutation succeeds independently of audit (separate writes)', () => {
+    // The audit write is AFTER the RPC return check — payout is already committed
+    const rpcReturnIdx = patchSrc.indexOf("return NextResponse.json({ success: true");
+    const auditIdx = patchSrc.indexOf('admin_audit_logs');
+    // Audit is BEFORE the return (so it runs), but if it fails, the return still happens
+    expect(auditIdx).toBeLessThan(rpcReturnIdx);
   });
 });

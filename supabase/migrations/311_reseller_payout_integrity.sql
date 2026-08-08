@@ -9,8 +9,8 @@
 --    via advisory lock to prevent cross-payout overspend.
 --
 -- C. Overlapping period prevention: exclusion constraint using daterange.
---
--- D. Input validation helper for payout period dates.
+--    Convention: period_end is EXCLUSIVE — [period_start, period_end).
+--    If existing non-rejected overlapping data exists, migration FAILS.
 -- ═══════════════════════════════════════════════════════
 
 -- ══════════════════════════════════════════════════════════
@@ -125,42 +125,42 @@ GRANT EXECUTE ON FUNCTION mark_reseller_payout_paid(uuid, uuid) TO service_role;
 -- ══════════════════════════════════════════════════════════
 -- C. Overlapping period prevention
 --    Uses btree_gist extension + exclusion constraint.
+--
+--    Convention: period_end is EXCLUSIVE.
+--    [period_start, period_end) — period_end itself is NOT included.
+--
 --    Adjacent periods [Aug 1, Aug 15) + [Aug 15, Aug 31) are allowed.
 --    Overlapping periods [Aug 1, Aug 15) + [Aug 10, Aug 20) are blocked.
 --    Only enforced for non-rejected payouts (rejected can be re-created).
+--
+--    FAIL-CLOSED: If existing non-rejected overlapping periods exist,
+--    this migration RAISES EXCEPTION and rolls back — never skips
+--    the constraint or silently continues without it installed.
 -- ══════════════════════════════════════════════════════════
 
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 
--- Add the exclusion constraint using daterange
--- period_end is exclusive (matches [startInclusive, endExclusive) semantics)
--- Note: the existing UNIQUE(reseller_id, period_start, period_end) remains for
--- exact-duplicate prevention. This exclusion catches overlaps.
--- Only active (non-rejected) payouts are constrained.
+-- Fail-closed: RAISE EXCEPTION if existing data has overlapping periods
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'reseller_payouts_no_overlap'
+  IF EXISTS (
+    SELECT 1
+    FROM reseller_payouts a
+    JOIN reseller_payouts b ON a.reseller_id = b.reseller_id
+      AND a.id < b.id
+      AND a.status != 'rejected'
+      AND b.status != 'rejected'
+      AND daterange(a.period_start, a.period_end, '[)') && daterange(b.period_start, b.period_end, '[)')
   ) THEN
-    -- First check for existing overlapping rows that would block the constraint
-    -- If any exist, we skip and log — do not silently destroy financial data
-    IF EXISTS (
-      SELECT 1
-      FROM reseller_payouts a
-      JOIN reseller_payouts b ON a.reseller_id = b.reseller_id
-        AND a.id < b.id
-        AND a.status != 'rejected'
-        AND b.status != 'rejected'
-        AND daterange(a.period_start, a.period_end + 1, '[)') && daterange(b.period_start, b.period_end + 1, '[)')
-    ) THEN
-      RAISE WARNING 'Existing overlapping reseller payouts detected — skipping exclusion constraint. Manual reconciliation required.';
-    ELSE
-      ALTER TABLE reseller_payouts
-        ADD CONSTRAINT reseller_payouts_no_overlap
-        EXCLUDE USING gist (
-          reseller_id WITH =,
-          daterange(period_start, period_end + 1, '[)') WITH &&
-        ) WHERE (status != 'rejected');
-    END IF;
+    RAISE EXCEPTION 'Migration 311 blocked: existing non-rejected reseller payouts have overlapping periods. Manual reconciliation required before the exclusion constraint can be installed.'
+      USING HINT = 'Inspect reseller_payouts for overlapping period_start/period_end ranges where status != rejected. Resolve conflicts, then re-run.';
   END IF;
 END $$;
+
+-- Install the exclusion constraint — period_end is exclusive, no +1 needed
+ALTER TABLE reseller_payouts
+  ADD CONSTRAINT reseller_payouts_no_overlap
+  EXCLUDE USING gist (
+    reseller_id WITH =,
+    daterange(period_start, period_end, '[)') WITH &&
+  ) WHERE (status != 'rejected');

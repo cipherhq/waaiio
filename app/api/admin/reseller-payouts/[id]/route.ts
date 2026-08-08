@@ -66,19 +66,18 @@ export async function PATCH(
       }
 
       // Audit log (server-side, separate write — failure logged but does not roll back payout)
-      try {
-        await service.from('admin_audit_logs').insert({
-          actor_id: auth.id,
-          action: 'reseller_payout_mark_paid',
-          entity_type: 'reseller_payout',
-          entity_id: id,
-          details: {
-            available_after: rpcResult.available_after,
-            ...(notes ? { notes } : {}),
-          },
-        });
-      } catch (auditErr) {
-        logger.error(`[ADMIN_RESELLER_PAYOUTS] Audit log failed for mark_paid ${id}:`, auditErr);
+      const { error: auditErr } = await service.from('admin_audit_logs').insert({
+        actor_id: auth.id,
+        action: 'reseller_payout_mark_paid',
+        entity_type: 'reseller_payout',
+        entity_id: id,
+        details: {
+          available_after: rpcResult.available_after,
+          ...(notes ? { notes } : {}),
+        },
+      });
+      if (auditErr) {
+        logger.error(`[ADMIN_RESELLER_PAYOUTS] Audit log failed for mark_paid ${id}:`, auditErr.message);
       }
 
       logger.info(`[ADMIN_RESELLER_PAYOUTS] Payout ${id} mark_paid: available_after=${rpcResult.available_after}`);
@@ -141,22 +140,21 @@ export async function PATCH(
     }
 
     // Audit log (server-side, separate write — failure logged but does not roll back)
-    try {
-      await service.from('admin_audit_logs').insert({
-        actor_id: auth.id,
-        action: `reseller_payout_${action}`,
-        entity_type: 'reseller_payout',
-        entity_id: id,
-        details: {
-          reseller_id: payout.reseller_id,
-          previous_status: payout.status,
-          new_status: updated.status,
-          net_amount: payout.net_amount,
-          ...(notes ? { notes } : {}),
-        },
-      });
-    } catch (auditErr) {
-      logger.error(`[ADMIN_RESELLER_PAYOUTS] Audit log failed for ${action} ${id}:`, auditErr);
+    const { error: auditErr } = await service.from('admin_audit_logs').insert({
+      actor_id: auth.id,
+      action: `reseller_payout_${action}`,
+      entity_type: 'reseller_payout',
+      entity_id: id,
+      details: {
+        reseller_id: payout.reseller_id,
+        previous_status: payout.status,
+        new_status: updated.status,
+        net_amount: payout.net_amount,
+        ...(notes ? { notes } : {}),
+      },
+    });
+    if (auditErr) {
+      logger.error(`[ADMIN_RESELLER_PAYOUTS] Audit log failed for ${action} ${id}:`, auditErr.message);
     }
 
     logger.info(`[ADMIN_RESELLER_PAYOUTS] Payout ${id} ${action}: status=${updated.status}`);

@@ -505,9 +505,10 @@ describe('Reseller payout period boundaries (A)', () => {
     expect(postSection).not.toContain(".lte('created_at',");
   });
 
-  it('server computes end+1day for exclusive boundary', () => {
-    expect(serverSource).toContain('setUTCDate');
-    expect(serverSource).toContain('periodEndExclusive');
+  it('server uses period_end directly (no +1 day — already exclusive)', () => {
+    const postSection = serverSource.slice(serverSource.indexOf('Calculate gross commission'));
+    expect(postSection).not.toContain('setUTCDate');
+    expect(postSection).toContain("period_end is EXCLUSIVE");
   });
 
   it('UI preview uses matching exclusive end boundary (.lt)', () => {
@@ -516,8 +517,9 @@ describe('Reseller payout period boundaries (A)', () => {
     expect(previewSection).not.toContain(".lte('created_at',");
   });
 
-  it('UI preview uses same +1day model as server', () => {
-    expect(uiSource).toContain('setUTCDate');
+  it('UI preview uses period_end directly (no +1 day)', () => {
+    const previewSection = uiSource.slice(uiSource.indexOf('platform_fees'));
+    expect(previewSection).not.toContain('setUTCDate');
   });
 
   it('server uses .gte for start boundary (inclusive)', () => {

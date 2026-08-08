@@ -120,17 +120,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Calculate gross commission from platform_fees
-    // Use [start, end+1day) window so the entire end date is included
-    const periodEndExclusive = new Date(period_end + 'T00:00:00Z');
-    periodEndExclusive.setUTCDate(periodEndExclusive.getUTCDate() + 1);
-    const endExclusiveISO = periodEndExclusive.toISOString();
-
+    // Convention: [period_start, period_end) — period_end is EXCLUSIVE
+    // A fee at period_end belongs to the NEXT period, not this one
     const { data: fees, error: feesErr } = await service
       .from('platform_fees')
       .select('reseller_commission')
       .eq('reseller_id', reseller_id)
       .gte('created_at', period_start)
-      .lt('created_at', endExclusiveISO);
+      .lt('created_at', period_end);
 
     if (feesErr) {
       logger.error('[ADMIN_RESELLER_PAYOUTS] Fee calc error:', feesErr.message);
@@ -187,22 +184,21 @@ export async function POST(request: NextRequest) {
     }
 
     // Audit log (server-side, separate write — failure logged but does not roll back payout)
-    try {
-      await service.from('admin_audit_logs').insert({
-        actor_id: auth.id,
-        action: 'generate_reseller_payout',
-        entity_type: 'reseller_payout',
-        entity_id: payout.id,
-        details: {
-          reseller_id,
-          period_start,
-          period_end,
-          gross_commission: grossCommission,
-          net_amount: netAmount,
-        },
-      });
-    } catch (auditErr) {
-      logger.error(`[ADMIN_RESELLER_PAYOUTS] Audit log failed for generate ${payout.id}:`, auditErr);
+    const { error: auditErr } = await service.from('admin_audit_logs').insert({
+      actor_id: auth.id,
+      action: 'generate_reseller_payout',
+      entity_type: 'reseller_payout',
+      entity_id: payout.id,
+      details: {
+        reseller_id,
+        period_start,
+        period_end,
+        gross_commission: grossCommission,
+        net_amount: netAmount,
+      },
+    });
+    if (auditErr) {
+      logger.error(`[ADMIN_RESELLER_PAYOUTS] Audit log failed for generate ${payout.id}:`, auditErr.message);
     }
 
     logger.info(`[ADMIN_RESELLER_PAYOUTS] Payout created: ${payout.id} for reseller ${reseller_id}, net=${netAmount}`);
