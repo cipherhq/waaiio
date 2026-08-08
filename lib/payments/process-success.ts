@@ -357,15 +357,18 @@ export async function processInvoicePayment(
     return;
   }
 
-  // Always attempt fee creation for successful RPC calls (applied or already_applied).
-  // The payment_id UNIQUE constraint on platform_fees prevents duplicates.
-  // This ensures fee is eventually created even if a previous attempt crashed
-  // before fee INSERT after a successful RPC commit.
-  if (result && !result.reason) {
+  // Fee retry logic:
+  // - New payment (applied or already_applied + not legacy): attempt fee.
+  //   payment_id UNIQUE prevents duplicates on retry.
+  // - Legacy marker replay: do NOT create fee (legacy fees already exist with NULL payment_id).
+  const shouldEnsureFee = result && !result.reason && !result.is_legacy;
+  if (shouldEnsureFee) {
+    // Use DB-authoritative amount from RPC, not caller-supplied paymentAmount
+    const authoritativeAmount = result.amount ? Number(result.amount) : paymentAmount;
     await recordPlatformFee(supabase, {
       invoiceId,
       paymentId,
-      paymentAmount,
+      paymentAmount: authoritativeAmount,
       gatewayFee,
     });
   }
@@ -401,11 +404,10 @@ export async function processCampaignDonation(
     return;
   }
 
-  // Always attempt fee creation for successful RPC calls (applied or already_applied).
-  // The payment_id UNIQUE constraint on platform_fees prevents duplicates.
-  // Use authoritative amount from RPC result when available, fall back to payment.amount.
-  const feeAmount = result?.amount ? Number(result.amount) : amount;
-  if (result && !result.reason) {
+  // Fee retry logic: same as invoice — skip legacy, ensure for new/post-migration
+  const shouldEnsureFee = result && !result.reason && !result.is_legacy;
+  if (shouldEnsureFee) {
+    const authoritativeAmount = result.amount ? Number(result.amount) : amount;
     const { data: campaign } = await supabase
       .from('campaigns')
       .select('business_id')
@@ -417,7 +419,7 @@ export async function processCampaignDonation(
         campaignId,
         paymentId,
         businessId: campaign.business_id,
-        paymentAmount: feeAmount,
+        paymentAmount: authoritativeAmount,
         gatewayFee,
       });
     }

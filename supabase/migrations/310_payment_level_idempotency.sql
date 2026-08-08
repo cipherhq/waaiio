@@ -5,8 +5,8 @@
 --
 -- Legacy invariant: at migration completion, every invoice's amount_paid
 -- remains EXACTLY what it was before migration. Historical payment records
--- are marked as already-processed (replay prevention) but do NOT reinterpret
--- the existing authoritative amount_paid.
+-- are marked as already-processed but do NOT reinterpret existing balance.
+-- Legacy replays do NOT create second economic fees.
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- 1. Invoice payment applications ledger
@@ -35,23 +35,16 @@ CREATE POLICY "service_role_all_invoice_payment_applications"
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS
   legacy_amount_paid_baseline numeric(12,2) NOT NULL DEFAULT 0;
 
--- Capture the EXACT current amount_paid as the frozen baseline
 UPDATE invoices
 SET legacy_amount_paid_baseline = COALESCE(amount_paid, 0)
 WHERE COALESCE(amount_paid, 0) > 0;
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- 3. Backfill historical payments as REPLAY MARKERS (amount_applied=0)
---    These prevent historical payment replay from incrementing amount_paid
---    but do NOT reinterpret the existing authoritative balance.
 -- ═══════════════════════════════════════════════════════════════════════
 
 INSERT INTO invoice_payment_applications (invoice_id, payment_id, amount_applied, is_legacy_marker)
-SELECT
-  p.invoice_id,
-  p.id,
-  0,
-  true
+SELECT p.invoice_id, p.id, 0, true
 FROM payments p
 WHERE p.invoice_id IS NOT NULL
   AND p.status = 'success'
@@ -61,13 +54,35 @@ WHERE p.invoice_id IS NOT NULL
   );
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 4. Atomic invoice payment application RPC
---
---    Authoritative amount_paid =
---      legacy_amount_paid_baseline + SUM(non-legacy amount_applied)
---
---    Legacy markers have amount_applied=0 so they don't add to the total.
---    New post-migration payments have amount_applied=payment.amount.
+-- 4. Campaign donations: add legacy marker + payment uniqueness
+-- ═══════════════════════════════════════════════════════════════════════
+
+ALTER TABLE campaign_donations ADD COLUMN IF NOT EXISTS
+  is_legacy boolean NOT NULL DEFAULT false;
+
+-- Mark pre-migration successful donations as legacy
+UPDATE campaign_donations SET is_legacy = true WHERE status = 'success';
+
+-- Deduplicate payment_id before adding UNIQUE constraint.
+-- Keep the earliest donation per payment_id, mark others as legacy orphans.
+-- This handles any existing anomalous duplicate payment_id rows safely.
+WITH ranked AS (
+  SELECT id, payment_id,
+    ROW_NUMBER() OVER (PARTITION BY payment_id ORDER BY created_at ASC, id ASC) AS rn
+  FROM campaign_donations
+  WHERE payment_id IS NOT NULL
+)
+UPDATE campaign_donations cd
+SET payment_id = NULL, is_legacy = true
+FROM ranked r
+WHERE cd.id = r.id AND r.rn > 1;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_campaign_donations_payment_unique
+  ON campaign_donations(payment_id)
+  WHERE payment_id IS NOT NULL;
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- 5. Atomic invoice payment application RPC
 -- ═══════════════════════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION apply_invoice_payment(
@@ -83,21 +98,17 @@ DECLARE
   v_ledger_total numeric;
   v_new_amount_paid numeric;
   v_is_fully_paid boolean;
+  v_existing_marker record;
 BEGIN
-  -- Load and validate payment from DB (authoritative source of truth)
   SELECT id, amount, invoice_id, status, business_id
-  INTO v_payment
-  FROM public.payments
-  WHERE id = p_payment_id;
+  INTO v_payment FROM public.payments WHERE id = p_payment_id;
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('applied', false, 'reason', 'payment_not_found');
   END IF;
-
   IF v_payment.status != 'success' THEN
     RETURN jsonb_build_object('applied', false, 'reason', 'payment_not_successful');
   END IF;
-
   IF v_payment.invoice_id IS NULL OR v_payment.invoice_id != p_invoice_id THEN
     RETURN jsonb_build_object('applied', false, 'reason', 'payment_invoice_mismatch');
   END IF;
@@ -107,33 +118,36 @@ BEGIN
     RETURN jsonb_build_object('applied', false, 'reason', 'invalid_amount');
   END IF;
 
-  -- Lock invoice row to serialize concurrent applications
   SELECT total_amount, amount_paid, status, business_id, legacy_amount_paid_baseline
-  INTO v_invoice
-  FROM public.invoices
-  WHERE id = p_invoice_id
-  FOR UPDATE;
+  INTO v_invoice FROM public.invoices WHERE id = p_invoice_id FOR UPDATE;
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('applied', false, 'reason', 'invoice_not_found');
   END IF;
-
   IF v_invoice.business_id != v_payment.business_id THEN
     RETURN jsonb_build_object('applied', false, 'reason', 'business_mismatch');
   END IF;
 
-  -- Idempotent insert: new payment gets full amount_applied; legacy markers already exist
+  -- Idempotent insert
   INSERT INTO public.invoice_payment_applications (invoice_id, payment_id, amount_applied, is_legacy_marker)
   VALUES (p_invoice_id, p_payment_id, v_amount, false)
   ON CONFLICT (invoice_id, payment_id) DO NOTHING;
 
   IF NOT FOUND THEN
-    -- Already applied (either legacy marker or previous application)
-    RETURN jsonb_build_object('applied', false, 'already_applied', true);
+    -- Check if this is a legacy marker or a previous new application
+    SELECT is_legacy_marker INTO v_existing_marker
+    FROM public.invoice_payment_applications
+    WHERE invoice_id = p_invoice_id AND payment_id = p_payment_id;
+
+    RETURN jsonb_build_object(
+      'applied', false,
+      'already_applied', true,
+      'is_legacy', COALESCE(v_existing_marker.is_legacy_marker, false),
+      'amount', v_amount
+    );
   END IF;
 
-  -- Authoritative: baseline + SUM(non-legacy applications)
-  -- Legacy markers have amount_applied=0, so SUM only counts new payments
+  -- Authoritative: baseline + SUM(all amount_applied)
   SELECT COALESCE(SUM(amount_applied), 0) INTO v_ledger_total
   FROM public.invoice_payment_applications
   WHERE invoice_id = p_invoice_id;
@@ -150,7 +164,8 @@ BEGIN
 
   RETURN jsonb_build_object(
     'applied', true,
-    'amount_applied', v_amount,
+    'is_legacy', false,
+    'amount', v_amount,
     'new_amount_paid', v_new_amount_paid,
     'is_fully_paid', v_is_fully_paid
   );
@@ -158,7 +173,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 5. Atomic campaign donation application RPC
+-- 6. Atomic campaign donation application RPC
 -- ═══════════════════════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION apply_campaign_donation(
@@ -172,96 +187,74 @@ DECLARE
   v_campaign record;
   v_amount numeric;
   v_rows_updated integer;
-  v_already_success boolean;
+  v_donation record;
 BEGIN
-  -- Load and validate payment from DB
   SELECT id, amount, campaign_id, status, business_id
-  INTO v_payment
-  FROM public.payments
-  WHERE id = p_payment_id;
+  INTO v_payment FROM public.payments WHERE id = p_payment_id;
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('applied', false, 'reason', 'payment_not_found');
   END IF;
-
   IF v_payment.status != 'success' THEN
     RETURN jsonb_build_object('applied', false, 'reason', 'payment_not_successful');
   END IF;
-
   IF v_payment.campaign_id IS NULL OR v_payment.campaign_id != p_campaign_id THEN
     RETURN jsonb_build_object('applied', false, 'reason', 'payment_campaign_mismatch');
   END IF;
 
-  SELECT id, business_id INTO v_campaign
-  FROM public.campaigns WHERE id = p_campaign_id;
-
+  SELECT id, business_id INTO v_campaign FROM public.campaigns WHERE id = p_campaign_id;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('applied', false, 'reason', 'campaign_not_found');
   END IF;
-
   IF v_campaign.business_id != v_payment.business_id THEN
     RETURN jsonb_build_object('applied', false, 'reason', 'business_mismatch');
   END IF;
 
   v_amount := v_payment.amount;
 
-  -- Atomically transition donation from pending → success
+  -- Transition pending → success
   UPDATE public.campaign_donations
   SET status = 'success'
-  WHERE payment_id = p_payment_id
-    AND campaign_id = p_campaign_id
-    AND status = 'pending';
-
+  WHERE payment_id = p_payment_id AND campaign_id = p_campaign_id AND status = 'pending';
   GET DIAGNOSTICS v_rows_updated = ROW_COUNT;
 
   IF v_rows_updated = 0 THEN
-    -- Check if already successfully applied (vs donation not found)
-    SELECT EXISTS (
-      SELECT 1 FROM public.campaign_donations
-      WHERE payment_id = p_payment_id
-        AND campaign_id = p_campaign_id
-        AND status = 'success'
-    ) INTO v_already_success;
+    -- Check if already success (legacy or previous application)
+    SELECT is_legacy INTO v_donation
+    FROM public.campaign_donations
+    WHERE payment_id = p_payment_id AND campaign_id = p_campaign_id AND status = 'success';
 
-    IF v_already_success THEN
-      RETURN jsonb_build_object('applied', false, 'already_applied', true, 'amount', v_amount);
+    IF FOUND THEN
+      RETURN jsonb_build_object(
+        'applied', false,
+        'already_applied', true,
+        'is_legacy', COALESCE(v_donation.is_legacy, false),
+        'amount', v_amount
+      );
     ELSE
       RETURN jsonb_build_object('applied', false, 'reason', 'donation_not_found');
     END IF;
   END IF;
 
-  -- Only increment stats if we actually transitioned
   UPDATE public.campaigns
-  SET raised_amount = raised_amount + v_amount,
-      donor_count = donor_count + 1
+  SET raised_amount = raised_amount + v_amount, donor_count = donor_count + 1
   WHERE id = p_campaign_id;
 
-  RETURN jsonb_build_object('applied', true, 'amount', v_amount);
+  RETURN jsonb_build_object('applied', true, 'is_legacy', false, 'amount', v_amount);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 6. Platform fees: payment_id + payment-level uniqueness
+-- 7. Platform fees: payment_id + payment-level uniqueness
 -- ═══════════════════════════════════════════════════════════════════════
 
 ALTER TABLE platform_fees ADD COLUMN IF NOT EXISTS payment_id uuid REFERENCES payments(id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_fees_payment_unique
-  ON platform_fees(payment_id)
-  WHERE payment_id IS NOT NULL;
+  ON platform_fees(payment_id) WHERE payment_id IS NOT NULL;
 
 DROP INDEX IF EXISTS idx_platform_fees_invoice_unique;
 DROP INDEX IF EXISTS idx_platform_fees_campaign_unique;
-
--- ═══════════════════════════════════════════════════════════════════════
--- 7. Campaign donations: enforce one donation per payment
--- ═══════════════════════════════════════════════════════════════════════
-
--- Partial unique index: one non-null payment_id per campaign donation
--- NULL payment_id rows are excluded (allows multiple unlinked donations)
-CREATE UNIQUE INDEX IF NOT EXISTS idx_campaign_donations_payment_unique
-  ON campaign_donations(payment_id)
-  WHERE payment_id IS NOT NULL;
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- 8. Security: lock down RPC privileges

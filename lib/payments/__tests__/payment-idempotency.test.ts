@@ -133,8 +133,10 @@ describe('Migration 310 — payment-level idempotency schema', () => {
 
   it('backfills historical payments as legacy markers (amount_applied=0)', () => {
     // Legacy markers prevent replay but do NOT add to recognized amount
-    expect(migrationSql).toMatch(/INSERT INTO invoice_payment_applications.*amount_applied.*\n.*0,\n.*true/s);
     expect(migrationSql).toContain('is_legacy_marker');
+    // Backfill inserts with amount_applied=0 and is_legacy_marker=true
+    const backfillSection = migrationSql.split('Backfill historical')[1];
+    expect(backfillSection).toContain('0, true');
   });
 
   it('RPCs use SET search_path = public', () => {
@@ -363,11 +365,12 @@ describe('process-success.ts uses atomic RPCs and payment_id', () => {
     expect(rpcCall![0]).not.toContain('p_business_id');
   });
 
-  it('processInvoicePayment attempts fee on any successful RPC (applied or already_applied)', () => {
+  it('processInvoicePayment attempts fee for non-legacy results only', () => {
     const fnBody = source.split('processInvoicePayment')[2];
-    // Should attempt fee when result exists and has no rejection reason
-    expect(fnBody).toContain('if (result && !result.reason)');
+    expect(fnBody).toContain('!result.is_legacy');
     expect(fnBody).toContain('recordPlatformFee');
+    // Uses DB-authoritative amount
+    expect(fnBody).toContain('result.amount');
   });
 
   it('processCampaignDonation calls apply_campaign_donation RPC (no caller-supplied amount)', () => {
@@ -380,10 +383,11 @@ describe('process-success.ts uses atomic RPCs and payment_id', () => {
     expect(rpcCall![0]).not.toContain('p_amount');
   });
 
-  it('processCampaignDonation attempts fee on any successful RPC (applied or already_applied)', () => {
+  it('processCampaignDonation attempts fee for non-legacy results only', () => {
     const fnBody = source.split('processCampaignDonation')[2];
-    expect(fnBody).toContain('if (result && !result.reason)');
+    expect(fnBody).toContain('!result.is_legacy');
     expect(fnBody).toContain('recordPlatformFee');
+    expect(fnBody).toContain('result.amount');
   });
 
   it('recordPlatformFee accepts and inserts payment_id', () => {
