@@ -5,6 +5,19 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-08
+
+### fix: Paystack reconciliation 400 for BYO payments
+
+- **Root cause:** Payment reconciliation cron (`app/api/cron/payment-reconciliation/route.ts`) verified ALL Paystack payments using the platform's `PAYSTACK_SECRET_KEY`. BYO (Bring Your Own) payments — created through a business's own Paystack account — cannot be verified with the platform key. Paystack returns HTTP 400 ("invalid reference") because the transaction reference exists on a different account.
+- **Fix:** (1) Detect BYO payments via `metadata.byo` flag. (2) Resolve the business's own encrypted Paystack key from `business_payment_credentials`. (3) Decrypt with `decryptToken()`. (4) Use the resolved key for verification. (5) If BYO key cannot be resolved, skip the payment (leave pending) instead of erroring. (6) Treat Paystack 400 as permanent failure (`'failed'`) alongside 404, since both indicate the reference will never resolve on the queried account.
+- **Files changed:** `app/api/cron/payment-reconciliation/route.ts`
+- **Tests:** `lib/__tests__/paystack-reconciliation-400.test.ts` — 15 tests.
+- **Affects:** Payment reconciliation cron only. No changes to webhook handlers, payment initialization, or BYO webhook endpoints.
+- **Could break:** Nothing — BYO payments that were previously erroring with 400 will now either be correctly verified or safely skipped.
+
+---
+
 ## 2026-08-07
 
 ### fix(P0-PAY-1): payment-level idempotency for financial operations
