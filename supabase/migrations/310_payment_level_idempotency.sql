@@ -117,13 +117,17 @@ BEGIN
   GET DIAGNOSTICS v_rows_updated = ROW_COUNT;
 
   IF v_rows_updated = 0 THEN
-    -- Try fallback: donation created without payment_id
+    -- Try fallback: donation created without payment_id (pick one via subquery)
     UPDATE campaign_donations
     SET status = 'success', payment_id = p_payment_id
-    WHERE campaign_id = p_campaign_id
-      AND status = 'pending'
-      AND payment_id IS NULL
-    LIMIT 1;
+    WHERE id = (
+      SELECT id FROM campaign_donations
+      WHERE campaign_id = p_campaign_id
+        AND status = 'pending'
+        AND payment_id IS NULL
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    );
 
     GET DIAGNOSTICS v_rows_updated = ROW_COUNT;
   END IF;
