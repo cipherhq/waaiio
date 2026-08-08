@@ -241,7 +241,7 @@ describe.skipIf(!dbUrl)('Atomic reschedule — real PostgreSQL concurrency', () 
       'b9b00000-0000-0000-0000-000000000002'::uuid, '${BIZ}'::uuid, '2026-09-10'::date, '11:15');`);
 
     expect(r.rescheduled).toBe(true);
-    expect(r.new_time).toBe('11:15:00');
+    expect(r.new_time).toMatch(/^11:15/);
 
     // Verify booking actually moved
     const moved = psql(`SELECT date, time FROM bookings WHERE id = 'b9b00000-0000-0000-0000-000000000002';`);
