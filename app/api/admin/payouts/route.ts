@@ -4,8 +4,18 @@ import { requirePlatformAdmin } from '@/lib/admin-auth';
 
 export const dynamic = 'force-dynamic';
 
+// Safe columns for payout list response — excludes operational tokens
+const PAYOUT_LIST_COLUMNS = [
+  'id', 'business_id', 'period_start', 'period_end',
+  'gross_amount', 'platform_fee', 'gateway_fee', 'net_amount',
+  'status', 'flags', 'payout_account_id', 'transfer_method',
+  'approved_by', 'approved_at', 'rejected_reason',
+  'gateway_transfer_code', 'transfer_reference',
+  'created_at', 'updated_at',
+].join(', ');
+
 export async function GET(request: NextRequest) {
-  const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+  const admin = await requirePlatformAdmin(request, { requiredRole: ['admin', 'finance'] });
   if (!admin) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }
@@ -20,7 +30,7 @@ export async function GET(request: NextRequest) {
 
   let query = supabase
     .from('business_payouts')
-    .select('*', { count: 'exact' })
+    .select(PAYOUT_LIST_COLUMNS, { count: 'exact' })
     .order('created_at', { ascending: false })
     .range((page - 1) * perPage, page * perPage - 1);
 

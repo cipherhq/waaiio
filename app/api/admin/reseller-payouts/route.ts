@@ -7,9 +7,9 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
-    const service = createServiceClient();
     const auth = await requirePlatformAdmin(request, { requiredRole: ['admin', 'finance'] });
     if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    const service = createServiceClient();
 
     const params = request.nextUrl.searchParams;
     const status = params.get('status');
@@ -60,9 +60,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const service = createServiceClient();
-    const auth = await requirePlatformAdmin(request, { requiredRole: ['admin', 'finance'] });
+    const auth = await requirePlatformAdmin(request, { requiredRole: 'admin' });
     if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    const service = createServiceClient();
 
     const body = await request.json();
     const { reseller_id, period_start, period_end, holdback_percent, deductions, notes } = body;
@@ -152,6 +152,21 @@ export async function POST(request: NextRequest) {
       logger.error('[ADMIN_RESELLER_PAYOUTS] Insert error:', insertErr.message);
       return NextResponse.json({ error: 'Failed to create payout' }, { status: 500 });
     }
+
+    // Audit log
+    await service.from('admin_audit_logs').insert({
+      actor_id: auth.id,
+      action: 'generate_reseller_payout',
+      entity_type: 'reseller_payout',
+      entity_id: payout.id,
+      details: {
+        reseller_id,
+        period_start,
+        period_end,
+        gross_commission: grossCommission,
+        net_amount: netAmount,
+      },
+    });
 
     logger.info(`[ADMIN_RESELLER_PAYOUTS] Payout created: ${payout.id} for reseller ${reseller_id}, net=${netAmount}`);
     return NextResponse.json({ payout }, { status: 201 });

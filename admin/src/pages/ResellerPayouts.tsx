@@ -302,13 +302,15 @@ export default function ResellerPayouts() {
           <h1 className="text-2xl font-bold text-gray-900">Reseller Payouts</h1>
           <p className="text-sm text-gray-500 mt-1">Manage commission payouts to reseller partners.</p>
         </div>
-        <button
-          onClick={openGenerateModal}
-          className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700"
-        >
-          <Plus className="h-4 w-4" />
-          Generate Payout
-        </button>
+        {isFullAdmin && (
+          <button
+            onClick={openGenerateModal}
+            className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700"
+          >
+            <Plus className="h-4 w-4" />
+            Generate Payout
+          </button>
+        )}
       </div>
 
       {/* Summary cards */}
@@ -412,7 +414,7 @@ export default function ResellerPayouts() {
                           </button>
                         </>
                       )}
-                      {p.status === 'approved' && (
+                      {p.status === 'approved' && isFullAdmin && (
                         <button
                           onClick={() => handleAction(p.id, 'pay')}
                           disabled={actionLoading === p.id}
@@ -472,7 +474,7 @@ export default function ResellerPayouts() {
                   </button>
                 </>
               )}
-              {selected.status === 'approved' && (
+              {selected.status === 'approved' && isFullAdmin && (
                 <button
                   onClick={() => handleAction(selected.id, 'pay')}
                   disabled={!!actionLoading}

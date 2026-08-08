@@ -11,7 +11,7 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const auth = await requirePlatformAdmin(request, { requiredRole: ['admin', 'finance'] });
+    const auth = await requirePlatformAdmin(request, { requiredRole: 'admin' });
     if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
     const body = await request.json();
@@ -19,11 +19,6 @@ export async function PATCH(
 
     if (!action || !['approve', 'reject', 'mark_paid'].includes(action)) {
       return NextResponse.json({ error: 'Invalid action. Must be approve, reject, or mark_paid' }, { status: 400 });
-    }
-
-    // approve and reject require admin role; mark_paid allows admin or finance
-    if ((action === 'approve' || action === 'reject') && auth.role !== 'admin') {
-      return NextResponse.json({ error: 'Only admins can approve or reject payouts' }, { status: 403 });
     }
 
     const service = createServiceClient();
@@ -111,6 +106,21 @@ export async function PATCH(
       logger.error(`[ADMIN_RESELLER_PAYOUTS] Update error for ${id}:`, updateErr.message);
       return NextResponse.json({ error: 'Failed to update payout' }, { status: 500 });
     }
+
+    // Audit log
+    await service.from('admin_audit_logs').insert({
+      actor_id: auth.id,
+      action: `reseller_payout_${action}`,
+      entity_type: 'reseller_payout',
+      entity_id: id,
+      details: {
+        reseller_id: payout.reseller_id,
+        previous_status: payout.status,
+        new_status: updated.status,
+        net_amount: payout.net_amount,
+        ...(notes ? { notes } : {}),
+      },
+    });
 
     logger.info(`[ADMIN_RESELLER_PAYOUTS] Payout ${id} ${action}: status=${updated.status}`);
     return NextResponse.json({ payout: updated });

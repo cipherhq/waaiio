@@ -41,6 +41,7 @@ const statusStyles: Record<string, string> = {
 export default function Payouts() {
   const session = useAdminSession();
   const hasAccess = session && ['admin', 'finance'].includes(session.role);
+  const isAdmin = session?.role === 'admin';
   const [tab, setTab] = useState<'pending' | 'history'>('pending');
   const [payouts, setPayouts] = useState<PayoutRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -341,13 +342,15 @@ export default function Payouts() {
           >
             Export CSV
           </button>
-          <button
-            onClick={handleGenerate}
-            disabled={generating}
-            className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
-          >
-            {generating ? 'Generating...' : 'Generate Weekly Payouts'}
-          </button>
+          {isAdmin && (
+            <button
+              onClick={handleGenerate}
+              disabled={generating}
+              className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
+            >
+              {generating ? 'Generating...' : 'Generate Weekly Payouts'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -445,7 +448,7 @@ export default function Payouts() {
                       {p.status}
                     </span>
                   </td>
-                  {tab === 'pending' && (
+                  {tab === 'pending' && isAdmin && (
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button
