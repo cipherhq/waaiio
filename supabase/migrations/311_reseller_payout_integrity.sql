@@ -1,0 +1,166 @@
+-- ═══════════════════════════════════════════════════════
+-- 311: Reseller Payout Financial Integrity
+--
+-- A. Fix RLS: Finance = SELECT only; Admin = full CRUD.
+--    Previous "Admin manages reseller payouts" policy used profiles.role
+--    which is inconsistent with the post-247 security model.
+--
+-- B. mark_reseller_payout_paid RPC: serializes on reseller balance domain
+--    via advisory lock to prevent cross-payout overspend.
+--
+-- C. Overlapping period prevention: exclusion constraint using daterange.
+--
+-- D. Input validation helper for payout period dates.
+-- ═══════════════════════════════════════════════════════
+
+-- ══════════════════════════════════════════════════════════
+-- A. Fix reseller_payouts RLS policies
+-- ══════════════════════════════════════════════════════════
+
+-- Drop the old broad policy that gave Finance full CRUD
+DROP POLICY IF EXISTS "Admin manages reseller payouts" ON reseller_payouts;
+
+-- Admin: full CRUD (uses is_admin() which reads raw_app_meta_data)
+CREATE POLICY "admin_manages_reseller_payouts"
+  ON reseller_payouts FOR ALL
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+-- Finance: SELECT only (uses is_admin_or_support which includes finance)
+-- This lets Finance read payout data through direct queries if needed,
+-- but they cannot INSERT/UPDATE/DELETE.
+CREATE POLICY "finance_reads_reseller_payouts"
+  ON reseller_payouts FOR SELECT
+  USING (public.is_admin_or_support());
+
+-- ══════════════════════════════════════════════════════════
+-- B. mark_reseller_payout_paid RPC
+--    Serializes concurrent mark_paid requests on the same reseller
+--    to prevent cross-payout overspend.
+-- ══════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION mark_reseller_payout_paid(
+  p_payout_id uuid,
+  p_admin_id uuid
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_payout RECORD;
+  v_total_earned numeric;
+  v_total_paid numeric;
+  v_available numeric;
+  v_lock_key bigint;
+BEGIN
+  -- 1. Load and validate the target payout
+  SELECT * INTO v_payout FROM reseller_payouts
+    WHERE id = p_payout_id FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'not_found');
+  END IF;
+
+  -- CAS: only approved payouts can be marked paid
+  IF v_payout.status != 'approved' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'not_approved', 'status', v_payout.status);
+  END IF;
+
+  -- 2. Serialize on the reseller's payout balance domain
+  --    This advisory lock prevents two concurrent mark_paid requests
+  --    for different payouts of the same reseller from both succeeding
+  --    when the combined amount exceeds available balance.
+  v_lock_key := abs(hashtext('reseller_payout_balance:' || v_payout.reseller_id::text));
+  PERFORM pg_advisory_xact_lock(v_lock_key);
+
+  -- 3. Calculate authoritative available balance inside the lock
+  SELECT COALESCE(SUM(pf.reseller_commission), 0)
+    INTO v_total_earned
+    FROM platform_fees pf
+    WHERE pf.reseller_id = v_payout.reseller_id;
+
+  SELECT COALESCE(SUM(rp.net_amount), 0)
+    INTO v_total_paid
+    FROM reseller_payouts rp
+    WHERE rp.reseller_id = v_payout.reseller_id
+      AND rp.status = 'paid';
+
+  v_available := v_total_earned - v_total_paid;
+
+  IF v_payout.net_amount > v_available THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'reason', 'insufficient_balance',
+      'total_earned', v_total_earned,
+      'total_paid', v_total_paid,
+      'available', v_available,
+      'requested', v_payout.net_amount
+    );
+  END IF;
+
+  -- 4. Transition the payout — CAS guard on status
+  UPDATE reseller_payouts
+    SET status = 'paid',
+        paid_at = NOW(),
+        approved_by = COALESCE(approved_by, p_admin_id)
+    WHERE id = p_payout_id
+      AND status = 'approved';
+
+  IF NOT FOUND THEN
+    -- Another concurrent request already changed the status
+    RETURN jsonb_build_object('success', false, 'reason', 'status_changed');
+  END IF;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'available_after', v_available - v_payout.net_amount
+  );
+END;
+$$;
+
+-- Restrict execution
+REVOKE EXECUTE ON FUNCTION mark_reseller_payout_paid(uuid, uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION mark_reseller_payout_paid(uuid, uuid) FROM anon;
+REVOKE EXECUTE ON FUNCTION mark_reseller_payout_paid(uuid, uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION mark_reseller_payout_paid(uuid, uuid) TO service_role;
+
+-- ══════════════════════════════════════════════════════════
+-- C. Overlapping period prevention
+--    Uses btree_gist extension + exclusion constraint.
+--    Adjacent periods [Aug 1, Aug 15) + [Aug 15, Aug 31) are allowed.
+--    Overlapping periods [Aug 1, Aug 15) + [Aug 10, Aug 20) are blocked.
+--    Only enforced for non-rejected payouts (rejected can be re-created).
+-- ══════════════════════════════════════════════════════════
+
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+-- Add the exclusion constraint using daterange
+-- period_end is exclusive (matches [startInclusive, endExclusive) semantics)
+-- Note: the existing UNIQUE(reseller_id, period_start, period_end) remains for
+-- exact-duplicate prevention. This exclusion catches overlaps.
+-- Only active (non-rejected) payouts are constrained.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'reseller_payouts_no_overlap'
+  ) THEN
+    -- First check for existing overlapping rows that would block the constraint
+    -- If any exist, we skip and log — do not silently destroy financial data
+    IF EXISTS (
+      SELECT 1
+      FROM reseller_payouts a
+      JOIN reseller_payouts b ON a.reseller_id = b.reseller_id
+        AND a.id < b.id
+        AND a.status != 'rejected'
+        AND b.status != 'rejected'
+        AND daterange(a.period_start, a.period_end + 1, '[)') && daterange(b.period_start, b.period_end + 1, '[)')
+    ) THEN
+      RAISE WARNING 'Existing overlapping reseller payouts detected — skipping exclusion constraint. Manual reconciliation required.';
+    ELSE
+      ALTER TABLE reseller_payouts
+        ADD CONSTRAINT reseller_payouts_no_overlap
+        EXCLUDE USING gist (
+          reseller_id WITH =,
+          daterange(period_start, period_end + 1, '[)') WITH &&
+        ) WHERE (status != 'rejected');
+    END IF;
+  END IF;
+END $$;

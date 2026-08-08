@@ -71,6 +71,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'reseller_id, period_start, and period_end are required' }, { status: 400 });
     }
 
+    // Validate date format and ordering
+    const startDate = new Date(period_start + 'T00:00:00Z');
+    const endDate = new Date(period_end + 'T00:00:00Z');
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return NextResponse.json({ error: 'Invalid date format for period_start or period_end' }, { status: 400 });
+    }
+    if (startDate >= endDate) {
+      return NextResponse.json({ error: 'period_start must be before period_end' }, { status: 400 });
+    }
+
+    // Validate numeric inputs
+    if (holdback_percent !== undefined && holdback_percent !== null) {
+      const hbp = Number(holdback_percent);
+      if (!isFinite(hbp) || hbp < 0 || hbp > 100) {
+        return NextResponse.json({ error: 'holdback_percent must be a finite number between 0 and 100' }, { status: 400 });
+      }
+    }
+    if (deductions !== undefined && deductions !== null) {
+      const ded = Number(deductions);
+      if (!isFinite(ded) || ded < 0) {
+        return NextResponse.json({ error: 'deductions must be a non-negative finite number' }, { status: 400 });
+      }
+    }
+
     // Validate reseller exists
     const { data: reseller, error: resellerErr } = await service
       .from('resellers')
@@ -154,28 +178,32 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (insertErr) {
-      // DB UNIQUE(reseller_id, period_start, period_end) constraint violation
-      if (insertErr.code === '23505') {
-        return NextResponse.json({ error: 'A payout already exists for this period' }, { status: 409 });
+      // DB UNIQUE or exclusion constraint violations
+      if (insertErr.code === '23505' || insertErr.code === '23P01') {
+        return NextResponse.json({ error: 'A payout already exists for this period or the period overlaps an existing payout' }, { status: 409 });
       }
       logger.error('[ADMIN_RESELLER_PAYOUTS] Insert error:', insertErr.message);
       return NextResponse.json({ error: 'Failed to create payout' }, { status: 500 });
     }
 
-    // Audit log
-    await service.from('admin_audit_logs').insert({
-      actor_id: auth.id,
-      action: 'generate_reseller_payout',
-      entity_type: 'reseller_payout',
-      entity_id: payout.id,
-      details: {
-        reseller_id,
-        period_start,
-        period_end,
-        gross_commission: grossCommission,
-        net_amount: netAmount,
-      },
-    });
+    // Audit log (server-side, separate write — failure logged but does not roll back payout)
+    try {
+      await service.from('admin_audit_logs').insert({
+        actor_id: auth.id,
+        action: 'generate_reseller_payout',
+        entity_type: 'reseller_payout',
+        entity_id: payout.id,
+        details: {
+          reseller_id,
+          period_start,
+          period_end,
+          gross_commission: grossCommission,
+          net_amount: netAmount,
+        },
+      });
+    } catch (auditErr) {
+      logger.error(`[ADMIN_RESELLER_PAYOUTS] Audit log failed for generate ${payout.id}:`, auditErr);
+    }
 
     logger.info(`[ADMIN_RESELLER_PAYOUTS] Payout created: ${payout.id} for reseller ${reseller_id}, net=${netAmount}`);
     return NextResponse.json({ payout }, { status: 201 });

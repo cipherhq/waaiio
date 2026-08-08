@@ -554,16 +554,12 @@ describe('Reseller payout CAS state transitions (B)', () => {
     expect(patchSource).toMatch(/reject[\s\S]*?allowedSourceStatuses\s*=\s*\['pending',\s*'approved'\]/);
   });
 
-  it('mark_paid source status is [approved]', () => {
-    expect(patchSource).toMatch(/mark_paid[\s\S]*?allowedSourceStatuses\s*=\s*\['approved'\]/);
+  it('mark_paid uses atomic RPC with advisory lock', () => {
+    expect(patchSource).toContain("service.rpc('mark_reseller_payout_paid'");
   });
 
-  it('balance re-verification still precedes mark_paid transition', () => {
-    const markPaidSection = patchSource.slice(patchSource.indexOf("action === 'mark_paid'"));
-    const balanceIdx = markPaidSection.indexOf('Insufficient balance');
-    const casIdx = markPaidSection.indexOf('allowedSourceStatuses');
-    expect(balanceIdx).toBeGreaterThan(-1);
-    expect(casIdx).toBeGreaterThan(balanceIdx);
+  it('mark_paid RPC handles insufficient_balance', () => {
+    expect(patchSource).toContain("reason === 'insufficient_balance'");
   });
 });
 
@@ -598,9 +594,12 @@ describe('Reseller audit logging is server-side (D)', () => {
   const postSource = readFileSync('app/api/admin/reseller-payouts/route.ts', 'utf-8');
 
   it('PATCH writes audit log server-side after successful mutation', () => {
-    const auditIdx = patchSource.indexOf('admin_audit_logs');
+    // For approve/reject: audit is after .update(updateData)
+    // For mark_paid: audit is after RPC call
+    // Both patterns have 'admin_audit_logs' after the mutation
+    const approveAuditIdx = patchSource.lastIndexOf('admin_audit_logs');
     const updateIdx = patchSource.indexOf('.update(updateData)');
-    expect(auditIdx).toBeGreaterThan(updateIdx);
+    expect(approveAuditIdx).toBeGreaterThan(updateIdx);
   });
 
   it('POST writes audit log server-side after successful insert', () => {
