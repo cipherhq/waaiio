@@ -140,12 +140,15 @@ export default function ResellerPayouts() {
     setGenCalculating(true);
     setGenGrossCommission(null);
     try {
+      // Use [start, end+1day) window matching server semantics
+      const endExcl = new Date(genPeriodEnd + 'T00:00:00Z');
+      endExcl.setUTCDate(endExcl.getUTCDate() + 1);
       const { data: feeRows } = await adminDb
         .from('platform_fees')
         .select('reseller_commission')
         .eq('reseller_id', genResellerId)
         .gte('created_at', genPeriodStart)
-        .lte('created_at', genPeriodEnd + 'T23:59:59.999Z');
+        .lt('created_at', endExcl.toISOString());
 
       const total = (feeRows || []).reduce((sum, f) => sum + (f.reseller_commission || 0), 0);
       setGenGrossCommission(total);

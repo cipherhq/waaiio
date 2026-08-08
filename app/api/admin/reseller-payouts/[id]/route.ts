@@ -35,11 +35,13 @@ export async function PATCH(
     }
 
     let updateData: Record<string, any> = {};
+    let allowedSourceStatuses: string[] = [];
 
     if (action === 'approve') {
       if (payout.status !== 'pending') {
         return NextResponse.json({ error: 'Only pending payouts can be approved' }, { status: 400 });
       }
+      allowedSourceStatuses = ['pending'];
       updateData = {
         status: 'approved',
         approved_by: auth.id,
@@ -49,6 +51,7 @@ export async function PATCH(
       if (payout.status !== 'pending' && payout.status !== 'approved') {
         return NextResponse.json({ error: 'Only pending or approved payouts can be rejected' }, { status: 400 });
       }
+      allowedSourceStatuses = ['pending', 'approved'];
       updateData = {
         status: 'rejected',
         notes: notes || payout.notes,
@@ -88,6 +91,7 @@ export async function PATCH(
         }, { status: 400 });
       }
 
+      allowedSourceStatuses = ['approved'];
       updateData = {
         status: 'paid',
         paid_at: new Date().toISOString(),
@@ -95,16 +99,22 @@ export async function PATCH(
       };
     }
 
+    // Atomic CAS: include expected source status in UPDATE to prevent TOCTOU race
     const { data: updated, error: updateErr } = await service
       .from('reseller_payouts')
       .update(updateData)
       .eq('id', id)
+      .in('status', allowedSourceStatuses)
       .select()
-      .single();
+      .maybeSingle();
 
     if (updateErr) {
       logger.error(`[ADMIN_RESELLER_PAYOUTS] Update error for ${id}:`, updateErr.message);
       return NextResponse.json({ error: 'Failed to update payout' }, { status: 500 });
+    }
+
+    if (!updated) {
+      return NextResponse.json({ error: 'Payout status has changed — please refresh and try again' }, { status: 409 });
     }
 
     // Audit log

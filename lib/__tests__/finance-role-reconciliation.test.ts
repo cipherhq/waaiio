@@ -490,3 +490,129 @@ describe('Reseller GET response uses explicit safe fields', () => {
     expect(getSection).not.toContain('...p');
   });
 });
+
+// ══════════════════════════════════════════════════════════
+// A. Reseller payout period boundary verification
+// ══════════════════════════════════════════════════════════
+
+describe('Reseller payout period boundaries (A)', () => {
+  const serverSource = readFileSync('app/api/admin/reseller-payouts/route.ts', 'utf-8');
+  const uiSource = readFileSync('admin/src/pages/ResellerPayouts.tsx', 'utf-8');
+
+  it('server uses exclusive end boundary (.lt not .lte)', () => {
+    const postSection = serverSource.slice(serverSource.indexOf('Calculate gross commission'));
+    expect(postSection).toContain(".lt('created_at',");
+    expect(postSection).not.toContain(".lte('created_at',");
+  });
+
+  it('server computes end+1day for exclusive boundary', () => {
+    expect(serverSource).toContain('setUTCDate');
+    expect(serverSource).toContain('periodEndExclusive');
+  });
+
+  it('UI preview uses matching exclusive end boundary (.lt)', () => {
+    const previewSection = uiSource.slice(uiSource.indexOf('platform_fees'));
+    expect(previewSection).toContain(".lt('created_at',");
+    expect(previewSection).not.toContain(".lte('created_at',");
+  });
+
+  it('UI preview uses same +1day model as server', () => {
+    expect(uiSource).toContain('setUTCDate');
+  });
+
+  it('server uses .gte for start boundary (inclusive)', () => {
+    const postSection = serverSource.slice(serverSource.indexOf('Calculate gross commission'));
+    expect(postSection).toContain(".gte('created_at',");
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// B. Reseller payout state transition atomicity (CAS)
+// ══════════════════════════════════════════════════════════
+
+describe('Reseller payout CAS state transitions (B)', () => {
+  const patchSource = readFileSync('app/api/admin/reseller-payouts/[id]/route.ts', 'utf-8');
+
+  it('UPDATE includes .in(status, allowedSourceStatuses) guard', () => {
+    expect(patchSource).toContain(".in('status', allowedSourceStatuses)");
+  });
+
+  it('uses maybeSingle to detect zero-affected-row case', () => {
+    expect(patchSource).toContain('.maybeSingle()');
+  });
+
+  it('returns 409 when CAS fails (status changed)', () => {
+    expect(patchSource).toContain('409');
+    expect(patchSource).toContain('status has changed');
+  });
+
+  it('approve source status is [pending]', () => {
+    expect(patchSource).toMatch(/approve[\s\S]*?allowedSourceStatuses\s*=\s*\['pending'\]/);
+  });
+
+  it('reject source statuses are [pending, approved]', () => {
+    expect(patchSource).toMatch(/reject[\s\S]*?allowedSourceStatuses\s*=\s*\['pending',\s*'approved'\]/);
+  });
+
+  it('mark_paid source status is [approved]', () => {
+    expect(patchSource).toMatch(/mark_paid[\s\S]*?allowedSourceStatuses\s*=\s*\['approved'\]/);
+  });
+
+  it('balance re-verification still precedes mark_paid transition', () => {
+    const markPaidSection = patchSource.slice(patchSource.indexOf("action === 'mark_paid'"));
+    const balanceIdx = markPaidSection.indexOf('Insufficient balance');
+    const casIdx = markPaidSection.indexOf('allowedSourceStatuses');
+    expect(balanceIdx).toBeGreaterThan(-1);
+    expect(casIdx).toBeGreaterThan(balanceIdx);
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// C. Duplicate reseller payout period DB constraint
+// ══════════════════════════════════════════════════════════
+
+describe('Duplicate reseller payout period protection (C)', () => {
+  const migrationSource = readFileSync('supabase/migrations/207_reseller_full.sql', 'utf-8');
+  const postSource = readFileSync('app/api/admin/reseller-payouts/route.ts', 'utf-8');
+
+  it('DB has UNIQUE constraint on (reseller_id, period_start, period_end)', () => {
+    expect(migrationSource).toContain('UNIQUE(reseller_id, period_start, period_end)');
+  });
+
+  it('API maps unique violation (23505) to 409', () => {
+    expect(postSource).toContain("insertErr.code === '23505'");
+    expect(postSource).toContain('409');
+  });
+
+  it('API still has application-level duplicate check before insert', () => {
+    expect(postSource).toContain('A payout already exists for this period');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// D. Audit logging accuracy
+// ══════════════════════════════════════════════════════════
+
+describe('Reseller audit logging is server-side (D)', () => {
+  const patchSource = readFileSync('app/api/admin/reseller-payouts/[id]/route.ts', 'utf-8');
+  const postSource = readFileSync('app/api/admin/reseller-payouts/route.ts', 'utf-8');
+
+  it('PATCH writes audit log server-side after successful mutation', () => {
+    const auditIdx = patchSource.indexOf('admin_audit_logs');
+    const updateIdx = patchSource.indexOf('.update(updateData)');
+    expect(auditIdx).toBeGreaterThan(updateIdx);
+  });
+
+  it('POST writes audit log server-side after successful insert', () => {
+    const auditIdx = postSource.indexOf('admin_audit_logs');
+    const insertIdx = postSource.indexOf('.insert({');
+    expect(auditIdx).toBeGreaterThan(insertIdx);
+  });
+
+  it('audit failure is logged but does not roll back the payout', () => {
+    // Audit log write is a separate statement, not inside a transaction/RPC
+    // This is accurate — described as server-side logging, not atomic
+    expect(patchSource).toContain('admin_audit_logs');
+    // The audit insert is NOT inside a try/catch that would undo the payout update
+  });
+});

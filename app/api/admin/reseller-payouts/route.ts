@@ -96,12 +96,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Calculate gross commission from platform_fees
+    // Use [start, end+1day) window so the entire end date is included
+    const periodEndExclusive = new Date(period_end + 'T00:00:00Z');
+    periodEndExclusive.setUTCDate(periodEndExclusive.getUTCDate() + 1);
+    const endExclusiveISO = periodEndExclusive.toISOString();
+
     const { data: fees, error: feesErr } = await service
       .from('platform_fees')
       .select('reseller_commission')
       .eq('reseller_id', reseller_id)
       .gte('created_at', period_start)
-      .lte('created_at', period_end);
+      .lt('created_at', endExclusiveISO);
 
     if (feesErr) {
       logger.error('[ADMIN_RESELLER_PAYOUTS] Fee calc error:', feesErr.message);
@@ -149,6 +154,10 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (insertErr) {
+      // DB UNIQUE(reseller_id, period_start, period_end) constraint violation
+      if (insertErr.code === '23505') {
+        return NextResponse.json({ error: 'A payout already exists for this period' }, { status: 409 });
+      }
       logger.error('[ADMIN_RESELLER_PAYOUTS] Insert error:', insertErr.message);
       return NextResponse.json({ error: 'Failed to create payout' }, { status: 500 });
     }
