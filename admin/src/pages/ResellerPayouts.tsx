@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
-import { adminDb } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDate, fmtCurrency } from '@/lib/formatters';
-import { logAudit } from '@/lib/auditLog';
 import { Wallet, Plus, Search, AlertCircle, CheckCircle, XCircle, DollarSign, FileText } from 'lucide-react';
 
 interface Reseller {
@@ -35,6 +34,11 @@ interface Payout {
 }
 
 const PER_PAGE = 20;
+
+async function getAccessToken(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  return data?.session?.access_token || null;
+}
 
 export default function ResellerPayouts() {
   const adminSession = useAdminSession();
@@ -91,35 +95,36 @@ export default function ResellerPayouts() {
   async function loadData() {
     setLoading(true);
     try {
-      // Load resellers for the generate modal and name mapping
-      const { data: resellerRows } = await adminDb
-        .from('resellers')
-        .select('id, company_name, commission_percentage, created_at')
-        .order('company_name', { ascending: true });
-
-      setResellers(resellerRows || []);
-
-      const nameMap = new Map((resellerRows || []).map(r => [r.id, r.company_name]));
-
-      // Load payouts
-      const { data: payoutRows, error } = await adminDb
-        .from('reseller_payouts')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Failed to load payouts:', error.message);
+      const token = await getAccessToken();
+      if (!token) {
         setPayouts([]);
         setLoading(false);
         return;
       }
 
-      const enriched: Payout[] = (payoutRows || []).map(p => ({
-        ...p,
-        company_name: nameMap.get(p.reseller_id) || 'Unknown',
-      }));
+      const apiUrl = import.meta.env.VITE_API_URL || '';
 
-      setPayouts(enriched);
+      // Load payouts via authenticated server route
+      const res = await fetch(`${apiUrl}/api/admin/reseller-payouts`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setPayouts(data.payouts || []);
+      } else {
+        console.warn('Failed to load reseller payouts:', res.status);
+        setPayouts([]);
+      }
+
+      // Load resellers for the generate modal dropdown (admin-only UI control)
+      if (isFullAdmin) {
+        const { data: resellerRows } = await adminDb
+          .from('resellers')
+          .select('id, company_name, commission_percentage, created_at')
+          .order('company_name', { ascending: true });
+        setResellers(resellerRows || []);
+      }
     } catch (err) {
       console.error('Failed to load payout data:', err);
     } finally {
@@ -127,7 +132,8 @@ export default function ResellerPayouts() {
     }
   }
 
-  // Calculate gross commission for the selected reseller and period
+  // Non-authoritative UI preview: estimate gross commission for the generate modal
+  // The server POST route performs the authoritative calculation
   async function calculateCommission() {
     if (!genResellerId || !genPeriodStart || !genPeriodEnd) return;
 
@@ -178,49 +184,42 @@ export default function ResellerPayouts() {
     setGenGrossCommission(null);
   }
 
+  // Create payout via authenticated server route (authoritative calculation)
   async function handleGeneratePayout() {
-    if (!genResellerId || !genPeriodStart || !genPeriodEnd || genGrossCommission === null) return;
+    if (!genResellerId || !genPeriodStart || !genPeriodEnd) return;
 
     setGenSaving(true);
     setGenError('');
 
     try {
-      const holdbackPct = parseFloat(genHoldbackPct) || 0;
-      const deductions = parseFloat(genDeductions) || 0;
-      const holdbackAmount = Math.round(genGrossCommission * holdbackPct / 100);
-      const netAmount = Math.max(0, genGrossCommission - holdbackAmount - deductions);
-
-      const { error } = await adminDb
-        .from('reseller_payouts')
-        .insert({
-          reseller_id: genResellerId,
-          period_start: genPeriodStart,
-          period_end: genPeriodEnd,
-          gross_commission: genGrossCommission,
-          holdback: holdbackAmount,
-          deductions,
-          net_amount: netAmount,
-          notes: genNotes || null,
-          status: 'pending',
-        });
-
-      if (error) {
-        setGenError(error.message);
+      const token = await getAccessToken();
+      if (!token) {
+        setGenError('Session expired — please re-login');
         return;
       }
 
-      await logAudit({
-        action: 'generate_reseller_payout',
-        entity_type: 'reseller_payout',
-        entity_id: genResellerId,
-        details: {
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${apiUrl}/api/admin/reseller-payouts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
           reseller_id: genResellerId,
           period_start: genPeriodStart,
           period_end: genPeriodEnd,
-          gross_commission: genGrossCommission,
-          net_amount: netAmount,
-        },
+          holdback_percent: parseFloat(genHoldbackPct) || 0,
+          deductions: parseFloat(genDeductions) || 0,
+          notes: genNotes || null,
+        }),
       });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setGenError(data.error || 'Failed to create payout');
+        return;
+      }
 
       setGenerateOpen(false);
       await loadData();
@@ -231,37 +230,34 @@ export default function ResellerPayouts() {
     }
   }
 
+  // Approve/reject/mark_paid via authenticated server route
   async function handleAction(payoutId: string, action: 'approve' | 'reject' | 'pay') {
     setActionLoading(payoutId);
     try {
-      const updates: Record<string, unknown> = {};
-
-      if (action === 'approve') {
-        updates.status = 'approved';
-        updates.approved_by = adminSession?.id || null;
-      } else if (action === 'reject') {
-        updates.status = 'rejected';
-      } else if (action === 'pay') {
-        updates.status = 'paid';
-        updates.paid_at = new Date().toISOString();
-      }
-
-      const { error } = await adminDb
-        .from('reseller_payouts')
-        .update(updates)
-        .eq('id', payoutId);
-
-      if (error) {
-        alert('Failed to update payout: ' + error.message);
+      const token = await getAccessToken();
+      if (!token) {
+        alert('Session expired — please re-login');
         return;
       }
 
-      await logAudit({
-        action: `${action}_reseller_payout`,
-        entity_type: 'reseller_payout',
-        entity_id: payoutId,
-        details: { action, status: updates.status },
+      // Map UI action 'pay' to server action 'mark_paid'
+      const serverAction = action === 'pay' ? 'mark_paid' : action;
+
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${apiUrl}/api/admin/reseller-payouts/${payoutId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action: serverAction }),
       });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || `Failed to ${action} payout`);
+        return;
+      }
 
       // Close detail modal if viewing this payout
       if (selected?.id === payoutId) {
@@ -276,7 +272,7 @@ export default function ResellerPayouts() {
     }
   }
 
-  // Computed net for generate modal preview
+  // Computed net for generate modal preview (non-authoritative — server calculates final)
   const genHoldbackVal = parseFloat(genHoldbackPct) || 0;
   const genDeductionsVal = parseFloat(genDeductions) || 0;
   const genHoldbackAmount = genGrossCommission !== null ? Math.round(genGrossCommission * genHoldbackVal / 100) : 0;
@@ -537,12 +533,13 @@ export default function ResellerPayouts() {
             disabled={!genResellerId || !genPeriodStart || !genPeriodEnd || genCalculating}
             className="w-full rounded-xl border border-brand px-4 py-2.5 text-sm font-medium text-brand transition hover:bg-brand/5 disabled:opacity-50"
           >
-            {genCalculating ? 'Calculating...' : 'Calculate Commission'}
+            {genCalculating ? 'Calculating...' : 'Preview Commission (estimate)'}
           </button>
 
           {genGrossCommission !== null && (
             <>
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-2 text-sm">
+                <p className="text-xs text-gray-400 mb-2">Preview only — server calculates final amounts</p>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Gross Commission</span>
                   <span className="font-medium text-gray-900">{fmtCurrency(genGrossCommission / 100, 'USD')}</span>
@@ -556,7 +553,7 @@ export default function ResellerPayouts() {
                   <span className="text-gray-600">-{fmtCurrency(genDeductionsVal / 100, 'USD')}</span>
                 </div>
                 <div className="flex justify-between border-t border-gray-200 pt-2">
-                  <span className="font-medium text-gray-900">Net Payout</span>
+                  <span className="font-medium text-gray-900">Estimated Net</span>
                   <span className="font-bold text-gray-900">{fmtCurrency(genNetAmount / 100, 'USD')}</span>
                 </div>
               </div>
@@ -608,7 +605,7 @@ export default function ResellerPayouts() {
                 disabled={genSaving || genNetAmount <= 0}
                 className="w-full rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
               >
-                {genSaving ? 'Creating Payout...' : `Create Payout (${fmtCurrency(genNetAmount / 100, 'USD')})`}
+                {genSaving ? 'Creating Payout...' : `Create Payout (est. ${fmtCurrency(genNetAmount / 100, 'USD')})`}
               </button>
             </>
           )}

@@ -431,3 +431,62 @@ describe('Payouts API route uses service client with safe columns', () => {
     expect(responseBlock).not.toContain('provider_idempotency_key');
   });
 });
+
+// ══════════════════════════════════════════════════════════
+// ResellerPayouts.tsx — server-side data path verification
+// ══════════════════════════════════════════════════════════
+
+describe('ResellerPayouts.tsx uses authenticated API (no direct DB)', () => {
+  const src = readFileSync('admin/src/pages/ResellerPayouts.tsx', 'utf-8');
+
+  it('does NOT directly select from reseller_payouts', () => {
+    expect(src).not.toContain("from('reseller_payouts')");
+  });
+
+  it('does NOT directly insert into reseller_payouts', () => {
+    expect(src).not.toContain('.insert(');
+  });
+
+  it('does NOT directly update reseller_payouts', () => {
+    expect(src).not.toContain('.update(');
+  });
+
+  it('does NOT import logAudit (server handles audit)', () => {
+    expect(src).not.toContain('logAudit');
+  });
+
+  it('loads payouts via authenticated GET /api/admin/reseller-payouts', () => {
+    expect(src).toContain('/api/admin/reseller-payouts');
+    expect(src).toContain('Authorization');
+  });
+
+  it('creates payouts via authenticated POST', () => {
+    expect(src).toContain("method: 'POST'");
+  });
+
+  it('mutates payouts via authenticated PATCH', () => {
+    expect(src).toContain("method: 'PATCH'");
+  });
+
+  it('maps UI action pay to server action mark_paid', () => {
+    expect(src).toContain("'pay' ? 'mark_paid'");
+  });
+
+  it('labels commission preview as non-authoritative', () => {
+    expect(src).toContain('server calculates final');
+  });
+});
+
+describe('Reseller GET response uses explicit safe fields', () => {
+  const routeSource = readFileSync('app/api/admin/reseller-payouts/route.ts', 'utf-8');
+
+  it('maps to explicit fields', () => {
+    expect(routeSource).toContain('id: p.id');
+    expect(routeSource).toContain('company_name:');
+  });
+
+  it('does not pass through raw DB rows in GET response', () => {
+    const getSection = routeSource.slice(0, routeSource.indexOf('export async function POST'));
+    expect(getSection).not.toContain('...p');
+  });
+});
