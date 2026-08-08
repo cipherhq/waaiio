@@ -36,11 +36,10 @@ ALTER TABLE auth.users ENABLE TRIGGER ALL;
 INSERT INTO resellers (id, user_id, company_name, commission_percentage)
   VALUES ('$RESELLER_ID', '$RESELLER_AUTH_USER', 'M311 Test Reseller', 10);
 -- Seed 1000 in commission earnings
-INSERT INTO platform_fees (business_id, payment_id, fee_amount, reseller_id, reseller_commission)
+INSERT INTO platform_fees (business_id, transaction_amount, fee_total, reseller_id, reseller_commission)
   VALUES (
     (SELECT id FROM businesses LIMIT 1),
-    'test-m311-' || gen_random_uuid()::text,
-    100, '$RESELLER_ID', 1000
+    10000, 100, '$RESELLER_ID', 1000
   );
 SETUP
 
