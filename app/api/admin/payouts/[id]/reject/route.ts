@@ -40,17 +40,25 @@ export async function POST(
     return NextResponse.json({ error: 'Payout cannot be rejected in current status' }, { status: 400 });
   }
 
-  const { error: updateError } = await supabase
+  // Atomic reject: include status guard in UPDATE to prevent TOCTOU race
+  const { data: updated, error: updateError } = await supabase
     .from('business_payouts')
     .update({
       status: 'rejected',
       rejected_reason: reason,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', id);
+    .eq('id', id)
+    .in('status', ['pending', 'approved'])
+    .select('id')
+    .maybeSingle();
 
   if (updateError) {
     return NextResponse.json({ error: 'Failed to reject payout' }, { status: 500 });
+  }
+
+  if (!updated) {
+    return NextResponse.json({ error: 'Payout status has changed — please refresh and try again' }, { status: 409 });
   }
 
   // Audit log

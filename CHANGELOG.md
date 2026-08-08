@@ -17,6 +17,15 @@ If something breaks, check this log to find what changed and when.
 - **Affects:** Invoice payment, campaign donation, platform fee recording across ALL payment completion surfaces.
 - **Could break:** Nothing — the old non-atomic patterns are strictly replaced by atomic equivalents. Single-payment entities (booking, order, reservation) retain their entity-level UNIQUE indexes as additional safety.
 
+### fix(FIN-RECON): restore Finance read-only boundary + reseller audit trail + payout rejection atomicity
+
+- **Root cause:** Finance role reconciliation against PRs #15-#18 found 6 current-main gaps: (1) Finance lost approved read-only access to business payouts list (admin-only since initial implementation); (2) Finance could create reseller payout records; (3) Finance could mark reseller payouts paid; (4) No audit trail for reseller payout mutations; (5) Business payout rejection had TOCTOU race (SELECT → UPDATE without status guard); (6) Payout list used `select('*')` exposing `claim_token`/`provider_idempotency_key`.
+- **Fix:** (1) `GET /api/admin/payouts` now accepts `['admin', 'finance']`, with explicit `PAYOUT_LIST_COLUMNS` excluding operational tokens. (2) `POST /api/admin/reseller-payouts` restricted to `requiredRole: 'admin'`. (3) `PATCH /api/admin/reseller-payouts/[id]` restricted to `requiredRole: 'admin'` for ALL actions (approve, reject, mark_paid). (4) Both reseller POST and PATCH now insert `admin_audit_logs` entries after successful mutations. (5) Payout rejection UPDATE now includes `.in('status', ['pending', 'approved'])` guard and returns 409 on conflict. (6) Service client instantiation order fixed in reseller GET/POST (auth check now precedes `createServiceClient()`). (7) Admin UI: Payouts page gates Generate/Approve/Reject buttons with `isAdmin`; ResellerPayouts page gates Generate/MarkPaid buttons with `isFullAdmin`.
+- **Files changed:** `app/api/admin/payouts/route.ts`, `app/api/admin/payouts/[id]/reject/route.ts`, `app/api/admin/reseller-payouts/route.ts`, `app/api/admin/reseller-payouts/[id]/route.ts`, `admin/src/pages/Payouts.tsx`, `admin/src/pages/ResellerPayouts.tsx`
+- **Tests added:** `lib/__tests__/finance-role-reconciliation.test.ts` — 68 tests.
+- **No migration required.**
+- **Affects:** Admin panel finance authorization boundaries. No changes to business-facing payout flows, provider integrations, or RLS policies.
+
 ### fix(DEAD-002): reservation cancellation notification — replace dead endpoint with domain-specific route
 
 - **Root cause:** Dashboard reservation cancellation called nonexistent `/api/notifications/send` to notify guests. The 404 was silently swallowed — customers were never notified of cancelled reservations.

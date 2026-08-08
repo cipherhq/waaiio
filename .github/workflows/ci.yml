@@ -777,6 +777,45 @@ jobs:
           echo "  - Final status = processing"
           echo "  - Token persisted, key = payout_{id}"
 
+      - name: Migration 311 reseller payout integrity DB tests
+        if: hashFiles('lib/__tests__/migration-311-reseller-payout-integrity-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 311 real PostgreSQL reseller payout integrity tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/migration-311-reseller-payout-integrity-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 311 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ Migration 311 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No Migration 311 DB tests passed."; exit 1; fi
+          echo "✅ Migration 311 reseller payout integrity DB tests complete — zero skips, zero failures."
+
+      - name: Migration 311 two-session concurrency tests
+        if: hashFiles('scripts/test-migration-311-concurrency.sh') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          echo "Running Migration 311 two-session concurrency tests..."
+          bash scripts/test-migration-311-concurrency.sh
+
   # ── Engineering Governance ──
   governance:
     name: Engineering governance
