@@ -57,75 +57,55 @@ export async function POST(
     });
     if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-    // Fetch the booking and verify it belongs to this business
-    const { data: booking, error: fetchError } = await service
-      .from('bookings')
-      .select('id, business_id, service_id, date, time, status, guest_name, guest_phone, guest_email, reference_code, businesses(name, country_code, metadata)')
-      .eq('id', id)
-      .eq('business_id', businessId)
-      .single();
+    // Atomic reschedule via RPC — validates ownership, capacity, buffer, and moves booking in one transaction
+    const { data: result, error: rpcError } = await service.rpc('reschedule_booking_atomic', {
+      p_booking_id: id,
+      p_business_id: businessId,
+      p_new_date: newDate,
+      p_new_time: newTime,
+    });
 
-    if (fetchError || !booking) {
-      return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
-    }
-
-    // Only allow reschedule for pending and confirmed bookings
-    if (!['pending', 'confirmed'].includes(booking.status)) {
-      return NextResponse.json(
-        { error: 'Only pending or confirmed bookings can be rescheduled' },
-        { status: 400 },
-      );
-    }
-
-    // Check slot availability at the new date/time
-    const { count } = await service
-      .from('bookings')
-      .select('id', { count: 'exact', head: true })
-      .eq('business_id', booking.business_id)
-      .eq('service_id', booking.service_id)
-      .eq('date', newDate)
-      .eq('time', newTime)
-      .neq('id', id) // Exclude the booking being rescheduled
-      .in('status', ['pending', 'confirmed', 'in_progress']);
-
-    // Get service max capacity
-    const { data: svc } = await service
-      .from('services')
-      .select('max_capacity')
-      .eq('id', booking.service_id)
-      .single();
-
-    const maxCapacity = svc?.max_capacity || 1;
-    if (count !== null && count >= maxCapacity) {
-      return NextResponse.json({ error: 'This time slot is fully booked' }, { status: 409 });
-    }
-
-    const originalDate = booking.date;
-    const originalTime = booking.time;
-    const now = new Date().toISOString();
-
-    // Update the booking
-    const { error: updateError } = await service
-      .from('bookings')
-      .update({
-        date: newDate,
-        time: newTime,
-        original_date: originalDate,
-        original_time: originalTime,
-        rescheduled_at: now,
-      })
-      .eq('id', id);
-
-    if (updateError) {
-      logger.error('[RESCHEDULE] Update error:', updateError);
+    if (rpcError) {
+      logger.error('[RESCHEDULE] RPC error:', rpcError);
       return NextResponse.json({ error: 'Failed to reschedule booking' }, { status: 500 });
     }
 
-    const biz = booking.businesses as unknown as { name: string; country_code?: string; metadata?: Record<string, unknown> } | null;
+    if (!result?.rescheduled) {
+      const reason = result?.reason;
+      if (reason === 'booking_not_found' || reason === 'business_mismatch') {
+        return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+      }
+      if (reason === 'not_reschedulable') {
+        return NextResponse.json({ error: 'Only pending or confirmed bookings can be rescheduled' }, { status: 400 });
+      }
+      if (reason === 'slot_full') {
+        return NextResponse.json({ error: 'This time slot is fully booked' }, { status: 409 });
+      }
+      if (reason === 'buffer_conflict') {
+        return NextResponse.json({ error: 'This time conflicts with buffer time of another booking' }, { status: 409 });
+      }
+      return NextResponse.json({ error: reason || 'Reschedule failed' }, { status: 400 });
+    }
+
+    // If already at target, return success without notifications
+    if (result.already_at_target) {
+      return NextResponse.json({ success: true });
+    }
+
+    const originalDate = result.old_date;
+
+    // Fetch booking details for notifications (post-RPC, booking is already moved)
+    const { data: booking } = await service
+      .from('bookings')
+      .select('id, business_id, service_id, guest_name, guest_phone, guest_email, reference_code, businesses(name, country_code, metadata)')
+      .eq('id', id)
+      .single();
+
+    const biz = booking?.businesses as unknown as { name: string; country_code?: string; metadata?: Record<string, unknown> } | null;
     const bizName = biz?.name || 'the business';
 
     // Notify waitlisted customers about the freed original slot
-    if (biz?.metadata?.waitlist_auto_notify !== false && originalDate !== newDate) {
+    if (booking && biz?.metadata?.waitlist_auto_notify !== false && originalDate !== newDate) {
       try {
         await notifyWaitlistOnSlotOpen({
           supabase: service,
@@ -149,7 +129,7 @@ export async function POST(
     const displayTime = newTime.slice(0, 5);
 
     // Send reschedule notification via WhatsApp (with email fallback/dual-delivery)
-    if (booking.guest_phone) {
+    if (booking?.guest_phone) {
       try {
         const resolver = new ChannelResolver(service);
         const resolved = await resolver.resolveByBusinessId(booking.business_id);
