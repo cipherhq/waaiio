@@ -17,6 +17,7 @@ cleanup() {
   psql -q -c "DELETE FROM reseller_payouts WHERE reseller_id = '$RESELLER_ID'" 2>/dev/null || true
   psql -q -c "DELETE FROM platform_fees WHERE reseller_id = '$RESELLER_ID'" 2>/dev/null || true
   psql -q -c "DELETE FROM resellers WHERE id IN ('$RESELLER_ID', '00000000-0000-0000-0000-000000000313')" 2>/dev/null || true
+  psql -q -c "ALTER TABLE auth.users DISABLE TRIGGER ALL; DELETE FROM auth.users WHERE id = '00000000-0000-0000-0000-000000311099'; ALTER TABLE auth.users ENABLE TRIGGER ALL;" 2>/dev/null || true
   rm -f /tmp/m311_*.txt
 }
 trap cleanup EXIT
@@ -24,12 +25,16 @@ trap cleanup EXIT
 echo "=== Migration 311: Reseller Payout Concurrency Tests ==="
 
 # ── SETUP ──
+RESELLER_AUTH_USER='00000000-0000-0000-0000-000000311099'
 psql -v ON_ERROR_STOP=1 -q <<SETUP
 DELETE FROM reseller_payouts WHERE reseller_id = '$RESELLER_ID';
 DELETE FROM platform_fees WHERE reseller_id = '$RESELLER_ID';
 DELETE FROM resellers WHERE id = '$RESELLER_ID';
-INSERT INTO resellers (id, company_name, contact_email, commission_percentage)
-  VALUES ('$RESELLER_ID', 'M311 Test Reseller', 'm311@test.local', 10);
+ALTER TABLE auth.users DISABLE TRIGGER ALL;
+INSERT INTO auth.users (id) VALUES ('$RESELLER_AUTH_USER') ON CONFLICT DO NOTHING;
+ALTER TABLE auth.users ENABLE TRIGGER ALL;
+INSERT INTO resellers (id, user_id, company_name, commission_percentage)
+  VALUES ('$RESELLER_ID', '$RESELLER_AUTH_USER', 'M311 Test Reseller', 10);
 -- Seed 1000 in commission earnings
 INSERT INTO platform_fees (business_id, payment_id, fee_amount, reseller_id, reseller_commission)
   VALUES (

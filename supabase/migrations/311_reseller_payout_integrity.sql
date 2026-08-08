@@ -49,8 +49,13 @@ REVOKE EXECUTE ON FUNCTION public.is_admin_or_finance() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.is_admin_or_finance() TO authenticated, service_role;
 
 -- ══════════════════════════════════════════════════════════
--- A. Fix reseller_payouts RLS policies
+-- A. Fix reseller_payouts RLS policies + table grants
 -- ══════════════════════════════════════════════════════════
+
+-- Grant table-level access to authenticated role (required for RLS to work)
+-- Without this GRANT, SET ROLE authenticated gets "permission denied" before
+-- RLS policies are even evaluated.
+GRANT SELECT, INSERT, UPDATE, DELETE ON reseller_payouts TO authenticated;
 
 -- Drop the old broad policy that gave Finance full CRUD
 DROP POLICY IF EXISTS "Admin manages reseller payouts" ON reseller_payouts;
