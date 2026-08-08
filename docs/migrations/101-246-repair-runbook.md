@@ -19,17 +19,18 @@ This runbook governs the controlled verification and repair of 124 migration-his
 
 ## Current State
 
-- **132 ALIGNED_TRACKED:** 102–225 (excluding not-verifiable and superseded) + 227–246 (excluding 244 individually tracked)
+- **146 ALIGNED_TRACKED:** All 101–246 now appear in production `schema_migrations` (132 via controlled repair + 14 via deviation below)
 - **0 VERIFIED_APPLIED_UNTRACKED**
 - **0 PENDING_PRODUCTION_REVERIFICATION**
-- **12 NOT_VERIFIABLE_SAFELY:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
-- **2 SUPERSEDED:** 122, 130
+- **14 APPLIED_WITHOUT_EXECUTION:** See deviation note below
 - **Active repair allowlist: 0**
 - **Completed migration-history repairs: 124** (45 Batch 1-3 + 15 Batch 4 + 15 Batch 5 + 15 Batch 6 + 15 Batch 7 + 15 Batch 8 + 4 Batch 9)
 - **All batches (1–9): verification and repair COMPLETE**
-- **No unverified actionable candidates remain**
-- **12 not-verifiable and 2 superseded migrations intentionally remain unrepaired**
 - **Issue #53 remains open pending merge and final closure**
+
+### Production Deviation (August 2026)
+
+During production release preparation, `supabase migration repair --status applied` was run on 14 versions that were intentionally excluded from repair (12 NOT_VERIFIABLE_SAFELY + 2 SUPERSEDED_WITH_EQUIVALENT_STATE). Their SQL was NOT executed. See `docs/migrations/PRODUCTION_DEVIATION_LOG.md` for full details and version list. The `scripts/migration-repair-guard.ts` guard and CI test now prevent repetition.
 
 ## Batch Status
 

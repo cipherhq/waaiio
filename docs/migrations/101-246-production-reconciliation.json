@@ -5,14 +5,14 @@
     "checksum": "690ea3c8583954f4319f4d3e62c3adb8e1e093fbdea74eeddde1b48bb1f14149",
     "original_classification": "NOT_VERIFIABLE_SAFELY",
     "current_classification": "NOT_VERIFIABLE_SAFELY",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [],
     "missing_effects": [
       "Record-level verification would require reading contents"
     ],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "N/A",
     "recommended_action": "do_not_repair_without_new_evidence",
     "last_verified_at": null,
@@ -294,7 +294,7 @@
     "checksum": "95b7c57d500010580f73b853d75bb9bec20ba2a502b1c2244f7ad19105908e44",
     "original_classification": "NOT_VERIFIABLE_SAFELY",
     "current_classification": "NOT_VERIFIABLE_SAFELY",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "column",
@@ -308,7 +308,7 @@
     ],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "N/A",
     "recommended_action": "do_not_repair_without_new_evidence",
     "last_verified_at": null,
@@ -486,7 +486,7 @@
     "checksum": "d6f92b97d0f7be48f41213a46c50cea03f83ea992398c43f36447f49f0e7e115",
     "original_classification": "NOT_VERIFIABLE_SAFELY",
     "current_classification": "NOT_VERIFIABLE_SAFELY",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "column",
@@ -500,7 +500,7 @@
     ],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "N/A",
     "recommended_action": "do_not_repair_without_new_evidence",
     "last_verified_at": null,
@@ -1440,7 +1440,7 @@
     "checksum": "31533e5a3c3b71b0c9f04c999204459a6c7282c0a2d69081ff546e40e4dfc9e8",
     "original_classification": "SUPERSEDED_WITH_EQUIVALENT_STATE",
     "current_classification": "SUPERSEDED_WITH_EQUIVALENT_STATE",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "policy",
@@ -1454,7 +1454,7 @@
     ],
     "superseding_migration": "293 (security_fix_exposed_tables dropped the permissive policy and replaced with view)",
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "HIGH",
     "recommended_action": "leave_unrepaired_superseded",
     "last_verified_at": null,
@@ -1634,12 +1634,12 @@
     "checksum": "57632d76afeb4fc7607fad576442946666cf27407db45af7f85a8388c6d119bf",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
     "current_classification": "NOT_VERIFIABLE_SAFELY",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "HIGH",
     "recommended_action": "do_not_repair_without_new_evidence",
     "last_verified_at": null,
@@ -1819,7 +1819,7 @@
     "checksum": "07a4d3273ca35914e3c7c79c328a5b86bea9b6b6a0ab8e13e5aa9e3efd408eea",
     "original_classification": "SUPERSEDED_WITH_EQUIVALENT_STATE",
     "current_classification": "SUPERSEDED_WITH_EQUIVALENT_STATE",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "table",
@@ -1899,7 +1899,7 @@
     ],
     "superseding_migration": "131 (standalone_invites replaced unique constraint with COALESCE-based); 144 (dropped Guests policy)",
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "HIGH",
     "recommended_action": "leave_unrepaired_superseded",
     "last_verified_at": null,
@@ -2841,7 +2841,7 @@
         "replacement_object_name": "trg_bot_session_deactivate ON bot_sessions (re-created in same migration)",
         "superseding_migration": "147_auto_last_active_on_deactivate.sql",
         "rationale": "Migration 147 uses DROP IF EXISTS + CREATE pattern to replace the trigger definition. The DROP step is superseded by the CREATE in the same migration.",
-        "application_behaviour_impact": "None — trigger exists with intended function update_last_active_on_deactivate. Behaviour matches intent."
+        "application_behaviour_impact": "None \u2014 trigger exists with intended function update_last_active_on_deactivate. Behaviour matches intent."
       }
     ],
     "missing_effects": [],
@@ -3354,7 +3354,7 @@
         "replacement_object_name": "trg_generate_event_slug ON events (re-created in same migration)",
         "superseding_migration": "149_public_event_booking_slugs.sql",
         "rationale": "Migration 149 uses DROP IF EXISTS + CREATE pattern to replace the trigger. The DROP is superseded by the re-creation in the same migration.",
-        "application_behaviour_impact": "None — trigger exists with intended function generate_event_slug. Behaviour matches intent."
+        "application_behaviour_impact": "None \u2014 trigger exists with intended function generate_event_slug. Behaviour matches intent."
       }
     ],
     "missing_effects": [],
@@ -3774,7 +3774,7 @@
         "replacement_implementation_migration": "176_buffer_time_atomic.sql",
         "obsolete_overload_removal_migration": "245_fix_book_slot_atomic_overloads.sql",
         "rationale": "Migration 176 created the current 26-argument implementation preserving all parameters from earlier migrations (p_location_id from 155, p_appointment_id from 166) plus p_buffer_minutes and p_duration. Migration 245 removed the obsolete 23- and 24-argument overloads, leaving only the 26-argument implementation.",
-        "application_behaviour_impact": "None — all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
+        "application_behaviour_impact": "None \u2014 all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
       }
     ],
     "missing_effects": [],
@@ -3959,7 +3959,7 @@
     "checksum": "045047809cc5b063d97505c0b553d340a472c076db9e9a9acea1b20950c5db9f",
     "original_classification": "NOT_VERIFIABLE_SAFELY",
     "current_classification": "NOT_VERIFIABLE_SAFELY",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "index",
@@ -3973,7 +3973,7 @@
     ],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "N/A",
     "recommended_action": "do_not_repair_without_new_evidence",
     "last_verified_at": null,
@@ -4091,14 +4091,14 @@
     "checksum": "2c89713a1e5f6d2d3c443119cac7af7e8014a852ecc3a1e65e80f72042a40a6e",
     "original_classification": "NOT_VERIFIABLE_SAFELY",
     "current_classification": "NOT_VERIFIABLE_SAFELY",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [],
     "missing_effects": [
       "Record-level verification would require reading contents"
     ],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "N/A",
     "recommended_action": "do_not_repair_without_new_evidence",
     "last_verified_at": null,
@@ -4110,14 +4110,14 @@
     "checksum": "1d1a1a86788b9abdef8628acc7443bf3550295f82c00f65ec8f81d928ad3ee23",
     "original_classification": "NOT_VERIFIABLE_SAFELY",
     "current_classification": "NOT_VERIFIABLE_SAFELY",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [],
     "missing_effects": [
       "Record-level verification would require reading contents"
     ],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "N/A",
     "recommended_action": "do_not_repair_without_new_evidence",
     "last_verified_at": null,
@@ -4202,7 +4202,7 @@
         "replacement_implementation_migration": "176_buffer_time_atomic.sql",
         "obsolete_overload_removal_migration": "245_fix_book_slot_atomic_overloads.sql",
         "rationale": "Migration 176 created the current 26-argument implementation preserving all parameters from earlier migrations (p_location_id from 155, p_appointment_id from 166) plus p_buffer_minutes and p_duration. Migration 245 removed the obsolete 23- and 24-argument overloads, leaving only the 26-argument implementation.",
-        "application_behaviour_impact": "None — all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
+        "application_behaviour_impact": "None \u2014 all parameters and logic from the earlier migration version are preserved in the current 26-argument function."
       }
     ],
     "missing_effects": [],
@@ -5598,7 +5598,7 @@
     "checksum": "2554fc60b344de804034f3249e182aae607b3246f16b52abd97c95669f5a353c",
     "original_classification": "NOT_VERIFIABLE_SAFELY",
     "current_classification": "NOT_VERIFIABLE_SAFELY",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [
       {
         "object_type": "column_alter",
@@ -5612,7 +5612,7 @@
     ],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "N/A",
     "recommended_action": "do_not_repair_without_new_evidence",
     "last_verified_at": null,
@@ -9582,12 +9582,12 @@
     "checksum": "9a5bcaac81e73aafe25c12ea4d34266012625add233a269317a9117f42f8f184",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
     "current_classification": "NOT_VERIFIABLE_SAFELY",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "HIGH",
     "recommended_action": "do_not_repair_without_new_evidence",
     "last_verified_at": null,
@@ -9599,12 +9599,12 @@
     "checksum": "a19c597e635f32b8e8e9a9989186d03576eaddd4d620012e08b23dff0b06e6e6",
     "original_classification": "VERIFIED_APPLIED_UNTRACKED",
     "current_classification": "NOT_VERIFIABLE_SAFELY",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [],
     "missing_effects": [],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "HIGH",
     "recommended_action": "do_not_repair_without_new_evidence",
     "last_verified_at": null,
@@ -9913,14 +9913,14 @@
     "checksum": "f2d900dbd671e1b6fea721b4341bfb38622932b5e30968071e184ff0a8a51d29",
     "original_classification": "NOT_VERIFIABLE_SAFELY",
     "current_classification": "NOT_VERIFIABLE_SAFELY",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [],
     "missing_effects": [
       "Record-level verification would require reading contents"
     ],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "N/A",
     "recommended_action": "do_not_repair_without_new_evidence",
     "last_verified_at": null,
@@ -10409,14 +10409,14 @@
     "checksum": "54c26ef2fdf9fa648db01b90269d16e9554bfd560745b1be8c94a0439f575237",
     "original_classification": "NOT_VERIFIABLE_SAFELY",
     "current_classification": "NOT_VERIFIABLE_SAFELY",
-    "remote_tracked": false,
+    "remote_tracked": true,
     "evidence": [],
     "missing_effects": [
       "Record-level verification would require reading contents"
     ],
     "superseding_migration": null,
     "repair_eligible": false,
-    "repair_status": "not_eligible",
+    "repair_status": "applied_without_execution",
     "confidence": "N/A",
     "recommended_action": "do_not_repair_without_new_evidence",
     "last_verified_at": null,
@@ -11513,7 +11513,7 @@
         "non_executable_source_differences": [
           {
             "type": "sql_line_comment",
-            "repository_text": "-- Version mismatch — return the current state so caller can retry",
+            "repository_text": "-- Version mismatch \u2014 return the current state so caller can retry",
             "deployed_candidate_text": null,
             "executable_effect": "none"
           }
@@ -11529,7 +11529,7 @@
           "source_commit_sha": "58a8d11f570851b69c2cd1c74fcde805188944dc",
           "source_blob_sha": "53ef69d6d25dc96e4cb64a59837b91fb04fa8092",
           "current_repository_commit_sha": "21cbf57ff76d30538fe493069148e673451431c6",
-          "exact_removed_comment": "-- Version mismatch — return the current state so caller can retry",
+          "exact_removed_comment": "-- Version mismatch \u2014 return the current state so caller can retry",
           "other_source_differences": [],
           "repository_derived_candidate_definition_sha256": "7df85cfe54243452810229ea236d41c98c45dcae5029a9091c48d43000dfc20b",
           "production_observed_definition_sha256": "7df85cfe54243452810229ea236d41c98c45dcae5029a9091c48d43000dfc20b",
