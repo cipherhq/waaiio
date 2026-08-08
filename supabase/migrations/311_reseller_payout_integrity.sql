@@ -19,6 +19,36 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 BEGIN;
 
 -- ══════════════════════════════════════════════════════════
+-- A0. Create is_admin_or_finance() helper
+--     Exact Admin+Finance boundary — does NOT include Support/Operations.
+--     Uses raw_app_meta_data (same trusted authority as is_admin).
+-- ══════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION public.is_admin_or_finance()
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_role text;
+BEGIN
+  SELECT raw_app_meta_data ->> 'role'
+  INTO v_role
+  FROM auth.users
+  WHERE id = auth.uid();
+
+  RETURN COALESCE(v_role IN ('admin', 'finance'), false);
+EXCEPTION WHEN OTHERS THEN
+  RETURN false;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.is_admin_or_finance() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_admin_or_finance() TO authenticated, service_role;
+
+-- ══════════════════════════════════════════════════════════
 -- A. Fix reseller_payouts RLS policies
 -- ══════════════════════════════════════════════════════════
 
@@ -31,12 +61,10 @@ CREATE POLICY "admin_manages_reseller_payouts"
   USING (public.is_admin())
   WITH CHECK (public.is_admin());
 
--- Finance: SELECT only (uses is_admin_or_support which includes finance)
--- This lets Finance read payout data through direct queries if needed,
--- but they cannot INSERT/UPDATE/DELETE.
+-- Finance: SELECT only (exact Admin+Finance boundary, excludes Support/Operations)
 CREATE POLICY "finance_reads_reseller_payouts"
   ON reseller_payouts FOR SELECT
-  USING (public.is_admin_or_support());
+  USING (public.is_admin_or_finance());
 
 -- ══════════════════════════════════════════════════════════
 -- B. mark_reseller_payout_paid RPC

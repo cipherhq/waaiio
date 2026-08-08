@@ -28,10 +28,18 @@ describe('Migration 311: reseller payout integrity', () => {
     expect(src).toContain('is_admin()');
   });
 
-  it('creates finance SELECT-only policy', () => {
+  it('creates finance SELECT-only policy using is_admin_or_finance()', () => {
     expect(src).toContain('finance_reads_reseller_payouts');
     expect(src).toContain('FOR SELECT');
-    expect(src).toContain('is_admin_or_support()');
+    expect(src).toContain('is_admin_or_finance()');
+  });
+
+  it('creates is_admin_or_finance() helper (admin+finance only)', () => {
+    expect(src).toContain('CREATE OR REPLACE FUNCTION public.is_admin_or_finance()');
+    // Must include admin and finance
+    const fnSection = src.slice(src.indexOf('is_admin_or_finance'));
+    expect(fnSection).toContain("'admin'");
+    expect(fnSection).toContain("'finance'");
   });
 
   // mark_reseller_payout_paid RPC

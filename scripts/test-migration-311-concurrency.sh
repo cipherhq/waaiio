@@ -107,9 +107,16 @@ VALUES
   ('$PAYOUT_B', '$RESELLER_ID', '2026-03-15', '2026-04-01', 600, 600, 'approved');
 SEED2
 
-psql -t -A -c "SELECT mark_reseller_payout_paid('$PAYOUT_A', '$ADMIN_ID')" > /tmp/m311_a2.txt 2>&1 &
+# Deterministic overlap: Session A holds advisory lock with pg_sleep
+psql -t -A <<SESSION_A2 > /tmp/m311_a2.txt 2>&1 &
+BEGIN;
+SELECT mark_reseller_payout_paid('$PAYOUT_A', '$ADMIN_ID');
+SELECT pg_sleep(2);
+COMMIT;
+SESSION_A2
 PID_A=$!
-sleep 0.3
+sleep 0.5
+# Session B blocks on advisory lock until A commits
 psql -t -A -c "SELECT mark_reseller_payout_paid('$PAYOUT_B', '$ADMIN_ID')" > /tmp/m311_b2.txt 2>&1 &
 PID_B=$!
 wait $PID_A || true
@@ -189,20 +196,24 @@ COMMIT;
 INSERT_A
 PID_A=$!
 sleep 0.5
-psql -t -A -c "INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status) VALUES ('$RESELLER_ID', '2026-12-10', '2026-12-20', 100, 'pending')" > /tmp/m311_b4.txt 2>&1 &
-PID_B=$!
-wait $PID_A
-EXIT_A=$?
-wait $PID_B
-EXIT_B=$?
+# Session B: expected to fail with exclusion constraint (23P01)
+psql -t -A -c "INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status) VALUES ('$RESELLER_ID', '2026-12-10', '2026-12-20', 100, 'pending')" > /tmp/m311_b4.txt 2>&1 || true
+PID_B_EXIT=$?
+wait $PID_A || true
 
 ROW_COUNT=$(psql -t -A -c "SELECT COUNT(*) FROM reseller_payouts WHERE reseller_id='$RESELLER_ID' AND period_start >= '2026-12-01' AND status != 'rejected'")
 
-echo "  Session A exit: $EXIT_A"
-echo "  Session B exit: $EXIT_B"
 echo "  Active payout rows: $ROW_COUNT"
 
-# One should succeed, one should fail with exclusion violation
+# Verify the loser got an exclusion constraint violation
+if grep -q "exclusion" /tmp/m311_b4.txt || grep -q "23P01" /tmp/m311_b4.txt; then
+  echo "  Loser received exclusion constraint violation (23P01) — correct"
+else
+  echo "  Session B output: $(cat /tmp/m311_b4.txt)"
+  echo "FAIL: loser did not receive exclusion constraint violation"
+  FAILED=1
+fi
+
 if [ "$ROW_COUNT" -ne 1 ]; then echo "FAIL: exactly one overlapping payout should exist, got $ROW_COUNT"; FAILED=1; fi
 
 [ "$FAILED" -eq 0 ] && echo "  ✅ Test 4 PASSED"
