@@ -17,7 +17,9 @@ cleanup() {
   psql -q -c "DELETE FROM reseller_payouts WHERE reseller_id = '$RESELLER_ID'" 2>/dev/null || true
   psql -q -c "DELETE FROM platform_fees WHERE reseller_id = '$RESELLER_ID'" 2>/dev/null || true
   psql -q -c "DELETE FROM resellers WHERE id IN ('$RESELLER_ID', '00000000-0000-0000-0000-000000000313')" 2>/dev/null || true
-  psql -q -c "ALTER TABLE auth.users DISABLE TRIGGER ALL; DELETE FROM auth.users WHERE id = '00000000-0000-0000-0000-000000311099'; ALTER TABLE auth.users ENABLE TRIGGER ALL;" 2>/dev/null || true
+  psql -q -c "DELETE FROM businesses WHERE id = '00000000-0000-0000-0000-000000311097'" 2>/dev/null || true
+  psql -q -c "DELETE FROM profiles WHERE id = '00000000-0000-0000-0000-000000311098'" 2>/dev/null || true
+  psql -q -c "ALTER TABLE auth.users DISABLE TRIGGER ALL; DELETE FROM auth.users WHERE id IN ('00000000-0000-0000-0000-000000311099','00000000-0000-0000-0000-000000311098'); ALTER TABLE auth.users ENABLE TRIGGER ALL;" 2>/dev/null || true
   rm -f /tmp/m311_*.txt
 }
 trap cleanup EXIT
@@ -26,21 +28,28 @@ echo "=== Migration 311: Reseller Payout Concurrency Tests ==="
 
 # ── SETUP ──
 RESELLER_AUTH_USER='00000000-0000-0000-0000-000000311099'
+BIZ_OWNER='00000000-0000-0000-0000-000000311098'
+BIZ_ID='00000000-0000-0000-0000-000000311097'
 psql -v ON_ERROR_STOP=1 -q <<SETUP
 DELETE FROM reseller_payouts WHERE reseller_id = '$RESELLER_ID';
 DELETE FROM platform_fees WHERE reseller_id = '$RESELLER_ID';
 DELETE FROM resellers WHERE id = '$RESELLER_ID';
+DELETE FROM businesses WHERE id = '$BIZ_ID';
 ALTER TABLE auth.users DISABLE TRIGGER ALL;
-INSERT INTO auth.users (id) VALUES ('$RESELLER_AUTH_USER') ON CONFLICT DO NOTHING;
+INSERT INTO auth.users (id, raw_app_meta_data) VALUES
+  ('$RESELLER_AUTH_USER', '{}'::jsonb),
+  ('$BIZ_OWNER', '{}'::jsonb),
+  ('$ADMIN_ID', '{"role":"admin"}'::jsonb)
+  ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = EXCLUDED.raw_app_meta_data;
 ALTER TABLE auth.users ENABLE TRIGGER ALL;
+INSERT INTO profiles (id, first_name, last_name, email) VALUES ('$BIZ_OWNER', 'M311', 'Test', 'm311biz@test.local') ON CONFLICT DO NOTHING;
+INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code)
+  VALUES ('$BIZ_ID', 'M311 Test Biz', 'm311-test-biz', '$BIZ_OWNER', '1 Test', 'Lagos', 'VI', '+0000', 'active', 'NG') ON CONFLICT DO NOTHING;
 INSERT INTO resellers (id, user_id, company_name, commission_percentage)
   VALUES ('$RESELLER_ID', '$RESELLER_AUTH_USER', 'M311 Test Reseller', 10);
 -- Seed 1000 in commission earnings
 INSERT INTO platform_fees (business_id, transaction_amount, fee_total, reseller_id, reseller_commission)
-  VALUES (
-    (SELECT id FROM businesses LIMIT 1),
-    10000, 100, '$RESELLER_ID', 1000
-  );
+  VALUES ('$BIZ_ID', 10000, 100, '$RESELLER_ID', 1000);
 SETUP
 
 # ════════════════════════════════════════
