@@ -83,26 +83,32 @@ export default function Payouts() {
     setLoading(true);
 
     try {
-      const { data: payoutData } = await adminDb
-        .from('business_payouts')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) {
+        console.warn('No session — cannot load payouts');
+        setPayouts([]);
+        return;
+      }
 
-      // Get business names
-      const bizIds = [...new Set((payoutData || []).map(p => p.business_id))];
-      const { data: businesses } = bizIds.length > 0
-        ? await adminDb.from('businesses').select('id, name, country_code').in('id', bizIds)
-        : { data: [] };
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      // Load all payouts via authenticated server route (handles safe column selection)
+      const allPayouts: PayoutRecord[] = [];
+      let currentPage = 1;
+      let totalPages = 1;
 
-      const bizMap = new Map((businesses || []).map(b => [b.id, { name: b.name, country_code: b.country_code }]));
+      do {
+        const res = await fetch(`${apiUrl}/api/admin/payouts?page=${currentPage}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!res.ok) break;
+        const data = await res.json();
+        allPayouts.push(...(data.payouts || []));
+        totalPages = data.total_pages || 1;
+        currentPage++;
+      } while (currentPage <= totalPages);
 
-      const enriched = (payoutData || []).map(p => ({
-        ...p,
-        business_name: bizMap.get(p.business_id)?.name || 'Unknown',
-        country_code: bizMap.get(p.business_id)?.country_code || 'NG',
-      }));
-
-      setPayouts(enriched);
+      setPayouts(allPayouts);
     } catch (error) {
       console.warn('Failed to load payouts:', error);
     } finally {

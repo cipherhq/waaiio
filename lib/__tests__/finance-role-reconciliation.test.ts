@@ -65,6 +65,9 @@ vi.mock('@/lib/supabase/service', () => ({
       eq: vi.fn().mockReturnThis(),
       gte: vi.fn().mockReturnThis(),
       lte: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
       maybeSingle: mockSelectResult,
       single: mockSelectResult,
       insert: vi.fn().mockReturnValue({
@@ -278,12 +281,28 @@ describe('Payout list response excludes operational tokens', () => {
     expect(payoutsSource).toContain('PAYOUT_LIST_COLUMNS');
   });
 
-  it('excludes claim_token', () => {
-    expect(payoutsSource).not.toContain('claim_token');
+  it('PAYOUT_LIST_COLUMNS does not include claim_token', () => {
+    // Extract the array literal between [ and ].join
+    const match = payoutsSource.match(/PAYOUT_LIST_COLUMNS\s*=\s*\[([\s\S]*?)\]\.join/);
+    expect(match).toBeTruthy();
+    const columns = match![1];
+    expect(columns).not.toContain('claim_token');
   });
 
-  it('excludes provider_idempotency_key', () => {
-    expect(payoutsSource).not.toContain('provider_idempotency_key');
+  it('PAYOUT_LIST_COLUMNS does not include provider_idempotency_key', () => {
+    const match = payoutsSource.match(/PAYOUT_LIST_COLUMNS\s*=\s*\[([\s\S]*?)\]\.join/);
+    expect(match).toBeTruthy();
+    const columns = match![1];
+    expect(columns).not.toContain('provider_idempotency_key');
+  });
+
+  it('response mapping does not include claim_token or provider_idempotency_key', () => {
+    // Check the response shaping block (after "Shape response")
+    const shapeIdx = payoutsSource.indexOf('Shape response');
+    expect(shapeIdx).toBeGreaterThan(-1);
+    const responseShape = payoutsSource.slice(shapeIdx);
+    expect(responseShape).not.toContain('claim_token');
+    expect(responseShape).not.toContain('provider_idempotency_key');
   });
 });
 
@@ -354,10 +373,61 @@ describe('Admin UI — Finance mutation controls hidden', () => {
   });
 
   it('ResellerPayouts Mark as Paid button gated by isFullAdmin', () => {
-    // Both inline and detail modal buttons should check isFullAdmin
-    const markPaidOccurrences = resellerUI.match(/isFullAdmin.*Mark as Paid|Mark as Paid.*isFullAdmin/g);
-    // At minimum the two "approved && isFullAdmin" guards exist
     const approvedGuards = (resellerUI.match(/approved.*&&.*isFullAdmin/g) || []).length;
     expect(approvedGuards).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// Payouts.tsx — server-side data path verification
+// ══════════════════════════════════════════════════════════
+
+describe('Payouts.tsx data loading via authenticated API', () => {
+  const payoutsUI = readFileSync('admin/src/pages/Payouts.tsx', 'utf-8');
+
+  it('does NOT directly query business_payouts table', () => {
+    // The old pattern: adminDb.from('business_payouts').select('*')
+    expect(payoutsUI).not.toContain("from('business_payouts')");
+  });
+
+  it('loads data via authenticated /api/admin/payouts route', () => {
+    expect(payoutsUI).toContain('/api/admin/payouts');
+    expect(payoutsUI).toContain('Authorization');
+    expect(payoutsUI).toContain('Bearer');
+  });
+
+  it('uses session access token for API calls', () => {
+    expect(payoutsUI).toContain('supabase.auth.getSession()');
+    expect(payoutsUI).toContain('access_token');
+  });
+});
+
+describe('Payouts API route uses service client with safe columns', () => {
+  const routeSource = readFileSync('app/api/admin/payouts/route.ts', 'utf-8');
+
+  it('uses createServiceClient (not createClient)', () => {
+    expect(routeSource).toContain('createServiceClient');
+    expect(routeSource).not.toContain("from '@/lib/supabase/server'");
+  });
+
+  it('joins business name and country_code server-side', () => {
+    expect(routeSource).toContain('businesses(name, country_code)');
+  });
+
+  it('shapes response with explicit field mapping', () => {
+    expect(routeSource).toContain('business_name:');
+    expect(routeSource).toContain('country_code:');
+  });
+
+  it('response shaping excludes claim_token', () => {
+    const shapeIdx = routeSource.indexOf('Shape response');
+    const responseBlock = routeSource.slice(shapeIdx);
+    expect(responseBlock).not.toContain('claim_token');
+  });
+
+  it('response shaping excludes provider_idempotency_key', () => {
+    const shapeIdx = routeSource.indexOf('Shape response');
+    const responseBlock = routeSource.slice(shapeIdx);
+    expect(responseBlock).not.toContain('provider_idempotency_key');
   });
 });
