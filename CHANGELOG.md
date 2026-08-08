@@ -7,6 +7,16 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-07
 
+### fix(P0-PAY-1): payment-level idempotency for financial operations
+
+- **Root cause:** `processSuccessfulPayment()` callable from 7 entry points (5 webhooks + cron + payment-success page). Invoice `processInvoicePayment` used non-atomic read-modify-write for `amount_paid`. Campaign `processCampaignDonation` called `increment_campaign_donation` RPC unconditionally — replay = double-count. Platform fee uniqueness was keyed to entity IDs (invoice_id, campaign_id) not payment IDs — blocked legitimate second payments on same invoice/campaign. `recordPlatformFee` used entity `total_amount` instead of actual payment amount for `transaction_amount`.
+- **Fix:** (1) `apply_invoice_payment` RPC: loads payment from DB (validates status=success, invoice_id match, business match, positive amount). Uses `SELECT FOR UPDATE` + `invoice_payment_applications` ledger with `UNIQUE(invoice_id, payment_id)`. (2) Legacy baseline: `invoices.legacy_amount_paid_baseline` = frozen pre-migration `amount_paid`. Historical payments backfilled as replay markers (`amount_applied=0, is_legacy_marker=true`). Authoritative `amount_paid = baseline + SUM(non-legacy amount_applied)`. Pre-migration `amount_paid` never decreases or gets reinterpreted. (3) Fee retry safety: fee creation attempted on both `applied` and `already_applied` (non-rejection) RPC results. `payment_id UNIQUE` on `platform_fees` prevents duplicates. Crash-before-fee + replay → fee eventually exists exactly once. (4) `apply_campaign_donation` RPC: validates payment status, campaign_id, business_id from DB. Distinguishes `already_applied` from `donation_not_found`. (5) RPCs use `SET search_path = public` + `SECURITY DEFINER`. REVOKE from PUBLIC/anon/authenticated, GRANT service_role only. (6) `campaign_donations` partial UNIQUE on `payment_id WHERE NOT NULL`. (7) `platform_fees.payment_id` unconditional UNIQUE. (8) `transaction_amount` = actual payment amount.
+- **Migration:** `310_payment_level_idempotency.sql` — creates `invoice_payment_applications` table, `apply_invoice_payment` + `apply_campaign_donation` RPCs, adds `payment_id` to `platform_fees`, updates unique indexes.
+- **Files changed:** `lib/payments/process-success.ts`, `supabase/migrations/310_payment_level_idempotency.sql`, test files
+- **Tests:** 41 focused idempotency tests + existing 119 payment tests pass.
+- **Affects:** Invoice payment, campaign donation, platform fee recording across ALL payment completion surfaces.
+- **Could break:** Nothing — the old non-atomic patterns are strictly replaced by atomic equivalents. Single-payment entities (booking, order, reservation) retain their entity-level UNIQUE indexes as additional safety.
+
 ### fix(DEAD-002): reservation cancellation notification — replace dead endpoint with domain-specific route
 
 - **Root cause:** Dashboard reservation cancellation called nonexistent `/api/notifications/send` to notify guests. The 404 was silently swallowed — customers were never notified of cancelled reservations.

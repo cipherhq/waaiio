@@ -48,6 +48,7 @@ export async function processSuccessfulPayment(
     try {
       await recordPlatformFee(supabase, {
         bookingId: payment.booking_id,
+        paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
       });
@@ -119,6 +120,7 @@ export async function processSuccessfulPayment(
 
       await recordPlatformFee(supabase, {
         orderId,
+        paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
       });
@@ -162,6 +164,7 @@ export async function processSuccessfulPayment(
 
       await recordPlatformFee(supabase, {
         reservationId: payment.reservation_id,
+        paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
       });
@@ -204,56 +207,54 @@ export async function recordPlatformFee(
     orderId?: string;
     reservationId?: string;
     businessId?: string;
+    paymentId?: string;
     paymentAmount: number;
     gatewayFee?: number;
   },
 ): Promise<void> {
   let businessId = opts.businessId;
-  let transactionAmount = opts.paymentAmount;
+  // Use actual payment amount as transaction_amount (the money collected by THIS payment)
+  const transactionAmount = opts.paymentAmount;
 
-  // Resolve business_id and total_amount from the entity
+  // Resolve business_id from the entity if not provided
   if (opts.bookingId && !businessId) {
     const { data: booking } = await supabase
       .from('bookings')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.bookingId)
       .single();
     if (!booking?.business_id) return;
     businessId = booking.business_id;
-    transactionAmount = booking.total_amount || opts.paymentAmount;
   }
 
   if (opts.orderId && !businessId) {
     const { data: order } = await supabase
       .from('orders')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.orderId)
       .single();
     if (!order?.business_id) return;
     businessId = order.business_id;
-    transactionAmount = order.total_amount || opts.paymentAmount;
   }
 
   if (opts.invoiceId && !businessId) {
     const { data: invoice } = await supabase
       .from('invoices')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.invoiceId)
       .single();
     if (!invoice?.business_id) return;
     businessId = invoice.business_id;
-    transactionAmount = invoice.total_amount || opts.paymentAmount;
   }
 
   if (opts.reservationId && !businessId) {
     const { data: reservation } = await supabase
       .from('reservations')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.reservationId)
       .single();
     if (!reservation?.business_id) return;
     businessId = reservation.business_id;
-    transactionAmount = reservation.total_amount || opts.paymentAmount;
   }
 
   if (!businessId) return;
@@ -297,6 +298,7 @@ export async function recordPlatformFee(
   // Insert fee — log but don't throw on duplicate (webhook + "I've Paid" race)
   const { error: feeErr } = await supabase.from('platform_fees').insert({
     business_id: businessId,
+    payment_id: opts.paymentId || null,
     booking_id: opts.bookingId || null,
     invoice_id: opts.invoiceId || null,
     campaign_id: opts.campaignId || null,
@@ -324,8 +326,14 @@ export async function recordPlatformFee(
 }
 
 /**
- * Process invoice payment with partial payment accumulation.
- * Idempotent: checks if payment was already applied before incrementing amount_paid.
+ * Process invoice payment with payment-level idempotency.
+ * Uses apply_invoice_payment RPC which atomically:
+ *   - Records the application in invoice_payment_applications (idempotent via UNIQUE)
+ *   - Updates amount_paid from the authoritative ledger (SUM of all applications)
+ *   - Serializes concurrent access via SELECT FOR UPDATE on the invoice row
+ *
+ * Same payment replayed → no second increment.
+ * Different partial payments → both apply correctly.
  */
 export async function processInvoicePayment(
   supabase: SupabaseClient,
@@ -334,38 +342,54 @@ export async function processInvoicePayment(
   paymentAmount: number,
   gatewayFee?: number,
 ): Promise<void> {
-  const { data: invoice } = await supabase
-    .from('invoices')
-    .select('business_id, total_amount, amount_paid, status')
-    .eq('id', invoiceId)
-    .single();
+  // RPC loads and validates payment + invoice from DB internally
+  const { data: result, error: rpcError } = await supabase.rpc('apply_invoice_payment', {
+    p_invoice_id: invoiceId,
+    p_payment_id: paymentId,
+  });
 
-  if (!invoice) return;
-
-  // Idempotency guard: if invoice is already fully paid, skip.
-  // This prevents double-incrementing amount_paid on webhook retries.
-  if (invoice.status === 'paid') {
+  if (rpcError) {
+    logger.error('[INVOICE-PAYMENT] RPC error:', rpcError.message);
+    Sentry.captureException(new Error(`apply_invoice_payment RPC error: ${rpcError.message}`), {
+      tags: { component: 'process-success', operation: 'invoice-payment' },
+      extra: { invoiceId, paymentId },
+    });
     return;
   }
 
-  const newAmountPaid = (Number(invoice.amount_paid) || 0) + paymentAmount;
-  const totalAmount = Number(invoice.total_amount) || 0;
-  const isFullyPaid = newAmountPaid >= totalAmount;
-
-  await supabase
-    .from('invoices')
-    .update({
-      status: isFullyPaid ? 'paid' : 'sent',
-      amount_paid: newAmountPaid,
-      paid_at: isFullyPaid ? new Date().toISOString() : null,
-    })
-    .eq('id', invoiceId);
-
-  await recordPlatformFee(supabase, { invoiceId, paymentAmount, gatewayFee });
+  // Fee retry logic:
+  // - New payment (applied or already_applied + not legacy): attempt fee.
+  //   payment_id UNIQUE prevents duplicates on retry.
+  // - Legacy marker replay: do NOT create fee (legacy fees already exist with NULL payment_id).
+  const shouldEnsureFee = result && !result.reason && !result.is_legacy;
+  if (shouldEnsureFee) {
+    // Use ONLY DB-authoritative amount from RPC — never caller-supplied
+    const authoritativeAmount = result.amount ? Number(result.amount) : null;
+    if (authoritativeAmount && authoritativeAmount > 0) {
+      await recordPlatformFee(supabase, {
+        invoiceId,
+        paymentId,
+        paymentAmount: authoritativeAmount,
+        gatewayFee,
+      });
+    } else {
+      logger.error('[INVOICE-PAYMENT] RPC returned fee-eligible result without valid amount', { invoiceId, paymentId, result });
+      Sentry.captureException(new Error('Invoice RPC fee-eligible but missing authoritative amount'), {
+        tags: { component: 'process-success', operation: 'invoice-fee' },
+        extra: { invoiceId, paymentId },
+      });
+    }
+  }
 }
 
 /**
- * Process campaign donation: mark as success, increment stats, record fee.
+ * Process campaign donation with payment-level idempotency.
+ * Uses apply_campaign_donation RPC which atomically:
+ *   - Transitions donation from pending → success (idempotency gate)
+ *   - Increments raised_amount and donor_count only if transition occurred
+ *
+ * Same payment replayed → no second increment.
+ * Different donations → each counts independently.
  */
 export async function processCampaignDonation(
   supabase: SupabaseClient,
@@ -374,55 +398,47 @@ export async function processCampaignDonation(
   amount: number,
   gatewayFee?: number,
 ): Promise<void> {
-  // Mark donation as success — try by payment_id first, fallback to campaign_id
-  const { data: updated } = await supabase
-    .from('campaign_donations')
-    .update({ status: 'success' })
-    .eq('payment_id', paymentId)
-    .eq('status', 'pending')
-    .select('id')
-    .maybeSingle();
+  const { data: result, error: rpcError } = await supabase.rpc('apply_campaign_donation', {
+    p_campaign_id: campaignId,
+    p_payment_id: paymentId,
+  });
 
-  if (!updated) {
-    await supabase
-      .from('campaign_donations')
-      .update({ status: 'success', payment_id: paymentId })
-      .eq('campaign_id', campaignId)
-      .eq('status', 'pending')
-      .is('payment_id', null);
+  if (rpcError) {
+    logger.error('[CAMPAIGN-DONATION] RPC error:', rpcError.message);
+    Sentry.captureException(new Error(`apply_campaign_donation RPC error: ${rpcError.message}`), {
+      tags: { component: 'process-success', operation: 'campaign-donation' },
+      extra: { campaignId, paymentId, amount },
+    });
+    return;
   }
 
-  // Atomic increment of campaign stats (prevents double-counting under race)
-  if (typeof supabase.rpc === 'function') {
-    await supabase.rpc('increment_campaign_donation', {
-      p_campaign_id: campaignId,
-      p_amount: amount,
-      p_donor_count: 1,
-    });
-  } else {
-    // Fallback for test environments without RPC support
-    const { data: camp } = await supabase.from('campaigns').select('raised_amount, donor_count').eq('id', campaignId).single();
-    if (camp) {
-      await supabase.from('campaigns').update({
-        raised_amount: Number(camp.raised_amount || 0) + amount,
-        donor_count: (camp.donor_count || 0) + 1,
-      }).eq('id', campaignId);
+  // Fee retry logic: same as invoice — skip legacy, ensure for new/post-migration
+  const shouldEnsureFee = result && !result.reason && !result.is_legacy;
+  if (shouldEnsureFee) {
+    // Use ONLY DB-authoritative amount from RPC — never caller-supplied
+    const authoritativeAmount = result.amount ? Number(result.amount) : null;
+    if (authoritativeAmount && authoritativeAmount > 0) {
+      const { data: campaign } = await supabase
+        .from('campaigns')
+        .select('business_id')
+        .eq('id', campaignId)
+        .single();
+
+      if (campaign?.business_id) {
+        await recordPlatformFee(supabase, {
+          campaignId,
+          paymentId,
+          businessId: campaign.business_id,
+          paymentAmount: authoritativeAmount,
+          gatewayFee,
+        });
+      }
+    } else {
+      logger.error('[CAMPAIGN-DONATION] RPC returned fee-eligible result without valid amount', { campaignId, paymentId, result });
+      Sentry.captureException(new Error('Campaign RPC fee-eligible but missing authoritative amount'), {
+        tags: { component: 'process-success', operation: 'campaign-fee' },
+        extra: { campaignId, paymentId },
+      });
     }
-  }
-
-  // Record platform fee (unique index prevents duplicates)
-  const { data: campaign } = await supabase
-    .from('campaigns')
-    .select('business_id')
-    .eq('id', campaignId)
-    .single();
-
-  if (campaign?.business_id) {
-    await recordPlatformFee(supabase, {
-      campaignId,
-      businessId: campaign.business_id,
-      paymentAmount: amount,
-      gatewayFee,
-    });
   }
 }
