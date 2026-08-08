@@ -35,7 +35,7 @@ function mockSupabase(overrides: Record<string, unknown> = {}) {
         }),
       }),
     })),
-    rpc: vi.fn().mockResolvedValue({ data: { applied: true, new_amount_paid: 1000, is_fully_paid: true }, error: null }),
+    rpc: vi.fn().mockResolvedValue({ data: { applied: true, is_legacy: false, amount: 500, new_amount_paid: 1000, is_fully_paid: true }, error: null }),
     _insertFn: insertFn,
   };
 }

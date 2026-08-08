@@ -365,12 +365,13 @@ describe('process-success.ts uses atomic RPCs and payment_id', () => {
     expect(rpcCall![0]).not.toContain('p_business_id');
   });
 
-  it('processInvoicePayment attempts fee for non-legacy results only', () => {
+  it('processInvoicePayment uses DB-authoritative amount only (no caller fallback)', () => {
     const fnBody = source.split('processInvoicePayment')[2];
     expect(fnBody).toContain('!result.is_legacy');
     expect(fnBody).toContain('recordPlatformFee');
-    // Uses DB-authoritative amount
     expect(fnBody).toContain('result.amount');
+    // No fallback to caller-supplied paymentAmount for fee
+    expect(fnBody).not.toMatch(/result\.amount\s*\?\s*Number\(result\.amount\)\s*:\s*paymentAmount/);
   });
 
   it('processCampaignDonation calls apply_campaign_donation RPC (no caller-supplied amount)', () => {
@@ -383,11 +384,12 @@ describe('process-success.ts uses atomic RPCs and payment_id', () => {
     expect(rpcCall![0]).not.toContain('p_amount');
   });
 
-  it('processCampaignDonation attempts fee for non-legacy results only', () => {
+  it('processCampaignDonation uses DB-authoritative amount only (no caller fallback)', () => {
     const fnBody = source.split('processCampaignDonation')[2];
     expect(fnBody).toContain('!result.is_legacy');
     expect(fnBody).toContain('recordPlatformFee');
     expect(fnBody).toContain('result.amount');
+    expect(fnBody).not.toMatch(/result\.amount\s*\?\s*Number\(result\.amount\)\s*:\s*amount/);
   });
 
   it('recordPlatformFee accepts and inserts payment_id', () => {

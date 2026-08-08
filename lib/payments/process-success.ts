@@ -363,14 +363,22 @@ export async function processInvoicePayment(
   // - Legacy marker replay: do NOT create fee (legacy fees already exist with NULL payment_id).
   const shouldEnsureFee = result && !result.reason && !result.is_legacy;
   if (shouldEnsureFee) {
-    // Use DB-authoritative amount from RPC, not caller-supplied paymentAmount
-    const authoritativeAmount = result.amount ? Number(result.amount) : paymentAmount;
-    await recordPlatformFee(supabase, {
-      invoiceId,
-      paymentId,
-      paymentAmount: authoritativeAmount,
-      gatewayFee,
-    });
+    // Use ONLY DB-authoritative amount from RPC — never caller-supplied
+    const authoritativeAmount = result.amount ? Number(result.amount) : null;
+    if (authoritativeAmount && authoritativeAmount > 0) {
+      await recordPlatformFee(supabase, {
+        invoiceId,
+        paymentId,
+        paymentAmount: authoritativeAmount,
+        gatewayFee,
+      });
+    } else {
+      logger.error('[INVOICE-PAYMENT] RPC returned fee-eligible result without valid amount', { invoiceId, paymentId, result });
+      Sentry.captureException(new Error('Invoice RPC fee-eligible but missing authoritative amount'), {
+        tags: { component: 'process-success', operation: 'invoice-fee' },
+        extra: { invoiceId, paymentId },
+      });
+    }
   }
 }
 
@@ -407,20 +415,29 @@ export async function processCampaignDonation(
   // Fee retry logic: same as invoice — skip legacy, ensure for new/post-migration
   const shouldEnsureFee = result && !result.reason && !result.is_legacy;
   if (shouldEnsureFee) {
-    const authoritativeAmount = result.amount ? Number(result.amount) : amount;
-    const { data: campaign } = await supabase
-      .from('campaigns')
-      .select('business_id')
-      .eq('id', campaignId)
-      .single();
+    // Use ONLY DB-authoritative amount from RPC — never caller-supplied
+    const authoritativeAmount = result.amount ? Number(result.amount) : null;
+    if (authoritativeAmount && authoritativeAmount > 0) {
+      const { data: campaign } = await supabase
+        .from('campaigns')
+        .select('business_id')
+        .eq('id', campaignId)
+        .single();
 
-    if (campaign?.business_id) {
-      await recordPlatformFee(supabase, {
-        campaignId,
-        paymentId,
-        businessId: campaign.business_id,
-        paymentAmount: authoritativeAmount,
-        gatewayFee,
+      if (campaign?.business_id) {
+        await recordPlatformFee(supabase, {
+          campaignId,
+          paymentId,
+          businessId: campaign.business_id,
+          paymentAmount: authoritativeAmount,
+          gatewayFee,
+        });
+      }
+    } else {
+      logger.error('[CAMPAIGN-DONATION] RPC returned fee-eligible result without valid amount', { campaignId, paymentId, result });
+      Sentry.captureException(new Error('Campaign RPC fee-eligible but missing authoritative amount'), {
+        tags: { component: 'process-success', operation: 'campaign-fee' },
+        extra: { campaignId, paymentId },
       });
     }
   }

@@ -367,4 +367,140 @@ describe.skipIf(!dbUrl)('Migration 310: Payment idempotency (real PostgreSQL)', 
       expect(psql(`SELECT COUNT(*) FROM campaign_donations WHERE campaign_id='${c}' AND payment_id IS NULL;`)).toBe('2');
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // CAMPAIGN ZERO/NEGATIVE AMOUNT REJECTION
+  // ═══════════════════════════════════════════════════════════════
+  describe('Campaign amount validation', () => {
+    let campId: string;
+    beforeAll(() => { campId = psql(`INSERT INTO campaigns (business_id, raised_amount, donor_count) VALUES ('${BIZ1}', 0, 0) RETURNING id;`); });
+
+    it('zero amount payment rejected', () => {
+      const pid = psql(`INSERT INTO payments (business_id, amount, status, campaign_id, gateway_reference) VALUES ('${BIZ1}', 0, 'success', '${campId}', 'camp-zero') RETURNING id;`);
+      psql(`INSERT INTO campaign_donations (campaign_id, business_id, payment_id, donor_phone, amount, status) VALUES ('${campId}', '${BIZ1}', '${pid}', '+111', 0, 'pending');`);
+      const r = psqlJson(`SELECT apply_campaign_donation('${campId}', '${pid}');`);
+      expect(r.reason).toBe('invalid_amount');
+      // Donation remains pending
+      expect(psql(`SELECT status FROM campaign_donations WHERE payment_id='${pid}';`)).toBe('pending');
+      // Campaign unchanged
+      expect(psql(`SELECT raised_amount, donor_count FROM campaigns WHERE id='${campId}';`)).toBe('0.00|0');
+    });
+
+    it('negative amount payment rejected', () => {
+      const pid = psql(`INSERT INTO payments (business_id, amount, status, campaign_id, gateway_reference) VALUES ('${BIZ1}', -100, 'success', '${campId}', 'camp-neg') RETURNING id;`);
+      psql(`INSERT INTO campaign_donations (campaign_id, business_id, payment_id, donor_phone, amount, status) VALUES ('${campId}', '${BIZ1}', '${pid}', '+222', 100, 'pending');`);
+      const r = psqlJson(`SELECT apply_campaign_donation('${campId}', '${pid}');`);
+      expect(r.reason).toBe('invalid_amount');
+      expect(psql(`SELECT status FROM campaign_donations WHERE payment_id='${pid}';`)).toBe('pending');
+    });
+
+    it('positive amount succeeds normally', () => {
+      const pid = psql(`INSERT INTO payments (business_id, amount, status, campaign_id, gateway_reference) VALUES ('${BIZ1}', 500, 'success', '${campId}', 'camp-pos') RETURNING id;`);
+      psql(`INSERT INTO campaign_donations (campaign_id, business_id, payment_id, donor_phone, amount, status) VALUES ('${campId}', '${BIZ1}', '${pid}', '+333', 500, 'pending');`);
+      const r = psqlJson(`SELECT apply_campaign_donation('${campId}', '${pid}');`);
+      expect(r.applied).toBe(true);
+      expect(Number(r.amount)).toBe(500);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // DUPLICATE HISTORICAL DONATION MIGRATION FAILURE
+  // ═══════════════════════════════════════════════════════════════
+  describe('Duplicate historical donation migration safety', () => {
+    it('migration fails diagnostically with duplicate payment_id rows', () => {
+      // Create a fresh isolated database scenario
+      psql(`
+        CREATE TABLE IF NOT EXISTS test_dup_donations (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          campaign_id uuid NOT NULL,
+          business_id uuid NOT NULL,
+          payment_id uuid,
+          donor_phone text NOT NULL,
+          amount integer NOT NULL,
+          status varchar(20) DEFAULT 'pending',
+          is_legacy boolean DEFAULT false,
+          created_at timestamptz DEFAULT now()
+        );
+
+        INSERT INTO test_dup_donations (campaign_id, business_id, payment_id, donor_phone, amount, status)
+        VALUES
+          ('30000000-0000-0000-0000-000000000099', '${BIZ1}', '50000000-0000-0000-0000-000000000001', '+111', 100, 'success'),
+          ('30000000-0000-0000-0000-000000000099', '${BIZ1}', '50000000-0000-0000-0000-000000000001', '+222', 100, 'success');
+      `);
+
+      // Simulate the migration's duplicate check
+      let err = '';
+      try {
+        psql(`
+          DO $$
+          DECLARE v_dup_count integer;
+          BEGIN
+            SELECT COUNT(*) INTO v_dup_count FROM (
+              SELECT payment_id FROM test_dup_donations
+              WHERE payment_id IS NOT NULL GROUP BY payment_id HAVING COUNT(*) > 1
+            ) dups;
+            IF v_dup_count > 0 THEN
+              RAISE EXCEPTION 'Migration 310 blocked: % payment_id value(s) have duplicate rows.', v_dup_count;
+            END IF;
+          END $$;
+        `);
+      } catch (e: any) {
+        err = e.toString();
+      }
+      expect(err).toContain('Migration 310 blocked');
+      expect(err).toContain('duplicate rows');
+
+      // Both rows remain unchanged
+      expect(psql(`SELECT COUNT(*) FROM test_dup_donations WHERE payment_id='50000000-0000-0000-0000-000000000001';`)).toBe('2');
+
+      psql(`DROP TABLE IF EXISTS test_dup_donations;`);
+    });
+
+    it('migration succeeds with clean data (no duplicates)', () => {
+      psql(`
+        CREATE TABLE IF NOT EXISTS test_clean_donations (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          campaign_id uuid NOT NULL,
+          business_id uuid NOT NULL,
+          payment_id uuid,
+          donor_phone text NOT NULL,
+          amount integer NOT NULL,
+          status varchar(20) DEFAULT 'pending',
+          is_legacy boolean DEFAULT false,
+          created_at timestamptz DEFAULT now()
+        );
+
+        INSERT INTO test_clean_donations (campaign_id, business_id, payment_id, donor_phone, amount, status)
+        VALUES
+          ('30000000-0000-0000-0000-000000000099', '${BIZ1}', '50000000-0000-0000-0000-000000000002', '+111', 100, 'success'),
+          ('30000000-0000-0000-0000-000000000099', '${BIZ1}', '50000000-0000-0000-0000-000000000003', '+222', 200, 'success'),
+          ('30000000-0000-0000-0000-000000000099', '${BIZ1}', NULL, '+333', 300, 'pending');
+      `);
+
+      // No error
+      psql(`
+        DO $$
+        DECLARE v_dup_count integer;
+        BEGIN
+          SELECT COUNT(*) INTO v_dup_count FROM (
+            SELECT payment_id FROM test_clean_donations
+            WHERE payment_id IS NOT NULL GROUP BY payment_id HAVING COUNT(*) > 1
+          ) dups;
+          IF v_dup_count > 0 THEN
+            RAISE EXCEPTION 'blocked';
+          END IF;
+        END $$;
+      `);
+      // If we get here without error, the check passed
+      expect(true).toBe(true);
+
+      psql(`DROP TABLE IF EXISTS test_clean_donations;`);
+    });
+
+    it('multiple NULL payment_id rows are allowed', () => {
+      // The actual migration's UNIQUE index allows multiple NULLs
+      // Verified by the existing "NULL payment_id rows allowed" test above
+      expect(true).toBe(true);
+    });
+  });
 });

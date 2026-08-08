@@ -63,19 +63,24 @@ ALTER TABLE campaign_donations ADD COLUMN IF NOT EXISTS
 -- Mark pre-migration successful donations as legacy
 UPDATE campaign_donations SET is_legacy = true WHERE status = 'success';
 
--- Deduplicate payment_id before adding UNIQUE constraint.
--- Keep the earliest donation per payment_id, mark others as legacy orphans.
--- This handles any existing anomalous duplicate payment_id rows safely.
-WITH ranked AS (
-  SELECT id, payment_id,
-    ROW_NUMBER() OVER (PARTITION BY payment_id ORDER BY created_at ASC, id ASC) AS rn
-  FROM campaign_donations
-  WHERE payment_id IS NOT NULL
-)
-UPDATE campaign_donations cd
-SET payment_id = NULL, is_legacy = true
-FROM ranked r
-WHERE cd.id = r.id AND r.rn > 1;
+-- Verify no ambiguous duplicate payment_id values exist before adding UNIQUE.
+-- If duplicates exist, migration FAILS with a clear diagnostic rather than
+-- silently rewriting historical financial attribution.
+DO $$
+DECLARE
+  v_dup_count integer;
+BEGIN
+  SELECT COUNT(*) INTO v_dup_count
+  FROM (
+    SELECT payment_id FROM campaign_donations
+    WHERE payment_id IS NOT NULL
+    GROUP BY payment_id HAVING COUNT(*) > 1
+  ) dups;
+
+  IF v_dup_count > 0 THEN
+    RAISE EXCEPTION 'Migration 310 blocked: % campaign_donations payment_id value(s) have duplicate rows. Manual reconciliation required before migration can proceed.', v_dup_count;
+  END IF;
+END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_campaign_donations_payment_unique
   ON campaign_donations(payment_id)
@@ -211,6 +216,9 @@ BEGIN
   END IF;
 
   v_amount := v_payment.amount;
+  IF v_amount <= 0 THEN
+    RETURN jsonb_build_object('applied', false, 'reason', 'invalid_amount');
+  END IF;
 
   -- Transition pending → success
   UPDATE public.campaign_donations
