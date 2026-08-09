@@ -629,77 +629,85 @@ export async function sendProactiveConfirmation(
     }
     sideEffectsMayHaveOccurred = true; // tickets, customer email, donation receipt
 
-    // ── 8. Send tickets for ticketing bookings ──
+    // ── 8. Ticketing bookings: finalize inventory, then deliver tickets ──
     try {
       if (payment.booking_id) {
         const { data: ticketBooking } = await supabase
           .from('bookings')
-          .select('flow_type, event_id, date, time, party_size, guest_name, guest_phone, guest_email, notes')
+          .select('flow_type, event_id, bot_session_id, date, time, party_size, guest_name, guest_phone, guest_email, notes')
           .eq('id', payment.booking_id)
           .single();
 
         if (ticketBooking?.flow_type === 'ticketing' && ticketBooking.event_id) {
-          const { data: event } = await supabase
-            .from('events')
-            .select('id, name, date, time, venue')
-            .eq('id', ticketBooking.event_id)
-            .single();
-
-          const eventName = event?.name || ticketBooking.notes?.replace('Tickets for: ', '') || 'Event';
-          const dateLabel = new Date((event?.date || ticketBooking.date) + 'T00:00').toLocaleDateString('en-US', {
-            weekday: 'long', day: 'numeric', month: 'long',
-          });
-
-          const { sendTicketsAfterPurchase } = await import('@/lib/bot/flows/shared/send-tickets');
           const ticketQty = ticketBooking.party_size || 1;
-          await sendTicketsAfterPurchase({
-            supabase,
-            sender: resolved?.sender,  // undefined for web-only purchases (email-only delivery)
-            businessId,
-            bookingId: payment.booking_id,
-            eventId: ticketBooking.event_id,
-            eventName, eventDate: dateLabel,
-            eventTime: event?.time || ticketBooking.time || undefined,
-            venue: event?.venue || '',
-            guestName: ticketBooking.guest_name || 'Guest',
-            guestPhone: ticketBooking.guest_phone || customerPhone || '',
-            guestEmail: ticketBooking.guest_email || undefined,
-            referenceCode,
-            quantity: ticketQty,
-            amount: payment.amount, countryCode,
-          });
 
-          // ── Finalize ticket counters idempotently (same RPC as bot "I've Paid" path) ──
-          // Resolve ticket_type_id from the bot session that created this booking
+          // ── 8a. Resolve ticket_type_id from the EXACT originating bot session ──
+          // Uses booking.bot_session_id (durable FK set at booking creation), not "latest session for phone"
           let ticketTypeId: string | null = null;
-          try {
-            const { data: session } = await supabase
-              .from('bot_sessions')
-              .select('session_data')
-              .eq('business_id', businessId)
-              .or(
-                `whatsapp_number.eq.${ticketBooking.guest_phone?.replace('+', '')},whatsapp_number.eq.${ticketBooking.guest_phone}`,
-              )
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-            ticketTypeId = (session?.session_data as Record<string, unknown>)?.ticket_type_id as string || null;
-          } catch {
-            // Non-critical — counters still increment at event level
+          if (ticketBooking.bot_session_id) {
+            try {
+              const { data: originSession } = await supabase
+                .from('bot_sessions')
+                .select('session_data')
+                .eq('id', ticketBooking.bot_session_id)
+                .single();
+              ticketTypeId = (originSession?.session_data as Record<string, unknown>)?.ticket_type_id as string || null;
+            } catch {
+              // Session lookup failed — ticketTypeId stays null
+            }
           }
 
+          // ── 8b. Canonical inventory finalization BEFORE ticket creation/delivery ──
+          // Must succeed before we generate tickets — ensures counters are consistent.
           const { data: finResult, error: finError } = await supabase.rpc('finalize_free_ticket_booking', {
             p_booking_id: payment.booking_id,
             p_event_id: ticketBooking.event_id,
             p_ticket_type_id: ticketTypeId,
             p_quantity: ticketQty,
           });
+
           if (finError) {
             logSafeError(logPrefix, 'ticket-counter-finalize', finError);
+            Sentry.captureException(finError, { tags: { component: 'send-confirmation', operation: 'ticket-finalize' } });
+            // Do NOT proceed to ticket creation — inventory state is indeterminate.
+            // The claim remains; stale recovery or webhook retry will re-attempt.
           } else if (finResult?.already_finalized) {
             logger.info(`${logPrefix} Ticket counters already finalized for booking ${payment.booking_id}`);
+            // Already finalized — safe to proceed to ticket delivery (idempotent)
           } else {
             logger.info(`${logPrefix} Ticket counters finalized: event=${ticketBooking.event_id} qty=${ticketQty}`);
+          }
+
+          // ── 8c. Only deliver tickets if finalization succeeded or was already done ──
+          if (!finError) {
+            const { data: event } = await supabase
+              .from('events')
+              .select('id, name, date, time, venue')
+              .eq('id', ticketBooking.event_id)
+              .single();
+
+            const eventName = event?.name || ticketBooking.notes?.replace('Tickets for: ', '') || 'Event';
+            const dateLabel = new Date((event?.date || ticketBooking.date) + 'T00:00').toLocaleDateString('en-US', {
+              weekday: 'long', day: 'numeric', month: 'long',
+            });
+
+            const { sendTicketsAfterPurchase } = await import('@/lib/bot/flows/shared/send-tickets');
+            await sendTicketsAfterPurchase({
+              supabase,
+              sender: resolved?.sender,
+              businessId,
+              bookingId: payment.booking_id,
+              eventId: ticketBooking.event_id,
+              eventName, eventDate: dateLabel,
+              eventTime: event?.time || ticketBooking.time || undefined,
+              venue: event?.venue || '',
+              guestName: ticketBooking.guest_name || 'Guest',
+              guestPhone: ticketBooking.guest_phone || customerPhone || '',
+              guestEmail: ticketBooking.guest_email || undefined,
+              referenceCode,
+              quantity: ticketQty,
+              amount: payment.amount, countryCode,
+            });
           }
         }
       }

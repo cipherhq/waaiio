@@ -41,15 +41,15 @@ export async function initializePayment(
     const { getCountry } = await import('@/lib/countries');
     const currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
 
-    // ── Idempotent reuse: if a pending payment already exists for this entity with
-    // matching amount, currency, and gateway — AND has a valid checkout URL — return it
-    // instead of creating a duplicate provider transaction.
-    // This prevents Paystack "duplicate_reference" errors on retry/re-entry. ──
+    // ── Idempotent reuse: check for an existing pending payment for this entity.
+    // Fail closed: if the lookup itself fails, do NOT proceed to the provider —
+    // creating a duplicate provider transaction is worse than a transient failure. ──
     const entityId = opts.bookingId || opts.orderId || opts.invoiceId || opts.reservationId;
     if (entityId) {
       const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : 'reservation_id';
+      let lookupOk = false;
       try {
-        const { data: existingPayment } = await supabase
+        const { data: existingPayment, error: lookupError } = await supabase
           .from('payments')
           .select('id, gateway_reference, amount, currency, gateway, metadata')
           .eq(entityCol, entityId)
@@ -57,6 +57,14 @@ export async function initializePayment(
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle();
+
+        if (lookupError) {
+          logger.withContext({ op: 'payment.reuse-lookup', ...safeLogErrorContext(lookupError) })
+            .error('[PAYMENT] Pending payment lookup failed — aborting to prevent duplicate provider transaction');
+          return null;
+        }
+
+        lookupOk = true;
 
         if (
           existingPayment
@@ -74,9 +82,11 @@ export async function initializePayment(
           }
         }
       } catch (lookupErr) {
-        // Lookup failure must not block payment — fall through to fresh initialization
-        logger.withContext({ op: 'payment.reuse-lookup', ...safeLogErrorContext(lookupErr) })
-          .error('[PAYMENT] Pending payment lookup failed, proceeding with fresh init');
+        if (!lookupOk) {
+          logger.withContext({ op: 'payment.reuse-lookup-throw', ...safeLogErrorContext(lookupErr) })
+            .error('[PAYMENT] Pending payment lookup threw — aborting to prevent duplicate provider transaction');
+          return null;
+        }
       }
     }
 

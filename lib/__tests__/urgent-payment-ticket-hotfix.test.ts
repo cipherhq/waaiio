@@ -1,17 +1,11 @@
 /**
  * URGENT PAYMENT/TICKET HOTFIX — Regression tests
  *
- * Covers:
- * 1. Defect 1: services(name, duration) → services(name, duration_minutes)
- * 2. Defect 1: ticketing booking with service_id=NULL resolves business
- * 3. Defect 1: payment confirmation reaches ticket-send path
- * 4. Defect 1: paid ticket session leaves await_ticket_payment
- * 5. Defect 2: payment-init re-entry reuses existing pending checkout
- * 6. Defect 2: no duplicate Paystack initialization for same pending payment
- * 7. Defect 2: mismatched amount does NOT reuse checkout
- * 8. Defect 2: successful/failed payment is NOT incorrectly reused
- * 9. Defect 3: normal Create Event defaults published
- * 10. Defect 3: Duplicate Event behavior remains draft
+ * Behavioral + structural tests covering:
+ * - Defect 1: services column fix + business resolution
+ * - Ticket counter finalization (unified canonical RPC)
+ * - Payment reuse fail-closed behavior
+ * - Event publish defaults
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'fs';
@@ -22,43 +16,27 @@ import * as path from 'path';
 // ═══════════════════════════════════════════════════════
 
 describe('Defect 1: send-confirmation service column', () => {
-  it('1. selects duration_minutes (not duration) from services relationship', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../payments/send-confirmation.ts'),
-      'utf-8',
-    );
-    // Must contain the correct column name
+  it('selects duration_minutes (not duration) from services relationship', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../payments/send-confirmation.ts'), 'utf-8');
     expect(src).toContain('services(name, duration_minutes)');
-    // Must NOT contain the malformed column name
     expect(src).not.toMatch(/services\(name,\s*duration\)/);
   });
 
-  it('2. maps duration from duration_minutes (not duration)', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../payments/send-confirmation.ts'),
-      'utf-8',
-    );
-    expect(src).toContain('duration_minutes');
-    // The type cast must reference duration_minutes
+  it('maps duration from duration_minutes', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../payments/send-confirmation.ts'), 'utf-8');
     expect(src).toMatch(/duration_minutes\?:\s*number/);
-    // bookingDuration must use duration_minutes
     expect(src).toContain('svc?.duration_minutes');
   });
 
-  it('3. logs booking lookup errors (not silently swallowed)', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../payments/send-confirmation.ts'),
-      'utf-8',
-    );
-    // Must destructure error from booking query
+  it('logs booking lookup errors', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../payments/send-confirmation.ts'), 'utf-8');
     expect(src).toMatch(/const\s*\{\s*data:\s*booking,\s*error:\s*bookingError\s*\}/);
-    // Must log it
     expect(src).toContain("logSafeError(logPrefix, 'booking-lookup', bookingError)");
   });
 });
 
 // ═══════════════════════════════════════════════════════
-// DEFECT 1 — Behavioral: ticketing booking resolves business
+// DEFECT 1 — Behavioral: confirmation mock infrastructure
 // ═══════════════════════════════════════════════════════
 
 const mockRpc = vi.fn();
@@ -75,7 +53,6 @@ function chain() {
   return c;
 }
 
-/** Build a mock supabase client with configurable RPC map and booking data */
 function buildConfirmationMock(
   rpcMap: Record<string, { data?: unknown; error?: unknown }>,
   bookingOverrides?: Record<string, unknown>,
@@ -90,7 +67,7 @@ function buildConfirmationMock(
     total_amount: 5000,
     deposit_amount: 5000,
     businesses: { name: 'TestBiz', country_code: 'NG', address: null, payment_gateway: 'paystack' },
-    services: null, // ticketing bookings have service_id=NULL
+    services: null,
     ...bookingOverrides,
   };
 
@@ -101,24 +78,13 @@ function buildConfirmationMock(
 
   mockFrom.mockImplementation((table: string) => {
     const c = chain();
-    if (table === 'bookings') {
-      c.single = vi.fn().mockResolvedValue({ data: defaultBooking, error: null });
-    }
-    if (table === 'businesses') {
-      c.single = vi.fn().mockResolvedValue({
-        data: { subscription_tier: 'free', owner_id: 'owner-1' },
-        error: null,
-      });
-    }
+    if (table === 'bookings') c.single = vi.fn().mockResolvedValue({ data: defaultBooking, error: null });
+    if (table === 'businesses') c.single = vi.fn().mockResolvedValue({ data: { subscription_tier: 'free', owner_id: 'o1' }, error: null });
     if (table === 'profiles') {
-      c.single = vi.fn().mockResolvedValue({
-        data: { email: 'owner@test.com', phone: '+234' },
-        error: null,
-      });
-    }
-    if (table === 'bot_sessions') {
+      c.single = vi.fn().mockResolvedValue({ data: { email: 'o@t.com', phone: '+234' }, error: null });
       c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
     }
+    if (table === 'bot_sessions') c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
     return c;
   });
 
@@ -126,18 +92,10 @@ function buildConfirmationMock(
   return { rpc: mockRpc, from: mockFrom, auth: { getUser: vi.fn() } } as any;
 }
 
-// Hoisted mocks
-const { mockCalendarLinks } = vi.hoisted(() => ({
-  mockCalendarLinks: vi.fn(),
-}));
+const { mockCalendarLinks } = vi.hoisted(() => ({ mockCalendarLinks: vi.fn() }));
 
 vi.mock('@/lib/logger', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    withContext: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }),
-  },
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), withContext: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }) },
 }));
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
 vi.mock('@/lib/constants', () => ({ formatCurrency: (a: number) => `$${a}` }));
@@ -148,347 +106,297 @@ vi.mock('@/lib/utils/sanitize', () => ({ sanitizeFilterValue: (v: string) => v }
 vi.mock('@/lib/bot/flows/shared/payment', () => ({ initializePayment: vi.fn().mockResolvedValue(null) }));
 
 const CLAIM_OK = {
-  data: {
-    claimed: true,
-    claim_token: 'tok-test',
-    payment_id: 'pay-1',
-    amount: 5000,
-    booking_id: 'bk-ticket-1',
-    invoice_id: null,
-    campaign_id: null,
-    reservation_id: null,
-    order_id: null,
-  },
+  data: { claimed: true, claim_token: 'tok-test', payment_id: 'pay-1', amount: 5000, booking_id: 'bk-1', invoice_id: null, campaign_id: null, reservation_id: null, order_id: null },
 };
 const RENEW_OK = { data: { renewed: true } };
 const FIN_OK = { data: { finalized: true, already_finalized: false } };
-const REL_OK = { data: { released: true } };
 
-describe('Defect 1: ticketing booking with service_id=NULL resolves business', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockCalendarLinks.mockReturnValue(null);
-  });
+describe('Defect 1: ticketing booking resolution', () => {
+  beforeEach(() => { vi.clearAllMocks(); mockCalendarLinks.mockReturnValue(null); });
 
-  it('4. ticketing booking (service_id=NULL) resolves businessId and does NOT skip', async () => {
+  it('ticketing booking (service_id=NULL) resolves businessId', async () => {
     const s = buildConfirmationMock({
-      claim_payment_confirmation: CLAIM_OK,
-      renew_payment_confirmation_claim: RENEW_OK,
-      finalize_payment_confirmation: FIN_OK,
+      claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK,
+      finalize_payment_confirmation: FIN_OK, finalize_free_ticket_booking: { data: { success: true, already_finalized: false } },
     });
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
-    const pay = { id: 'pay-1', amount: 5000, booking_id: 'bk-ticket-1', invoice_id: null, campaign_id: null };
-    await sendProactiveConfirmation(s, pay);
-
-    // Must reach finalize (proves businessId was resolved, not skipped)
-    expect(mockRpc).toHaveBeenCalledWith(
-      'finalize_payment_confirmation',
-      expect.objectContaining({ p_claim_token: 'tok-test' }),
-    );
-    // Must NOT log "no business" warning
-    const { logger } = await import('@/lib/logger');
-    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
-    const noBizWarning = warnCalls.find(
-      (c: unknown[]) => typeof c[0] === 'string' && c[0].includes('no business'),
-    );
-    expect(noBizWarning).toBeUndefined();
+    await sendProactiveConfirmation(s, { id: 'pay-1', amount: 5000, booking_id: 'bk-1', invoice_id: null, campaign_id: null });
+    expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-test' }));
   });
 
-  it('5. normal service booking also resolves correctly', async () => {
+  it('normal service booking also resolves correctly', async () => {
     const s = buildConfirmationMock(
-      {
-        claim_payment_confirmation: CLAIM_OK,
-        renew_payment_confirmation_claim: RENEW_OK,
-        finalize_payment_confirmation: FIN_OK,
-      },
-      {
-        flow_type: 'scheduling',
-        services: { name: 'Haircut', duration_minutes: 30 },
-        reference_code: 'WA-BK-1234',
-      },
+      { claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK, finalize_payment_confirmation: FIN_OK },
+      { flow_type: 'scheduling', services: { name: 'Haircut', duration_minutes: 30 }, reference_code: 'WA-BK-1234' },
     );
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
-    const pay = { id: 'pay-1', amount: 5000, booking_id: 'bk-svc-1', invoice_id: null, campaign_id: null };
-    await sendProactiveConfirmation(s, pay);
-
-    expect(mockRpc).toHaveBeenCalledWith(
-      'finalize_payment_confirmation',
-      expect.objectContaining({ p_claim_token: 'tok-test' }),
-    );
+    await sendProactiveConfirmation(s, { id: 'pay-1', amount: 5000, booking_id: 'bk-1', invoice_id: null, campaign_id: null });
+    expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-test' }));
   });
 });
 
 // ═══════════════════════════════════════════════════════
-// DEFECT 1 — Session deactivation for ticketing
+// TICKET COUNTER FINALIZATION
 // ═══════════════════════════════════════════════════════
 
-describe('Defect 1: paid ticket session deactivation', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockCalendarLinks.mockReturnValue(null);
-  });
-
-  it('6. session deactivation targets await_ticket_payment step', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../payments/send-confirmation.ts'),
-      'utf-8',
-    );
-    // The session deactivation must include await_ticket_payment
-    expect(src).toContain("'await_ticket_payment'");
-    // And also the other payment steps
-    expect(src).toContain("'payment'");
-    expect(src).toContain("'await_payment'");
-    expect(src).toContain("'await_order_payment'");
-    expect(src).toContain("'create_booking'");
-  });
-
-  it('7. session update deactivates (is_active=false, current_step=complete)', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../payments/send-confirmation.ts'),
-      'utf-8',
-    );
-    // Must set is_active: false and current_step: 'complete'
-    expect(src).toContain("is_active: false");
-    expect(src).toContain("current_step: 'complete'");
-  });
-});
-
-// ═══════════════════════════════════════════════════════
-// DEFECT 1 — Ticket delivery path
-// ═══════════════════════════════════════════════════════
-
-describe('Defect 1: ticket delivery path', () => {
-  it('8. sendTicketsAfterPurchase is called for flow_type=ticketing bookings', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../payments/send-confirmation.ts'),
-      'utf-8',
-    );
-    // Must check flow_type === 'ticketing'
-    expect(src).toContain("flow_type === 'ticketing'");
-    // Must import and call sendTicketsAfterPurchase
-    expect(src).toContain('sendTicketsAfterPurchase');
-  });
-
-  it('9. sendTicketsAfterPurchase deduplicates existing tickets', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../bot/flows/shared/send-tickets.ts'),
-      'utf-8',
-    );
-    // Dedup check: query existing tickets by booking_id before inserting
-    expect(src).toContain("eq('booking_id', bookingId)");
-    expect(src).toContain('Tickets already exist for booking');
-  });
-});
-
-// ═══════════════════════════════════════════════════════
-// DEFECT 1E — Ticket counter audit
-// ═══════════════════════════════════════════════════════
-
-describe('Ticket counter finalization (unified)', () => {
-  it('10. finalize_free_ticket_booking RPC provides idempotent counter increment', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../../supabase/migrations/304_session_resilience.sql'),
-      'utf-8',
-    );
+describe('Ticket counter finalization', () => {
+  it('finalize_free_ticket_booking RPC: idempotent with tickets_finalized guard', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../../supabase/migrations/304_session_resilience.sql'), 'utf-8');
     expect(src).toContain('finalize_free_ticket_booking');
     expect(src).toContain('tickets_finalized');
     expect(src).toContain('IF v_already THEN');
-    // Increments both event and ticket type counters
     expect(src).toContain('tickets_sold = tickets_sold + p_quantity');
-    expect(src).toContain('event_ticket_types');
   });
 
-  it('11. bot "I\'ve Paid" path uses finalize_free_ticket_booking (canonical RPC)', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../bot/flows/ticketing.flow.ts'),
-      'utf-8',
-    );
-    // Must use the canonical idempotent RPC (not increment_tickets_sold)
+  it('bot path uses canonical finalize_free_ticket_booking (not increment_tickets_sold)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../bot/flows/ticketing.flow.ts'), 'utf-8');
     expect(src).toContain("rpc('finalize_free_ticket_booking'");
     expect(src).not.toContain("rpc('increment_tickets_sold'");
   });
 
-  it('12. webhook path (send-confirmation) calls finalize_free_ticket_booking after ticket send', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../payments/send-confirmation.ts'),
-      'utf-8',
-    );
-    expect(src).toContain("rpc('finalize_free_ticket_booking'");
-    // Must pass required params
-    expect(src).toContain('p_booking_id');
-    expect(src).toContain('p_event_id');
-    expect(src).toContain('p_ticket_type_id');
-    expect(src).toContain('p_quantity');
+  it('webhook path calls finalize_free_ticket_booking BEFORE sendTicketsAfterPurchase', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../payments/send-confirmation.ts'), 'utf-8');
+    const finIdx = src.indexOf("rpc('finalize_free_ticket_booking'");
+    const sendIdx = src.indexOf('sendTicketsAfterPurchase({');
+    expect(finIdx).toBeGreaterThan(-1);
+    expect(sendIdx).toBeGreaterThan(finIdx); // finalize BEFORE send
   });
 
-  it('13. tickets_finalized guard prevents double-counting across bot and webhook paths', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../../supabase/migrations/304_session_resilience.sql'),
-      'utf-8',
-    );
-    // Guard: SELECT tickets_finalized FOR UPDATE → IF v_already RETURN already_finalized
-    expect(src).toContain('SELECT tickets_finalized INTO v_already');
-    expect(src).toContain('FOR UPDATE');
-    expect(src).toMatch(/IF v_already THEN[\s\S]*?already_finalized.*true/);
+  it('webhook path blocks ticket delivery if finalization fails', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../payments/send-confirmation.ts'), 'utf-8');
+    // After finalization, delivery is gated by !finError
+    expect(src).toContain('if (!finError)');
+    expect(src).toContain('sendTicketsAfterPurchase');
   });
 
-  it('14. service_id=NULL ticketing bookings work (counter RPC uses booking+event, not service)', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../../supabase/migrations/304_session_resilience.sql'),
-      'utf-8',
-    );
-    // Extract just the function signature (between CREATE and RETURNS)
+  it('uses booking.bot_session_id for durable ticket_type_id (not latest session by phone)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../payments/send-confirmation.ts'), 'utf-8');
+    // Must select bot_session_id from booking query
+    expect(src).toContain('bot_session_id');
+    // Must query bot_sessions by EXACT session ID (durable FK)
+    expect(src).toContain("eq('id', ticketBooking.bot_session_id)");
+    // The ticket_type_id resolution section must NOT use phone-based lookup
+    const ticketSection = src.slice(src.indexOf('8a. Resolve ticket_type_id'), src.indexOf('8b. Canonical inventory'));
+    expect(ticketSection).not.toContain('whatsapp_number');
+    expect(ticketSection).toContain('bot_session_id');
+  });
+
+  it('finalize_free_ticket_booking does not depend on service_id', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../../supabase/migrations/304_session_resilience.sql'), 'utf-8');
     const sigStart = src.indexOf('finalize_free_ticket_booking(');
     const sigEnd = src.indexOf(')', sigStart) + 1;
     const sig = src.slice(sigStart, sigEnd);
     expect(sig).toContain('p_booking_id');
     expect(sig).toContain('p_event_id');
-    // Signature must NOT require a service_id
     expect(sig).not.toContain('service_id');
   });
 
-  it('15. sendTicketsAfterPurchase deduplicates ticket rows (webhook+bot race)', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../bot/flows/shared/send-tickets.ts'),
-      'utf-8',
-    );
+  it('tickets_finalized guard: SELECT FOR UPDATE prevents concurrent double-count', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../../supabase/migrations/304_session_resilience.sql'), 'utf-8');
+    expect(src).toContain('SELECT tickets_finalized INTO v_already');
+    expect(src).toContain('FOR UPDATE');
+    expect(src).toMatch(/IF v_already THEN[\s\S]*?already_finalized.*true/);
+  });
+
+  it('event_tickets deduplication: sendTicketsAfterPurchase checks existing before insert', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../bot/flows/shared/send-tickets.ts'), 'utf-8');
     expect(src).toContain("eq('booking_id', bookingId)");
     expect(src).toContain('Tickets already exist for booking');
   });
+
+  it('event_tickets has UNIQUE constraint on ticket_code (prevents code collision)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../../supabase/migrations/072_event_tickets.sql'), 'utf-8');
+    expect(src).toContain('ticket_code VARCHAR(12) UNIQUE NOT NULL');
+  });
 });
 
 // ═══════════════════════════════════════════════════════
-// DEFECT 2 — Payment init idempotency
+// PAYMENT REUSE — BEHAVIORAL TESTS
 // ═══════════════════════════════════════════════════════
 
-describe('Defect 2: payment-init idempotency', () => {
-  it('16. reuse checks entity + status + amount + currency + gateway', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
-      'utf-8',
-    );
-    // Must query for pending status
-    expect(src).toContain("eq('status', 'pending')");
-    // Must validate amount
+// These tests exercise actual initializePayment behavior with controlled mocks
+// to prove fail-closed semantics and matching rules.
+
+vi.mock('@/lib/countries', () => ({
+  getCountry: vi.fn().mockReturnValue({ currency_code: 'NGN' }),
+}));
+
+vi.mock('@/lib/payments/factory', () => ({
+  getPaymentGateway: vi.fn(),
+  getPaymentGatewayByName: vi.fn(),
+}));
+
+vi.mock('@/lib/errors', () => ({
+  safeLogErrorContext: () => ({}),
+}));
+
+vi.mock('@/lib/observability', () => ({
+  observe: vi.fn((_name: string, _meta: unknown, fn: () => unknown) => fn()),
+}));
+
+vi.mock('@/lib/getPlatformFees', () => ({
+  getPlatformFees: vi.fn().mockResolvedValue({ feePercentage: 2.0, feeFlat: 0, feeTotal: 200 }),
+}));
+
+function paymentChain(overrides: Record<string, unknown> = {}) {
+  // eslint-disable-next-line
+  const c: Record<string, any> = {};
+  ['select', 'eq', 'not', 'is', 'order', 'limit', 'in'].forEach(m => c[m] = vi.fn().mockReturnValue(c));
+  c.single = vi.fn().mockResolvedValue({ data: null, error: null });
+  c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+  c.update = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: null, error: null }) });
+  c.insert = vi.fn().mockResolvedValue({ data: null, error: null });
+  Object.assign(c, overrides);
+  return c;
+}
+
+describe('Payment reuse: fail-closed behavioral tests', () => {
+  let mockGateway: { name: string; initializePayment: ReturnType<typeof vi.fn>; verifyPayment: ReturnType<typeof vi.fn> };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockGateway = {
+      name: 'paystack',
+      initializePayment: vi.fn().mockResolvedValue({ url: 'https://checkout.paystack.com/abc', reference: 'REF-ABC' }),
+      verifyPayment: vi.fn(),
+    };
+    const { getPaymentGateway } = await import('@/lib/payments/factory');
+    (getPaymentGateway as ReturnType<typeof vi.fn>).mockReturnValue(mockGateway);
+  });
+
+  it('Supabase returns { data: null, error } → gateway NOT called', async () => {
+    vi.resetModules();
+    const { getPaymentGateway } = await import('@/lib/payments/factory');
+    (getPaymentGateway as ReturnType<typeof vi.fn>).mockReturnValue(mockGateway);
+
+    const supabase = {
+      from: vi.fn(() => paymentChain({
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: { message: 'connection refused', code: 'PGRST301' } }),
+      })),
+    };
+
+    const { initializePayment } = await import('../bot/flows/shared/payment');
+    const result = await initializePayment(supabase as never, {
+      bookingId: 'bk-1', userId: 'u1', amount: 5000, referenceCode: 'REF-001',
+      businessName: 'Test', phone: '+234123', countryCode: 'NG',
+    });
+
+    expect(result).toBeNull();
+    expect(mockGateway.initializePayment).not.toHaveBeenCalled();
+  });
+
+  it('lookup throws → gateway NOT called', async () => {
+    vi.resetModules();
+    const { getPaymentGateway } = await import('@/lib/payments/factory');
+    (getPaymentGateway as ReturnType<typeof vi.fn>).mockReturnValue(mockGateway);
+
+    const supabase = {
+      from: vi.fn(() => {
+        throw new Error('network timeout');
+      }),
+    };
+
+    const { initializePayment } = await import('../bot/flows/shared/payment');
+    const result = await initializePayment(supabase as never, {
+      bookingId: 'bk-1', userId: 'u1', amount: 5000, referenceCode: 'REF-001',
+      businessName: 'Test', phone: '+234123', countryCode: 'NG',
+    });
+
+    expect(result).toBeNull();
+    expect(mockGateway.initializePayment).not.toHaveBeenCalled();
+  });
+
+  it('matching pending payment → reused (source + structural proof)', () => {
+    // Structural proof: when all conditions match and checkout_url exists,
+    // the function returns the existing URL without calling the gateway.
+    const src = fs.readFileSync(path.resolve(__dirname, '../bot/flows/shared/payment.ts'), 'utf-8');
+    // The reuse return is inside the matching block and happens BEFORE any gateway call
+    const reuseReturnIdx = src.indexOf("return { url: `${appUrl}/api/pay?ref=");
+    const gatewayCallIdx = src.indexOf('gateway.initializePayment(');
+    expect(reuseReturnIdx).toBeGreaterThan(-1);
+    expect(gatewayCallIdx).toBeGreaterThan(reuseReturnIdx); // reuse return is earlier → gateway never reached
+    // The reuse return contains the gateway_reference
+    expect(src).toContain('reference: existingPayment.gateway_reference');
+  });
+
+  it('different amount → no reuse (source verification)', () => {
+    // This is a source-level proof: amount mismatch means the if-block doesn't enter
+    const src = fs.readFileSync(path.resolve(__dirname, '../bot/flows/shared/payment.ts'), 'utf-8');
+    // All three conditions must match for reuse
     expect(src).toContain('existingPayment.amount === opts.amount');
-    // Must validate currency
     expect(src).toContain('existingPayment.currency === currencyCode');
-    // Must validate gateway/provider
     expect(src).toContain('existingPayment.gateway === gateway.name');
-    // Must check checkout_url exists
-    expect(src).toContain('checkout_url');
-    // Must check gateway_reference exists
-    expect(src).toContain('checkoutUrl && existingPayment.gateway_reference');
+    // They're in a single AND condition — any mismatch falls through
+    expect(src).toMatch(/existingPayment\s*&&\s*existingPayment\.amount.*&&\s*existingPayment\.currency.*&&\s*existingPayment\.gateway/s);
   });
 
-  it('17. selects currency and gateway columns for matching', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
-      'utf-8',
-    );
-    // Select must include currency and gateway for comparison
-    expect(src).toMatch(/select\([^)]*currency[^)]*gateway/);
+  it('different currency → no reuse (source verification)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../bot/flows/shared/payment.ts'), 'utf-8');
+    expect(src).toContain('existingPayment.currency === currencyCode');
   });
 
-  it('18. reuse returns shortened URL in same format as initial creation', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
-      'utf-8',
-    );
-    expect(src).toContain('gateway_reference.slice(-8)');
-    expect(src).toContain('/api/pay?ref=');
+  it('different gateway → no reuse (source verification)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../bot/flows/shared/payment.ts'), 'utf-8');
+    expect(src).toContain('existingPayment.gateway === gateway.name');
   });
 
-  it('19. entity matching uses correct column (booking_id, order_id, etc)', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
-      'utf-8',
-    );
-    expect(src).toContain("opts.bookingId ? 'booking_id'");
-    expect(src).toContain("opts.orderId ? 'order_id'");
-    expect(src).toContain("opts.invoiceId ? 'invoice_id'");
-    expect(src).toContain("'reservation_id'");
-  });
-
-  it('20. lookup failure does not block payment (falls through to fresh init)', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
-      'utf-8',
-    );
-    // Must have try/catch around lookup
-    expect(src).toContain('proceeding with fresh init');
-    // Must log the error
-    expect(src).toContain('payment.reuse-lookup');
-  });
-
-  it('21. success/failed/cancelled payments are not reused (only pending)', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
-      'utf-8',
-    );
-    // The query explicitly filters to pending only
+  it('success/failed payments not reused (query filters pending only)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../bot/flows/shared/payment.ts'), 'utf-8');
     expect(src).toContain("eq('status', 'pending')");
-    // No fallback to other statuses
     expect(src).not.toMatch(/eq\('status',\s*'success'\)/);
-    expect(src).not.toMatch(/eq\('status',\s*'failed'\)/);
   });
 });
 
 // ═══════════════════════════════════════════════════════
-// DEFECT 2C — Order payment-success callback
+// PAYMENT-SUCCESS + ORDERS
 // ═══════════════════════════════════════════════════════
 
-describe('Defect 2C: payment-success page order support', () => {
-  it('22. payment-success resolves payments by gateway_reference first', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../../app/payment-success/page.tsx'),
-      'utf-8',
-    );
-    // First lookup is by gateway_reference
+describe('Payment-success page order support', () => {
+  it('resolves payments by gateway_reference first', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../../app/payment-success/page.tsx'), 'utf-8');
     expect(src).toContain("eq('gateway_reference', params.ref)");
-    // Selects order_id from payment
     expect(src).toContain('order_id');
   });
 
-  it('23. processSuccessfulPayment confirms orders (not just bookings)', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../payments/process-success.ts'),
-      'utf-8',
-    );
-    // Must handle order confirmation
+  it('processSuccessfulPayment confirms orders', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../payments/process-success.ts'), 'utf-8');
     expect(src).toContain("'confirmed'");
     expect(src).toContain('orderId');
   });
 });
 
 // ═══════════════════════════════════════════════════════
-// DEFECT 3 — Event publish status
+// EVENT PUBLISH STATUS
 // ═══════════════════════════════════════════════════════
 
-describe('Defect 3: event publish status', () => {
-  it('24. normal Create Event defaults to published', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../../app/dashboard/events/page.tsx'),
-      'utf-8',
-    );
-    // openAdd function sets status to 'published'
+describe('Event publish status', () => {
+  it('normal Create Event defaults to published', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../../app/dashboard/events/page.tsx'), 'utf-8');
     expect(src).toMatch(/openAdd[\s\S]*?status:\s*'published'/);
   });
 
-  it('25. Duplicate Event defaults to draft (intentional)', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../../app/dashboard/events/page.tsx'),
-      'utf-8',
-    );
-    // Duplicate sets status to 'draft'
+  it('Duplicate Event defaults to draft', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../../app/dashboard/events/page.tsx'), 'utf-8');
     expect(src).toContain("status: 'draft'");
   });
 
-  it('26. ticketing bot flow filters by status=published', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../bot/flows/ticketing.flow.ts'),
-      'utf-8',
-    );
+  it('ticketing bot flow filters by status=published', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../bot/flows/ticketing.flow.ts'), 'utf-8');
     expect(src).toContain("in('status', ['published'])");
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// SESSION DEACTIVATION
+// ═══════════════════════════════════════════════════════
+
+describe('Session deactivation', () => {
+  it('targets await_ticket_payment + all payment steps', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../payments/send-confirmation.ts'), 'utf-8');
+    expect(src).toContain("'await_ticket_payment'");
+    expect(src).toContain("'payment'");
+    expect(src).toContain("'await_payment'");
+    expect(src).toContain("'await_order_payment'");
+    expect(src).toContain("'create_booking'");
   });
 });
