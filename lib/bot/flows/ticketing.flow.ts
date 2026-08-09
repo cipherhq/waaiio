@@ -748,9 +748,8 @@ export const ticketingFlow: FlowDefinition = {
           return [{ type: 'text', text: 'Something went wrong finalizing your tickets. Send *Hi* to try again.' }];
         }
 
-        // Free event — send tickets before marking complete
-        try {
-          await sendTicketsAfterPurchase({
+        // Free event — create canonical ticket rows before marking complete
+        const freeTicketResult = await sendTicketsAfterPurchase({
           supabase: ctx.supabase,
           sender: ctx.sender,
           businessId: ctx.business!.id,
@@ -765,8 +764,9 @@ export const ticketingFlow: FlowDefinition = {
           referenceCode: booking.reference_code,
           quantity: qty,
         });
-        } catch (err) {
-          logger.withContext({ op: 'ticketing.ticket-pdf-send', ...safeLogErrorContext(err) }).error('[TICKETING] Ticket PDF send error');
+        if (!freeTicketResult.success) {
+          logger.error('[TICKETING] Free ticket creation failed:', freeTicketResult.error);
+          return [{ type: 'text', text: 'Something went wrong creating your tickets. Send *Hi* to try again.' }];
         }
 
         // Notify owner: email + WhatsApp
@@ -997,28 +997,25 @@ export const ticketingFlow: FlowDefinition = {
                 })),
               });
 
-              // Dedup path: webhook confirmed payment but doesn't generate tickets.
-              // Generate and send tickets now.
+              // Dedup path: webhook confirmed payment; ensure canonical ticket rows exist.
               const dedupQty = (d.ticket_quantity as number) || 1;
-              try {
-                await sendTicketsAfterPurchase({
-                  supabase: ctx.supabase,
-                  sender: ctx.sender,
-                  businessId: ctx.business!.id,
-                  bookingId: d.booking_id as string,
-                  eventId: d.event_id as string,
-                  eventName: d.event_name as string,
-                  eventDate: dedupDateLabel,
-                  eventTime: d.event_time as string | undefined,
-                  venue: (d.event_venue as string) || '',
-                  guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-                  guestPhone: ctx.from,
-                  referenceCode: d.reference_code as string,
-                  quantity: dedupQty,
-                });
-              } catch (ticketErr) {
-                logger.withContext({ op: 'ticketing.dedup-send-tickets', ...safeLogErrorContext(ticketErr) }).error('[TICKETING] Dedup sendTicketsAfterPurchase FAILED');
-                // Text fallback with reference code
+              const dedupResult = await sendTicketsAfterPurchase({
+                supabase: ctx.supabase,
+                sender: ctx.sender,
+                businessId: ctx.business!.id,
+                bookingId: d.booking_id as string,
+                eventId: d.event_id as string,
+                eventName: d.event_name as string,
+                eventDate: dedupDateLabel,
+                eventTime: d.event_time as string | undefined,
+                venue: (d.event_venue as string) || '',
+                guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+                guestPhone: ctx.from,
+                referenceCode: d.reference_code as string,
+                quantity: dedupQty,
+              });
+              if (!dedupResult.success) {
+                logger.withContext({ op: 'ticketing.dedup-send-tickets' }).error('[TICKETING] Dedup ticket creation failed:', dedupResult.error);
                 await ctx.sender.sendText({
                   to: ctx.from,
                   text: await ctx.t(`🎟️ Your booking is confirmed!\nRef: *${d.reference_code}*\n\nShow this at the entrance or type *my bookings* to view tickets.`),
@@ -1061,37 +1058,25 @@ export const ticketingFlow: FlowDefinition = {
               })),
             });
 
-            // Send ticket PDF + QR codes (MUST await — Vercel kills process after response)
-            try {
-              await sendTicketsAfterPurchase({
-                supabase: ctx.supabase,
-                sender: ctx.sender,
-                businessId: ctx.business!.id,
-                bookingId: d.booking_id as string,
-                eventId: d.event_id as string,
-                eventName: d.event_name as string,
-                eventDate: dateLabel,
-                eventTime: d.event_time as string | undefined,
-                venue: (d.event_venue as string) || '',
-                guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-                guestPhone: ctx.from,
-                referenceCode: d.reference_code as string,
-                quantity: d.ticket_quantity as number,
-              });
-            } catch (ticketErr) {
-              logger.withContext({ op: 'ticketing.send-tickets', ...safeLogErrorContext(ticketErr) }).error('[TICKETING] sendTicketsAfterPurchase FAILED');
-              // Fallback: send a text-only ticket with the code
-              const ticketCodes = await ctx.supabase
-                .from('event_tickets')
-                .select('ticket_code')
-                .eq('booking_id', d.booking_id as string);
-              if (ticketCodes.data && ticketCodes.data.length > 0) {
-                const codes = ticketCodes.data.map(t => t.ticket_code).join('\n');
-                await ctx.sender.sendText({
-                  to: ctx.from,
-                  text: await ctx.t(`🎟️ Your ticket code${ticketCodes.data.length > 1 ? 's' : ''}:\n\n${codes}\n\nShow this at the entrance. You can also type *my bookings* to view your tickets.`),
-                });
-              }
+            // Canonical ticket row creation (MUST await — Vercel kills process after response)
+            const paidTicketResult = await sendTicketsAfterPurchase({
+              supabase: ctx.supabase,
+              sender: ctx.sender,
+              businessId: ctx.business!.id,
+              bookingId: d.booking_id as string,
+              eventId: d.event_id as string,
+              eventName: d.event_name as string,
+              eventDate: dateLabel,
+              eventTime: d.event_time as string | undefined,
+              venue: (d.event_venue as string) || '',
+              guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+              guestPhone: ctx.from,
+              referenceCode: d.reference_code as string,
+              quantity: d.ticket_quantity as number,
+            });
+            if (!paidTicketResult.success) {
+              logger.error('[TICKETING] Paid ticket creation failed:', paidTicketResult.error);
+              return { valid: false, errorMessage: 'Ticket creation failed. Your payment is confirmed — please try again to receive your tickets.' };
             }
 
             // Notify owner: email + WhatsApp

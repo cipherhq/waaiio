@@ -295,21 +295,75 @@ describe('sendTicketsAfterPurchase result contract', () => {
     expect(src).toContain('export interface TicketCreationResult');
   });
   it('reports success with ticket data', () => {
-    const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    expect(src).toContain('return { success: true, tickets }');
+    expect(readSrc('../bot/flows/shared/send-tickets.ts')).toContain('return { success: true, tickets }');
   });
   it('reports insert failure explicitly', () => {
-    const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    expect(src).toContain("return { success: false, tickets: [], error: 'insert_failed' }");
+    expect(readSrc('../bot/flows/shared/send-tickets.ts')).toContain("return { success: false, tickets: [], error: 'insert_failed' }");
   });
-  it('handles UNIQUE conflict from concurrent worker (code 23505)', () => {
+  it('handles UNIQUE conflict (23505) by not returning failure', () => {
     const src = readSrc('../bot/flows/shared/send-tickets.ts');
     expect(src).toContain("insertError.code === '23505'");
-    expect(src).toContain('concurrent worker created rows');
   });
-  it('re-reads canonical rows on UNIQUE conflict', () => {
+  it('does authoritative final re-read after insert/conflict', () => {
     const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    expect(src).toContain('concurrentRows');
+    expect(src).toContain('Authoritative final re-read');
+    expect(src).toContain('finalTickets');
+  });
+  it('validates canonical set: exactly expected ticket_numbers', () => {
+    const src = readSrc('../bot/flows/shared/send-tickets.ts');
+    expect(src).toContain('canonical_set_incomplete');
+    expect(src).toContain('allPresent');
+  });
+  it('handles partial state: inserts only missing ticket numbers', () => {
+    const src = readSrc('../bot/flows/shared/send-tickets.ts');
+    expect(src).toContain('missingNumbers');
+    expect(src).toContain('expectedNumbers');
+    // Must use persisted ticket_number, not array index
+    expect(src).toContain("select('ticket_code, ticket_number')");
+  });
+  it('existing ticket lookup error → fail closed', () => {
+    const src = readSrc('../bot/flows/shared/send-tickets.ts');
+    expect(src).toContain("error: 'existing_ticket_lookup_failed'");
+  });
+  it('final re-read error → fail closed', () => {
+    const src = readSrc('../bot/flows/shared/send-tickets.ts');
+    expect(src).toContain("error: 'final_reread_failed'");
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// CALLER AUDIT
+// ═══════════════════════════════════════════════════════
+
+describe('sendTicketsAfterPurchase caller audit', () => {
+  it('webhook path inspects TicketCreationResult', () => {
+    const src = readSrc('../payments/send-confirmation.ts');
+    expect(src).toContain('ticketResult.success');
+  });
+  it('free-ticket bot path inspects TicketCreationResult', () => {
+    const src = readSrc('../bot/flows/ticketing.flow.ts');
+    expect(src).toContain('freeTicketResult.success');
+  });
+  it('paid "I\'ve Paid" bot path inspects TicketCreationResult', () => {
+    const src = readSrc('../bot/flows/ticketing.flow.ts');
+    expect(src).toContain('paidTicketResult.success');
+  });
+  it('dedup path inspects TicketCreationResult', () => {
+    const src = readSrc('../bot/flows/ticketing.flow.ts');
+    expect(src).toContain('dedupResult.success');
+  });
+  it('paid path ticket failure blocks completion', () => {
+    const src = readSrc('../bot/flows/ticketing.flow.ts');
+    const idx = src.indexOf('paidTicketResult.success');
+    const after = src.slice(idx, idx + 300);
+    expect(after).toContain('valid: false');
+    expect(after).toContain('Ticket creation failed');
+  });
+  it('free path ticket failure returns error message', () => {
+    const src = readSrc('../bot/flows/ticketing.flow.ts');
+    const idx = src.indexOf('freeTicketResult.success');
+    const after = src.slice(idx, idx + 300);
+    expect(after).toContain('creating your tickets');
   });
 });
 
