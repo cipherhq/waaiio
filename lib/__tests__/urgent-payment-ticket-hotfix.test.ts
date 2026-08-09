@@ -284,49 +284,76 @@ describe('Defect 1: ticket delivery path', () => {
 // DEFECT 1E — Ticket counter audit
 // ═══════════════════════════════════════════════════════
 
-describe('Defect 1E: ticket sold counter audit', () => {
-  it('10. sendTicketsAfterPurchase does NOT increment tickets_sold (known gap)', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../bot/flows/shared/send-tickets.ts'),
-      'utf-8',
-    );
-    // sendTicketsAfterPurchase creates event_tickets but does NOT increment counters
-    // It reads tickets_sold for sold-out webhook check but never calls UPDATE on events.tickets_sold
-    expect(src).not.toContain('increment_tickets_sold');
-    expect(src).not.toContain('finalize_free_ticket_booking');
-    // Verify it reads but does not write
-    expect(src).toContain("select('total_tickets, tickets_sold')");
-    // No UPDATE events SET tickets_sold pattern
-    expect(src).not.toMatch(/update.*tickets_sold/i);
-  });
-
-  it('11. finalize_free_ticket_booking RPC exists with idempotent counter increment', () => {
+describe('Ticket counter finalization (unified)', () => {
+  it('10. finalize_free_ticket_booking RPC provides idempotent counter increment', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../../supabase/migrations/304_session_resilience.sql'),
       'utf-8',
     );
     expect(src).toContain('finalize_free_ticket_booking');
     expect(src).toContain('tickets_finalized');
-    // Idempotent guard
     expect(src).toContain('IF v_already THEN');
+    // Increments both event and ticket type counters
+    expect(src).toContain('tickets_sold = tickets_sold + p_quantity');
+    expect(src).toContain('event_ticket_types');
   });
 
-  it('12. bot "I\'ve Paid" path increments tickets_sold via increment_tickets_sold RPC', () => {
+  it('11. bot "I\'ve Paid" path uses finalize_free_ticket_booking (canonical RPC)', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../bot/flows/ticketing.flow.ts'),
       'utf-8',
     );
-    expect(src).toContain("rpc('increment_tickets_sold'");
+    // Must use the canonical idempotent RPC (not increment_tickets_sold)
+    expect(src).toContain("rpc('finalize_free_ticket_booking'");
+    expect(src).not.toContain("rpc('increment_tickets_sold'");
   });
 
-  it('13. webhook path (processSuccessfulPayment) does NOT increment tickets_sold', () => {
+  it('12. webhook path (send-confirmation) calls finalize_free_ticket_booking after ticket send', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, '../payments/process-success.ts'),
+      path.resolve(__dirname, '../payments/send-confirmation.ts'),
       'utf-8',
     );
-    expect(src).not.toContain('tickets_sold');
-    expect(src).not.toContain('increment_tickets_sold');
-    expect(src).not.toContain('finalize_free_ticket_booking');
+    expect(src).toContain("rpc('finalize_free_ticket_booking'");
+    // Must pass required params
+    expect(src).toContain('p_booking_id');
+    expect(src).toContain('p_event_id');
+    expect(src).toContain('p_ticket_type_id');
+    expect(src).toContain('p_quantity');
+  });
+
+  it('13. tickets_finalized guard prevents double-counting across bot and webhook paths', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../../supabase/migrations/304_session_resilience.sql'),
+      'utf-8',
+    );
+    // Guard: SELECT tickets_finalized FOR UPDATE → IF v_already RETURN already_finalized
+    expect(src).toContain('SELECT tickets_finalized INTO v_already');
+    expect(src).toContain('FOR UPDATE');
+    expect(src).toMatch(/IF v_already THEN[\s\S]*?already_finalized.*true/);
+  });
+
+  it('14. service_id=NULL ticketing bookings work (counter RPC uses booking+event, not service)', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../../supabase/migrations/304_session_resilience.sql'),
+      'utf-8',
+    );
+    // Extract just the function signature (between CREATE and RETURNS)
+    const sigStart = src.indexOf('finalize_free_ticket_booking(');
+    const sigEnd = src.indexOf(')', sigStart) + 1;
+    const sig = src.slice(sigStart, sigEnd);
+    expect(sig).toContain('p_booking_id');
+    expect(sig).toContain('p_event_id');
+    // Signature must NOT require a service_id
+    expect(sig).not.toContain('service_id');
+  });
+
+  it('15. sendTicketsAfterPurchase deduplicates ticket rows (webhook+bot race)', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../bot/flows/shared/send-tickets.ts'),
+      'utf-8',
+    );
+    expect(src).toContain("eq('booking_id', bookingId)");
+    expect(src).toContain('Tickets already exist for booking');
   });
 });
 
@@ -335,48 +362,44 @@ describe('Defect 1E: ticket sold counter audit', () => {
 // ═══════════════════════════════════════════════════════
 
 describe('Defect 2: payment-init idempotency', () => {
-  it('14. initializePayment checks for existing pending payment before gateway call', () => {
+  it('16. reuse checks entity + status + amount + currency + gateway', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
       'utf-8',
     );
-    // Must query payments table for existing pending payment
+    // Must query for pending status
     expect(src).toContain("eq('status', 'pending')");
-    // Must check checkout_url in metadata
-    expect(src).toContain('checkout_url');
-    // Must contain the reuse log
-    expect(src).toContain('Reusing existing pending payment');
-  });
-
-  it('15. reuse only happens when amount matches', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
-      'utf-8',
-    );
-    // Amount must be validated
+    // Must validate amount
     expect(src).toContain('existingPayment.amount === opts.amount');
-  });
-
-  it('16. reuse requires valid checkout_url and gateway_reference', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
-      'utf-8',
-    );
-    // Must check both fields exist
+    // Must validate currency
+    expect(src).toContain('existingPayment.currency === currencyCode');
+    // Must validate gateway/provider
+    expect(src).toContain('existingPayment.gateway === gateway.name');
+    // Must check checkout_url exists
+    expect(src).toContain('checkout_url');
+    // Must check gateway_reference exists
     expect(src).toContain('checkoutUrl && existingPayment.gateway_reference');
   });
 
-  it('17. reuse returns shortened URL in same format as initial creation', () => {
+  it('17. selects currency and gateway columns for matching', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
       'utf-8',
     );
-    // Must use the same short-ref format
+    // Select must include currency and gateway for comparison
+    expect(src).toMatch(/select\([^)]*currency[^)]*gateway/);
+  });
+
+  it('18. reuse returns shortened URL in same format as initial creation', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
+      'utf-8',
+    );
     expect(src).toContain('gateway_reference.slice(-8)');
     expect(src).toContain('/api/pay?ref=');
   });
 
-  it('18. entity matching uses correct column (booking_id, order_id, etc)', () => {
+  it('19. entity matching uses correct column (booking_id, order_id, etc)', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
       'utf-8',
@@ -386,6 +409,29 @@ describe('Defect 2: payment-init idempotency', () => {
     expect(src).toContain("opts.invoiceId ? 'invoice_id'");
     expect(src).toContain("'reservation_id'");
   });
+
+  it('20. lookup failure does not block payment (falls through to fresh init)', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
+      'utf-8',
+    );
+    // Must have try/catch around lookup
+    expect(src).toContain('proceeding with fresh init');
+    // Must log the error
+    expect(src).toContain('payment.reuse-lookup');
+  });
+
+  it('21. success/failed/cancelled payments are not reused (only pending)', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../bot/flows/shared/payment.ts'),
+      'utf-8',
+    );
+    // The query explicitly filters to pending only
+    expect(src).toContain("eq('status', 'pending')");
+    // No fallback to other statuses
+    expect(src).not.toMatch(/eq\('status',\s*'success'\)/);
+    expect(src).not.toMatch(/eq\('status',\s*'failed'\)/);
+  });
 });
 
 // ═══════════════════════════════════════════════════════
@@ -393,7 +439,7 @@ describe('Defect 2: payment-init idempotency', () => {
 // ═══════════════════════════════════════════════════════
 
 describe('Defect 2C: payment-success page order support', () => {
-  it('19. payment-success resolves payments by gateway_reference first', () => {
+  it('22. payment-success resolves payments by gateway_reference first', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../../app/payment-success/page.tsx'),
       'utf-8',
@@ -404,7 +450,7 @@ describe('Defect 2C: payment-success page order support', () => {
     expect(src).toContain('order_id');
   });
 
-  it('20. processSuccessfulPayment confirms orders (not just bookings)', () => {
+  it('23. processSuccessfulPayment confirms orders (not just bookings)', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../payments/process-success.ts'),
       'utf-8',
@@ -420,7 +466,7 @@ describe('Defect 2C: payment-success page order support', () => {
 // ═══════════════════════════════════════════════════════
 
 describe('Defect 3: event publish status', () => {
-  it('21. normal Create Event defaults to published', () => {
+  it('24. normal Create Event defaults to published', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../../app/dashboard/events/page.tsx'),
       'utf-8',
@@ -429,7 +475,7 @@ describe('Defect 3: event publish status', () => {
     expect(src).toMatch(/openAdd[\s\S]*?status:\s*'published'/);
   });
 
-  it('22. Duplicate Event defaults to draft (intentional)', () => {
+  it('25. Duplicate Event defaults to draft (intentional)', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../../app/dashboard/events/page.tsx'),
       'utf-8',
@@ -438,7 +484,7 @@ describe('Defect 3: event publish status', () => {
     expect(src).toContain("status: 'draft'");
   });
 
-  it('23. ticketing bot flow filters by status=published', () => {
+  it('26. ticketing bot flow filters by status=published', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../bot/flows/ticketing.flow.ts'),
       'utf-8',

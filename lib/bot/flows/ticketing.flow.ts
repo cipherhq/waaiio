@@ -1028,37 +1028,19 @@ export const ticketingFlow: FlowDefinition = {
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
 
-            // Increment tickets_sold now that payment is verified
+            // Finalize ticket counters idempotently (shared with webhook path)
             const qty = (d.ticket_quantity as number) || 1;
-            const { error: rpcError } = await ctx.supabase.rpc('increment_tickets_sold', {
-              event_id: d.event_id as string,
-              qty,
+            const { data: finResult, error: finError } = await ctx.supabase.rpc('finalize_free_ticket_booking', {
+              p_booking_id: d.booking_id as string,
+              p_event_id: d.event_id as string,
+              p_ticket_type_id: (d.ticket_type_id as string) || null,
+              p_quantity: qty,
             });
-            if (rpcError) {
-              const { data: ev } = await ctx.supabase
-                .from('events')
-                .select('tickets_sold')
-                .eq('id', d.event_id as string)
-                .single();
-              if (ev) {
-                await ctx.supabase
-                  .from('events')
-                  .update({ tickets_sold: ev.tickets_sold + qty })
-                  .eq('id', d.event_id as string);
-              }
-            }
-            if (d.ticket_type_id) {
-              const { data: tt } = await ctx.supabase
-                .from('event_ticket_types')
-                .select('tickets_sold')
-                .eq('id', d.ticket_type_id as string)
-                .single();
-              if (tt) {
-                await ctx.supabase
-                  .from('event_ticket_types')
-                  .update({ tickets_sold: (tt.tickets_sold || 0) + qty })
-                  .eq('id', d.ticket_type_id as string);
-              }
+            if (finError) {
+              logger.withContext({ op: 'ticketing.finalize-counter', ...safeLogErrorContext(finError) })
+                .error('[TICKETING] finalize_free_ticket_booking RPC error');
+            } else if (finResult?.already_finalized) {
+              logger.info('[TICKETING] Ticket counters already finalized for booking ' + (d.booking_id as string));
             }
 
             const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {

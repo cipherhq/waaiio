@@ -18,16 +18,19 @@ If something breaks, check this log to find what changed and when.
 ### fix(PAY-IDEMPOTENT): prevent duplicate_reference on payment retry/re-entry
 
 - **Root cause:** When a bot flow re-enters the payment step (e.g., retry after timeout, re-prompt), `initializePayment` calls the gateway again with the same `referenceCode`. Paystack rejects with `duplicate_reference` because the reference is already registered. The customer loses their payment link.
-- **Fix:** Before calling the gateway, `initializePayment` now checks for an existing pending payment for the same entity (booking_id/order_id/invoice_id/reservation_id) with matching amount and a valid `metadata.checkout_url`. If found, returns the existing checkout URL instead of creating a duplicate provider transaction. Amount and entity must match — successful/failed/cancelled payments and mismatched amounts are NOT reused.
+- **Fix:** Before calling the gateway, `initializePayment` now checks for an existing pending payment for the same entity with matching amount, currency, AND gateway. If found with a valid `metadata.checkout_url`, returns the existing checkout URL instead of creating a duplicate provider transaction. Lookup failure is caught and falls through to fresh initialization (never blocks payment).
+- **Matching rules:** entity (booking_id/order_id/invoice_id/reservation_id) + status=pending + amount + currency + gateway. Successful/failed/cancelled payments are never reused. Mismatched amount/currency/gateway falls through to fresh init.
 - **Files changed:** `lib/bot/flows/shared/payment.ts`
 - **Affects:** All payment initialization flows (scheduling, ordering, ticketing, invoicing, reservations).
 - **Could break:** Nothing — adds a guard before the gateway call. Existing first-attempt behavior unchanged.
 
-### audit(TICKET-COUNTER): ticket sold counter not incremented on webhook path
+### fix(TICKET-COUNTER): unified idempotent ticket sold counter finalization
 
-- **Finding:** When a paid ticket purchase is confirmed via Paystack webhook, `processSuccessfulPayment` confirms the booking and `sendProactiveConfirmation` sends tickets via `sendTicketsAfterPurchase`. However, neither path increments `events.tickets_sold` or `event_ticket_types.tickets_sold`. Only the bot "I've Paid" path (ticketing.flow.ts line 1031) calls `increment_tickets_sold`. An idempotent RPC `finalize_free_ticket_booking` exists (migration 304) with `tickets_finalized` flag but is never called by any application code. The two paths use incompatible idempotency mechanisms — fixing requires coordinating both to use `finalize_free_ticket_booking`.
-- **Status:** Classified as launch-blocking ticket inventory defect. NOT fixed in this PR — requires CTO decision on coordination approach.
-- **Impact:** Paid-via-webhook ticket purchases create valid ticket rows but do not decrement available inventory. Event may oversell.
+- **Root cause:** Webhook confirmation path (`sendProactiveConfirmation`) sent tickets via `sendTicketsAfterPurchase` but never incremented `events.tickets_sold` or `event_ticket_types.tickets_sold`. Bot "I've Paid" path used a non-idempotent `increment_tickets_sold` RPC (never defined in migrations — relied on fallback manual UPDATE). The two paths could double-count or miss counts.
+- **Fix:** Both paths now use the canonical `finalize_free_ticket_booking` RPC (migration 304) which provides idempotent counter increment via `tickets_finalized` flag. Bot "I've Paid" path replaced `increment_tickets_sold` + manual fallback with single `finalize_free_ticket_booking` call. Webhook path (`send-confirmation.ts`) now calls `finalize_free_ticket_booking` after `sendTicketsAfterPurchase`. Ticket type ID is resolved from the bot session when available.
+- **Files changed:** `lib/bot/flows/ticketing.flow.ts`, `lib/payments/send-confirmation.ts`
+- **Affects:** Ticket inventory tracking for both webhook-confirmed and bot-confirmed paid ticket purchases.
+- **Could break:** Nothing — replaces a broken non-idempotent mechanism with the canonical idempotent one.
 
 ## 2026-08-07
 

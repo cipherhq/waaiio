@@ -651,6 +651,7 @@ export async function sendProactiveConfirmation(
           });
 
           const { sendTicketsAfterPurchase } = await import('@/lib/bot/flows/shared/send-tickets');
+          const ticketQty = ticketBooking.party_size || 1;
           await sendTicketsAfterPurchase({
             supabase,
             sender: resolved?.sender,  // undefined for web-only purchases (email-only delivery)
@@ -664,9 +665,42 @@ export async function sendProactiveConfirmation(
             guestPhone: ticketBooking.guest_phone || customerPhone || '',
             guestEmail: ticketBooking.guest_email || undefined,
             referenceCode,
-            quantity: ticketBooking.party_size || 1,
+            quantity: ticketQty,
             amount: payment.amount, countryCode,
           });
+
+          // ── Finalize ticket counters idempotently (same RPC as bot "I've Paid" path) ──
+          // Resolve ticket_type_id from the bot session that created this booking
+          let ticketTypeId: string | null = null;
+          try {
+            const { data: session } = await supabase
+              .from('bot_sessions')
+              .select('session_data')
+              .eq('business_id', businessId)
+              .or(
+                `whatsapp_number.eq.${ticketBooking.guest_phone?.replace('+', '')},whatsapp_number.eq.${ticketBooking.guest_phone}`,
+              )
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            ticketTypeId = (session?.session_data as Record<string, unknown>)?.ticket_type_id as string || null;
+          } catch {
+            // Non-critical — counters still increment at event level
+          }
+
+          const { data: finResult, error: finError } = await supabase.rpc('finalize_free_ticket_booking', {
+            p_booking_id: payment.booking_id,
+            p_event_id: ticketBooking.event_id,
+            p_ticket_type_id: ticketTypeId,
+            p_quantity: ticketQty,
+          });
+          if (finError) {
+            logSafeError(logPrefix, 'ticket-counter-finalize', finError);
+          } else if (finResult?.already_finalized) {
+            logger.info(`${logPrefix} Ticket counters already finalized for booking ${payment.booking_id}`);
+          } else {
+            logger.info(`${logPrefix} Ticket counters finalized: event=${ticketBooking.event_id} qty=${ticketQty}`);
+          }
         }
       }
     } catch (ticketErr) {

@@ -33,34 +33,6 @@ export async function initializePayment(
   try {
     const countryCode = opts.countryCode || 'NG';
 
-    // ── Idempotent reuse: if a pending payment already exists for this entity with a
-    // valid checkout URL, return it instead of creating a duplicate provider transaction.
-    // This prevents Paystack "duplicate_reference" errors on retry/re-entry. ──
-    const entityId = opts.bookingId || opts.orderId || opts.invoiceId || opts.reservationId;
-    if (entityId) {
-      const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : 'reservation_id';
-      const { data: existingPayment } = await supabase
-        .from('payments')
-        .select('id, gateway_reference, amount, metadata')
-        .eq(entityCol, entityId)
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (existingPayment && existingPayment.amount === opts.amount) {
-        const meta = (existingPayment.metadata || {}) as Record<string, unknown>;
-        const checkoutUrl = meta.checkout_url as string | undefined;
-        if (checkoutUrl && existingPayment.gateway_reference) {
-          logger.info('[PAYMENT] Reusing existing pending payment for ' + entityCol + '=' + entityId);
-          // Return the shortened URL (same format as initial creation)
-          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-          const shortRef = existingPayment.gateway_reference.slice(-8);
-          return { url: `${appUrl}/api/pay?ref=${shortRef}`, reference: existingPayment.gateway_reference };
-        }
-      }
-    }
-
     // Per-business gateway override takes priority
     const gateway = opts.gatewayOverride
       ? getPaymentGatewayByName(opts.gatewayOverride as PaymentGatewayName)
@@ -68,6 +40,45 @@ export async function initializePayment(
 
     const { getCountry } = await import('@/lib/countries');
     const currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
+
+    // ── Idempotent reuse: if a pending payment already exists for this entity with
+    // matching amount, currency, and gateway — AND has a valid checkout URL — return it
+    // instead of creating a duplicate provider transaction.
+    // This prevents Paystack "duplicate_reference" errors on retry/re-entry. ──
+    const entityId = opts.bookingId || opts.orderId || opts.invoiceId || opts.reservationId;
+    if (entityId) {
+      const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : 'reservation_id';
+      try {
+        const { data: existingPayment } = await supabase
+          .from('payments')
+          .select('id, gateway_reference, amount, currency, gateway, metadata')
+          .eq(entityCol, entityId)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (
+          existingPayment
+          && existingPayment.amount === opts.amount
+          && existingPayment.currency === currencyCode
+          && existingPayment.gateway === gateway.name
+        ) {
+          const meta = (existingPayment.metadata || {}) as Record<string, unknown>;
+          const checkoutUrl = meta.checkout_url as string | undefined;
+          if (checkoutUrl && existingPayment.gateway_reference) {
+            logger.info('[PAYMENT] Reusing existing pending payment for ' + entityCol + '=' + entityId);
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+            const shortRef = existingPayment.gateway_reference.slice(-8);
+            return { url: `${appUrl}/api/pay?ref=${shortRef}`, reference: existingPayment.gateway_reference };
+          }
+        }
+      } catch (lookupErr) {
+        // Lookup failure must not block payment — fall through to fresh initialization
+        logger.withContext({ op: 'payment.reuse-lookup', ...safeLogErrorContext(lookupErr) })
+          .error('[PAYMENT] Pending payment lookup failed, proceeding with fresh init');
+      }
+    }
 
     // Fetch payout account for split payments
     let subaccountCode: string | undefined;
