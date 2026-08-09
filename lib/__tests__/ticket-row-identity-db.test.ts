@@ -69,7 +69,7 @@ describe.skipIf(!canRun)('Migration 313: ticket-row identity', () => {
       ON CONFLICT (id) DO NOTHING;
       ALTER TABLE businesses ENABLE TRIGGER ALL;`);
     psql(`INSERT INTO events (id, business_id, name, date, time, venue, price, total_tickets, tickets_sold, status) VALUES ('${EVT}', '${BIZ}', 'Evt313', '2027-01-01', '18:00', 'V', 1000, 100, 0, 'published') ON CONFLICT (id) DO NOTHING;`);
-    psql(`INSERT INTO bookings (id, business_id, event_id, date, time, party_size, flow_type, channel, status, deposit_status, deposit_amount, total_amount, guest_name, guest_phone) VALUES ('${BK}', '${BIZ}', '${EVT}', '2027-01-01', '18:00', 2, 'ticketing', 'whatsapp', 'confirmed', 'paid', 1000, 2000, 'Guest', '+234') ON CONFLICT (id) DO NOTHING;`);
+    psql(`INSERT INTO bookings (id, business_id, user_id, event_id, date, time, party_size, flow_type, channel, status, deposit_status, deposit_amount, total_amount, guest_name, guest_phone) VALUES ('${BK}', '${BIZ}', '${USR}', '${EVT}', '2027-01-01', '18:00', 2, 'ticketing', 'whatsapp', 'confirmed', 'paid', 1000, 2000, 'Guest', '+234') ON CONFLICT (id) DO NOTHING;`);
 
     // Apply migration 313
     const fs = require('fs');
