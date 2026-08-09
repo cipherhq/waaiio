@@ -60,6 +60,7 @@ describe.skipIf(!canRun)('Migration 313: ticket-row identity', () => {
   const USR = '00000000-0000-0000-0313-000000000001';
 
   beforeAll(() => {
+    psql(`INSERT INTO auth.users (id, raw_app_meta_data) VALUES ('${USR}', '{"role":"authenticated"}') ON CONFLICT (id) DO NOTHING;`);
     psql(`INSERT INTO profiles (id) VALUES ('${USR}') ON CONFLICT (id) DO NOTHING;`);
     psql(`INSERT INTO businesses (id, name, slug, owner_id, status) VALUES ('${BIZ}', 'TicketTest313', 'tt313', '${USR}', 'active') ON CONFLICT (id) DO NOTHING;`);
     psql(`INSERT INTO events (id, business_id, name, date, time, venue, price, total_tickets, tickets_sold, status) VALUES ('${EVT}', '${BIZ}', 'Evt313', '2027-01-01', '18:00', 'V', 1000, 100, 0, 'published') ON CONFLICT (id) DO NOTHING;`);
@@ -79,6 +80,7 @@ describe.skipIf(!canRun)('Migration 313: ticket-row identity', () => {
     psql(`DELETE FROM events WHERE id = '${EVT}';`);
     psql(`DELETE FROM businesses WHERE id = '${BIZ}';`);
     psql(`DELETE FROM profiles WHERE id = '${USR}';`);
+    psql(`DELETE FROM auth.users WHERE id = '${USR}';`);
   });
 
   it('UNIQUE index exists', () => {
