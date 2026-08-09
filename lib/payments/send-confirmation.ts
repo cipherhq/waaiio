@@ -179,18 +179,22 @@ export async function sendProactiveConfirmation(
 
   // ── 1. Resolve customer + business from booking ──
   if (payment.booking_id) {
-    const { data: booking } = await supabase
+    const { data: booking, error: bookingError } = await supabase
       .from('bookings')
-      .select('guest_phone, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration)')
+      .select('guest_phone, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration_minutes)')
       .eq('id', payment.booking_id)
       .single();
+
+    if (bookingError) {
+      logSafeError(logPrefix, 'booking-lookup', bookingError);
+    }
 
     if (booking) {
       customerPhone = booking.guest_phone;
       businessId = booking.business_id;
       referenceCode = booking.reference_code || '';
       const biz = booking.businesses as unknown as { name: string; country_code?: string; address?: string; payment_gateway?: string } | null;
-      const svc = booking.services as unknown as { name: string; duration?: number } | null;
+      const svc = booking.services as unknown as { name: string; duration_minutes?: number } | null;
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
       if (svc?.name) serviceName = svc.name;
@@ -198,7 +202,7 @@ export async function sendProactiveConfirmation(
         bookingDate = booking.date;
         bookingTime = booking.time;
         bookingAddress = biz?.address || undefined;
-        bookingDuration = svc?.duration || undefined;
+        bookingDuration = svc?.duration_minutes || undefined;
       }
       // Check for remaining balance (deposit scenario)
       const total = Number(booking.total_amount || 0);

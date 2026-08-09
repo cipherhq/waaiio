@@ -5,6 +5,30 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-09
+
+### fix(PAY-CONFIRM): payment confirmation broken by malformed services column select
+
+- **Root cause:** `lib/payments/send-confirmation.ts` line 184 selected `services(name, duration)` but the `services` table column is `duration_minutes` (not `duration`). PostgREST returns a 400 error for the entire query, making `booking` null, `businessId` null, and causing ALL payment confirmations (not just ticketing) to log "Proactive confirmation skipped — no business" and skip WhatsApp confirmation, ticket delivery, session deactivation, and post-completion.
+- **Fix:** Changed `services(name, duration)` → `services(name, duration_minutes)`. Updated type cast and assignment to use `duration_minutes`. Added `{ data, error }` destructuring and error logging for booking lookup (was silently swallowed).
+- **Files changed:** `lib/payments/send-confirmation.ts`, `lib/__tests__/p0-payment-confirmation.test.ts` (mock data updated)
+- **Affects:** ALL payment confirmation flows (5 gateway webhooks + payment-success page). Ticketing bookings, scheduling bookings, ordering — everything that goes through `sendProactiveConfirmation`.
+- **Could break:** Nothing — corrects a query that was already broken.
+
+### fix(PAY-IDEMPOTENT): prevent duplicate_reference on payment retry/re-entry
+
+- **Root cause:** When a bot flow re-enters the payment step (e.g., retry after timeout, re-prompt), `initializePayment` calls the gateway again with the same `referenceCode`. Paystack rejects with `duplicate_reference` because the reference is already registered. The customer loses their payment link.
+- **Fix:** Before calling the gateway, `initializePayment` now checks for an existing pending payment for the same entity (booking_id/order_id/invoice_id/reservation_id) with matching amount and a valid `metadata.checkout_url`. If found, returns the existing checkout URL instead of creating a duplicate provider transaction. Amount and entity must match — successful/failed/cancelled payments and mismatched amounts are NOT reused.
+- **Files changed:** `lib/bot/flows/shared/payment.ts`
+- **Affects:** All payment initialization flows (scheduling, ordering, ticketing, invoicing, reservations).
+- **Could break:** Nothing — adds a guard before the gateway call. Existing first-attempt behavior unchanged.
+
+### audit(TICKET-COUNTER): ticket sold counter not incremented on webhook path
+
+- **Finding:** When a paid ticket purchase is confirmed via Paystack webhook, `processSuccessfulPayment` confirms the booking and `sendProactiveConfirmation` sends tickets via `sendTicketsAfterPurchase`. However, neither path increments `events.tickets_sold` or `event_ticket_types.tickets_sold`. Only the bot "I've Paid" path (ticketing.flow.ts line 1031) calls `increment_tickets_sold`. An idempotent RPC `finalize_free_ticket_booking` exists (migration 304) with `tickets_finalized` flag but is never called by any application code. The two paths use incompatible idempotency mechanisms — fixing requires coordinating both to use `finalize_free_ticket_booking`.
+- **Status:** Classified as launch-blocking ticket inventory defect. NOT fixed in this PR — requires CTO decision on coordination approach.
+- **Impact:** Paid-via-webhook ticket purchases create valid ticket rows but do not decrement available inventory. Event may oversell.
+
 ## 2026-08-07
 
 ### fix(P0-PAY-1): payment-level idempotency for financial operations
