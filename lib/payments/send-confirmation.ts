@@ -105,7 +105,7 @@ interface PaymentForConfirmation {
 export type ConfirmationResult =
   | { status: 'completed' }
   | { status: 'already_completed' }
-  | { status: 'claimed_by_other'; retryable: false }
+  | { status: 'processing'; retryable: true }
   | { status: 'retryable_failed'; retryable: true; reason: string }
   | { status: 'not_deliverable'; retryable: false; reason: string };
 
@@ -143,7 +143,7 @@ export async function sendProactiveConfirmation(
       return { status: 'already_completed' };
     }
     logger.info(`${logPrefix} Confirmation claim not granted for payment ${payment.id}: ${claim?.reason || 'unknown'}`);
-    return { status: 'claimed_by_other', retryable: false };
+    return { status: 'processing', retryable: true };
   }
 
   const claimToken = claim.claim_token as string;
@@ -360,7 +360,7 @@ export async function sendProactiveConfirmation(
   const preExternal = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
   if (!preExternal.ok) {
     logger.warn(`${logPrefix} Ownership lost before external operations: ${preExternal.reason}`);
-    return { status: 'claimed_by_other', retryable: false }; // claim may belong to another worker
+    return { status: 'processing', retryable: true }; // claim may belong to another worker
   }
 
   // Add balance info if deposit was partial
@@ -497,7 +497,7 @@ export async function sendProactiveConfirmation(
     const prePostCompletion = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!prePostCompletion.ok) {
       logger.warn(`${logPrefix} Ownership lost before post-completion: ${prePostCompletion.reason}`);
-      return { status: 'claimed_by_other', retryable: false };
+      return { status: 'processing', retryable: true };
     }
 
     // ── 6. Post-completion (loyalty, feedback, referral, customer profile) ──
@@ -524,7 +524,7 @@ export async function sendProactiveConfirmation(
     const preOwnerNotify = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!preOwnerNotify.ok) {
       logger.warn(`${logPrefix} Ownership lost before owner notify: ${preOwnerNotify.reason}`);
-      return { status: 'claimed_by_other', retryable: false };
+      return { status: 'processing', retryable: true };
     }
 
     // ── 7. Owner notification ──
@@ -633,7 +633,7 @@ export async function sendProactiveConfirmation(
     const preTickets = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!preTickets.ok) {
       logger.warn(`${logPrefix} Ownership lost before tickets/emails: ${preTickets.reason}`);
-      return { status: 'claimed_by_other', retryable: false };
+      return { status: 'processing', retryable: true };
     }
     sideEffectsMayHaveOccurred = true; // tickets, customer email, donation receipt
 
@@ -643,109 +643,125 @@ export async function sendProactiveConfirmation(
     let ticketStateComplete = true; // non-ticketing bookings are "complete" by default
     try {
       if (payment.booking_id) {
-        const { data: ticketBooking } = await supabase
+        const { data: ticketBooking, error: ticketBookingError } = await supabase
           .from('bookings')
           .select('flow_type, event_id, bot_session_id, date, time, party_size, guest_name, guest_phone, guest_email, notes')
           .eq('id', payment.booking_id)
           .single();
 
-        if (ticketBooking?.flow_type === 'ticketing' && ticketBooking.event_id) {
+        // BLOCKER 2: booking lookup error → fail closed
+        if (ticketBookingError) {
+          logSafeError(logPrefix, 'ticket-booking-lookup', ticketBookingError);
+          ticketStateComplete = false;
+        } else if (ticketBooking?.flow_type === 'ticketing' && ticketBooking.event_id) {
           ticketStateComplete = false; // must be proven complete
           const ticketQty = ticketBooking.party_size || 1;
 
           // ── 8a. Determine if event is typed (has event_ticket_types) ──
-          const { data: ticketTypes } = await supabase
+          // Query ALL types (not just active) — a type purchased before deactivation is still valid
+          const { data: ticketTypes, error: typeQueryError } = await supabase
             .from('event_ticket_types')
             .select('id')
             .eq('event_id', ticketBooking.event_id)
-            .eq('is_active', true)
             .limit(1);
-          const isTypedEvent = (ticketTypes?.length ?? 0) > 0;
 
-          // ── 8b. Resolve ticket_type_id from EXACT originating bot session ──
-          let ticketTypeId: string | null = null;
-          let typeResolutionFailed = false;
-          if (ticketBooking.bot_session_id) {
-            const { data: originSession, error: sessionError } = await supabase
-              .from('bot_sessions')
-              .select('session_data')
-              .eq('id', ticketBooking.bot_session_id)
-              .single();
-            if (sessionError) {
-              logSafeError(logPrefix, 'ticket-type-session-lookup', sessionError);
-              typeResolutionFailed = true;
-            } else {
-              ticketTypeId = (originSession?.session_data as Record<string, unknown>)?.ticket_type_id as string || null;
-            }
-          } else if (isTypedEvent) {
-            // No bot_session_id on typed event (web-only or data gap) — cannot resolve type
-            typeResolutionFailed = true;
-          }
-
-          // ── 8c. For typed events, fail closed if ticket_type_id unresolvable ──
-          if (isTypedEvent && (!ticketTypeId || typeResolutionFailed)) {
-            logger.error(`${logPrefix} Typed event ${ticketBooking.event_id} — cannot resolve ticket_type_id, failing closed`);
-            // ticketStateComplete stays false → confirmation won't finalize
+          // BLOCKER 1: type query error → fail closed (don't treat as untyped)
+          if (typeQueryError) {
+            logSafeError(logPrefix, 'ticket-type-query', typeQueryError);
+            // ticketStateComplete stays false → retryable
           } else {
-            // ── 8d. Canonical inventory finalization BEFORE ticket creation ──
-            const { data: finResult, error: finError } = await supabase.rpc('finalize_free_ticket_booking', {
-              p_booking_id: payment.booking_id,
-              p_event_id: ticketBooking.event_id,
-              p_ticket_type_id: ticketTypeId,
-              p_quantity: ticketQty,
-            });
+            const isTypedEvent = (ticketTypes?.length ?? 0) > 0;
 
-            if (finError) {
-              logSafeError(logPrefix, 'ticket-counter-finalize', finError);
-              Sentry.captureException(finError, { tags: { component: 'send-confirmation', operation: 'ticket-finalize' } });
-              // ticketStateComplete stays false — inventory indeterminate
-            } else {
-              if (finResult?.already_finalized) {
-                logger.info(`${logPrefix} Ticket counters already finalized for booking ${payment.booking_id}`);
-              } else {
-                logger.info(`${logPrefix} Ticket counters finalized: event=${ticketBooking.event_id} qty=${ticketQty}`);
-              }
-
-              // ── 8e. Canonical ticket row creation (idempotent) ──
-              const { data: event } = await supabase
-                .from('events')
-                .select('id, name, date, time, venue')
-                .eq('id', ticketBooking.event_id)
+            // ── 8b. Resolve ticket_type_id from EXACT originating bot session ──
+            let ticketTypeId: string | null = null;
+            let typeResolutionFailed = false;
+            if (ticketBooking.bot_session_id) {
+              const { data: originSession, error: sessionError } = await supabase
+                .from('bot_sessions')
+                .select('session_data')
+                .eq('id', ticketBooking.bot_session_id)
                 .single();
-
-              const eventName = event?.name || ticketBooking.notes?.replace('Tickets for: ', '') || 'Event';
-              const dateLabel = new Date((event?.date || ticketBooking.date) + 'T00:00').toLocaleDateString('en-US', {
-                weekday: 'long', day: 'numeric', month: 'long',
-              });
-
-              const { sendTicketsAfterPurchase } = await import('@/lib/bot/flows/shared/send-tickets');
-              await sendTicketsAfterPurchase({
-                supabase,
-                sender: resolved?.sender,
-                businessId,
-                bookingId: payment.booking_id,
-                eventId: ticketBooking.event_id,
-                eventName, eventDate: dateLabel,
-                eventTime: event?.time || ticketBooking.time || undefined,
-                venue: event?.venue || '',
-                guestName: ticketBooking.guest_name || 'Guest',
-                guestPhone: ticketBooking.guest_phone || customerPhone || '',
-                guestEmail: ticketBooking.guest_email || undefined,
-                referenceCode,
-                quantity: ticketQty,
-                amount: payment.amount, countryCode,
-              });
-
-              // Verify ticket rows were actually created
-              const { data: createdTickets } = await supabase
-                .from('event_tickets')
-                .select('id')
-                .eq('booking_id', payment.booking_id);
-              if ((createdTickets?.length ?? 0) >= ticketQty) {
-                ticketStateComplete = true;
+              if (sessionError) {
+                logSafeError(logPrefix, 'ticket-type-session-lookup', sessionError);
+                typeResolutionFailed = true;
               } else {
-                logger.error(`${logPrefix} Expected ${ticketQty} ticket rows, found ${createdTickets?.length ?? 0}`);
-                // ticketStateComplete stays false — retry will create missing rows
+                ticketTypeId = (originSession?.session_data as Record<string, unknown>)?.ticket_type_id as string || null;
+              }
+            } else if (isTypedEvent) {
+              typeResolutionFailed = true;
+            }
+
+            // ── 8c. For typed events, validate ticket_type_id belongs to this event ──
+            if (isTypedEvent && ticketTypeId && !typeResolutionFailed) {
+              const { data: typeOwnership, error: ownershipError } = await supabase
+                .from('event_ticket_types')
+                .select('id')
+                .eq('id', ticketTypeId)
+                .eq('event_id', ticketBooking.event_id)
+                .maybeSingle();
+              if (ownershipError || !typeOwnership) {
+                logger.error(`${logPrefix} ticket_type_id ${ticketTypeId} does not belong to event ${ticketBooking.event_id}`);
+                typeResolutionFailed = true;
+              }
+            }
+
+            if (isTypedEvent && (!ticketTypeId || typeResolutionFailed)) {
+              logger.error(`${logPrefix} Typed event ${ticketBooking.event_id} — cannot resolve ticket_type_id, failing closed`);
+              // ticketStateComplete stays false
+            } else {
+              // ── 8d. Canonical inventory finalization BEFORE ticket creation ──
+              const { data: finResult, error: finError } = await supabase.rpc('finalize_free_ticket_booking', {
+                p_booking_id: payment.booking_id,
+                p_event_id: ticketBooking.event_id,
+                p_ticket_type_id: ticketTypeId,
+                p_quantity: ticketQty,
+              });
+
+              if (finError) {
+                logSafeError(logPrefix, 'ticket-counter-finalize', finError);
+                Sentry.captureException(finError, { tags: { component: 'send-confirmation', operation: 'ticket-finalize' } });
+              } else {
+                if (finResult?.already_finalized) {
+                  logger.info(`${logPrefix} Ticket counters already finalized for booking ${payment.booking_id}`);
+                } else {
+                  logger.info(`${logPrefix} Ticket counters finalized: event=${ticketBooking.event_id} qty=${ticketQty}`);
+                }
+
+                // ── 8e. Canonical ticket row creation ──
+                const { data: event } = await supabase
+                  .from('events')
+                  .select('id, name, date, time, venue')
+                  .eq('id', ticketBooking.event_id)
+                  .single();
+
+                const eventName = event?.name || ticketBooking.notes?.replace('Tickets for: ', '') || 'Event';
+                const dateLabel = new Date((event?.date || ticketBooking.date) + 'T00:00').toLocaleDateString('en-US', {
+                  weekday: 'long', day: 'numeric', month: 'long',
+                });
+
+                const { sendTicketsAfterPurchase } = await import('@/lib/bot/flows/shared/send-tickets');
+                const ticketResult = await sendTicketsAfterPurchase({
+                  supabase,
+                  sender: resolved?.sender,
+                  businessId,
+                  bookingId: payment.booking_id,
+                  eventId: ticketBooking.event_id,
+                  eventName, eventDate: dateLabel,
+                  eventTime: event?.time || ticketBooking.time || undefined,
+                  venue: event?.venue || '',
+                  guestName: ticketBooking.guest_name || 'Guest',
+                  guestPhone: ticketBooking.guest_phone || customerPhone || '',
+                  guestEmail: ticketBooking.guest_email || undefined,
+                  referenceCode,
+                  quantity: ticketQty,
+                  amount: payment.amount, countryCode,
+                });
+
+                if (ticketResult.success && ticketResult.tickets.length >= ticketQty) {
+                  ticketStateComplete = true;
+                } else {
+                  logger.error(`${logPrefix} Ticket creation incomplete: success=${ticketResult.success} rows=${ticketResult.tickets.length} expected=${ticketQty}`);
+                }
               }
             }
           }
@@ -857,7 +873,7 @@ export async function sendProactiveConfirmation(
     const preFinalize = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!preFinalize.ok) {
       logger.warn(`${logPrefix} Ownership lost before session/finalize: ${preFinalize.reason}`);
-      return { status: 'claimed_by_other', retryable: false };
+      return { status: 'processing', retryable: true };
     }
 
     // ── 9. Deactivate the payment-waiting session (webhook confirmed — user doesn't need to tap "I've Paid") ──

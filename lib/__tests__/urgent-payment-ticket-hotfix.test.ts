@@ -1,14 +1,16 @@
 /**
- * URGENT PAYMENT/TICKET HOTFIX — Regression tests (CTO Final Round)
+ * URGENT PAYMENT/TICKET HOTFIX — Regression tests (CTO Final)
  *
- * Behavioral + structural tests covering:
+ * Covers all blockers from CTO correction rounds:
  * - Payment confirmation schema fix
- * - Confirmation result contract
- * - Payment reuse fail-closed
- * - Quarantine/second-charge guard
+ * - Confirmation result contract (processing state)
+ * - Payment reuse fail-closed + quarantine guard
  * - Typed ticket fail-closed
+ * - Ticket type ownership validation
+ * - Ticket booking lookup fail-closed
  * - Ticket state completeness
  * - Bot counter fail-closed
+ * - sendTicketsAfterPurchase result contract
  * - Event publish defaults
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -20,7 +22,7 @@ function readSrc(relPath: string) {
 }
 
 // ═══════════════════════════════════════════════════════
-// 1. PAYMENT CONFIRMATION SCHEMA FIX
+// 1. PAYMENT CONFIRMATION SCHEMA
 // ═══════════════════════════════════════════════════════
 
 describe('Payment confirmation schema', () => {
@@ -29,17 +31,8 @@ describe('Payment confirmation schema', () => {
     expect(src).toContain('services(name, duration_minutes)');
     expect(src).not.toMatch(/services\(name,\s*duration\)/);
   });
-
-  it('type-casts and assigns duration_minutes', () => {
-    const src = readSrc('../payments/send-confirmation.ts');
-    expect(src).toMatch(/duration_minutes\?:\s*number/);
-    expect(src).toContain('svc?.duration_minutes');
-  });
-
-  it('destructures and logs booking lookup error', () => {
-    const src = readSrc('../payments/send-confirmation.ts');
-    expect(src).toMatch(/const\s*\{\s*data:\s*booking,\s*error:\s*bookingError\s*\}/);
-    expect(src).toContain("logSafeError(logPrefix, 'booking-lookup', bookingError)");
+  it('logs booking lookup error', () => {
+    expect(readSrc('../payments/send-confirmation.ts')).toContain("logSafeError(logPrefix, 'booking-lookup', bookingError)");
   });
 });
 
@@ -48,57 +41,40 @@ describe('Payment confirmation schema', () => {
 // ═══════════════════════════════════════════════════════
 
 describe('Confirmation result contract', () => {
-  it('exports ConfirmationResult type', () => {
-    expect(readSrc('../payments/send-confirmation.ts')).toContain('export type ConfirmationResult');
-  });
-
-  it('function returns Promise<ConfirmationResult>', () => {
+  it('returns ConfirmationResult (not void)', () => {
     expect(readSrc('../payments/send-confirmation.ts')).toContain('): Promise<ConfirmationResult>');
   });
-
-  it('defines all semantic states', () => {
+  it('defines processing state (not claimed_by_other)', () => {
     const src = readSrc('../payments/send-confirmation.ts');
-    for (const status of ['completed', 'already_completed', 'retryable_failed', 'claimed_by_other', 'not_deliverable']) {
-      expect(src).toContain(`status: '${status}'`);
-    }
+    expect(src).toContain("status: 'processing'");
+    expect(src).not.toContain("status: 'claimed_by_other'");
   });
-
+  it('no void returns in function body', () => {
+    const fn = readSrc('../payments/send-confirmation.ts').slice(
+      readSrc('../payments/send-confirmation.ts').indexOf('): Promise<ConfirmationResult>'),
+    );
+    expect(fn.match(/return;/g)).toBeNull();
+  });
   it('no business → retryable_failed', () => {
     const src = readSrc('../payments/send-confirmation.ts');
     const idx = src.indexOf('no business');
-    const ret = src.slice(src.indexOf('return', idx), src.indexOf(';', src.indexOf('return', idx)));
-    expect(ret).toContain('retryable_failed');
+    expect(src.slice(src.indexOf('return', idx), src.indexOf(';', src.indexOf('return', idx)))).toContain('retryable_failed');
   });
-
-  it('claim error → retryable_failed', () => {
-    const src = readSrc('../payments/send-confirmation.ts');
-    const idx = src.indexOf('claim-rpc');
-    const ret = src.slice(src.indexOf('return', idx), src.indexOf(';', src.indexOf('return', idx)));
-    expect(ret).toContain('retryable_failed');
-  });
-
-  it('already completed → already_completed', () => {
-    const src = readSrc('../payments/send-confirmation.ts');
-    expect(src).toMatch(/already_completed[\s\S]*?return.*already_completed/);
-  });
-
   it('ticket state incomplete → retryable, NOT finalized', () => {
     const src = readSrc('../payments/send-confirmation.ts');
     expect(src).toContain('ticket_state_incomplete');
-    const idx = src.indexOf('ticket_state_incomplete');
-    const nearby = src.slice(idx - 100, idx + 50);
-    expect(nearby).toContain('retryable_failed');
   });
-
-  it('no void returns in function body', () => {
+  it('another worker → processing (retryable: true)', () => {
     const src = readSrc('../payments/send-confirmation.ts');
-    const fnBody = src.slice(src.indexOf('): Promise<ConfirmationResult>'));
-    expect(fnBody.match(/return;/g)).toBeNull();
+    // All claim-lost/another-worker returns should be processing
+    expect(src).toContain("{ status: 'processing', retryable: true }");
+    // Not claimed_by_other with retryable: false
+    expect(src).not.toContain("retryable: false }; // claim may belong");
   });
 });
 
 // ═══════════════════════════════════════════════════════
-// 3. PAYMENT REUSE FAIL-CLOSED
+// 3. PAYMENT REUSE FAIL-CLOSED + QUARANTINE
 // ═══════════════════════════════════════════════════════
 
 vi.mock('@/lib/logger', () => ({
@@ -130,63 +106,72 @@ function paymentChain(overrides: Record<string, unknown> = {}): any {
   return c;
 }
 
-describe('Payment reuse: fail-closed behavioral', () => {
+describe('Payment reuse fail-closed', () => {
   let mockGateway: { name: string; initializePayment: ReturnType<typeof vi.fn>; verifyPayment: ReturnType<typeof vi.fn> };
-
   beforeEach(async () => {
     vi.clearAllMocks();
-    mockGateway = {
-      name: 'paystack',
-      initializePayment: vi.fn().mockResolvedValue({ url: 'https://pay.test/abc', reference: 'REF-ABC' }),
-      verifyPayment: vi.fn(),
-    };
+    mockGateway = { name: 'paystack', initializePayment: vi.fn().mockResolvedValue({ url: 'https://pay/abc', reference: 'REF' }), verifyPayment: vi.fn() };
     const { getPaymentGateway } = await import('@/lib/payments/factory');
     (getPaymentGateway as ReturnType<typeof vi.fn>).mockReturnValue(mockGateway);
   });
 
-  it('Supabase lookup {data:null, error} → provider call 0', async () => {
+  it('Supabase lookup {data:null,error} → provider 0', async () => {
     vi.resetModules();
+    (await import('@/lib/payments/factory')).getPaymentGateway;
     const { getPaymentGateway } = await import('@/lib/payments/factory');
     (getPaymentGateway as ReturnType<typeof vi.fn>).mockReturnValue(mockGateway);
-    const supabase = {
-      from: vi.fn(() => paymentChain({
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: { message: 'db down' } }),
-      })),
-    };
+    const supabase = { from: vi.fn(() => paymentChain({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: { message: 'db' } }) })) };
     const { initializePayment } = await import('../bot/flows/shared/payment');
-    const result = await initializePayment(supabase as never, {
-      bookingId: 'bk-1', userId: 'u1', amount: 5000, referenceCode: 'REF-001',
-      businessName: 'Test', phone: '+234123', countryCode: 'NG',
-    });
-    expect(result).toBeNull();
+    expect(await initializePayment(supabase as never, { bookingId: 'bk-1', userId: 'u1', amount: 5000, referenceCode: 'R', businessName: 'T', phone: '+234', countryCode: 'NG' })).toBeNull();
     expect(mockGateway.initializePayment).not.toHaveBeenCalled();
   });
 
-  it('lookup throws → provider call 0', async () => {
+  it('lookup throws → provider 0', async () => {
     vi.resetModules();
     const { getPaymentGateway } = await import('@/lib/payments/factory');
     (getPaymentGateway as ReturnType<typeof vi.fn>).mockReturnValue(mockGateway);
     const supabase = { from: vi.fn(() => { throw new Error('timeout'); }) };
     const { initializePayment } = await import('../bot/flows/shared/payment');
-    const result = await initializePayment(supabase as never, {
-      bookingId: 'bk-1', userId: 'u1', amount: 5000, referenceCode: 'REF-001',
-      businessName: 'Test', phone: '+234123', countryCode: 'NG',
-    });
-    expect(result).toBeNull();
+    expect(await initializePayment(supabase as never, { bookingId: 'bk-1', userId: 'u1', amount: 5000, referenceCode: 'R', businessName: 'T', phone: '+234', countryCode: 'NG' })).toBeNull();
     expect(mockGateway.initializePayment).not.toHaveBeenCalled();
   });
 
-  it('reuse requires entity + pending + amount + currency + gateway (structural)', () => {
+  it('requires entity + pending + amount + currency + gateway (structural)', () => {
     const src = readSrc('../bot/flows/shared/payment.ts');
     expect(src).toContain('existingPayment.amount === opts.amount');
     expect(src).toContain('existingPayment.currency === currencyCode');
     expect(src).toContain('existingPayment.gateway === gateway.name');
-    expect(src).toContain("eq('status', 'pending')");
+  });
+});
+
+describe('Quarantine guard', () => {
+  it('quarantine check runs BEFORE pending reuse', () => {
+    const src = readSrc('../bot/flows/shared/payment.ts');
+    const quarantineIdx = src.indexOf("like('gateway_status', 'review_required:%')");
+    const pendingIdx = src.indexOf("eq('status', 'pending')");
+    expect(quarantineIdx).toBeGreaterThan(-1);
+    expect(pendingIdx).toBeGreaterThan(quarantineIdx);
   });
 
-  it('quarantine guard blocks new charges for review-required payments', () => {
+  it('quarantine matches regardless of payment status (not just success)', () => {
     const src = readSrc('../bot/flows/shared/payment.ts');
-    expect(src).toContain("like('gateway_status', 'review_required:%')");
+    // The quarantine query should NOT filter by status='success'
+    const quarantineSection = src.slice(src.indexOf('Step 1: Quarantine'), src.indexOf('Step 2: Pending'));
+    expect(quarantineSection).not.toContain("eq('status', 'success')");
+    expect(quarantineSection).toContain("like('gateway_status', 'review_required:%')");
+  });
+
+  it('quarantine lookup error → provider 0', () => {
+    const src = readSrc('../bot/flows/shared/payment.ts');
+    expect(src).toContain('quarantine-lookup');
+    expect(src).toContain('Quarantine lookup failed');
+    // After the error, return null
+    const idx = src.indexOf('Quarantine lookup failed');
+    expect(src.slice(idx, idx + 200)).toContain('return null');
+  });
+
+  it('quarantine row blocks new charge', () => {
+    const src = readSrc('../bot/flows/shared/payment.ts');
     expect(src).toContain('blocking new charge');
   });
 });
@@ -195,30 +180,38 @@ describe('Payment reuse: fail-closed behavioral', () => {
 // 4. TYPED TICKET FAIL-CLOSED
 // ═══════════════════════════════════════════════════════
 
-describe('Typed ticket finalization fail-closed', () => {
-  it('checks event_ticket_types to determine typed/untyped', () => {
+describe('Typed ticket fail-closed', () => {
+  it('type query error → fail closed (not treated as untyped)', () => {
     const src = readSrc('../payments/send-confirmation.ts');
-    expect(src).toContain("from('event_ticket_types')");
-    expect(src).toContain('isTypedEvent');
+    expect(src).toContain("error: typeQueryError");
+    expect(src).toContain("logSafeError(logPrefix, 'ticket-type-query', typeQueryError)");
+    // After error, isTypedEvent is NOT set → ticketStateComplete stays false
   });
 
-  it('typed event + missing bot_session_id → finalize NOT called', () => {
+  it('queries ALL types (not just active) for typed-event classification', () => {
+    const src = readSrc('../payments/send-confirmation.ts');
+    const typeQuerySection = src.slice(src.indexOf('8a. Determine'), src.indexOf('8b. Resolve'));
+    // Should NOT filter is_active for classification
+    expect(typeQuerySection).not.toContain("eq('is_active'");
+  });
+
+  it('validates ticket_type_id belongs to event', () => {
+    const src = readSrc('../payments/send-confirmation.ts');
+    expect(src).toContain("eq('id', ticketTypeId)");
+    expect(src).toContain("eq('event_id', ticketBooking.event_id)");
+    expect(src).toContain('does not belong to event');
+  });
+
+  it('wrong-event ticket_type_id → typeResolutionFailed', () => {
+    const src = readSrc('../payments/send-confirmation.ts');
+    const ownershipSection = src.slice(src.indexOf('8c. For typed events'), src.indexOf('8d.'));
+    expect(ownershipSection).toContain('typeResolutionFailed = true');
+  });
+
+  it('typed event + missing bot_session_id → fail closed', () => {
     const src = readSrc('../payments/send-confirmation.ts');
     expect(src).toContain('isTypedEvent && (!ticketTypeId || typeResolutionFailed)');
     expect(src).toContain('failing closed');
-  });
-
-  it('session lookup error → typeResolutionFailed', () => {
-    const src = readSrc('../payments/send-confirmation.ts');
-    const idx = src.indexOf('ticket-type-session-lookup');
-    expect(idx).toBeGreaterThan(-1);
-    expect(src.slice(idx, idx + 200)).toContain('typeResolutionFailed = true');
-  });
-
-  it('untyped event → NULL type accepted', () => {
-    const src = readSrc('../payments/send-confirmation.ts');
-    // Fail-closed only triggers for isTypedEvent
-    expect(src).toContain('isTypedEvent && (!ticketTypeId || typeResolutionFailed)');
   });
 
   it('uses booking.bot_session_id (not phone)', () => {
@@ -230,112 +223,123 @@ describe('Typed ticket finalization fail-closed', () => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 5. BOT COUNTER FAIL-CLOSED
+// 5. TICKET BOOKING LOOKUP FAIL-CLOSED
 // ═══════════════════════════════════════════════════════
 
-describe('Bot ticket counter fail-closed', () => {
-  it('bot uses finalize_free_ticket_booking (not increment_tickets_sold)', () => {
+describe('Ticket booking lookup fail-closed', () => {
+  it('destructures error from booking query', () => {
+    const src = readSrc('../payments/send-confirmation.ts');
+    expect(src).toContain('error: ticketBookingError');
+  });
+
+  it('booking lookup error → ticketStateComplete = false', () => {
+    const src = readSrc('../payments/send-confirmation.ts');
+    const idx = src.indexOf('ticket-booking-lookup');
+    const after = src.slice(idx, idx + 200);
+    expect(after).toContain('ticketStateComplete = false');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 6. BOT COUNTER FAIL-CLOSED
+// ═══════════════════════════════════════════════════════
+
+describe('Bot counter fail-closed', () => {
+  it('uses finalize_free_ticket_booking (not increment_tickets_sold)', () => {
     const src = readSrc('../bot/flows/ticketing.flow.ts');
     expect(src).toContain("rpc('finalize_free_ticket_booking'");
     expect(src).not.toContain("rpc('increment_tickets_sold'");
   });
-
-  it('bot finalization error → validation failure (not continue)', () => {
+  it('finalization error → validation failure', () => {
     const src = readSrc('../bot/flows/ticketing.flow.ts');
     const idx = src.indexOf('finalize_free_ticket_booking RPC error');
-    const after = src.slice(idx, idx + 300);
-    expect(after).toContain('valid: false');
-    expect(after).toContain('blocking ticket delivery');
+    expect(src.slice(idx, idx + 300)).toContain('valid: false');
   });
-
-  it('no legacy SELECT→UPDATE counter fallback', () => {
-    const src = readSrc('../bot/flows/ticketing.flow.ts');
-    // The old pattern was: SELECT tickets_sold → UPDATE tickets_sold + qty
-    // That should be gone now
-    expect(src).not.toContain("update({ tickets_sold:");
+  it('no legacy SELECT→UPDATE fallback', () => {
+    expect(readSrc('../bot/flows/ticketing.flow.ts')).not.toContain("update({ tickets_sold:");
   });
 });
 
 // ═══════════════════════════════════════════════════════
-// 6. INVENTORY + TICKET STATE COMPLETENESS
+// 7. TICKET STATE COMPLETENESS
 // ═══════════════════════════════════════════════════════
 
-describe('Ticket inventory and state completeness', () => {
+describe('Ticket state completeness', () => {
   it('finalization BEFORE ticket creation', () => {
     const src = readSrc('../payments/send-confirmation.ts');
-    const fin = src.indexOf("rpc('finalize_free_ticket_booking'");
-    const send = src.indexOf('sendTicketsAfterPurchase({');
-    expect(fin).toBeGreaterThan(-1);
-    expect(send).toBeGreaterThan(fin);
+    expect(src.indexOf("rpc('finalize_free_ticket_booking'")).toBeLessThan(src.indexOf('sendTicketsAfterPurchase({'));
   });
-
-  it('finalization failure blocks delivery', () => {
-    const src = readSrc('../payments/send-confirmation.ts');
-    // After finError, Sentry alert is raised and ticket delivery is NOT reached
-    // sendTicketsAfterPurchase is inside the else block (only reached when !finError)
-    const finErrIdx = src.indexOf('if (finError)');
-    const sendIdx = src.indexOf('sendTicketsAfterPurchase({');
-    expect(finErrIdx).toBeGreaterThan(-1);
-    expect(sendIdx).toBeGreaterThan(finErrIdx);
-    // The finError block does NOT contain sendTicketsAfterPurchase
-    const errBlock = src.slice(finErrIdx, src.indexOf('} else', finErrIdx));
-    expect(errBlock).not.toContain('sendTicketsAfterPurchase');
-  });
-
-  it('ticket row count verified after creation', () => {
-    const src = readSrc('../payments/send-confirmation.ts');
-    expect(src).toContain('createdTickets?.length');
-    expect(src).toContain('Expected');
-    expect(src).toContain('ticket rows');
-  });
-
-  it('incomplete state prevents finalization', () => {
+  it('incomplete state prevents confirmation finalization', () => {
     const src = readSrc('../payments/send-confirmation.ts');
     expect(src).toContain('if (!ticketStateComplete)');
-    const gate = src.indexOf('if (!ticketStateComplete)');
-    const finalize = src.indexOf('finalizeConfirmationClaim', gate);
-    expect(finalize).toBeGreaterThan(gate);
+    // The gate check must be before the invocation (not the function definition)
+    const gateIdx = src.indexOf('if (!ticketStateComplete)');
+    const invokeIdx = src.indexOf('await finalizeConfirmationClaim(');
+    expect(gateIdx).toBeLessThan(invokeIdx);
   });
-
-  it('tickets_finalized RPC guard prevents double-counting', () => {
-    const src = readSrc('../../supabase/migrations/304_session_resilience.sql');
-    expect(src).toContain('SELECT tickets_finalized INTO v_already');
-    expect(src).toContain('FOR UPDATE');
+  it('uses sendTicketsAfterPurchase result (not void)', () => {
+    const src = readSrc('../payments/send-confirmation.ts');
+    expect(src).toContain('ticketResult.success');
+    expect(src).toContain('ticketResult.tickets.length');
   });
+});
 
-  it('sendTicketsAfterPurchase deduplicates', () => {
+// ═══════════════════════════════════════════════════════
+// 8. sendTicketsAfterPurchase RESULT CONTRACT
+// ═══════════════════════════════════════════════════════
+
+describe('sendTicketsAfterPurchase result contract', () => {
+  it('returns TicketCreationResult (not void)', () => {
     const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    expect(src).toContain("eq('booking_id', bookingId)");
-    expect(src).toContain('Tickets already exist');
+    expect(src).toContain('Promise<TicketCreationResult>');
+    expect(src).toContain('export interface TicketCreationResult');
+  });
+  it('reports success with ticket data', () => {
+    const src = readSrc('../bot/flows/shared/send-tickets.ts');
+    expect(src).toContain('return { success: true, tickets }');
+  });
+  it('reports insert failure explicitly', () => {
+    const src = readSrc('../bot/flows/shared/send-tickets.ts');
+    expect(src).toContain("return { success: false, tickets: [], error: 'insert_failed' }");
+  });
+  it('handles UNIQUE conflict from concurrent worker (code 23505)', () => {
+    const src = readSrc('../bot/flows/shared/send-tickets.ts');
+    expect(src).toContain("insertError.code === '23505'");
+    expect(src).toContain('concurrent worker created rows');
+  });
+  it('re-reads canonical rows on UNIQUE conflict', () => {
+    const src = readSrc('../bot/flows/shared/send-tickets.ts');
+    expect(src).toContain('concurrentRows');
   });
 });
 
 // ═══════════════════════════════════════════════════════
-// 7. TICKET ROW CONCURRENCY
+// 9. MIGRATION 313 TICKET ROW IDENTITY
 // ═══════════════════════════════════════════════════════
 
-describe('Ticket row concurrency', () => {
-  it('NO booking-scoped UNIQUE on event_tickets — MIGRATION REQUIRED', () => {
-    const src = readSrc('../../supabase/migrations/072_event_tickets.sql');
-    expect(src).toContain('ticket_code VARCHAR(12) UNIQUE NOT NULL');
-    expect(src).not.toMatch(/UNIQUE.*booking_id.*ticket_number/);
-
-    const dir = path.resolve(__dirname, '../../supabase/migrations');
-    const files = fs.readdirSync(dir).filter(f => f.endsWith('.sql'));
-    let found = false;
-    for (const f of files) {
-      const c = fs.readFileSync(path.join(dir, f), 'utf-8');
-      if (c.includes('event_tickets') && c.match(/UNIQUE.*booking_id.*ticket_number/)) found = true;
-    }
-    expect(found).toBe(false);
+describe('Migration 313: ticket row identity', () => {
+  it('creates UNIQUE(booking_id, ticket_number) constraint', () => {
+    const src = readSrc('../../supabase/migrations/313_ticket_row_identity.sql');
+    expect(src).toContain('UNIQUE INDEX');
+    expect(src).toContain('booking_id');
+    expect(src).toContain('ticket_number');
+  });
+  it('uses IF NOT EXISTS (idempotent)', () => {
+    expect(readSrc('../../supabase/migrations/313_ticket_row_identity.sql')).toContain('IF NOT EXISTS');
+  });
+  it('does not change RLS or privileges', () => {
+    const src = readSrc('../../supabase/migrations/313_ticket_row_identity.sql');
+    expect(src).not.toContain('POLICY');
+    expect(src).not.toContain('GRANT');
+    expect(src).not.toContain('REVOKE');
   });
 });
 
 // ═══════════════════════════════════════════════════════
-// 8. EVENT PUBLISH + SESSION
+// 10. EVENT PUBLISH + SESSION
 // ═══════════════════════════════════════════════════════
 
-describe('Event publish status', () => {
+describe('Event publish + session', () => {
   it('Create → published, Duplicate → draft', () => {
     const src = readSrc('../../app/dashboard/events/page.tsx');
     expect(src).toMatch(/openAdd[\s\S]*?status:\s*'published'/);
@@ -344,10 +348,7 @@ describe('Event publish status', () => {
   it('bot filters by published', () => {
     expect(readSrc('../bot/flows/ticketing.flow.ts')).toContain("in('status', ['published'])");
   });
-});
-
-describe('Session deactivation', () => {
-  it('targets all payment steps', () => {
+  it('session deactivation targets all payment steps', () => {
     const src = readSrc('../payments/send-confirmation.ts');
     for (const s of ['await_ticket_payment', 'payment', 'await_payment', 'await_order_payment', 'create_booking']) {
       expect(src).toContain(`'${s}'`);

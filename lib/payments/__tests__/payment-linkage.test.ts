@@ -55,6 +55,7 @@ function createTestSupabase() {
       eq: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
       limit: vi.fn().mockReturnThis(),
+      like: vi.fn().mockReturnThis(),
       single: vi.fn().mockResolvedValue({ data: null, error: null }),
       maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
       update: vi.fn().mockReturnValue({
@@ -402,7 +403,7 @@ describe('Shared payment wrapper forwarding', () => {
     // Deep chainable mock that supports all query patterns (.eq, .not, .is, .single, .maybeSingle)
     const chainable = (): Record<string, unknown> => {
       const self: Record<string, unknown> = {};
-      for (const m of ['select', 'eq', 'not', 'is', 'single', 'maybeSingle', 'insert', 'update', 'in', 'order', 'limit']) {
+      for (const m of ['select', 'eq', 'not', 'is', 'single', 'maybeSingle', 'insert', 'update', 'in', 'order', 'limit', 'like']) {
         self[m] = vi.fn(() => self);
       }
       self.single = vi.fn().mockResolvedValue({ data: null, error: null });
@@ -470,7 +471,7 @@ describe('Shared payment wrapper forwarding', () => {
 
     const chainable = (): Record<string, unknown> => {
       const self: Record<string, unknown> = {};
-      for (const m of ['select', 'eq', 'not', 'is', 'single', 'maybeSingle', 'insert', 'update', 'in', 'order', 'limit']) {
+      for (const m of ['select', 'eq', 'not', 'is', 'single', 'maybeSingle', 'insert', 'update', 'in', 'order', 'limit', 'like']) {
         self[m] = vi.fn(() => self);
       }
       self.single = vi.fn().mockResolvedValue({ data: null, error: null });

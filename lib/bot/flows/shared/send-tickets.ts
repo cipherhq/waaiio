@@ -48,7 +48,17 @@ function generateTicketCode(): string {
  * 4. Upload to Supabase Storage
  * 5. Send PDF via WhatsApp
  */
-export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promise<void> {
+/**
+ * Result from canonical ticket-row creation.
+ * Callers must check `rowsCreated` to determine if ticket state is complete.
+ */
+export interface TicketCreationResult {
+  success: boolean;
+  tickets: Array<{ ticketCode: string; ticketNumber: number; totalTickets: number }>;
+  error?: string;
+}
+
+export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promise<TicketCreationResult> {
   const {
     supabase, sender, businessId, bookingId, eventId,
     eventName, eventDate, eventTime, venue,
@@ -69,10 +79,15 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
   }
 
   // 2. Check if tickets already exist (dedup — webhook + "I've Paid" race)
-  const { data: existingTickets } = await supabase
+  const { data: existingTickets, error: existingError } = await supabase
     .from('event_tickets')
     .select('ticket_code')
     .eq('booking_id', bookingId);
+
+  if (existingError) {
+    logger.error('[TICKETS] Failed to check existing tickets:', existingError.message);
+    return { success: false, tickets: [], error: 'existing_ticket_lookup_failed' };
+  }
 
   if (existingTickets && existingTickets.length > 0) {
     logger.info('[TICKETS] Tickets already exist for booking', bookingId, '— skipping insert, using existing');
@@ -103,10 +118,29 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
       .insert(rows);
 
     if (insertError) {
-      logger.error('[TICKETS] Failed to insert event_tickets:', insertError.message, insertError.code);
-      return;
+      // UNIQUE(booking_id, ticket_number) conflict = concurrent worker already created rows
+      if (insertError.code === '23505') {
+        logger.info('[TICKETS] UNIQUE conflict — concurrent worker created rows for booking', bookingId);
+        // Re-read the canonical rows created by the other worker
+        const { data: concurrentRows } = await supabase
+          .from('event_tickets')
+          .select('ticket_code')
+          .eq('booking_id', bookingId);
+        if (concurrentRows && concurrentRows.length > 0) {
+          tickets.length = 0;
+          concurrentRows.forEach((t, i) => {
+            tickets.push({ ticketCode: t.ticket_code, ticketNumber: i + 1, totalTickets: concurrentRows.length });
+          });
+        } else {
+          return { success: false, tickets: [], error: 'concurrent_insert_reread_failed' };
+        }
+      } else {
+        logger.error('[TICKETS] Failed to insert event_tickets:', insertError.message, insertError.code);
+        return { success: false, tickets: [], error: 'insert_failed' };
+      }
+    } else {
+      logger.info('[TICKETS] Inserted', tickets.length, 'event_tickets');
     }
-    logger.info('[TICKETS] Inserted', tickets.length, 'event_tickets');
   }
 
   const verifyBaseUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/tickets`;
@@ -255,4 +289,6 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
       total_tickets: evt.total_tickets,
     }).catch(err => logger.error('[TICKETS] Sold-out webhook error:', err));
   }
+
+  return { success: true, tickets };
 }

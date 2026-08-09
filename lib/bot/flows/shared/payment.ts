@@ -47,8 +47,29 @@ export async function initializePayment(
     const entityId = opts.bookingId || opts.orderId || opts.invoiceId || opts.reservationId;
     if (entityId) {
       const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : 'reservation_id';
-      let lookupOk = false;
       try {
+        // ── Step 1: Quarantine guard (FIRST — wins over pending reuse) ──
+        // If provider already collected money and the payment is under review,
+        // block new charges regardless of ordinary payment status.
+        const { data: quarantined, error: quarantineError } = await supabase
+          .from('payments')
+          .select('id, gateway_status')
+          .eq(entityCol, entityId)
+          .like('gateway_status', 'review_required:%')
+          .limit(1)
+          .maybeSingle();
+
+        if (quarantineError) {
+          logger.withContext({ op: 'payment.quarantine-lookup', ...safeLogErrorContext(quarantineError) })
+            .error('[PAYMENT] Quarantine lookup failed — aborting to prevent duplicate provider transaction');
+          return null;
+        }
+        if (quarantined) {
+          logger.warn('[PAYMENT] Provider-paid quarantined payment exists for ' + entityCol + '=' + entityId + ' — blocking new charge');
+          return null;
+        }
+
+        // ── Step 2: Pending payment reuse ──
         const { data: existingPayment, error: lookupError } = await supabase
           .from('payments')
           .select('id, gateway_reference, amount, currency, gateway, metadata')
@@ -62,26 +83,6 @@ export async function initializePayment(
           logger.withContext({ op: 'payment.reuse-lookup', ...safeLogErrorContext(lookupError) })
             .error('[PAYMENT] Pending payment lookup failed — aborting to prevent duplicate provider transaction');
           return null;
-        }
-
-        lookupOk = true;
-
-        // ── Quarantine guard: if a provider-paid payment exists for this entity
-        // that requires review (e.g. amount/currency mismatch detected by Terminal G),
-        // do NOT create another charge. The customer's money is already collected. ──
-        if (!existingPayment) {
-          const { data: quarantined } = await supabase
-            .from('payments')
-            .select('id, gateway_status')
-            .eq(entityCol, entityId)
-            .eq('status', 'success')
-            .like('gateway_status', 'review_required:%')
-            .limit(1)
-            .maybeSingle();
-          if (quarantined) {
-            logger.warn('[PAYMENT] Provider-paid quarantined payment exists for ' + entityCol + '=' + entityId + ' — blocking new charge');
-            return null;
-          }
         }
 
         if (
@@ -100,11 +101,9 @@ export async function initializePayment(
           }
         }
       } catch (lookupErr) {
-        if (!lookupOk) {
-          logger.withContext({ op: 'payment.reuse-lookup-throw', ...safeLogErrorContext(lookupErr) })
-            .error('[PAYMENT] Pending payment lookup threw — aborting to prevent duplicate provider transaction');
-          return null;
-        }
+        logger.withContext({ op: 'payment.reuse-lookup-throw', ...safeLogErrorContext(lookupErr) })
+          .error('[PAYMENT] Payment guard lookup threw — aborting to prevent duplicate provider transaction');
+        return null;
       }
     }
 

@@ -5,6 +5,24 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-10
+
+### migration(313): canonical ticket-row identity constraint
+
+- **Migration:** `313_ticket_row_identity.sql` — `UNIQUE(booking_id, ticket_number)` on `event_tickets`.
+- **Reason:** Two concurrent workers (webhook + bot) could both INSERT different ticket codes for the same booking+ticket_number. Only `ticket_code UNIQUE` existed, which doesn't prevent booking-scoped duplication.
+- **Files:** `supabase/migrations/313_ticket_row_identity.sql`
+
+### fix(TICKET-STATE): fail-closed ticket finalization + result contracts
+
+- **Typed event classification:** Query error on `event_ticket_types` now fails closed (not treated as untyped). Queries ALL types (not just active) since a deactivated type may still belong to a purchased ticket.
+- **Ticket type ownership:** Validates `ticket_type_id` belongs to `event_id` before finalization. Wrong-event type → fail closed.
+- **Booking lookup:** Error destructured and handled — confirmation not finalized on lookup error.
+- **sendTicketsAfterPurchase:** Returns `TicketCreationResult` (not void). Reports insert failures explicitly. Handles UNIQUE conflict (code 23505) from concurrent worker by re-reading canonical rows.
+- **Quarantine guard:** Runs BEFORE pending reuse. Matches any `gateway_status LIKE 'review_required:%'` regardless of payment status. Lookup error → fail closed.
+- **ConfirmationResult:** `claimed_by_other` replaced with `processing` (retryable: true) — another worker owning the claim is incomplete, not permanently non-retryable.
+- **Files:** `lib/payments/send-confirmation.ts`, `lib/bot/flows/shared/payment.ts`, `lib/bot/flows/shared/send-tickets.ts`, `lib/bot/flows/ticketing.flow.ts`
+
 ## 2026-08-09
 
 ### fix(PAY-CONFIRM): payment confirmation broken by malformed services column select
