@@ -53,12 +53,15 @@ function runTwoSessions(
 }
 
 describe.skipIf(!canRun)('Migration 313: ticket-row identity', () => {
-  const BIZ = '00000000-0000-0000-0000-000000313b01';
-  const EVT = '00000000-0000-0000-0000-000000313e01';
-  const BK = '00000000-0000-0000-0000-000000313k01';
+  const BIZ = '00000000-0000-0000-0313-000000000b01';
+  const EVT = '00000000-0000-0000-0313-000000000e01';
+  const BK  = '00000000-0000-0000-0313-0000000000a1';
+
+  const USR = '00000000-0000-0000-0313-000000000001';
 
   beforeAll(() => {
-    psql(`INSERT INTO businesses (id, name, slug, owner_id, status) VALUES ('${BIZ}', 'TicketTest313', 'tt313', '${BIZ}', 'active') ON CONFLICT (id) DO NOTHING;`);
+    psql(`INSERT INTO profiles (id) VALUES ('${USR}') ON CONFLICT (id) DO NOTHING;`);
+    psql(`INSERT INTO businesses (id, name, slug, owner_id, status) VALUES ('${BIZ}', 'TicketTest313', 'tt313', '${USR}', 'active') ON CONFLICT (id) DO NOTHING;`);
     psql(`INSERT INTO events (id, business_id, name, date, time, venue, price, total_tickets, tickets_sold, status) VALUES ('${EVT}', '${BIZ}', 'Evt313', '2027-01-01', '18:00', 'V', 1000, 100, 0, 'published') ON CONFLICT (id) DO NOTHING;`);
     psql(`INSERT INTO bookings (id, business_id, event_id, date, time, party_size, flow_type, channel, status, deposit_status, deposit_amount, total_amount, guest_name, guest_phone) VALUES ('${BK}', '${BIZ}', '${EVT}', '2027-01-01', '18:00', 2, 'ticketing', 'whatsapp', 'confirmed', 'paid', 1000, 2000, 'Guest', '+234') ON CONFLICT (id) DO NOTHING;`);
 
@@ -75,6 +78,7 @@ describe.skipIf(!canRun)('Migration 313: ticket-row identity', () => {
     psql(`DELETE FROM bookings WHERE id = '${BK}';`);
     psql(`DELETE FROM events WHERE id = '${EVT}';`);
     psql(`DELETE FROM businesses WHERE id = '${BIZ}';`);
+    psql(`DELETE FROM profiles WHERE id = '${USR}';`);
   });
 
   it('UNIQUE index exists', () => {
