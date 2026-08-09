@@ -60,9 +60,11 @@ describe.skipIf(!canRun)('Migration 313: ticket-row identity', () => {
   const USR = '00000000-0000-0000-0313-000000000001';
 
   beforeAll(() => {
+    // Use minimal inserts with trigger/constraint bypass (matches session-resilience-db pattern)
     psql(`ALTER TABLE auth.users DISABLE TRIGGER ALL; INSERT INTO auth.users (id) VALUES ('${USR}') ON CONFLICT DO NOTHING; ALTER TABLE auth.users ENABLE TRIGGER ALL;`);
     psql(`ALTER TABLE profiles DISABLE TRIGGER ALL; INSERT INTO profiles (id) VALUES ('${USR}') ON CONFLICT (id) DO NOTHING; ALTER TABLE profiles ENABLE TRIGGER ALL;`);
-    psql(`INSERT INTO businesses (id, name, slug, owner_id, status, address) VALUES ('${BIZ}', 'TicketTest313', 'tt313', '${USR}', 'active', 'Test Address') ON CONFLICT (id) DO NOTHING;`);
+    psql(`ALTER TABLE businesses DISABLE TRIGGER ALL; INSERT INTO businesses (id) VALUES ('${BIZ}') ON CONFLICT DO NOTHING; ALTER TABLE businesses ENABLE TRIGGER ALL;`);
+    psql(`UPDATE businesses SET name = 'TicketTest313', slug = 'tt313', owner_id = '${USR}', status = 'active' WHERE id = '${BIZ}';`);
     psql(`INSERT INTO events (id, business_id, name, date, time, venue, price, total_tickets, tickets_sold, status) VALUES ('${EVT}', '${BIZ}', 'Evt313', '2027-01-01', '18:00', 'V', 1000, 100, 0, 'published') ON CONFLICT (id) DO NOTHING;`);
     psql(`INSERT INTO bookings (id, business_id, event_id, date, time, party_size, flow_type, channel, status, deposit_status, deposit_amount, total_amount, guest_name, guest_phone) VALUES ('${BK}', '${BIZ}', '${EVT}', '2027-01-01', '18:00', 2, 'ticketing', 'whatsapp', 'confirmed', 'paid', 1000, 2000, 'Guest', '+234') ON CONFLICT (id) DO NOTHING;`);
 
