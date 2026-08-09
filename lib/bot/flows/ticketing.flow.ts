@@ -1038,8 +1038,10 @@ export const ticketingFlow: FlowDefinition = {
             });
             if (finError) {
               logger.withContext({ op: 'ticketing.finalize-counter', ...safeLogErrorContext(finError) })
-                .error('[TICKETING] finalize_free_ticket_booking RPC error');
-            } else if (finResult?.already_finalized) {
+                .error('[TICKETING] finalize_free_ticket_booking RPC error — blocking ticket delivery');
+              return { valid: false, errorMessage: 'Something went wrong confirming your ticket inventory. Please try again.' };
+            }
+            if (finResult?.already_finalized) {
               logger.info('[TICKETING] Ticket counters already finalized for booking ' + (d.booking_id as string));
             }
 

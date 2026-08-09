@@ -66,6 +66,24 @@ export async function initializePayment(
 
         lookupOk = true;
 
+        // ── Quarantine guard: if a provider-paid payment exists for this entity
+        // that requires review (e.g. amount/currency mismatch detected by Terminal G),
+        // do NOT create another charge. The customer's money is already collected. ──
+        if (!existingPayment) {
+          const { data: quarantined } = await supabase
+            .from('payments')
+            .select('id, gateway_status')
+            .eq(entityCol, entityId)
+            .eq('status', 'success')
+            .like('gateway_status', 'review_required:%')
+            .limit(1)
+            .maybeSingle();
+          if (quarantined) {
+            logger.warn('[PAYMENT] Provider-paid quarantined payment exists for ' + entityCol + '=' + entityId + ' — blocking new charge');
+            return null;
+          }
+        }
+
         if (
           existingPayment
           && existingPayment.amount === opts.amount

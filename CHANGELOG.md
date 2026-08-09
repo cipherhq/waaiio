@@ -26,11 +26,21 @@ If something breaks, check this log to find what changed and when.
 
 ### fix(TICKET-COUNTER): unified idempotent ticket sold counter finalization
 
-- **Root cause:** Webhook confirmation path (`sendProactiveConfirmation`) sent tickets via `sendTicketsAfterPurchase` but never incremented `events.tickets_sold` or `event_ticket_types.tickets_sold`. Bot "I've Paid" path used a non-idempotent `increment_tickets_sold` RPC (never defined in migrations — relied on fallback manual UPDATE). The two paths could double-count or miss counts.
-- **Fix:** Both paths now use the canonical `finalize_free_ticket_booking` RPC (migration 304) which provides idempotent counter increment via `tickets_finalized` flag. Bot "I've Paid" path replaced `increment_tickets_sold` + manual fallback with single `finalize_free_ticket_booking` call. Webhook path (`send-confirmation.ts`) now calls `finalize_free_ticket_booking` after `sendTicketsAfterPurchase`. Ticket type ID is resolved from the bot session when available.
+- **Root cause:** Webhook confirmation path sent tickets but never incremented `events.tickets_sold`. Bot "I've Paid" path used a non-idempotent `increment_tickets_sold` RPC (never defined in migrations).
+- **Fix:** Both paths now use `finalize_free_ticket_booking` RPC (migration 304) with `tickets_finalized` guard. Bot path fails closed on RPC error (blocks ticket delivery). Webhook path resolves `ticket_type_id` via `booking.bot_session_id` → exact originating session. For typed events, unresolvable `ticket_type_id` fails closed (no partial event-only counter increment). Inventory finalization runs BEFORE ticket row creation. Ticket state must be complete before confirmation claim is finalized.
 - **Files changed:** `lib/bot/flows/ticketing.flow.ts`, `lib/payments/send-confirmation.ts`
-- **Affects:** Ticket inventory tracking for both webhook-confirmed and bot-confirmed paid ticket purchases.
-- **Could break:** Nothing — replaces a broken non-idempotent mechanism with the canonical idempotent one.
+
+### feat(PAY-CONFIRM-CONTRACT): explicit ConfirmationResult return type
+
+- **Root cause:** `sendProactiveConfirmation` returned `void` — callers could not distinguish completed/already-completed/retryable-failure/claim-lost/not-deliverable.
+- **Fix:** Returns `ConfirmationResult` union type. Every early return now has a semantic status. Ticket state incomplete → `retryable_failed`. Claim lost → `claimed_by_other`. No business → `retryable_failed`. No contact → `not_deliverable`.
+- **Files changed:** `lib/payments/send-confirmation.ts`
+
+### fix(PAY-QUARANTINE): second-charge prevention for provider-paid quarantined payments
+
+- **Root cause:** Terminal G may quarantine a provider-paid payment with `gateway_status LIKE 'review_required:%'`. If customer re-enters payment flow, `initializePayment` would create another charge.
+- **Fix:** Before gateway call, checks for existing success+review_required payments on same entity. If found, returns null (blocks new charge). Guard infrastructure ready for Terminal G to populate.
+- **Files changed:** `lib/bot/flows/shared/payment.ts`
 
 ## 2026-08-07
 
