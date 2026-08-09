@@ -6,6 +6,7 @@ import { processSuccessfulPayment } from '@/lib/payments/process-success';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { logger } from '@/lib/logger';
 import { createCronLogger } from '@/lib/observability/cron';
+import { resolvePaystackKey, verifyPaystackPayment } from '@/lib/payments/paystack-reconciliation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,7 +19,7 @@ export const maxDuration = 60;
  * the payment gateway. If the gateway says paid, we process the payment.
  * If the gateway says failed/expired, we mark it failed.
  *
- * Runs every 4 hours: "0 *​/4 * * *"
+ * Runs every 4 hours.
  */
 export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
   // Find stale pending payments (only Stripe and Paystack — we can verify those)
   const { data: stalePayments, error: queryError } = await supabase
     .from('payments')
-    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata')
+    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata, business_id')
     .eq('status', 'pending')
     .lt('created_at', twoHoursAgo.toISOString())
     .in('gateway', ['stripe', 'paystack'])
@@ -58,7 +59,30 @@ export async function GET(request: NextRequest) {
 
   for (const payment of stalePayments) {
     try {
-      const gatewayStatus = await verifyWithGateway(payment.gateway, payment.gateway_reference);
+      let gatewayStatus: 'paid' | 'pending' | 'failed' | 'expired';
+
+      if (payment.gateway === 'paystack') {
+        // Resolve the correct Paystack key (BYO vs platform)
+        const metadata = payment.metadata as Record<string, unknown> | null;
+        const { key, skip } = await resolvePaystackKey(supabase, {
+          id: payment.id,
+          gateway: payment.gateway,
+          gateway_reference: payment.gateway_reference,
+          business_id: payment.business_id,
+          metadata,
+        });
+
+        if (skip || !key) {
+          // Cannot resolve key — leave payment pending
+          continue;
+        }
+
+        gatewayStatus = await verifyPaystackPayment(payment.gateway_reference, key);
+      } else if (payment.gateway === 'stripe') {
+        gatewayStatus = await verifyStripePayment(payment.gateway_reference);
+      } else {
+        continue; // Unknown gateway
+      }
 
       if (gatewayStatus === 'paid') {
         // Gateway says paid — update status and run post-payment pipeline
@@ -141,22 +165,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-type GatewayVerifyResult = 'paid' | 'pending' | 'failed' | 'expired';
-
-async function verifyWithGateway(
-  gateway: string,
-  reference: string,
-): Promise<GatewayVerifyResult> {
-  if (gateway === 'stripe') {
-    return verifyStripePayment(reference);
-  }
-  if (gateway === 'paystack') {
-    return verifyPaystackPayment(reference);
-  }
-  return 'pending'; // Unknown gateway — leave as-is
-}
-
-async function verifyStripePayment(reference: string): Promise<GatewayVerifyResult> {
+async function verifyStripePayment(reference: string): Promise<'paid' | 'pending' | 'failed' | 'expired'> {
   const stripeKey = process.env.STRIPE_SECRET_KEY;
   if (!stripeKey) return 'pending'; // Can't verify without key
 
@@ -191,30 +200,4 @@ async function verifyStripePayment(reference: string): Promise<GatewayVerifyResu
     if (data.status === 'requires_payment_method') return 'failed';
     return 'pending';
   }
-}
-
-async function verifyPaystackPayment(reference: string): Promise<GatewayVerifyResult> {
-  const paystackKey = process.env.PAYSTACK_SECRET_KEY;
-  if (!paystackKey) return 'pending'; // Can't verify without key
-
-  const response = await fetch(
-    `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
-    {
-      headers: { Authorization: `Bearer ${paystackKey}` },
-      signal: AbortSignal.timeout(15000),
-    },
-  );
-
-  if (!response.ok) {
-    if (response.status === 404) return 'failed';
-    throw new Error(`Paystack API error: ${response.status}`);
-  }
-
-  const data = await response.json();
-  const status = data?.data?.status;
-
-  if (status === 'success') return 'paid';
-  if (status === 'failed' || status === 'abandoned') return 'failed';
-  if (status === 'reversed') return 'failed';
-  return 'pending';
 }
