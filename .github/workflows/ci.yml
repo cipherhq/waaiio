@@ -837,6 +837,9 @@ jobs:
       - name: Validate migration repair plan
         run: npm run verify:migration-repair-plan
 
+      - name: Validate migration repair guard
+        run: node scripts/validate-migration-repair-guard.mjs
+
   # ── Playwright Smoke Tests ──
   playwright:
     name: Playwright smoke tests

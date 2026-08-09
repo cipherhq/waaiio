@@ -5,6 +5,17 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-08
+
+### chore: migration history deviation documentation and repair guard
+
+- **Deviation:** 14 migration versions (12 NOT_VERIFIABLE_SAFELY + 2 SUPERSEDED) were marked as applied via `supabase migration repair --status applied` during production release, despite their SQL never being executed. No schema damage — repair only inserts metadata rows.
+- **Documentation:** Added `PRODUCTION_DEVIATION_LOG.md` recording the incident, affected versions, and canonical treatment as APPLIED_WITHOUT_EXECUTION.
+- **Guard:** Added `scripts/migration-repair-guard.ts` preventing future repairs on blocked classifications. 7 regression tests.
+- **Runbook:** Updated `101-246-repair-runbook.md` to reflect current production state.
+- **Manifest:** Updated `101-246-production-reconciliation.json` to mark 14 versions as `applied_without_execution`.
+- **Files:** `docs/migrations/PRODUCTION_DEVIATION_LOG.md`, `docs/migrations/101-246-repair-runbook.md`, `docs/migrations/101-246-production-reconciliation.json`, `scripts/migration-repair-guard.ts`, `lib/__tests__/migration-repair-guard.test.ts`
+
 ## 2026-08-07
 
 ### fix(P0-PAY-1): payment-level idempotency for financial operations
