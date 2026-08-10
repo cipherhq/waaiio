@@ -101,6 +101,14 @@ interface PaymentForConfirmation {
   order_id?: string | null;
 }
 
+/** Explicit result from sendProactiveConfirmation for callers that need to distinguish outcomes. */
+export type ConfirmationResult =
+  | { status: 'completed' }
+  | { status: 'already_completed' }
+  | { status: 'processing'; retryable: true }
+  | { status: 'retryable_failed'; retryable: true; reason: string }
+  | { status: 'not_deliverable'; retryable: false; reason: string };
+
 /**
  * Send proactive WhatsApp confirmation after a successful payment.
  * Shared across all 5 gateway webhooks + payment-success page.
@@ -117,7 +125,7 @@ export async function sendProactiveConfirmation(
   supabase: SupabaseClient,
   payment: PaymentForConfirmation,
   logPrefix = '[WEBHOOK]',
-): Promise<void> {
+): Promise<ConfirmationResult> {
   // ── Atomic claim: only one concurrent caller wins processing rights ──
   const { data: claim, error: claimError } = await supabase.rpc('claim_payment_confirmation', {
     p_payment_id: payment.id,
@@ -126,22 +134,22 @@ export async function sendProactiveConfirmation(
   if (claimError) {
     logSafeError(logPrefix, 'claim-rpc', claimError);
     Sentry.captureException(claimError, { tags: { component: 'send-confirmation', operation: 'claim' } });
-    return;
+    return { status: 'retryable_failed', retryable: true, reason: 'claim_rpc_error' };
   }
 
   if (!claim?.claimed) {
     if (claim?.already_completed) {
       logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
-    } else {
-      logger.info(`${logPrefix} Confirmation claim not granted for payment ${payment.id}: ${claim?.reason || 'unknown'}`);
+      return { status: 'already_completed' };
     }
-    return;
+    logger.info(`${logPrefix} Confirmation claim not granted for payment ${payment.id}: ${claim?.reason || 'unknown'}`);
+    return { status: 'processing', retryable: true };
   }
 
   const claimToken = claim.claim_token as string;
   if (!claimToken || !claim.payment_id) {
     logger.error(`${logPrefix} Claim succeeded but returned incomplete data for payment ${payment.id}`);
-    return;
+    return { status: 'retryable_failed', retryable: true, reason: 'claim_incomplete_data' };
   }
 
   // Use the claim's authoritative payment data
@@ -179,18 +187,22 @@ export async function sendProactiveConfirmation(
 
   // ── 1. Resolve customer + business from booking ──
   if (payment.booking_id) {
-    const { data: booking } = await supabase
+    const { data: booking, error: bookingError } = await supabase
       .from('bookings')
-      .select('guest_phone, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration)')
+      .select('guest_phone, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration_minutes)')
       .eq('id', payment.booking_id)
       .single();
+
+    if (bookingError) {
+      logSafeError(logPrefix, 'booking-lookup', bookingError);
+    }
 
     if (booking) {
       customerPhone = booking.guest_phone;
       businessId = booking.business_id;
       referenceCode = booking.reference_code || '';
       const biz = booking.businesses as unknown as { name: string; country_code?: string; address?: string; payment_gateway?: string } | null;
-      const svc = booking.services as unknown as { name: string; duration?: number } | null;
+      const svc = booking.services as unknown as { name: string; duration_minutes?: number } | null;
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
       if (svc?.name) serviceName = svc.name;
@@ -198,7 +210,7 @@ export async function sendProactiveConfirmation(
         bookingDate = booking.date;
         bookingTime = booking.time;
         bookingAddress = biz?.address || undefined;
-        bookingDuration = svc?.duration || undefined;
+        bookingDuration = svc?.duration_minutes || undefined;
       }
       // Check for remaining balance (deposit scenario)
       const total = Number(booking.total_amount || 0);
@@ -296,7 +308,7 @@ export async function sendProactiveConfirmation(
   if (!businessId) {
     logger.warn(`${logPrefix} Proactive confirmation skipped — no business`);
     await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
-    return;
+    return { status: 'retryable_failed', retryable: true, reason: 'no_business_resolved' };
   }
 
   // Fetch subscription tier for white-label checks on emails
@@ -322,7 +334,7 @@ export async function sendProactiveConfirmation(
     if (!guestEmail) {
       logger.warn(`${logPrefix} Proactive confirmation skipped — no phone or email`);
       await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
-      return;
+      return { status: 'not_deliverable', retryable: false, reason: 'no_phone_or_email' };
     }
     // We have email but no phone — send email-only below
     logger.info(`${logPrefix} No phone found, will attempt email-only confirmation`);
@@ -348,7 +360,7 @@ export async function sendProactiveConfirmation(
   const preExternal = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
   if (!preExternal.ok) {
     logger.warn(`${logPrefix} Ownership lost before external operations: ${preExternal.reason}`);
-    return; // Do NOT release — claim may belong to another worker
+    return { status: 'processing', retryable: true }; // claim may belong to another worker
   }
 
   // Add balance info if deposit was partial
@@ -485,7 +497,7 @@ export async function sendProactiveConfirmation(
     const prePostCompletion = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!prePostCompletion.ok) {
       logger.warn(`${logPrefix} Ownership lost before post-completion: ${prePostCompletion.reason}`);
-      return; // Do NOT release or finalize — claim belongs to another worker
+      return { status: 'processing', retryable: true };
     }
 
     // ── 6. Post-completion (loyalty, feedback, referral, customer profile) ──
@@ -512,7 +524,7 @@ export async function sendProactiveConfirmation(
     const preOwnerNotify = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!preOwnerNotify.ok) {
       logger.warn(`${logPrefix} Ownership lost before owner notify: ${preOwnerNotify.reason}`);
-      return;
+      return { status: 'processing', retryable: true };
     }
 
     // ── 7. Owner notification ──
@@ -621,53 +633,144 @@ export async function sendProactiveConfirmation(
     const preTickets = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!preTickets.ok) {
       logger.warn(`${logPrefix} Ownership lost before tickets/emails: ${preTickets.reason}`);
-      return;
+      return { status: 'processing', retryable: true };
     }
     sideEffectsMayHaveOccurred = true; // tickets, customer email, donation receipt
 
-    // ── 8. Send tickets for ticketing bookings ──
+    // ── 8. Ticketing bookings: finalize inventory, create ticket rows, deliver ──
+    // Sequence: inventory finalization → canonical ticket rows → delivery
+    // Inventory finalization and ticket rows must succeed before confirmation is marked complete.
+    let ticketStateComplete = true; // non-ticketing bookings are "complete" by default
     try {
       if (payment.booking_id) {
-        const { data: ticketBooking } = await supabase
+        const { data: ticketBooking, error: ticketBookingError } = await supabase
           .from('bookings')
-          .select('flow_type, event_id, date, time, party_size, guest_name, guest_phone, guest_email, notes')
+          .select('flow_type, event_id, bot_session_id, date, time, party_size, guest_name, guest_phone, guest_email, notes')
           .eq('id', payment.booking_id)
           .single();
 
-        if (ticketBooking?.flow_type === 'ticketing' && ticketBooking.event_id) {
-          const { data: event } = await supabase
-            .from('events')
-            .select('id, name, date, time, venue')
-            .eq('id', ticketBooking.event_id)
-            .single();
+        // BLOCKER 2: booking lookup error → fail closed
+        if (ticketBookingError) {
+          logSafeError(logPrefix, 'ticket-booking-lookup', ticketBookingError);
+          ticketStateComplete = false;
+        } else if (ticketBooking?.flow_type === 'ticketing' && ticketBooking.event_id) {
+          ticketStateComplete = false; // must be proven complete
+          const ticketQty = ticketBooking.party_size || 1;
 
-          const eventName = event?.name || ticketBooking.notes?.replace('Tickets for: ', '') || 'Event';
-          const dateLabel = new Date((event?.date || ticketBooking.date) + 'T00:00').toLocaleDateString('en-US', {
-            weekday: 'long', day: 'numeric', month: 'long',
-          });
+          // ── 8a. Determine if event is typed (has event_ticket_types) ──
+          // Query ALL types (not just active) — a type purchased before deactivation is still valid
+          const { data: ticketTypes, error: typeQueryError } = await supabase
+            .from('event_ticket_types')
+            .select('id')
+            .eq('event_id', ticketBooking.event_id)
+            .limit(1);
 
-          const { sendTicketsAfterPurchase } = await import('@/lib/bot/flows/shared/send-tickets');
-          await sendTicketsAfterPurchase({
-            supabase,
-            sender: resolved?.sender,  // undefined for web-only purchases (email-only delivery)
-            businessId,
-            bookingId: payment.booking_id,
-            eventId: ticketBooking.event_id,
-            eventName, eventDate: dateLabel,
-            eventTime: event?.time || ticketBooking.time || undefined,
-            venue: event?.venue || '',
-            guestName: ticketBooking.guest_name || 'Guest',
-            guestPhone: ticketBooking.guest_phone || customerPhone || '',
-            guestEmail: ticketBooking.guest_email || undefined,
-            referenceCode,
-            quantity: ticketBooking.party_size || 1,
-            amount: payment.amount, countryCode,
-          });
+          // BLOCKER 1: type query error → fail closed (don't treat as untyped)
+          if (typeQueryError) {
+            logSafeError(logPrefix, 'ticket-type-query', typeQueryError);
+            // ticketStateComplete stays false → retryable
+          } else {
+            const isTypedEvent = (ticketTypes?.length ?? 0) > 0;
+
+            // ── 8b. Resolve ticket_type_id from EXACT originating bot session ──
+            let ticketTypeId: string | null = null;
+            let typeResolutionFailed = false;
+            if (ticketBooking.bot_session_id) {
+              const { data: originSession, error: sessionError } = await supabase
+                .from('bot_sessions')
+                .select('session_data')
+                .eq('id', ticketBooking.bot_session_id)
+                .single();
+              if (sessionError) {
+                logSafeError(logPrefix, 'ticket-type-session-lookup', sessionError);
+                typeResolutionFailed = true;
+              } else {
+                ticketTypeId = (originSession?.session_data as Record<string, unknown>)?.ticket_type_id as string || null;
+              }
+            } else if (isTypedEvent) {
+              typeResolutionFailed = true;
+            }
+
+            // ── 8c. For typed events, validate ticket_type_id belongs to this event ──
+            if (isTypedEvent && ticketTypeId && !typeResolutionFailed) {
+              const { data: typeOwnership, error: ownershipError } = await supabase
+                .from('event_ticket_types')
+                .select('id')
+                .eq('id', ticketTypeId)
+                .eq('event_id', ticketBooking.event_id)
+                .maybeSingle();
+              if (ownershipError || !typeOwnership) {
+                logger.error(`${logPrefix} ticket_type_id ${ticketTypeId} does not belong to event ${ticketBooking.event_id}`);
+                typeResolutionFailed = true;
+              }
+            }
+
+            if (isTypedEvent && (!ticketTypeId || typeResolutionFailed)) {
+              logger.error(`${logPrefix} Typed event ${ticketBooking.event_id} — cannot resolve ticket_type_id, failing closed`);
+              // ticketStateComplete stays false
+            } else {
+              // ── 8d. Canonical inventory finalization BEFORE ticket creation ──
+              const { data: finResult, error: finError } = await supabase.rpc('finalize_free_ticket_booking', {
+                p_booking_id: payment.booking_id,
+                p_event_id: ticketBooking.event_id,
+                p_ticket_type_id: ticketTypeId,
+                p_quantity: ticketQty,
+              });
+
+              if (finError) {
+                logSafeError(logPrefix, 'ticket-counter-finalize', finError);
+                Sentry.captureException(finError, { tags: { component: 'send-confirmation', operation: 'ticket-finalize' } });
+              } else {
+                if (finResult?.already_finalized) {
+                  logger.info(`${logPrefix} Ticket counters already finalized for booking ${payment.booking_id}`);
+                } else {
+                  logger.info(`${logPrefix} Ticket counters finalized: event=${ticketBooking.event_id} qty=${ticketQty}`);
+                }
+
+                // ── 8e. Canonical ticket row creation ──
+                const { data: event } = await supabase
+                  .from('events')
+                  .select('id, name, date, time, venue')
+                  .eq('id', ticketBooking.event_id)
+                  .single();
+
+                const eventName = event?.name || ticketBooking.notes?.replace('Tickets for: ', '') || 'Event';
+                const dateLabel = new Date((event?.date || ticketBooking.date) + 'T00:00').toLocaleDateString('en-US', {
+                  weekday: 'long', day: 'numeric', month: 'long',
+                });
+
+                const { sendTicketsAfterPurchase } = await import('@/lib/bot/flows/shared/send-tickets');
+                const ticketResult = await sendTicketsAfterPurchase({
+                  supabase,
+                  sender: resolved?.sender,
+                  businessId,
+                  bookingId: payment.booking_id,
+                  eventId: ticketBooking.event_id,
+                  eventName, eventDate: dateLabel,
+                  eventTime: event?.time || ticketBooking.time || undefined,
+                  venue: event?.venue || '',
+                  guestName: ticketBooking.guest_name || 'Guest',
+                  guestPhone: ticketBooking.guest_phone || customerPhone || '',
+                  guestEmail: ticketBooking.guest_email || undefined,
+                  referenceCode,
+                  quantity: ticketQty,
+                  amount: payment.amount, countryCode,
+                });
+
+                if (ticketResult.success && ticketResult.tickets.length >= ticketQty) {
+                  ticketStateComplete = true;
+                } else {
+                  logger.error(`${logPrefix} Ticket creation incomplete: success=${ticketResult.success} rows=${ticketResult.tickets.length} expected=${ticketQty}`);
+                }
+              }
+            }
+          }
         }
       }
     } catch (ticketErr) {
       logSafeError(logPrefix, 'ticket-send', ticketErr);
       Sentry.captureException(ticketErr, { tags: { component: 'send-confirmation', operation: 'ticket-send' } });
+      ticketStateComplete = false;
     }
 
     // ── 8b. Send email confirmation — always send if guest has email (WhatsApp + email) ──
@@ -770,7 +873,7 @@ export async function sendProactiveConfirmation(
     const preFinalize = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!preFinalize.ok) {
       logger.warn(`${logPrefix} Ownership lost before session/finalize: ${preFinalize.reason}`);
-      return;
+      return { status: 'processing', retryable: true };
     }
 
     // ── 9. Deactivate the payment-waiting session (webhook confirmed — user doesn't need to tap "I've Paid") ──
@@ -785,20 +888,27 @@ export async function sendProactiveConfirmation(
     }
 
     // ── 10. Finalize: mark confirmation as successfully completed ──
-    await finalizeConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    // For ticketing bookings, only finalize if ticket inventory + rows are complete.
+    if (!ticketStateComplete) {
+      logger.warn(`${logPrefix} Ticket state incomplete — not finalizing confirmation claim`);
+      return { status: 'retryable_failed', retryable: true, reason: 'ticket_state_incomplete' };
+    }
+    const finalizeResult = await finalizeConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    if (!finalizeResult.ok) {
+      return { status: 'retryable_failed', retryable: true, reason: 'confirmation_finalize_failed' };
+    }
+    return { status: 'completed' };
 
   } catch (err) {
     logSafeError(logPrefix, 'send-confirmation', err);
     Sentry.captureException(err, { tags: { component: 'send-confirmation', operation: 'send-confirmation' } });
 
-    // Release only if no external sends occurred yet.
-    // After external sends, releasing guarantees a duplicate retry → unsafe.
-    // Leave the claim for stale recovery instead.
     if (!sideEffectsMayHaveOccurred) {
       await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     } else {
       logger.warn(`${logPrefix} External sends occurred — leaving claim for stale recovery, not releasing`);
     }
+    return { status: 'retryable_failed', retryable: true, reason: 'send_confirmation_error' };
   }
 
   } catch (outerErr) {
@@ -810,5 +920,6 @@ export async function sendProactiveConfirmation(
     } else {
       logger.warn(`${logPrefix} Side effects may have occurred — leaving claim for stale recovery, not releasing`);
     }
+    return { status: 'retryable_failed', retryable: true, reason: 'confirmation_outer_error' };
   }
 }

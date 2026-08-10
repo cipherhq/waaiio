@@ -748,9 +748,8 @@ export const ticketingFlow: FlowDefinition = {
           return [{ type: 'text', text: 'Something went wrong finalizing your tickets. Send *Hi* to try again.' }];
         }
 
-        // Free event — send tickets before marking complete
-        try {
-          await sendTicketsAfterPurchase({
+        // Free event — create canonical ticket rows before marking complete
+        const freeTicketResult = await sendTicketsAfterPurchase({
           supabase: ctx.supabase,
           sender: ctx.sender,
           businessId: ctx.business!.id,
@@ -765,8 +764,9 @@ export const ticketingFlow: FlowDefinition = {
           referenceCode: booking.reference_code,
           quantity: qty,
         });
-        } catch (err) {
-          logger.withContext({ op: 'ticketing.ticket-pdf-send', ...safeLogErrorContext(err) }).error('[TICKETING] Ticket PDF send error');
+        if (!freeTicketResult.success) {
+          logger.error('[TICKETING] Free ticket creation failed:', freeTicketResult.error);
+          return [{ type: 'text', text: 'Something went wrong creating your tickets. Send *Hi* to try again.' }];
         }
 
         // Notify owner: email + WhatsApp
@@ -997,68 +997,47 @@ export const ticketingFlow: FlowDefinition = {
                 })),
               });
 
-              // Dedup path: webhook confirmed payment but doesn't generate tickets.
-              // Generate and send tickets now.
+              // Dedup path: webhook confirmed payment; ensure canonical ticket rows exist.
               const dedupQty = (d.ticket_quantity as number) || 1;
-              try {
-                await sendTicketsAfterPurchase({
-                  supabase: ctx.supabase,
-                  sender: ctx.sender,
-                  businessId: ctx.business!.id,
-                  bookingId: d.booking_id as string,
-                  eventId: d.event_id as string,
-                  eventName: d.event_name as string,
-                  eventDate: dedupDateLabel,
-                  eventTime: d.event_time as string | undefined,
-                  venue: (d.event_venue as string) || '',
-                  guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-                  guestPhone: ctx.from,
-                  referenceCode: d.reference_code as string,
-                  quantity: dedupQty,
-                });
-              } catch (ticketErr) {
-                logger.withContext({ op: 'ticketing.dedup-send-tickets', ...safeLogErrorContext(ticketErr) }).error('[TICKETING] Dedup sendTicketsAfterPurchase FAILED');
-                // Text fallback with reference code
-                await ctx.sender.sendText({
-                  to: ctx.from,
-                  text: await ctx.t(`🎟️ Your booking is confirmed!\nRef: *${d.reference_code}*\n\nShow this at the entrance or type *my bookings* to view tickets.`),
-                });
+              const dedupResult = await sendTicketsAfterPurchase({
+                supabase: ctx.supabase,
+                sender: ctx.sender,
+                businessId: ctx.business!.id,
+                bookingId: d.booking_id as string,
+                eventId: d.event_id as string,
+                eventName: d.event_name as string,
+                eventDate: dedupDateLabel,
+                eventTime: d.event_time as string | undefined,
+                venue: (d.event_venue as string) || '',
+                guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+                guestPhone: ctx.from,
+                referenceCode: d.reference_code as string,
+                quantity: dedupQty,
+              });
+              if (!dedupResult.success) {
+                logger.withContext({ op: 'ticketing.dedup-send-tickets' }).error('[TICKETING] Dedup ticket creation failed:', dedupResult.error);
+                // Payment is confirmed but tickets are NOT ready — keep retryable
+                return { valid: false, errorMessage: 'Your payment is confirmed! Ticket generation is still being completed. Please try again in a moment.' };
               }
 
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
 
-            // Increment tickets_sold now that payment is verified
+            // Finalize ticket counters idempotently (shared with webhook path)
             const qty = (d.ticket_quantity as number) || 1;
-            const { error: rpcError } = await ctx.supabase.rpc('increment_tickets_sold', {
-              event_id: d.event_id as string,
-              qty,
+            const { data: finResult, error: finError } = await ctx.supabase.rpc('finalize_free_ticket_booking', {
+              p_booking_id: d.booking_id as string,
+              p_event_id: d.event_id as string,
+              p_ticket_type_id: (d.ticket_type_id as string) || null,
+              p_quantity: qty,
             });
-            if (rpcError) {
-              const { data: ev } = await ctx.supabase
-                .from('events')
-                .select('tickets_sold')
-                .eq('id', d.event_id as string)
-                .single();
-              if (ev) {
-                await ctx.supabase
-                  .from('events')
-                  .update({ tickets_sold: ev.tickets_sold + qty })
-                  .eq('id', d.event_id as string);
-              }
+            if (finError) {
+              logger.withContext({ op: 'ticketing.finalize-counter', ...safeLogErrorContext(finError) })
+                .error('[TICKETING] finalize_free_ticket_booking RPC error — blocking ticket delivery');
+              return { valid: false, errorMessage: 'Something went wrong confirming your ticket inventory. Please try again.' };
             }
-            if (d.ticket_type_id) {
-              const { data: tt } = await ctx.supabase
-                .from('event_ticket_types')
-                .select('tickets_sold')
-                .eq('id', d.ticket_type_id as string)
-                .single();
-              if (tt) {
-                await ctx.supabase
-                  .from('event_ticket_types')
-                  .update({ tickets_sold: (tt.tickets_sold || 0) + qty })
-                  .eq('id', d.ticket_type_id as string);
-              }
+            if (finResult?.already_finalized) {
+              logger.info('[TICKETING] Ticket counters already finalized for booking ' + (d.booking_id as string));
             }
 
             const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
@@ -1077,37 +1056,25 @@ export const ticketingFlow: FlowDefinition = {
               })),
             });
 
-            // Send ticket PDF + QR codes (MUST await — Vercel kills process after response)
-            try {
-              await sendTicketsAfterPurchase({
-                supabase: ctx.supabase,
-                sender: ctx.sender,
-                businessId: ctx.business!.id,
-                bookingId: d.booking_id as string,
-                eventId: d.event_id as string,
-                eventName: d.event_name as string,
-                eventDate: dateLabel,
-                eventTime: d.event_time as string | undefined,
-                venue: (d.event_venue as string) || '',
-                guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-                guestPhone: ctx.from,
-                referenceCode: d.reference_code as string,
-                quantity: d.ticket_quantity as number,
-              });
-            } catch (ticketErr) {
-              logger.withContext({ op: 'ticketing.send-tickets', ...safeLogErrorContext(ticketErr) }).error('[TICKETING] sendTicketsAfterPurchase FAILED');
-              // Fallback: send a text-only ticket with the code
-              const ticketCodes = await ctx.supabase
-                .from('event_tickets')
-                .select('ticket_code')
-                .eq('booking_id', d.booking_id as string);
-              if (ticketCodes.data && ticketCodes.data.length > 0) {
-                const codes = ticketCodes.data.map(t => t.ticket_code).join('\n');
-                await ctx.sender.sendText({
-                  to: ctx.from,
-                  text: await ctx.t(`🎟️ Your ticket code${ticketCodes.data.length > 1 ? 's' : ''}:\n\n${codes}\n\nShow this at the entrance. You can also type *my bookings* to view your tickets.`),
-                });
-              }
+            // Canonical ticket row creation (MUST await — Vercel kills process after response)
+            const paidTicketResult = await sendTicketsAfterPurchase({
+              supabase: ctx.supabase,
+              sender: ctx.sender,
+              businessId: ctx.business!.id,
+              bookingId: d.booking_id as string,
+              eventId: d.event_id as string,
+              eventName: d.event_name as string,
+              eventDate: dateLabel,
+              eventTime: d.event_time as string | undefined,
+              venue: (d.event_venue as string) || '',
+              guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+              guestPhone: ctx.from,
+              referenceCode: d.reference_code as string,
+              quantity: d.ticket_quantity as number,
+            });
+            if (!paidTicketResult.success) {
+              logger.error('[TICKETING] Paid ticket creation failed:', paidTicketResult.error);
+              return { valid: false, errorMessage: 'Ticket creation failed. Your payment is confirmed — please try again to receive your tickets.' };
             }
 
             // Notify owner: email + WhatsApp

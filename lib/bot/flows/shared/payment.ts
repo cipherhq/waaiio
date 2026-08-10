@@ -41,6 +41,72 @@ export async function initializePayment(
     const { getCountry } = await import('@/lib/countries');
     const currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
 
+    // ── Idempotent reuse: check for an existing pending payment for this entity.
+    // Fail closed: if the lookup itself fails, do NOT proceed to the provider —
+    // creating a duplicate provider transaction is worse than a transient failure. ──
+    const entityId = opts.bookingId || opts.orderId || opts.invoiceId || opts.reservationId;
+    if (entityId) {
+      const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : 'reservation_id';
+      try {
+        // ── Step 1: Quarantine guard (FIRST — wins over pending reuse) ──
+        // If provider already collected money and the payment is under review,
+        // block new charges regardless of ordinary payment status.
+        const { data: quarantined, error: quarantineError } = await supabase
+          .from('payments')
+          .select('id, gateway_status')
+          .eq(entityCol, entityId)
+          .like('gateway_status', 'review_required:%')
+          .limit(1)
+          .maybeSingle();
+
+        if (quarantineError) {
+          logger.withContext({ op: 'payment.quarantine-lookup', ...safeLogErrorContext(quarantineError) })
+            .error('[PAYMENT] Quarantine lookup failed — aborting to prevent duplicate provider transaction');
+          return null;
+        }
+        if (quarantined) {
+          logger.warn('[PAYMENT] Provider-paid quarantined payment exists for ' + entityCol + '=' + entityId + ' — blocking new charge');
+          return null;
+        }
+
+        // ── Step 2: Pending payment reuse ──
+        const { data: existingPayment, error: lookupError } = await supabase
+          .from('payments')
+          .select('id, gateway_reference, amount, currency, gateway, metadata')
+          .eq(entityCol, entityId)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (lookupError) {
+          logger.withContext({ op: 'payment.reuse-lookup', ...safeLogErrorContext(lookupError) })
+            .error('[PAYMENT] Pending payment lookup failed — aborting to prevent duplicate provider transaction');
+          return null;
+        }
+
+        if (
+          existingPayment
+          && existingPayment.amount === opts.amount
+          && existingPayment.currency === currencyCode
+          && existingPayment.gateway === gateway.name
+        ) {
+          const meta = (existingPayment.metadata || {}) as Record<string, unknown>;
+          const checkoutUrl = meta.checkout_url as string | undefined;
+          if (checkoutUrl && existingPayment.gateway_reference) {
+            logger.info('[PAYMENT] Reusing existing pending payment for ' + entityCol + '=' + entityId);
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+            const shortRef = existingPayment.gateway_reference.slice(-8);
+            return { url: `${appUrl}/api/pay?ref=${shortRef}`, reference: existingPayment.gateway_reference };
+          }
+        }
+      } catch (lookupErr) {
+        logger.withContext({ op: 'payment.reuse-lookup-throw', ...safeLogErrorContext(lookupErr) })
+          .error('[PAYMENT] Payment guard lookup threw — aborting to prevent duplicate provider transaction');
+        return null;
+      }
+    }
+
     // Fetch payout account for split payments
     let subaccountCode: string | undefined;
     let stripeAccountId: string | undefined;

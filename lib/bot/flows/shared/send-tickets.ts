@@ -48,7 +48,17 @@ function generateTicketCode(): string {
  * 4. Upload to Supabase Storage
  * 5. Send PDF via WhatsApp
  */
-export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promise<void> {
+/**
+ * Result from canonical ticket-row creation.
+ * Callers must check `rowsCreated` to determine if ticket state is complete.
+ */
+export interface TicketCreationResult {
+  success: boolean;
+  tickets: Array<{ ticketCode: string; ticketNumber: number; totalTickets: number }>;
+  error?: string;
+}
+
+export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promise<TicketCreationResult> {
   const {
     supabase, sender, businessId, bookingId, eventId,
     eventName, eventDate, eventTime, venue,
@@ -58,43 +68,34 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
 
   logger.info('[TICKETS] Starting sendTicketsAfterPurchase | booking:', bookingId, '| event:', eventName, '| qty:', quantity);
 
-  // 1. Generate unique ticket codes
-  const tickets: Array<{ ticketCode: string; ticketNumber: number; totalTickets: number }> = [];
-  for (let i = 0; i < quantity; i++) {
-    tickets.push({
-      ticketCode: generateTicketCode(),
-      ticketNumber: i + 1,
-      totalTickets: quantity,
-    });
-  }
+  const expectedNumbers = new Set(Array.from({ length: quantity }, (_, i) => i + 1));
+  const phone = guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`;
 
-  // 2. Check if tickets already exist (dedup — webhook + "I've Paid" race)
-  const { data: existingTickets } = await supabase
+  // ── 1. Read existing canonical ticket rows for this booking ──
+  const { data: existingTickets, error: existingError } = await supabase
     .from('event_tickets')
-    .select('ticket_code')
+    .select('ticket_code, ticket_number')
     .eq('booking_id', bookingId);
 
-  if (existingTickets && existingTickets.length > 0) {
-    logger.info('[TICKETS] Tickets already exist for booking', bookingId, '— skipping insert, using existing');
-    // Use existing ticket codes instead of generating new ones
-    tickets.length = 0;
-    existingTickets.forEach((t, i) => {
-      tickets.push({
-        ticketCode: t.ticket_code,
-        ticketNumber: i + 1,
-        totalTickets: existingTickets.length,
-      });
-    });
-  } else {
-    // Insert new tickets
-    const rows = tickets.map(t => ({
+  if (existingError) {
+    logger.error('[TICKETS] Failed to check existing tickets:', existingError.message);
+    return { success: false, tickets: [], error: 'existing_ticket_lookup_failed' };
+  }
+
+  // ── 2. Determine which ticket_numbers are missing ──
+  const existingNumbers = new Set((existingTickets || []).map(t => t.ticket_number));
+  const missingNumbers = [...expectedNumbers].filter(n => !existingNumbers.has(n));
+
+  if (missingNumbers.length > 0) {
+    // ── 3. Insert ONLY missing ticket rows ──
+    const rows = missingNumbers.map(n => ({
       business_id: businessId,
       booking_id: bookingId,
       event_id: eventId,
-      ticket_code: t.ticketCode,
-      ticket_number: t.ticketNumber,
+      ticket_code: generateTicketCode(),
+      ticket_number: n,
       guest_name: guestName,
-      guest_phone: guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`,
+      guest_phone: phone,
       status: 'valid',
     }));
 
@@ -103,14 +104,49 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
       .insert(rows);
 
     if (insertError) {
-      logger.error('[TICKETS] Failed to insert event_tickets:', insertError.message, insertError.code);
-      return;
+      if (insertError.code === '23505') {
+        // UNIQUE(booking_id, ticket_number) conflict = concurrent worker created these rows
+        logger.info('[TICKETS] UNIQUE conflict — concurrent worker created rows for booking', bookingId);
+      } else {
+        logger.error('[TICKETS] Failed to insert event_tickets:', insertError.message, insertError.code);
+        return { success: false, tickets: [], error: 'insert_failed' };
+      }
+    } else {
+      logger.info('[TICKETS] Inserted', rows.length, 'missing event_tickets for booking', bookingId);
     }
-    logger.info('[TICKETS] Inserted', tickets.length, 'event_tickets');
+  } else {
+    logger.info('[TICKETS] All', quantity, 'tickets already exist for booking', bookingId);
   }
 
+  // ── 4. Authoritative final re-read of canonical ticket state ──
+  const { data: finalTickets, error: finalError } = await supabase
+    .from('event_tickets')
+    .select('ticket_code, ticket_number')
+    .eq('booking_id', bookingId)
+    .order('ticket_number', { ascending: true });
+
+  if (finalError) {
+    logger.error('[TICKETS] Final ticket re-read failed:', finalError.message);
+    return { success: false, tickets: [], error: 'final_reread_failed' };
+  }
+
+  // ── 5. Validate canonical set: must be EXACTLY the expected ticket_numbers {1..N} ──
+  const finalNumbers = new Set((finalTickets || []).map(t => t.ticket_number));
+  const allPresent = [...expectedNumbers].every(n => finalNumbers.has(n));
+  const exactCount = (finalTickets?.length ?? 0) === quantity;
+  const allInRange = (finalTickets || []).every(t => expectedNumbers.has(t.ticket_number));
+  if (!allPresent || !exactCount || !allInRange) {
+    logger.error('[TICKETS] Canonical ticket set invalid: expected', [...expectedNumbers], 'got', [...finalNumbers], 'count', finalTickets?.length);
+    return { success: false, tickets: [], error: 'canonical_set_incomplete' };
+  }
+
+  const tickets: Array<{ ticketCode: string; ticketNumber: number; totalTickets: number }> = finalTickets!.map(t => ({
+    ticketCode: t.ticket_code,
+    ticketNumber: t.ticket_number,
+    totalTickets: quantity,
+  }));
+
   const verifyBaseUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/tickets`;
-  const phone = guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`;
   const ticketLabel = quantity === 1 ? 'ticket' : 'tickets';
 
   // Fetch subscription tier for white-label branding
@@ -255,4 +291,6 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
       total_tickets: evt.total_tickets,
     }).catch(err => logger.error('[TICKETS] Sold-out webhook error:', err));
   }
+
+  return { success: true, tickets };
 }

@@ -5,6 +5,61 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-10
+
+### migration(313): canonical ticket-row identity constraint
+
+- **Migration:** `312_ticket_row_identity.sql` — `UNIQUE(booking_id, ticket_number)` on `event_tickets`.
+- **Reason:** Two concurrent workers (webhook + bot) could both INSERT different ticket codes for the same booking+ticket_number. Only `ticket_code UNIQUE` existed, which doesn't prevent booking-scoped duplication.
+- **Files:** `supabase/migrations/312_ticket_row_identity.sql`
+
+### fix(TICKET-STATE): fail-closed ticket finalization + result contracts
+
+- **Typed event classification:** Query error on `event_ticket_types` now fails closed (not treated as untyped). Queries ALL types (not just active) since a deactivated type may still belong to a purchased ticket.
+- **Ticket type ownership:** Validates `ticket_type_id` belongs to `event_id` before finalization. Wrong-event type → fail closed.
+- **Booking lookup:** Error destructured and handled — confirmation not finalized on lookup error.
+- **sendTicketsAfterPurchase:** Returns `TicketCreationResult` (not void). Reports insert failures explicitly. Handles UNIQUE conflict (code 23505) from concurrent worker by re-reading canonical rows.
+- **Quarantine guard:** Runs BEFORE pending reuse. Matches any `gateway_status LIKE 'review_required:%'` regardless of payment status. Lookup error → fail closed.
+- **ConfirmationResult:** `claimed_by_other` replaced with `processing` (retryable: true) — another worker owning the claim is incomplete, not permanently non-retryable.
+- **Files:** `lib/payments/send-confirmation.ts`, `lib/bot/flows/shared/payment.ts`, `lib/bot/flows/shared/send-tickets.ts`, `lib/bot/flows/ticketing.flow.ts`
+
+## 2026-08-09
+
+### fix(PAY-CONFIRM): payment confirmation broken by malformed services column select
+
+- **Root cause:** `lib/payments/send-confirmation.ts` line 184 selected `services(name, duration)` but the `services` table column is `duration_minutes` (not `duration`). PostgREST returns a 400 error for the entire query, making `booking` null, `businessId` null, and causing ALL payment confirmations (not just ticketing) to log "Proactive confirmation skipped — no business" and skip WhatsApp confirmation, ticket delivery, session deactivation, and post-completion.
+- **Fix:** Changed `services(name, duration)` → `services(name, duration_minutes)`. Updated type cast and assignment to use `duration_minutes`. Added `{ data, error }` destructuring and error logging for booking lookup (was silently swallowed).
+- **Files changed:** `lib/payments/send-confirmation.ts`, `lib/__tests__/p0-payment-confirmation.test.ts` (mock data updated)
+- **Affects:** ALL payment confirmation flows (5 gateway webhooks + payment-success page). Ticketing bookings, scheduling bookings, ordering — everything that goes through `sendProactiveConfirmation`.
+- **Could break:** Nothing — corrects a query that was already broken.
+
+### fix(PAY-IDEMPOTENT): prevent duplicate_reference on payment retry/re-entry
+
+- **Root cause:** When a bot flow re-enters the payment step (e.g., retry after timeout, re-prompt), `initializePayment` calls the gateway again with the same `referenceCode`. Paystack rejects with `duplicate_reference` because the reference is already registered. The customer loses their payment link.
+- **Fix:** Before calling the gateway, `initializePayment` now checks for an existing pending payment for the same entity with matching amount, currency, AND gateway. If found with a valid `metadata.checkout_url`, returns the existing checkout URL instead of creating a duplicate provider transaction. Lookup failure is caught and falls through to fresh initialization (never blocks payment).
+- **Matching rules:** entity (booking_id/order_id/invoice_id/reservation_id) + status=pending + amount + currency + gateway. Successful/failed/cancelled payments are never reused. Mismatched amount/currency/gateway falls through to fresh init.
+- **Files changed:** `lib/bot/flows/shared/payment.ts`
+- **Affects:** All payment initialization flows (scheduling, ordering, ticketing, invoicing, reservations).
+- **Could break:** Nothing — adds a guard before the gateway call. Existing first-attempt behavior unchanged.
+
+### fix(TICKET-COUNTER): unified idempotent ticket sold counter finalization
+
+- **Root cause:** Webhook confirmation path sent tickets but never incremented `events.tickets_sold`. Bot "I've Paid" path used a non-idempotent `increment_tickets_sold` RPC (never defined in migrations).
+- **Fix:** Both paths now use `finalize_free_ticket_booking` RPC (migration 304) with `tickets_finalized` guard. Bot path fails closed on RPC error (blocks ticket delivery). Webhook path resolves `ticket_type_id` via `booking.bot_session_id` → exact originating session. For typed events, unresolvable `ticket_type_id` fails closed (no partial event-only counter increment). Inventory finalization runs BEFORE ticket row creation. Ticket state must be complete before confirmation claim is finalized.
+- **Files changed:** `lib/bot/flows/ticketing.flow.ts`, `lib/payments/send-confirmation.ts`
+
+### feat(PAY-CONFIRM-CONTRACT): explicit ConfirmationResult return type
+
+- **Root cause:** `sendProactiveConfirmation` returned `void` — callers could not distinguish completed/already-completed/retryable-failure/claim-lost/not-deliverable.
+- **Fix:** Returns `ConfirmationResult` union type. Every early return now has a semantic status. Ticket state incomplete → `retryable_failed`. Claim lost → `claimed_by_other`. No business → `retryable_failed`. No contact → `not_deliverable`.
+- **Files changed:** `lib/payments/send-confirmation.ts`
+
+### fix(PAY-QUARANTINE): second-charge prevention for provider-paid quarantined payments
+
+- **Root cause:** Terminal G may quarantine a provider-paid payment with `gateway_status LIKE 'review_required:%'`. If customer re-enters payment flow, `initializePayment` would create another charge.
+- **Fix:** Before gateway call, checks for existing success+review_required payments on same entity. If found, returns null (blocks new charge). Guard infrastructure ready for Terminal G to populate.
+- **Files changed:** `lib/bot/flows/shared/payment.ts`
+
 ## 2026-08-07
 
 ### fix(P0-PAY-1): payment-level idempotency for financial operations
