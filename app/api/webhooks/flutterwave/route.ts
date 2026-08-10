@@ -94,7 +94,7 @@ export async function POST(request: NextRequest) {
     // Find the payment record
     const { data: payment } = await supabase
       .from('payments')
-      .select('id, booking_id, amount, reservation_id, order_id, status')
+      .select('id, booking_id, amount, reservation_id, order_id, status, gateway_reference')
       .eq('gateway_reference', txRef)
       .single();
 
@@ -158,15 +158,20 @@ export async function POST(request: NextRequest) {
       gateway_fee: flutterwaveGatewayFee,
     };
 
-    // Confirm booking, record platform fees, process invoice/campaign
-    await processSuccessfulPayment(supabase, paymentForShared);
-
-    // Proactive confirmation: send WhatsApp message + post-completion
-    try {
-      await sendProactiveConfirmation(supabase, paymentForShared, '[FLUTTERWAVE WEBHOOK]');
-    } catch (confirmErr) {
-      logger.error('[FLUTTERWAVE WEBHOOK] Proactive confirmation error:', confirmErr);
-    }
+    // ── Canonical Payment Authority ──
+    const { reconcilePayment } = await import('@/lib/payments/reconcile');
+    await reconcilePayment(supabase, payment.id, 'webhook', {
+      status: 'verified',
+      result: {
+        provider: 'flutterwave', waaiioReference: payment.gateway_reference,
+        providerTransactionId: String(data.id || ''),
+        amount: data.amount as number,
+        currency: ((data.currency as string) || '').toUpperCase(),
+        paymentMethod: (data.payment_type as string) || 'card',
+        gatewayFee: flutterwaveGatewayFee,
+        providerStatus: 'successful', verifiedAt: new Date().toISOString(),
+      },
+    });
 
     // Mark event as processed AFTER all financial writes succeeded
     await supabase

@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
       if (paymentStatus === 'paid' && sessionId) {
         const { data: payment } = await supabase
           .from('payments')
-          .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status')
+          .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, gateway_reference')
           .eq('gateway_reference', sessionId)
           .single();
 
@@ -146,15 +146,19 @@ export async function POST(request: NextRequest) {
             gateway_fee: stripeGatewayFee,
           };
 
-          // Confirm booking, record platform fees, process invoice/campaign
-          await processSuccessfulPayment(supabase, paymentForShared);
-
-          // Proactive confirmation: send WhatsApp message + post-completion
-          try {
-            await sendProactiveConfirmation(supabase, paymentForShared, '[STRIPE WEBHOOK]');
-          } catch (confirmErr) {
-            logger.error('[STRIPE WEBHOOK] Proactive confirmation error:', confirmErr);
-          }
+          // ── Canonical Payment Authority ──
+          const { reconcilePayment } = await import('@/lib/payments/reconcile');
+          await reconcilePayment(supabase, payment.id, 'webhook', {
+            status: 'verified',
+            result: {
+              provider: 'stripe', waaiioReference: payment.gateway_reference,
+              providerTransactionId: (data.payment_intent as string) || sessionId,
+              amount: ((data.amount_total as number) || 0) / 100,
+              currency: ((data.currency as string) || '').toUpperCase(),
+              paymentMethod: 'card', gatewayFee: stripeGatewayFee,
+              providerStatus: 'success', verifiedAt: new Date().toISOString(),
+            },
+          });
         }
 
         // Handle subscription payments (business tier upgrades)

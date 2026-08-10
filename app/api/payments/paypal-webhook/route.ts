@@ -160,12 +160,12 @@ export async function POST(request: NextRequest) {
       const referenceId = purchaseUnits?.[0]?.reference_id;
 
       // Find payment by PayPal order ID
-      let payment: { id: string; booking_id: string | null; order_id: string | null; amount: number; status: string } | null = null;
+      let payment: { id: string; booking_id: string | null; order_id: string | null; amount: number; status: string; gateway_reference?: string } | null = null;
 
       if (orderId) {
         const { data } = await supabase
           .from('payments')
-          .select('id, booking_id, order_id, amount, status')
+          .select('id, booking_id, order_id, amount, status, gateway_reference')
           .eq('gateway_reference', orderId)
           .eq('gateway', 'paypal')
           .maybeSingle();
@@ -242,15 +242,19 @@ export async function POST(request: NextRequest) {
         gateway_fee: paypalGatewayFee,
       };
 
-      // Confirm booking, record platform fees, process invoice/campaign
-      await processSuccessfulPayment(supabase, paymentForShared);
-
-      // Proactive confirmation: send WhatsApp message + post-completion
-      try {
-        await sendProactiveConfirmation(supabase, paymentForShared, '[PAYPAL WEBHOOK]');
-      } catch (confirmErr) {
-        logger.error('[PAYPAL WEBHOOK] Proactive confirmation error:', confirmErr);
-      }
+      // ── Canonical Payment Authority ──
+      const { reconcilePayment } = await import('@/lib/payments/reconcile');
+      await reconcilePayment(supabase, payment.id, 'webhook', {
+        status: 'verified',
+        result: {
+          provider: 'paypal', waaiioReference: payment.gateway_reference || orderId,
+          providerTransactionId: (resource.id as string) || '',
+          amount: webhookAmount,
+          currency: (captureAmount?.currency_code || 'USD').toUpperCase(),
+          paymentMethod: 'paypal', gatewayFee: paypalGatewayFee,
+          providerStatus: 'COMPLETED', verifiedAt: new Date().toISOString(),
+        },
+      });
     }
 
     // PAYMENT.CAPTURE.DENIED — payment failed

@@ -114,4 +114,33 @@ describe('reconcilePayment', () => {
     expect(r.lifecycle?.status).toBe('processing');
     expect(r.lifecycle?.status).not.toBe('completed');
   });
+
+  it('8. verified + authority retryable_failed → lifecycle preserved', async () => {
+    mockAuthorize.mockResolvedValue({ status: 'retryable_failed', retryable: true, reason: 'critical_effects_failed', stages: { providerPaid: true, businessFinalized: false, customerConfirmed: false } });
+    const { reconcilePayment } = await import('../reconcile');
+    const r = await reconcilePayment(buildSupabase(), 'pay-1', 'webhook', { status: 'verified', result: { provider: 'paystack', waaiioReference: 'REF-1', amount: 5000, currency: 'NGN', verifiedAt: '', providerStatus: 'success' } });
+    expect(r.lifecycle?.status).toBe('retryable_failed');
+    expect(r.lifecycle?.status).not.toBe('completed');
+  });
+
+  it('9. verified + authority rejected → lifecycle preserved', async () => {
+    mockAuthorize.mockResolvedValue({ status: 'rejected', retryable: false, reason: 'amount_mismatch', stages: { providerPaid: false, businessFinalized: false, customerConfirmed: false } });
+    const { reconcilePayment } = await import('../reconcile');
+    const r = await reconcilePayment(buildSupabase(), 'pay-1', 'webhook', { status: 'verified', result: { provider: 'paystack', waaiioReference: 'REF-1', amount: 5000, currency: 'NGN', verifiedAt: '', providerStatus: 'success' } });
+    expect(r.lifecycle?.status).toBe('rejected');
+  });
+
+  it('10. verified + authority not_deliverable → lifecycle preserved', async () => {
+    mockAuthorize.mockResolvedValue({ status: 'not_deliverable', retryable: false, reason: 'no_phone_or_email', stages: { providerPaid: true, businessFinalized: true, customerConfirmed: false } });
+    const { reconcilePayment } = await import('../reconcile');
+    const r = await reconcilePayment(buildSupabase(), 'pay-1', 'webhook', { status: 'verified', result: { provider: 'paystack', waaiioReference: 'REF-1', amount: 5000, currency: 'NGN', verifiedAt: '', providerStatus: 'success' } });
+    expect(r.lifecycle?.status).toBe('not_deliverable');
+    expect(r.lifecycle?.stages.customerConfirmed).toBe(false);
+  });
+
+  it('11. retryable_error → acknowledgeSuccess is false (provider should retry)', async () => {
+    const { reconcilePayment } = await import('../reconcile');
+    const r = await reconcilePayment(buildSupabase(), 'pay-1', 'webhook', { status: 'retryable_error', reason: 'timeout' });
+    expect(r.acknowledgeSuccess).toBe(false);
+  });
 });

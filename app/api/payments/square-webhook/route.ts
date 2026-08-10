@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
       // Find our payment record by square_order_id in metadata
       const { data: payments } = await supabase
         .from('payments')
-        .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata')
+        .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference')
         .eq('gateway', 'square')
         .neq('status', 'success');
 
@@ -120,32 +120,21 @@ export async function POST(request: NextRequest) {
           logger.warn('[SQUARE WEBHOOK] Failed to extract processing fee');
         }
 
-        // Confirm booking, record platform fees
-        await processSuccessfulPayment(supabase, {
-          id: matchedPayment.id,
-          amount: matchedPayment.amount,
-          booking_id: matchedPayment.booking_id,
-          invoice_id: matchedPayment.invoice_id || null,
-          campaign_id: matchedPayment.campaign_id || null,
-          reservation_id: matchedPayment.reservation_id || null,
-          order_id: matchedPayment.order_id || null,
-          gateway_fee: squareGatewayFee,
+        // ── Canonical Payment Authority ──
+        const { reconcilePayment } = await import('@/lib/payments/reconcile');
+        const amountMoney = payment.amount_money as { amount?: number; currency?: string } | undefined;
+        await reconcilePayment(supabase, matchedPayment.id, 'webhook', {
+          status: 'verified',
+          result: {
+            provider: 'square', waaiioReference: matchedPayment.gateway_reference,
+            providerTransactionId: payment.id as string,
+            amount: (amountMoney?.amount || 0) / 100,
+            currency: (amountMoney?.currency || 'USD').toUpperCase(),
+            paymentMethod: (payment.source_type as string) || 'card',
+            gatewayFee: squareGatewayFee,
+            providerStatus: 'COMPLETED', verifiedAt: new Date().toISOString(),
+          },
         });
-
-        // Proactive confirmation: send WhatsApp message + post-completion
-        try {
-          await sendProactiveConfirmation(supabase, {
-            id: matchedPayment.id,
-            amount: matchedPayment.amount,
-            booking_id: matchedPayment.booking_id,
-            invoice_id: matchedPayment.invoice_id || null,
-            campaign_id: matchedPayment.campaign_id || null,
-            reservation_id: matchedPayment.reservation_id || null,
-            order_id: matchedPayment.order_id || null,
-          }, '[SQUARE WEBHOOK]');
-        } catch (confirmErr) {
-          logger.error('[SQUARE WEBHOOK] Proactive confirmation error:', confirmErr);
-        }
       } else if (paymentStatus === 'FAILED') {
         await supabase
           .from('payments')
