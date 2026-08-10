@@ -816,6 +816,18 @@ jobs:
           echo "Running Migration 311 two-session concurrency tests..."
           bash scripts/test-migration-311-concurrency.sh
 
+      - name: MK-3 manual booking concurrency tests
+        if: hashFiles('scripts/test-mk3-manual-booking-concurrency.sh') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          echo "Running MK-3 manual booking concurrency tests..."
+          bash scripts/test-mk3-manual-booking-concurrency.sh
+
       - name: Migration 312 ticket-row identity concurrency tests
         if: hashFiles('lib/__tests__/ticket-row-identity-db.test.ts') != ''
         env:
