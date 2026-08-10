@@ -343,7 +343,15 @@ export async function initializePayment(
         if (stripeAccountId) existingMeta.provider_account_id = stripeAccountId;
         // Square/Stripe payout: persist exact payout_accounts.id for rotation-safe verification
         if (payoutAccountId && !providerConnectionId) existingMeta.provider_connection_id = payoutAccountId;
-        await supabase.from('payments').update({ metadata: existingMeta, payment_authority_version: 1 }).eq('id', paymentRecord.id);
+        const { error: identityError } = await supabase.from('payments').update({ metadata: existingMeta, payment_authority_version: 1 }).eq('id', paymentRecord.id);
+        if (identityError) {
+          // Identity persistence failed — do NOT return checkout URL
+          // Mark for review so quarantine guard prevents duplicate provider transactions
+          await supabase.from('payments').update({ gateway_status: 'review_required:identity_persist_failed' }).eq('id', paymentRecord.id);
+          logger.withContext({ op: 'payment.identity-persist', ...safeLogErrorContext(identityError) })
+            .error('[PAYMENT] Failed to persist payment authority identity — checkout URL suppressed');
+          return null;
+        }
       }
 
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';

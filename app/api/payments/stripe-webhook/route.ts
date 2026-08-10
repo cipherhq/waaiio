@@ -85,11 +85,16 @@ export async function POST(request: NextRequest) {
       if (paymentStatus === 'paid' && sessionId) {
         const { data: payment } = await supabase
           .from('payments')
-          .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, gateway_reference')
+          .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
           .eq('gateway_reference', sessionId)
           .single();
 
-        if (payment && payment.status !== 'success') {
+        // Allow new-authority success payments through for Stage 2/3 resume
+        const needsReconciliation = payment && (
+          payment.status !== 'success'
+          || (payment.payment_authority_version === 1 && !payment.finalization_completed_at)
+        );
+        if (payment && needsReconciliation) {
           // Verify amount matches (Stripe amount_total is in cents)
           const stripeAmountCents = (data.amount_total as number) || 0;
           const stripeCurrency = ((data.currency as string) || '').toUpperCase();

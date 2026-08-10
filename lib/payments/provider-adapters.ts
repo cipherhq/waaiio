@@ -194,14 +194,16 @@ function resolvePaypalCredential(): ResolvedCredential | null {
  * Determine the explicit payment origin from metadata.
  * New-authority payments (payment_authority_version=1) MUST have an explicit origin.
  */
+const VALID_ORIGINS = new Set<string>(['platform', 'byo', 'connect']);
+
 export function resolvePaymentOrigin(meta: Record<string, unknown>): PaymentOrigin | null {
-  if (meta.payment_origin) return meta.payment_origin as PaymentOrigin;
-  // Infer from legacy metadata fields
+  const explicit = meta.payment_origin as string | undefined;
+  if (explicit && VALID_ORIGINS.has(explicit)) return explicit as PaymentOrigin;
+  if (explicit) return null; // Unknown origin string → fail closed
+  // Infer from legacy metadata fields (backward compat for pre-authority payments)
   if (meta.byo === true) return 'byo';
   if (meta.connect === true) return 'connect';
-  // Explicit platform marker or empty metadata on legacy payments
-  if (meta.payment_origin === 'platform') return 'platform';
-  return null; // Unknown — fail closed for new-authority payments
+  return null;
 }
 
 export async function verifyWithProvider(
@@ -233,10 +235,14 @@ export async function verifyWithProvider(
     };
   }
 
-  // For new-authority payments, require explicit origin
+  // For new-authority payments, require explicit valid origin
   const origin = resolvePaymentOrigin(paymentMetadata);
   if (isNewAuthority && !origin) {
     return { status: 'config_error', reason: 'missing_payment_origin' };
+  }
+  // New-authority BYO/connect must have exact provider_connection_id (no fallback to current-active)
+  if (isNewAuthority && (origin === 'byo' || origin === 'connect') && !paymentMetadata.provider_connection_id) {
+    return { status: 'config_error', reason: 'missing_provider_connection_id' };
   }
 
   switch (provider) {

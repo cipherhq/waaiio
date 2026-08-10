@@ -160,25 +160,23 @@ export async function POST(request: NextRequest) {
       const referenceId = purchaseUnits?.[0]?.reference_id;
 
       // Find payment by PayPal order ID
-      let payment: { id: string; booking_id: string | null; order_id: string | null; amount: number; status: string; gateway_reference?: string } | null = null;
+      let payment: { id: string; booking_id: string | null; order_id: string | null; amount: number; status: string; gateway_reference?: string; payment_authority_version?: number; finalization_completed_at?: string } | null = null;
 
       if (orderId) {
         const { data } = await supabase
           .from('payments')
-          .select('id, booking_id, order_id, amount, status, gateway_reference')
+          .select('id, booking_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
           .eq('gateway_reference', orderId)
           .eq('gateway', 'paypal')
           .maybeSingle();
         payment = data;
       }
 
-      // Fallback: search by metadata paypal_order_id
       if (!payment && orderId) {
         const { data: payments } = await supabase
           .from('payments')
-          .select('id, booking_id, order_id, amount, status, metadata')
-          .eq('gateway', 'paypal')
-          .neq('status', 'success');
+          .select('id, booking_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at')
+          .eq('gateway', 'paypal');
 
         payment = payments?.find(p => {
           const meta = p.metadata as Record<string, string> | null;
@@ -186,7 +184,9 @@ export async function POST(request: NextRequest) {
         }) || null;
       }
 
-      if (!payment || payment.status === 'success') {
+      if (!payment) return NextResponse.json({ received: true });
+      // Skip only if fully finalized (not just provider-paid)
+      if (payment.status === 'success' && (payment.payment_authority_version !== 1 || payment.finalization_completed_at)) {
         return NextResponse.json({ received: true });
       }
 

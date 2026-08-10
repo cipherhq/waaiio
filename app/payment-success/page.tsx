@@ -95,10 +95,9 @@ export default async function PaymentSuccessPage({
         } else if (reconcileResult.lifecycle?.status === 'not_deliverable') {
           // Business state is finalized but no delivery channel
           confirmed = true;
-        } else if (payment.status === 'success') {
-          // Already provider-paid (e.g. webhook already processed) — show as confirmed for UX
-          confirmed = true;
         }
+        // Do NOT fall back to payment.status='success' as "confirmed"
+        // Stage 1 (provider-paid) is not Stage 2/3 (business-finalized + customer-confirmed)
 
         // Fetch booking channel and ticket info for UI rendering
         if (confirmed && payment.booking_id) {

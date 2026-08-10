@@ -75,9 +75,8 @@ export async function POST(request: NextRequest) {
       // Find our payment record by square_order_id in metadata
       const { data: payments } = await supabase
         .from('payments')
-        .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference')
-        .eq('gateway', 'square')
-        .neq('status', 'success');
+        .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at')
+        .eq('gateway', 'square');
 
       const matchedPayment = payments?.find(p => {
         const meta = p.metadata as Record<string, string> | null;
@@ -86,7 +85,9 @@ export async function POST(request: NextRequest) {
 
       if (!matchedPayment) return NextResponse.json({ received: true });
 
-      if (paymentStatus === 'COMPLETED' && matchedPayment.status !== 'success') {
+      const sqNeedsReconciliation = matchedPayment.status !== 'success'
+        || (matchedPayment.payment_authority_version === 1 && !matchedPayment.finalization_completed_at);
+      if (paymentStatus === 'COMPLETED' && sqNeedsReconciliation) {
         // Verify amount matches (Square amount is in cents)
         const totalMoney = payment.total_money as { amount?: number } | undefined;
         const squareAmountCents = (totalMoney?.amount as number) || 0;

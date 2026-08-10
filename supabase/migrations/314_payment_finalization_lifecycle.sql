@@ -196,6 +196,12 @@ BEGIN
     RETURN jsonb_build_object('applied', false, 'reason', 'order_not_found');
   END IF;
 
+  -- 1b. Validate payment→order relationship
+  PERFORM id FROM payments WHERE id = p_payment_id AND (order_id = p_order_id OR metadata->>'order_id' = p_order_id::text);
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('applied', false, 'reason', 'payment_order_mismatch');
+  END IF;
+
   -- 2. Re-check under lock: already applied?
   SELECT id INTO v_existing
   FROM order_stock_applications

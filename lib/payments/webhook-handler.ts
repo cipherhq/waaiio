@@ -17,11 +17,19 @@ export async function processPaystackChargeSuccess(
 ): Promise<void> {
   const { data: existingPayment } = await supabase
     .from('payments')
-    .select('id, status, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway')
+    .select('id, status, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway, payment_authority_version, finalization_completed_at')
     .eq('gateway_reference', reference)
     .single();
 
-  if (!existingPayment || existingPayment.status === 'success') return;
+  if (!existingPayment) return;
+
+  // For new-authority payments: always reconcile (Stage 2/3 may be incomplete even if provider-paid)
+  // For legacy payments: skip if already success (preserve existing behavior)
+  if (existingPayment.status === 'success' && existingPayment.payment_authority_version !== 1) return;
+  if (existingPayment.status === 'success' && existingPayment.finalization_completed_at) {
+    // Fully finalized — safe to skip (confirmation has its own lifecycle)
+    return;
+  }
 
   // Extract Paystack processing fee (in kobo) and convert to naira
   const paystackFeeKobo = (data.fees as number) || 0;

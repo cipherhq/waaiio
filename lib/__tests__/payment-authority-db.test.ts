@@ -153,6 +153,8 @@ describe.skipIf(!canRun)('Migration 314: payment finalization lifecycle', () => 
 
   it('11. apply_order_stock_once: first application decrements stock', () => {
     psql(`INSERT INTO orders (id) VALUES ('${ORD_ID}') ON CONFLICT (id) DO NOTHING;`);
+    // Link payment to order for relationship validation
+    psql(`UPDATE payments SET order_id = '${ORD_ID}' WHERE id = '${PAY_ID}';`);
     psql(`INSERT INTO products (id, stock) VALUES ('${PROD_ID}', 10) ON CONFLICT (id) DO UPDATE SET stock = 10;`);
     psql(`DELETE FROM order_items WHERE order_id = '${ORD_ID}';`);
     psql(`DELETE FROM order_stock_applications WHERE order_id = '${ORD_ID}';`);
@@ -258,12 +260,13 @@ describe.skipIf(!canRun)('Migration 314: payment finalization lifecycle', () => 
       });
     }
 
-    // Worker A (webhook): claims finalization, holds with pg_sleep
+    // Worker A (webhook): claims finalization, holds transaction open with pg_sleep(2)
+    // Worker B starts 500ms later — FOR UPDATE serializes, B blocks until A commits
     const sqlA = `
       BEGIN;
       SET ROLE service_role;
       SELECT claim_payment_finalization('${PAY_ID}');
-      SELECT pg_sleep(1);
+      SELECT pg_sleep(2);
       COMMIT;
     `;
 
@@ -284,16 +287,14 @@ describe.skipIf(!canRun)('Migration 314: payment finalization lifecycle', () => 
     expect(a.exitCode).toBe(0);
     expect(b.exitCode).toBe(0);
 
-    // Exactly one claimed, one denied (processing_in_progress)
+    // XOR: exactly one claimed, exactly one denied
     const aClaimed = a.stdout.includes('"claimed": true');
     const bClaimed = b.stdout.includes('"claimed": true');
-    expect(aClaimed || bClaimed).toBe(true);
-    // At most one winner
-    if (aClaimed && bClaimed) {
-      // Both claimed is only possible if A committed before B checked
-      // In that case B should see processing_in_progress — but timing may vary
-      // The important invariant: finalization_processing_at is set once
-    }
+    expect(aClaimed !== bClaimed).toBe(true); // strict XOR
+
+    // The loser must have processing_in_progress reason
+    const loserOutput = aClaimed ? b.stdout : a.stdout;
+    expect(loserOutput).toContain('processing_in_progress');
 
     // Final state: exactly one processing claim active
     const processing = psql(`SELECT finalization_processing_at IS NOT NULL FROM payments WHERE id = '${PAY_ID}';`);

@@ -151,7 +151,11 @@ export async function processSuccessfulPayment(
       if (stockErr) {
         criticalErrors.push('order_stock_failed');
         logger.withContext({ op: 'process-success.stock', ...safeLogErrorContext(stockErr) }).error('[PROCESS-SUCCESS] apply_order_stock_once RPC error');
-      } else if (stockResult?.already_applied) {
+      } else if (!stockResult?.applied) {
+        // Semantic failure (e.g. order_not_found, payment/order mismatch)
+        criticalErrors.push(`order_stock_semantic_failure:${stockResult?.reason || 'unknown'}`);
+        logger.error('[PROCESS-SUCCESS] apply_order_stock_once returned applied=false:', stockResult?.reason);
+      } else if (stockResult.already_applied) {
         logger.info('[PROCESS-SUCCESS] Order stock already applied for payment ' + payment.id);
       }
     } catch (err) {

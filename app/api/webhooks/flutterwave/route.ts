@@ -94,7 +94,7 @@ export async function POST(request: NextRequest) {
     // Find the payment record
     const { data: payment } = await supabase
       .from('payments')
-      .select('id, booking_id, amount, reservation_id, order_id, status, gateway_reference')
+      .select('id, booking_id, amount, reservation_id, order_id, status, gateway_reference, payment_authority_version, finalization_completed_at')
       .eq('gateway_reference', txRef)
       .single();
 
@@ -106,8 +106,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Payment not found' }, { status: 404 });
     }
 
-    // Skip if already processed (idempotency at payment level)
-    if (payment.status === 'success') {
+    // Skip if fully finalized (Stage 2 complete). New-authority success with incomplete Stage 2 must resume.
+    if (payment.status === 'success' && (payment.payment_authority_version !== 1 || payment.finalization_completed_at)) {
       wh.duplicate({ webhookEventId: eventId, paymentId: payment.id });
       return NextResponse.json({ message: 'Already processed' }, { status: 200 });
     }
