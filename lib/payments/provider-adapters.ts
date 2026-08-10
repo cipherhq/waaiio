@@ -19,6 +19,9 @@ export type ProviderVerificationOutcome =
   | { status: 'retryable_error'; reason: string }
   | { status: 'config_error'; reason: string };
 
+/** Explicit payment origin — how the provider transaction was created. */
+export type PaymentOrigin = 'platform' | 'byo' | 'connect';
+
 /** Credential context resolved from the payment's stored connection identity. */
 interface ResolvedCredential {
   secretKey: string;
@@ -37,17 +40,22 @@ interface ResolvedCredential {
 async function resolvePaystackCredential(
   supabase: SupabaseClient,
   paymentMeta: Record<string, unknown>,
+  paymentBusinessId: string | null,
 ): Promise<ResolvedCredential | null> {
-  const isByo = paymentMeta.byo === true;
-  const byoBusinessId = paymentMeta.byo_business_id as string | undefined;
-  const isConnect = paymentMeta.connect === true;
-  const connectAccountId = paymentMeta.connect_account_id as string | undefined;
+  const origin = resolvePaymentOrigin(paymentMeta);
 
-  if (isByo && byoBusinessId) {
-    // Resolve BYO merchant credential
+  if (origin === 'byo') {
+    const byoBusinessId = paymentMeta.byo_business_id as string | undefined;
+    if (!byoBusinessId) return null;
+
+    // Validate business ownership: credential business must match payment business
+    if (paymentBusinessId && byoBusinessId !== paymentBusinessId) return null;
+
+    // Resolve the active BYO credential for this business+gateway
+    // Only one active credential per business+gateway (deactivate-before-insert pattern)
     const { data: cred, error } = await supabase
       .from('business_payment_credentials')
-      .select('secret_key, connection_type')
+      .select('secret_key, gateway')
       .eq('business_id', byoBusinessId)
       .eq('gateway', 'paystack')
       .eq('is_active', true)
@@ -64,14 +72,15 @@ async function resolvePaystackCredential(
     }
   }
 
-  if (isConnect && connectAccountId) {
-    // Platform key + connected account context
+  if (origin === 'connect') {
+    const connectAccountId = paymentMeta.connect_account_id as string | undefined;
+    if (!connectAccountId) return null;
     const platformKey = process.env.PAYSTACK_SECRET_KEY;
     if (!platformKey) return null;
     return { secretKey: platformKey, connectAccountId, isByo: false };
   }
 
-  // Platform mode
+  // Platform mode (origin === 'platform' or legacy null with inferred platform)
   const platformKey = process.env.PAYSTACK_SECRET_KEY;
   if (!platformKey) return null;
   return { secretKey: platformKey, isByo: false };
@@ -95,11 +104,15 @@ async function resolveStripeCredential(
 async function resolveFlutterwaveCredential(
   supabase: SupabaseClient,
   paymentMeta: Record<string, unknown>,
+  paymentBusinessId: string | null,
 ): Promise<ResolvedCredential | null> {
-  const isByo = paymentMeta.byo === true;
-  const byoBusinessId = paymentMeta.byo_business_id as string | undefined;
+  const origin = resolvePaymentOrigin(paymentMeta);
 
-  if (isByo && byoBusinessId) {
+  if (origin === 'byo') {
+    const byoBusinessId = paymentMeta.byo_business_id as string | undefined;
+    if (!byoBusinessId) return null;
+    if (paymentBusinessId && byoBusinessId !== paymentBusinessId) return null;
+
     const { data: cred, error } = await supabase
       .from('business_payment_credentials')
       .select('secret_key')
@@ -119,6 +132,7 @@ async function resolveFlutterwaveCredential(
     }
   }
 
+  // Platform mode
   const platformKey = process.env.FLUTTERWAVE_SECRET_KEY || process.env.FLW_SECRET_KEY;
   if (!platformKey) return null;
   return { secretKey: platformKey, isByo: false };
@@ -171,6 +185,20 @@ function resolvePaypalCredential(): ResolvedCredential | null {
  * Returns normalized VerifiedPaymentResult or failure reason.
  * Does NOT mutate Waaiio business/payment state.
  */
+/**
+ * Determine the explicit payment origin from metadata.
+ * New-authority payments (payment_authority_version=1) MUST have an explicit origin.
+ */
+export function resolvePaymentOrigin(meta: Record<string, unknown>): PaymentOrigin | null {
+  if (meta.payment_origin) return meta.payment_origin as PaymentOrigin;
+  // Infer from legacy metadata fields
+  if (meta.byo === true) return 'byo';
+  if (meta.connect === true) return 'connect';
+  // Explicit platform marker or empty metadata on legacy payments
+  if (meta.payment_origin === 'platform') return 'platform';
+  return null; // Unknown — fail closed for new-authority payments
+}
+
 export async function verifyWithProvider(
   supabase: SupabaseClient,
   opts: {
@@ -180,9 +208,10 @@ export async function verifyWithProvider(
     expectedCurrency: string;
     paymentMetadata: Record<string, unknown>;
     businessId: string | null;
+    isNewAuthority: boolean;
   },
 ): Promise<ProviderVerificationOutcome> {
-  const { provider, gatewayReference, expectedAmount, expectedCurrency, paymentMetadata, businessId } = opts;
+  const { provider, gatewayReference, expectedAmount, expectedCurrency, paymentMetadata, businessId, isNewAuthority } = opts;
 
   // Mock mode (non-production without credentials)
   if (gatewayReference.startsWith('mock_')) {
@@ -199,13 +228,19 @@ export async function verifyWithProvider(
     };
   }
 
+  // For new-authority payments, require explicit origin
+  const origin = resolvePaymentOrigin(paymentMetadata);
+  if (isNewAuthority && !origin) {
+    return { status: 'config_error', reason: 'missing_payment_origin' };
+  }
+
   switch (provider) {
     case 'paystack':
-      return verifyPaystack(supabase, gatewayReference, expectedAmount, expectedCurrency, paymentMetadata);
+      return verifyPaystack(supabase, gatewayReference, expectedAmount, expectedCurrency, paymentMetadata, businessId);
     case 'stripe':
       return verifyStripe(gatewayReference, expectedAmount, expectedCurrency, paymentMetadata);
     case 'flutterwave':
-      return verifyFlutterwave(supabase, gatewayReference, expectedAmount, expectedCurrency, paymentMetadata);
+      return verifyFlutterwave(supabase, gatewayReference, expectedAmount, expectedCurrency, paymentMetadata, businessId);
     case 'square':
       return verifySquare(supabase, gatewayReference, expectedAmount, expectedCurrency, businessId);
     case 'paypal':
@@ -221,8 +256,9 @@ async function verifyPaystack(
   expectedAmount: number,
   expectedCurrency: string,
   meta: Record<string, unknown>,
+  businessId: string | null,
 ): Promise<ProviderVerificationOutcome> {
-  const cred = await resolvePaystackCredential(supabase, meta);
+  const cred = await resolvePaystackCredential(supabase, meta, businessId);
   if (!cred) return { status: 'config_error', reason: 'paystack_credential_missing' };
 
   try {
@@ -318,8 +354,9 @@ async function verifyFlutterwave(
   expectedAmount: number,
   expectedCurrency: string,
   meta: Record<string, unknown>,
+  businessId: string | null,
 ): Promise<ProviderVerificationOutcome> {
-  const cred = await resolveFlutterwaveCredential(supabase, meta);
+  const cred = await resolveFlutterwaveCredential(supabase, meta, businessId);
   if (!cred) return { status: 'config_error', reason: 'flutterwave_credential_missing' };
 
   try {

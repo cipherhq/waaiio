@@ -66,7 +66,7 @@ describe('Provider adapters', () => {
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(buildSupabase(), {
       provider: 'paystack', gatewayReference: 'REF-1', expectedAmount: 5000, expectedCurrency: 'NGN',
-      paymentMetadata: {}, businessId: 'biz-1',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-1',
     });
     expect(r.status).toBe('verified');
     if (r.status === 'verified') {
@@ -84,7 +84,7 @@ describe('Provider adapters', () => {
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(supabase, {
       provider: 'paystack', gatewayReference: 'REF-2', expectedAmount: 1000, expectedCurrency: 'NGN',
-      paymentMetadata: { byo: true, byo_business_id: 'biz-byo' }, businessId: 'biz-byo',
+      paymentMetadata: { byo: true, byo_business_id: 'biz-byo' }, isNewAuthority: false, businessId: 'biz-byo',
     });
     expect(r.status).toBe('verified');
     // Must use decrypted BYO key, not platform key
@@ -96,7 +96,7 @@ describe('Provider adapters', () => {
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(supabase, {
       provider: 'paystack', gatewayReference: 'REF-3', expectedAmount: 1000, expectedCurrency: 'NGN',
-      paymentMetadata: { byo: true, byo_business_id: 'biz-missing' }, businessId: 'biz-missing',
+      paymentMetadata: { byo: true, byo_business_id: 'biz-missing' }, isNewAuthority: false, businessId: 'biz-missing',
     });
     expect(r.status).toBe('config_error');
     expect(mockFetch).not.toHaveBeenCalled();
@@ -107,7 +107,7 @@ describe('Provider adapters', () => {
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(supabase, {
       provider: 'paystack', gatewayReference: 'REF-4', expectedAmount: 1000, expectedCurrency: 'NGN',
-      paymentMetadata: { byo: true, byo_business_id: 'biz-decrypt' }, businessId: 'biz-decrypt',
+      paymentMetadata: { byo: true, byo_business_id: 'biz-decrypt' }, isNewAuthority: false, businessId: 'biz-decrypt',
     });
     expect(r.status).toBe('config_error');
     expect(mockFetch).not.toHaveBeenCalled();
@@ -120,7 +120,7 @@ describe('Provider adapters', () => {
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(buildSupabase(), {
       provider: 'stripe', gatewayReference: 'cs_test_123', expectedAmount: 5, expectedCurrency: 'USD',
-      paymentMetadata: {}, businessId: 'biz-1',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-1',
     });
     expect(r.status).toBe('verified');
     expect(mockFetch.mock.calls[0][1].headers['Stripe-Account']).toBeUndefined();
@@ -131,7 +131,7 @@ describe('Provider adapters', () => {
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(buildSupabase(), {
       provider: 'stripe', gatewayReference: 'cs_test_456', expectedAmount: 10, expectedCurrency: 'USD',
-      paymentMetadata: { connect: true, connect_account_id: 'acct_connected' }, businessId: 'biz-1',
+      paymentMetadata: { connect: true, connect_account_id: 'acct_connected' }, isNewAuthority: false, businessId: 'biz-1',
     });
     expect(r.status).toBe('verified');
     expect(mockFetch.mock.calls[0][1].headers['Stripe-Account']).toBe('acct_connected');
@@ -142,7 +142,7 @@ describe('Provider adapters', () => {
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(buildSupabase(), {
       provider: 'stripe', gatewayReference: 'cs_test_789', expectedAmount: 10, expectedCurrency: 'USD',
-      paymentMetadata: {}, businessId: 'biz-1',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-1',
     });
     expect(r.status).toBe('config_error');
     expect(mockFetch).not.toHaveBeenCalled();
@@ -156,7 +156,7 @@ describe('Provider adapters', () => {
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(supabase, {
       provider: 'square', gatewayReference: 'sq_ref', expectedAmount: 50, expectedCurrency: 'USD',
-      paymentMetadata: {}, businessId: 'biz-sq',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-sq',
     });
     expect(r.status).toBe('verified');
     expect(mockFetch.mock.calls[0][1].headers.Authorization).toContain('decrypted_sq_merchant_encrypted');
@@ -168,7 +168,7 @@ describe('Provider adapters', () => {
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(supabase, {
       provider: 'square', gatewayReference: 'sq_ref2', expectedAmount: 50, expectedCurrency: 'USD',
-      paymentMetadata: {}, businessId: 'biz-sq-missing',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-sq-missing',
     });
     expect(r.status).toBe('config_error');
     expect(mockFetch).not.toHaveBeenCalled();
@@ -181,7 +181,7 @@ describe('Provider adapters', () => {
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(buildSupabase(), {
       provider: 'paystack', gatewayReference: 'REF-timeout', expectedAmount: 1000, expectedCurrency: 'NGN',
-      paymentMetadata: {}, businessId: 'biz-1',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-1',
     });
     expect(r.status).toBe('retryable_error');
   });
@@ -191,7 +191,7 @@ describe('Provider adapters', () => {
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(buildSupabase(), {
       provider: 'paystack', gatewayReference: 'REF-failed', expectedAmount: 5000, expectedCurrency: 'NGN',
-      paymentMetadata: {}, businessId: 'biz-1',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-1',
     });
     expect(r.status).toBe('not_paid');
   });
@@ -204,7 +204,7 @@ describe('Provider adapters', () => {
     const { verifyWithProvider } = await import('../provider-adapters');
     await verifyWithProvider(supabase, {
       provider: 'paystack', gatewayReference: 'REF-readonly', expectedAmount: 5000, expectedCurrency: 'NGN',
-      paymentMetadata: {}, businessId: 'biz-1',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-1',
     });
     // from() should NOT have been called for mutations (update/insert)
     // The only from() calls should be for credential lookup
@@ -221,9 +221,54 @@ describe('Provider adapters', () => {
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(buildSupabase(), {
       provider: 'paystack', gatewayReference: 'mock_ps_abc', expectedAmount: 5000, expectedCurrency: 'NGN',
-      paymentMetadata: {}, businessId: 'biz-1',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-1',
     });
     expect(r.status).toBe('verified');
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  // ── PAYMENT ORIGIN IDENTITY ──
+
+  it('31. new-authority payment missing origin → config_error, fetch 0', async () => {
+    const { verifyWithProvider } = await import('../provider-adapters');
+    const r = await verifyWithProvider(buildSupabase(), {
+      provider: 'paystack', gatewayReference: 'REF-NO-ORIGIN', expectedAmount: 5000, expectedCurrency: 'NGN',
+      paymentMetadata: {}, isNewAuthority: true, businessId: 'biz-1',
+    });
+    expect(r.status).toBe('config_error');
+    expect(r.reason).toContain('missing_payment_origin');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('32. new-authority platform payment → platform credential allowed', async () => {
+    mockFetch.mockResolvedValueOnce({ json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx_plat' } }) });
+    const { verifyWithProvider } = await import('../provider-adapters');
+    const r = await verifyWithProvider(buildSupabase(), {
+      provider: 'paystack', gatewayReference: 'REF-PLAT', expectedAmount: 5000, expectedCurrency: 'NGN',
+      paymentMetadata: { payment_origin: 'platform' }, isNewAuthority: true, businessId: 'biz-1',
+    });
+    expect(r.status).toBe('verified');
+  });
+
+  it('33. BYO credential wrong business → config_error', async () => {
+    const supabase = buildSupabase({ secret_key: 'sk_other', gateway: 'paystack' });
+    const { verifyWithProvider } = await import('../provider-adapters');
+    const r = await verifyWithProvider(supabase, {
+      provider: 'paystack', gatewayReference: 'REF-WRONG-BIZ', expectedAmount: 1000, expectedCurrency: 'NGN',
+      paymentMetadata: { byo: true, byo_business_id: 'biz-A' }, isNewAuthority: true, businessId: 'biz-B',
+    });
+    expect(r.status).toBe('config_error');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('34. legacy payment without origin does NOT become platform (isNewAuthority=false)', async () => {
+    mockFetch.mockResolvedValueOnce({ json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx_leg' } }) });
+    const { verifyWithProvider } = await import('../provider-adapters');
+    // Legacy payments (isNewAuthority=false) with empty metadata still resolve to platform (backward compat)
+    const r = await verifyWithProvider(buildSupabase(), {
+      provider: 'paystack', gatewayReference: 'REF-LEGACY', expectedAmount: 5000, expectedCurrency: 'NGN',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-1',
+    });
+    expect(r.status).toBe('verified');
   });
 });
