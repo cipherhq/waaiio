@@ -1,4 +1,4 @@
--- Migration 313: Canonical ticket-row identity constraint
+-- Migration 312: Canonical ticket-row identity constraint
 --
 -- Prevents concurrent webhook + bot "I've Paid" from creating duplicate
 -- event_tickets rows for the same booking. Each (booking_id, ticket_number)

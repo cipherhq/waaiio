@@ -130,11 +130,13 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     return { success: false, tickets: [], error: 'final_reread_failed' };
   }
 
-  // ── 5. Validate canonical set: must have exactly the expected ticket_numbers ──
+  // ── 5. Validate canonical set: must be EXACTLY the expected ticket_numbers {1..N} ──
   const finalNumbers = new Set((finalTickets || []).map(t => t.ticket_number));
   const allPresent = [...expectedNumbers].every(n => finalNumbers.has(n));
-  if (!allPresent || (finalTickets?.length ?? 0) < quantity) {
-    logger.error('[TICKETS] Canonical ticket set incomplete: expected', [...expectedNumbers], 'got', [...finalNumbers]);
+  const exactCount = (finalTickets?.length ?? 0) === quantity;
+  const allInRange = (finalTickets || []).every(t => expectedNumbers.has(t.ticket_number));
+  if (!allPresent || !exactCount || !allInRange) {
+    logger.error('[TICKETS] Canonical ticket set invalid: expected', [...expectedNumbers], 'got', [...finalNumbers], 'count', finalTickets?.length);
     return { success: false, tickets: [], error: 'canonical_set_incomplete' };
   }
 

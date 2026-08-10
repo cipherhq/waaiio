@@ -368,21 +368,21 @@ describe('sendTicketsAfterPurchase caller audit', () => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 9. MIGRATION 313 TICKET ROW IDENTITY
+// 9. MIGRATION 312 TICKET ROW IDENTITY
 // ═══════════════════════════════════════════════════════
 
-describe('Migration 313: ticket row identity', () => {
+describe('Migration 312: ticket row identity', () => {
   it('creates UNIQUE(booking_id, ticket_number) constraint', () => {
-    const src = readSrc('../../supabase/migrations/313_ticket_row_identity.sql');
+    const src = readSrc('../../supabase/migrations/312_ticket_row_identity.sql');
     expect(src).toContain('UNIQUE INDEX');
     expect(src).toContain('booking_id');
     expect(src).toContain('ticket_number');
   });
   it('uses IF NOT EXISTS (idempotent)', () => {
-    expect(readSrc('../../supabase/migrations/313_ticket_row_identity.sql')).toContain('IF NOT EXISTS');
+    expect(readSrc('../../supabase/migrations/312_ticket_row_identity.sql')).toContain('IF NOT EXISTS');
   });
   it('does not change RLS or privileges', () => {
-    const src = readSrc('../../supabase/migrations/313_ticket_row_identity.sql');
+    const src = readSrc('../../supabase/migrations/312_ticket_row_identity.sql');
     expect(src).not.toContain('POLICY');
     expect(src).not.toContain('GRANT');
     expect(src).not.toContain('REVOKE');
@@ -391,6 +391,82 @@ describe('Migration 313: ticket row identity', () => {
 
 // ═══════════════════════════════════════════════════════
 // 10. EVENT PUBLISH + SESSION
+// ═══════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════
+// 11. FINALIZE CONFIRMATION CLAIM RESULT
+// ═══════════════════════════════════════════════════════
+
+describe('Confirmation finalization result honored', () => {
+  it('finalizeConfirmationClaim result is checked before returning completed', () => {
+    const src = readSrc('../payments/send-confirmation.ts');
+    // Must check finalizeResult.ok
+    expect(src).toContain('finalizeResult.ok');
+    // On failure, must NOT return completed
+    expect(src).toContain('confirmation_finalize_failed');
+  });
+  it('finalize failure → retryable, not completed', () => {
+    const src = readSrc('../payments/send-confirmation.ts');
+    const idx = src.indexOf('confirmation_finalize_failed');
+    const nearby = src.slice(idx - 150, idx + 50);
+    expect(nearby).toContain('retryable_failed');
+    expect(nearby).not.toContain("status: 'completed'");
+  });
+  it('finalize success → completed', () => {
+    const src = readSrc('../payments/send-confirmation.ts');
+    const okIdx = src.indexOf('finalizeResult.ok');
+    // After the ok check, the next return is completed
+    const completedIdx = src.indexOf("status: 'completed'", okIdx);
+    expect(completedIdx).toBeGreaterThan(okIdx);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 12. DEDUP PATH TICKET FAILURE
+// ═══════════════════════════════════════════════════════
+
+describe('Dedup "I\'ve Paid" ticket failure behavior', () => {
+  it('dedupResult.success=false → does NOT return already_confirmed', () => {
+    const src = readSrc('../bot/flows/ticketing.flow.ts');
+    const dedupIdx = src.indexOf('dedupResult.success');
+    const afterDedup = src.slice(dedupIdx, dedupIdx + 400);
+    // On failure, must return valid:false (not valid:true)
+    expect(afterDedup).toContain('valid: false');
+    // The already_confirmed return is ONLY reached after the failure check
+    const failBlock = afterDedup.slice(0, afterDedup.indexOf('already_confirmed'));
+    expect(failBlock).toContain('valid: false');
+  });
+  it('dedup failure message explains payment is confirmed but tickets pending', () => {
+    const src = readSrc('../bot/flows/ticketing.flow.ts');
+    const failIdx = src.indexOf('Ticket generation is still being completed');
+    expect(failIdx).toBeGreaterThan(-1);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 13. EXACT CANONICAL TICKET SET
+// ═══════════════════════════════════════════════════════
+
+describe('Exact canonical ticket set validation', () => {
+  it('validates exact count (not >=)', () => {
+    const src = readSrc('../bot/flows/shared/send-tickets.ts');
+    expect(src).toContain('exactCount');
+    expect(src).toContain("=== quantity");
+  });
+  it('validates all ticket_numbers in expected range', () => {
+    const src = readSrc('../bot/flows/shared/send-tickets.ts');
+    expect(src).toContain('allInRange');
+    expect(src).toContain('expectedNumbers.has(t.ticket_number)');
+  });
+  it('rejects extra/out-of-range rows', () => {
+    const src = readSrc('../bot/flows/shared/send-tickets.ts');
+    // The condition checks !exactCount || !allInRange
+    expect(src).toContain('!exactCount || !allInRange');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 14. EVENT PUBLISH + SESSION
 // ═══════════════════════════════════════════════════════
 
 describe('Event publish + session', () => {

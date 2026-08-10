@@ -893,7 +893,10 @@ export async function sendProactiveConfirmation(
       logger.warn(`${logPrefix} Ticket state incomplete — not finalizing confirmation claim`);
       return { status: 'retryable_failed', retryable: true, reason: 'ticket_state_incomplete' };
     }
-    await finalizeConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    const finalizeResult = await finalizeConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    if (!finalizeResult.ok) {
+      return { status: 'retryable_failed', retryable: true, reason: 'confirmation_finalize_failed' };
+    }
     return { status: 'completed' };
 
   } catch (err) {

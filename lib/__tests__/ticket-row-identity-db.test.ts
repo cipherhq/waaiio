@@ -1,5 +1,5 @@
 /**
- * Migration 313 — ticket row identity: real PostgreSQL tests.
+ * Migration 312 — ticket row identity: real PostgreSQL tests.
  *
  * Tests UNIQUE(booking_id, ticket_number) with real two-session concurrency.
  * Requires CI PostgreSQL — uses TEST_DATABASE_URL or POSTGRES_URL.
@@ -52,7 +52,7 @@ function runTwoSessions(
   });
 }
 
-describe.skipIf(!canRun)('Migration 313: ticket-row identity', () => {
+describe.skipIf(!canRun)('Migration 312: ticket-row identity', () => {
   const BIZ = '00000000-0000-0000-0313-000000000b01';
   const EVT = '00000000-0000-0000-0313-000000000e01';
   const BK  = '00000000-0000-0000-0313-0000000000a1';
@@ -71,9 +71,9 @@ describe.skipIf(!canRun)('Migration 313: ticket-row identity', () => {
     psql(`INSERT INTO events (id, business_id, name, date, time, venue, price, total_tickets, tickets_sold, status) VALUES ('${EVT}', '${BIZ}', 'Evt313', '2027-01-01', '18:00', 'V', 1000, 100, 0, 'published') ON CONFLICT (id) DO NOTHING;`);
     psql(`INSERT INTO bookings (id, business_id, user_id, event_id, date, time, party_size, flow_type, channel, status, deposit_status, deposit_amount, total_amount, guest_name, guest_phone) VALUES ('${BK}', '${BIZ}', '${USR}', '${EVT}', '2027-01-01', '18:00', 2, 'ticketing', 'whatsapp', 'confirmed', 'paid', 1000, 2000, 'Guest', '+234') ON CONFLICT (id) DO NOTHING;`);
 
-    // Apply migration 313
+    // Apply migration 312
     const fs = require('fs');
-    const migSql = fs.readFileSync('supabase/migrations/313_ticket_row_identity.sql', 'utf-8');
+    const migSql = fs.readFileSync('supabase/migrations/312_ticket_row_identity.sql', 'utf-8');
     psql(migSql.replace(/--.*$/gm, ''));
 
     psql(`DELETE FROM event_tickets WHERE booking_id = '${BK}';`);
@@ -110,44 +110,45 @@ describe.skipIf(!canRun)('Migration 313: ticket-row identity', () => {
     expect(threw).toBe(true);
   });
 
-  it('real two-session concurrency: quantity 2 → exactly 2 rows', async () => {
+  it('real two-session concurrency: overlapping transactions → exactly 2 rows', async () => {
     psql(`DELETE FROM event_tickets WHERE booking_id = '${BK}';`);
 
-    // Worker A: inserts ticket_number 1 and 2 (holds a brief advisory lock to create overlap window)
+    // Worker A: inserts ticket 1+2, then holds transaction open with pg_sleep(2).
+    // Worker B: starts 500ms later, attempts same ticket_numbers with different codes.
+    // Worker B's INSERT blocks on Worker A's uncommitted row (unique index lock).
+    // After Worker A commits, Worker B gets unique violation.
     const sqlA = `
       BEGIN;
-      SELECT pg_advisory_lock(313313);
       INSERT INTO event_tickets (business_id, booking_id, event_id, ticket_code, ticket_number, guest_name, guest_phone, status)
-        VALUES ('${BIZ}', '${BK}', '${EVT}', 'TK-313W1A', 1, 'WorkerA', '+234', 'valid');
+        VALUES ('${BIZ}', '${BK}', '${EVT}', 'TK-312W1A', 1, 'WorkerA', '+234', 'valid');
       INSERT INTO event_tickets (business_id, booking_id, event_id, ticket_code, ticket_number, guest_name, guest_phone, status)
-        VALUES ('${BIZ}', '${BK}', '${EVT}', 'TK-313W1B', 2, 'WorkerA', '+234', 'valid');
-      SELECT pg_advisory_unlock(313313);
-      SELECT 'workerA_done';
+        VALUES ('${BIZ}', '${BK}', '${EVT}', 'TK-312W1B', 2, 'WorkerA', '+234', 'valid');
+      SELECT pg_sleep(2);
+      SELECT 'workerA_committed';
       COMMIT;
     `;
 
-    // Worker B: attempts same ticket_numbers with different codes
+    // Worker B: starts 500ms after A (via runTwoSessions delay).
+    // B's INSERT for ticket_number=1 blocks because A holds an uncommitted row with the same key.
+    // After A commits (sleep ends), B's INSERT gets unique_violation.
     const sqlB = `
       BEGIN;
-      SELECT pg_sleep(0.3);
       INSERT INTO event_tickets (business_id, booking_id, event_id, ticket_code, ticket_number, guest_name, guest_phone, status)
-        VALUES ('${BIZ}', '${BK}', '${EVT}', 'TK-313W2A', 1, 'WorkerB', '+234', 'valid');
-      INSERT INTO event_tickets (business_id, booking_id, event_id, ticket_code, ticket_number, guest_name, guest_phone, status)
-        VALUES ('${BIZ}', '${BK}', '${EVT}', 'TK-313W2B', 2, 'WorkerB', '+234', 'valid');
+        VALUES ('${BIZ}', '${BK}', '${EVT}', 'TK-312W2A', 1, 'WorkerB', '+234', 'valid');
       SELECT 'workerB_done';
       COMMIT;
     `;
 
     const { a, b } = await runTwoSessions(sqlA, sqlB);
 
-    // Worker A should succeed
-    expect(a.stdout).toContain('workerA_done');
+    // Worker A should succeed (committed after sleep)
+    expect(a.stdout).toContain('workerA_committed');
 
-    // Worker B should fail with unique violation
+    // Worker B should fail with unique violation (blocked until A committed, then rejected)
     expect(b.exitCode).not.toBe(0);
     expect(b.stderr).toMatch(/unique|duplicate/i);
 
-    // Final state: exactly 2 rows, both from Worker A
+    // Final state: exactly 2 rows from Worker A
     const count = parseInt(psql(`SELECT COUNT(*) FROM event_tickets WHERE booking_id = '${BK}';`));
     expect(count).toBe(2);
 

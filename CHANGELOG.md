@@ -9,9 +9,9 @@ If something breaks, check this log to find what changed and when.
 
 ### migration(313): canonical ticket-row identity constraint
 
-- **Migration:** `313_ticket_row_identity.sql` — `UNIQUE(booking_id, ticket_number)` on `event_tickets`.
+- **Migration:** `312_ticket_row_identity.sql` — `UNIQUE(booking_id, ticket_number)` on `event_tickets`.
 - **Reason:** Two concurrent workers (webhook + bot) could both INSERT different ticket codes for the same booking+ticket_number. Only `ticket_code UNIQUE` existed, which doesn't prevent booking-scoped duplication.
-- **Files:** `supabase/migrations/313_ticket_row_identity.sql`
+- **Files:** `supabase/migrations/312_ticket_row_identity.sql`
 
 ### fix(TICKET-STATE): fail-closed ticket finalization + result contracts
 

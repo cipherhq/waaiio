@@ -1016,10 +1016,8 @@ export const ticketingFlow: FlowDefinition = {
               });
               if (!dedupResult.success) {
                 logger.withContext({ op: 'ticketing.dedup-send-tickets' }).error('[TICKETING] Dedup ticket creation failed:', dedupResult.error);
-                await ctx.sender.sendText({
-                  to: ctx.from,
-                  text: await ctx.t(`🎟️ Your booking is confirmed!\nRef: *${d.reference_code}*\n\nShow this at the entrance or type *my bookings* to view tickets.`),
-                });
+                // Payment is confirmed but tickets are NOT ready — keep retryable
+                return { valid: false, errorMessage: 'Your payment is confirmed! Ticket generation is still being completed. Please try again in a moment.' };
               }
 
               return { valid: true, data: { _action: 'already_confirmed' } };
