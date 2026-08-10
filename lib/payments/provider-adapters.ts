@@ -45,30 +45,30 @@ async function resolvePaystackCredential(
   const origin = resolvePaymentOrigin(paymentMeta);
 
   if (origin === 'byo') {
+    const connectionId = paymentMeta.provider_connection_id as string | undefined;
     const byoBusinessId = paymentMeta.byo_business_id as string | undefined;
-    if (!byoBusinessId) return null;
 
-    // Validate business ownership: credential business must match payment business
-    if (paymentBusinessId && byoBusinessId !== paymentBusinessId) return null;
+    if (!connectionId && !byoBusinessId) return null;
 
-    // Resolve the active BYO credential for this business+gateway
-    // Only one active credential per business+gateway (deactivate-before-insert pattern)
-    const { data: cred, error } = await supabase
-      .from('business_payment_credentials')
-      .select('secret_key, gateway')
-      .eq('business_id', byoBusinessId)
-      .eq('gateway', 'paystack')
-      .eq('is_active', true)
-      .not('verified_at', 'is', null)
-      .maybeSingle();
+    // Prefer exact connection row ID (rotation-safe)
+    // Fall back to business_id+gateway only for legacy BYO payments without connection ID
+    const query = connectionId
+      ? supabase.from('business_payment_credentials').select('id, business_id, secret_key, gateway').eq('id', connectionId).maybeSingle()
+      : supabase.from('business_payment_credentials').select('id, business_id, secret_key, gateway').eq('business_id', byoBusinessId!).eq('gateway', 'paystack').eq('is_active', true).not('verified_at', 'is', null).maybeSingle();
 
+    const { data: cred, error } = await query;
     if (error || !cred?.secret_key) return null;
+
+    // Validate ownership: credential business must match payment business
+    if (paymentBusinessId && cred.business_id !== paymentBusinessId) return null;
+    // Validate gateway match
+    if (cred.gateway !== 'paystack') return null;
 
     try {
       const { decryptToken } = await import('@/lib/encryption');
       return { secretKey: decryptToken(cred.secret_key), isByo: true };
     } catch {
-      return null; // decrypt failure
+      return null;
     }
   }
 
@@ -109,20 +109,18 @@ async function resolveFlutterwaveCredential(
   const origin = resolvePaymentOrigin(paymentMeta);
 
   if (origin === 'byo') {
+    const connectionId = paymentMeta.provider_connection_id as string | undefined;
     const byoBusinessId = paymentMeta.byo_business_id as string | undefined;
-    if (!byoBusinessId) return null;
-    if (paymentBusinessId && byoBusinessId !== paymentBusinessId) return null;
+    if (!connectionId && !byoBusinessId) return null;
 
-    const { data: cred, error } = await supabase
-      .from('business_payment_credentials')
-      .select('secret_key')
-      .eq('business_id', byoBusinessId)
-      .eq('gateway', 'flutterwave')
-      .eq('is_active', true)
-      .not('verified_at', 'is', null)
-      .maybeSingle();
+    const query = connectionId
+      ? supabase.from('business_payment_credentials').select('id, business_id, secret_key, gateway').eq('id', connectionId).maybeSingle()
+      : supabase.from('business_payment_credentials').select('id, business_id, secret_key, gateway').eq('business_id', byoBusinessId!).eq('gateway', 'flutterwave').eq('is_active', true).not('verified_at', 'is', null).maybeSingle();
 
+    const { data: cred, error } = await query;
     if (error || !cred?.secret_key) return null;
+    if (paymentBusinessId && cred.business_id !== paymentBusinessId) return null;
+    if (cred.gateway !== 'flutterwave') return null;
 
     try {
       const { decryptToken } = await import('@/lib/encryption');
@@ -132,7 +130,6 @@ async function resolveFlutterwaveCredential(
     }
   }
 
-  // Platform mode
   const platformKey = process.env.FLUTTERWAVE_SECRET_KEY || process.env.FLW_SECRET_KEY;
   if (!platformKey) return null;
   return { secretKey: platformKey, isByo: false };

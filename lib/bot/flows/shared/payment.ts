@@ -120,12 +120,13 @@ export async function initializePayment(
     let isByo = false;
     let byoBusinessId: string | undefined;
     let connectAccountId: string | undefined;
+    let providerConnectionId: string | undefined;
 
     if (opts.businessId) {
       // Check for BYO (Bring Your Own) gateway credentials first
       const { data: byoCreds } = await supabase
         .from('business_payment_credentials')
-        .select('secret_key, platform_subaccount_code, gateway, connect_account_id, connection_type')
+        .select('id, secret_key, platform_subaccount_code, gateway, connect_account_id, connection_type')
         .eq('business_id', opts.businessId)
         .eq('is_active', true)
         .not('verified_at', 'is', null)
@@ -160,6 +161,7 @@ export async function initializePayment(
         // True Connect mode: use platform key + X-Connect-Account header
         connectAccountId = byoCreds.connect_account_id;
         byoBusinessId = opts.businessId;
+        providerConnectionId = byoCreds.id;
 
         const { data: business, error: bizError2 } = await supabase
           .from('businesses')
@@ -187,6 +189,7 @@ export async function initializePayment(
         byoSecretKey = byoCreds.secret_key;
         byoPlatformSubaccount = byoCreds.platform_subaccount_code;
         byoBusinessId = opts.businessId;
+        providerConnectionId = byoCreds.id;
 
         // Calculate platform fee based on business tier
         const { data: business, error: bizError3 } = await supabase
@@ -330,7 +333,12 @@ export async function initializePayment(
       if (paymentRecord) {
         const existingMeta = (paymentRecord.metadata || {}) as Record<string, unknown>;
         existingMeta.checkout_url = result.url;
-        await supabase.from('payments').update({ metadata: existingMeta }).eq('id', paymentRecord.id);
+        // Persist exact payment origin + connection identity for Payment Authority verification
+        existingMeta.payment_origin = isByo ? 'byo' : connectAccountId ? 'connect' : 'platform';
+        if (providerConnectionId) existingMeta.provider_connection_id = providerConnectionId;
+        if (connectAccountId) existingMeta.provider_account_id = connectAccountId;
+        if (subaccountCode) existingMeta.provider_account_id = subaccountCode;
+        await supabase.from('payments').update({ metadata: existingMeta, payment_authority_version: 1 }).eq('id', paymentRecord.id);
       }
 
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';

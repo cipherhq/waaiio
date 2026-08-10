@@ -34,6 +34,10 @@ function mockChain(overrides: Record<string, unknown> = {}): any {
   return c;
 }
 
+function defaultCredData() {
+  return { id: 'cred-default', business_id: 'biz-default', secret_key: 'sk_default', gateway: 'paystack', connection_type: 'byo' };
+}
+
 // eslint-disable-next-line
 function buildSupabase(credData?: Record<string, unknown> | null, payoutData?: Record<string, unknown> | null): any {
   const fromFn = vi.fn().mockImplementation((table: string) => {
@@ -80,7 +84,7 @@ describe('Provider adapters', () => {
 
   it('2. Paystack BYO → exact merchant credential', async () => {
     mockFetch.mockResolvedValueOnce({ json: () => ({ data: { status: 'success', amount: 100000, currency: 'NGN', id: 'tx2' } }) });
-    const supabase = buildSupabase({ secret_key: 'sk_merchant_encrypted', connection_type: 'byo' });
+    const supabase = buildSupabase({ id: 'cred-byo-1', business_id: 'biz-byo', secret_key: 'sk_merchant_encrypted', gateway: 'paystack' });
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(supabase, {
       provider: 'paystack', gatewayReference: 'REF-2', expectedAmount: 1000, expectedCurrency: 'NGN',
@@ -103,7 +107,7 @@ describe('Provider adapters', () => {
   });
 
   it('4. Paystack decrypt failure → config_error, fetch 0', async () => {
-    const supabase = buildSupabase({ secret_key: 'ENCRYPTED_FAIL' });
+    const supabase = buildSupabase({ id: 'cred-fail', business_id: 'biz-decrypt', secret_key: 'ENCRYPTED_FAIL', gateway: 'paystack' });
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(supabase, {
       provider: 'paystack', gatewayReference: 'REF-4', expectedAmount: 1000, expectedCurrency: 'NGN',
@@ -256,6 +260,93 @@ describe('Provider adapters', () => {
     const r = await verifyWithProvider(supabase, {
       provider: 'paystack', gatewayReference: 'REF-WRONG-BIZ', expectedAmount: 1000, expectedCurrency: 'NGN',
       paymentMetadata: { byo: true, byo_business_id: 'biz-A' }, isNewAuthority: true, businessId: 'biz-B',
+    });
+    expect(r.status).toBe('config_error');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('35. BYO rotation: exact connection ID wins over current active', async () => {
+    // Credential A (used for payment) — now inactive
+    // Credential B (currently active) — different key
+    const CRED_A_ID = 'cred-aaa-111';
+    const supabase = buildSupabase();
+    // Override from() to return exact credential by ID
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      if (table === 'business_payment_credentials') {
+        return mockChain({
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { id: CRED_A_ID, business_id: 'biz-rotated', secret_key: 'old_key_A', gateway: 'paystack' },
+            error: null,
+          }),
+        });
+      }
+      return mockChain();
+    });
+    mockFetch.mockResolvedValueOnce({ json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx_rot' } }) });
+    const { verifyWithProvider } = await import('../provider-adapters');
+    const r = await verifyWithProvider(supabase, {
+      provider: 'paystack', gatewayReference: 'REF-ROTATED', expectedAmount: 5000, expectedCurrency: 'NGN',
+      paymentMetadata: { byo: true, byo_business_id: 'biz-rotated', provider_connection_id: CRED_A_ID },
+      isNewAuthority: true, businessId: 'biz-rotated',
+    });
+    expect(r.status).toBe('verified');
+    // Must use old key A (decrypted), not current active B
+    expect(mockFetch.mock.calls[0][1].headers.Authorization).toContain('decrypted_old_key_A');
+  });
+
+  it('36. BYO missing provider_connection_id on new-authority → config_error (not current active)', async () => {
+    const { verifyWithProvider } = await import('../provider-adapters');
+    const r = await verifyWithProvider(buildSupabase(null), {
+      provider: 'paystack', gatewayReference: 'REF-NO-CONN', expectedAmount: 5000, expectedCurrency: 'NGN',
+      paymentMetadata: { byo: true, byo_business_id: 'biz-no-conn' },
+      isNewAuthority: true, businessId: 'biz-no-conn',
+    });
+    // No connection ID + no active credential → config_error
+    expect(r.status).toBe('config_error');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('37. BYO connection wrong business → config_error', async () => {
+    const supabase = buildSupabase();
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      if (table === 'business_payment_credentials') {
+        return mockChain({
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { id: 'cred-wrong', business_id: 'biz-OTHER', secret_key: 'key', gateway: 'paystack' },
+            error: null,
+          }),
+        });
+      }
+      return mockChain();
+    });
+    const { verifyWithProvider } = await import('../provider-adapters');
+    const r = await verifyWithProvider(supabase, {
+      provider: 'paystack', gatewayReference: 'REF-WRONG', expectedAmount: 5000, expectedCurrency: 'NGN',
+      paymentMetadata: { byo: true, byo_business_id: 'biz-OTHER', provider_connection_id: 'cred-wrong' },
+      isNewAuthority: true, businessId: 'biz-MINE',
+    });
+    expect(r.status).toBe('config_error');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('38. BYO connection wrong gateway → config_error', async () => {
+    const supabase = buildSupabase();
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      if (table === 'business_payment_credentials') {
+        return mockChain({
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { id: 'cred-gw', business_id: 'biz-1', secret_key: 'key', gateway: 'flutterwave' },
+            error: null,
+          }),
+        });
+      }
+      return mockChain();
+    });
+    const { verifyWithProvider } = await import('../provider-adapters');
+    const r = await verifyWithProvider(supabase, {
+      provider: 'paystack', gatewayReference: 'REF-GW', expectedAmount: 5000, expectedCurrency: 'NGN',
+      paymentMetadata: { byo: true, byo_business_id: 'biz-1', provider_connection_id: 'cred-gw' },
+      isNewAuthority: true, businessId: 'biz-1',
     });
     expect(r.status).toBe('config_error');
     expect(mockFetch).not.toHaveBeenCalled();
