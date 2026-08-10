@@ -120,19 +120,23 @@ export async function ensurePaidTicketState(
     logger.info(`${logPfx} Inventory already finalized for booking ${opts.paymentBookingId}`);
   }
 
-  // 4. Ensure canonical ticket rows exist (without delivery)
-  // Use sendTicketsAfterPurchase with no sender — it creates rows but skips WhatsApp/PDF
-  const { sendTicketsAfterPurchase } = await import('@/lib/bot/flows/shared/send-tickets');
-  const ticketResult = await sendTicketsAfterPurchase({
+  // 4. Ensure canonical ticket rows exist (pure business state — NO delivery)
+  const { ensureCanonicalTicketRows } = await import('@/lib/bot/flows/shared/send-tickets');
+
+  // Resolve guest info from booking for row creation
+  const { data: guestInfo } = await supabase
+    .from('bookings')
+    .select('business_id, guest_name, guest_phone')
+    .eq('id', opts.paymentBookingId)
+    .single();
+
+  const ticketResult = await ensureCanonicalTicketRows({
     supabase,
-    sender: undefined, // No delivery in Stage 2
-    businessId: '', // Not needed for row creation
+    businessId: guestInfo?.business_id || '',
     bookingId: opts.paymentBookingId,
     eventId: booking.event_id,
-    eventName: '', // Display only — not needed for rows
-    eventDate: '', eventTime: undefined, venue: '',
-    guestName: '', guestPhone: '',
-    referenceCode: '',
+    guestName: guestInfo?.guest_name || '',
+    guestPhone: guestInfo?.guest_phone || '',
     quantity: ticketQty,
   });
 

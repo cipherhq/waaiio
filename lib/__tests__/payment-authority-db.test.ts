@@ -40,8 +40,10 @@ describe.skipIf(!canRun)('Migration 314: payment finalization lifecycle', () => 
         confirmation_sent_at TIMESTAMPTZ,
         finalization_completed_at TIMESTAMPTZ,
         finalization_processing_at TIMESTAMPTZ,
-        finalization_claim_token UUID
+        finalization_claim_token UUID,
+        payment_authority_version INTEGER
       );
+      CREATE TABLE IF NOT EXISTS orders (id UUID PRIMARY KEY, status TEXT DEFAULT 'pending');
       CREATE TABLE IF NOT EXISTS products (id UUID PRIMARY KEY, stock INT DEFAULT 0);
       CREATE TABLE IF NOT EXISTS product_variants (id UUID PRIMARY KEY, stock INT DEFAULT 0);
       CREATE TABLE IF NOT EXISTS order_items (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), order_id UUID, product_id UUID, variant_id UUID, quantity INT DEFAULT 1);
@@ -150,6 +152,7 @@ describe.skipIf(!canRun)('Migration 314: payment finalization lifecycle', () => 
   const PROD_ID = '00000000-0000-0000-0314-000000000003';
 
   it('11. apply_order_stock_once: first application decrements stock', () => {
+    psql(`INSERT INTO orders (id) VALUES ('${ORD_ID}') ON CONFLICT (id) DO NOTHING;`);
     psql(`INSERT INTO products (id, stock) VALUES ('${PROD_ID}', 10) ON CONFLICT (id) DO UPDATE SET stock = 10;`);
     psql(`DELETE FROM order_items WHERE order_id = '${ORD_ID}';`);
     psql(`DELETE FROM order_stock_applications WHERE order_id = '${ORD_ID}';`);
@@ -158,23 +161,81 @@ describe.skipIf(!canRun)('Migration 314: payment finalization lifecycle', () => 
     expect(r.applied).toBe(true);
     expect(r.already_applied).toBe(false);
     const stock = psql(`SELECT stock FROM products WHERE id = '${PROD_ID}';`);
-    expect(parseInt(stock)).toBe(7); // 10 - 3
+    expect(parseInt(stock)).toBe(7);
   });
 
-  it('12. apply_order_stock_once: retry is idempotent (no double decrement)', () => {
+  it('12. apply_order_stock_once: retry is idempotent', () => {
     const r = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${PAY_ID}', '${ORD_ID}');`);
     expect(r.applied).toBe(true);
     expect(r.already_applied).toBe(true);
-    const stock = psql(`SELECT stock FROM products WHERE id = '${PROD_ID}';`);
-    expect(parseInt(stock)).toBe(7); // Still 7, not 4
+    expect(parseInt(psql(`SELECT stock FROM products WHERE id = '${PROD_ID}';`))).toBe(7);
   });
 
-  it('13. historical backfill logic: success payments get finalization_completed_at', () => {
-    // Simulate what the migration backfill does for a payment that existed before migration
-    psql(`UPDATE payments SET finalization_completed_at = NULL WHERE id = '${PAY_ID}';`);
-    // Run the same backfill SQL
-    psql(`UPDATE payments SET finalization_completed_at = COALESCE(paid_at, NOW()) WHERE status = 'success' AND finalization_completed_at IS NULL;`);
-    const completed = psql(`SELECT finalization_completed_at IS NOT NULL FROM payments WHERE id = '${PAY_ID}';`);
-    expect(completed).toBe('t');
+  it('13. two-session order-stock race: exactly-once decrement', async () => {
+    // Reset state
+    psql(`UPDATE products SET stock = 20 WHERE id = '${PROD_ID}';`);
+    psql(`DELETE FROM order_stock_applications WHERE order_id = '${ORD_ID}';`);
+
+    const PAY2 = '00000000-0000-0000-0314-000000000099';
+    // Use same payment+order for both workers (concurrent webhook + "I've Paid")
+
+    // Worker A: calls RPC, holds transaction open with pg_sleep(1)
+    const sqlA = `
+      BEGIN;
+      SET ROLE service_role;
+      SELECT apply_order_stock_once('${PAY_ID}', '${ORD_ID}');
+      SELECT pg_sleep(1);
+      COMMIT;
+    `;
+
+    // Worker B: starts 300ms later, same payment+order — blocks on FOR UPDATE
+    const sqlB = `
+      BEGIN;
+      SET ROLE service_role;
+      SELECT apply_order_stock_once('${PAY_ID}', '${ORD_ID}');
+      COMMIT;
+    `;
+
+    const { exec } = require('child_process') as typeof import('child_process');
+    function execPsql(sql: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+      return new Promise((resolve) => {
+        const child = exec(`psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1`, { timeout: 15000, encoding: 'utf-8' },
+          (error, stdout, stderr) => resolve({
+            stdout: (stdout || '').trim(), stderr: (stderr || '').trim(),
+            exitCode: error ? (error as { code?: number }).code || 1 : 0,
+          }));
+        child.stdin!.write(sql);
+        child.stdin!.end();
+      });
+    }
+
+    const promiseA = execPsql(sqlA);
+    await new Promise(r => setTimeout(r, 300));
+    const promiseB = execPsql(sqlB);
+    const [a, b] = await Promise.all([promiseA, promiseB]);
+
+    // Both must succeed semantically (no raw unique violation)
+    expect(a.exitCode).toBe(0);
+    expect(b.exitCode).toBe(0);
+
+    // One applied, one already_applied
+    expect(a.stdout).toContain('"applied": true');
+    expect(b.stdout).toContain('"applied": true');
+    const aAlready = a.stdout.includes('"already_applied": true');
+    const bAlready = b.stdout.includes('"already_applied": true');
+    // Exactly one is already_applied
+    expect(aAlready !== bAlready).toBe(true);
+
+    // Stock decremented exactly once (20 - 3 = 17)
+    expect(parseInt(psql(`SELECT stock FROM products WHERE id = '${PROD_ID}';`))).toBe(17);
+
+    // Exactly one marker row
+    expect(parseInt(psql(`SELECT COUNT(*) FROM order_stock_applications WHERE payment_id = '${PAY_ID}' AND order_id = '${ORD_ID}';`))).toBe(1);
+  }, 15000);
+
+  it('14. order not found → safe rejection', () => {
+    const r = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${PAY_ID}', gen_random_uuid());`);
+    expect(r.applied).toBe(false);
+    expect(r.reason).toBe('order_not_found');
   });
 });

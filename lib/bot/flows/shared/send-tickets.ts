@@ -58,20 +58,23 @@ export interface TicketCreationResult {
   error?: string;
 }
 
-export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promise<TicketCreationResult> {
-  const {
-    supabase, sender, businessId, bookingId, eventId,
-    eventName, eventDate, eventTime, venue,
-    guestName, guestPhone, referenceCode, quantity,
-  } = opts;
-  const t = opts.translate ?? ((text: string) => Promise.resolve(text));
-
-  logger.info('[TICKETS] Starting sendTicketsAfterPurchase | booking:', bookingId, '| event:', eventName, '| qty:', quantity);
-
+/**
+ * Pure canonical ticket-row convergence. NO delivery side effects.
+ * Creates/repairs the exact {1..N} ticket row set for a booking.
+ */
+export async function ensureCanonicalTicketRows(opts: {
+  supabase: SupabaseClient;
+  businessId: string;
+  bookingId: string;
+  eventId: string;
+  guestName: string;
+  guestPhone: string;
+  quantity: number;
+}): Promise<TicketCreationResult> {
+  const { supabase, businessId, bookingId, eventId, guestName, guestPhone, quantity } = opts;
   const expectedNumbers = new Set(Array.from({ length: quantity }, (_, i) => i + 1));
   const phone = guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`;
 
-  // ── 1. Read existing canonical ticket rows for this booking ──
   const { data: existingTickets, error: existingError } = await supabase
     .from('event_tickets')
     .select('ticket_code, ticket_number')
@@ -82,12 +85,10 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     return { success: false, tickets: [], error: 'existing_ticket_lookup_failed' };
   }
 
-  // ── 2. Determine which ticket_numbers are missing ──
   const existingNumbers = new Set((existingTickets || []).map(t => t.ticket_number));
   const missingNumbers = [...expectedNumbers].filter(n => !existingNumbers.has(n));
 
   if (missingNumbers.length > 0) {
-    // ── 3. Insert ONLY missing ticket rows ──
     const rows = missingNumbers.map(n => ({
       business_id: businessId,
       booking_id: bookingId,
@@ -105,7 +106,6 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
 
     if (insertError) {
       if (insertError.code === '23505') {
-        // UNIQUE(booking_id, ticket_number) conflict = concurrent worker created these rows
         logger.info('[TICKETS] UNIQUE conflict — concurrent worker created rows for booking', bookingId);
       } else {
         logger.error('[TICKETS] Failed to insert event_tickets:', insertError.message, insertError.code);
@@ -118,7 +118,6 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     logger.info('[TICKETS] All', quantity, 'tickets already exist for booking', bookingId);
   }
 
-  // ── 4. Authoritative final re-read of canonical ticket state ──
   const { data: finalTickets, error: finalError } = await supabase
     .from('event_tickets')
     .select('ticket_code, ticket_number')
@@ -130,7 +129,6 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     return { success: false, tickets: [], error: 'final_reread_failed' };
   }
 
-  // ── 5. Validate canonical set: must be EXACTLY the expected ticket_numbers {1..N} ──
   const finalNumbers = new Set((finalTickets || []).map(t => t.ticket_number));
   const allPresent = [...expectedNumbers].every(n => finalNumbers.has(n));
   const exactCount = (finalTickets?.length ?? 0) === quantity;
@@ -140,11 +138,31 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     return { success: false, tickets: [], error: 'canonical_set_incomplete' };
   }
 
-  const tickets: Array<{ ticketCode: string; ticketNumber: number; totalTickets: number }> = finalTickets!.map(t => ({
-    ticketCode: t.ticket_code,
-    ticketNumber: t.ticket_number,
-    totalTickets: quantity,
-  }));
+  return {
+    success: true,
+    tickets: finalTickets!.map(t => ({ ticketCode: t.ticket_code, ticketNumber: t.ticket_number, totalTickets: quantity })),
+  };
+}
+
+export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promise<TicketCreationResult> {
+  const {
+    supabase, sender, businessId, bookingId, eventId,
+    eventName, eventDate, eventTime, venue,
+    guestName, guestPhone, referenceCode, quantity,
+  } = opts;
+  const t = opts.translate ?? ((text: string) => Promise.resolve(text));
+
+  logger.info('[TICKETS] Starting sendTicketsAfterPurchase | booking:', bookingId, '| event:', eventName, '| qty:', quantity);
+
+  // Canonical row creation (pure business state — no delivery)
+  const rowResult = await ensureCanonicalTicketRows({
+    supabase, businessId, bookingId, eventId, guestName, guestPhone, quantity,
+  });
+
+  if (!rowResult.success) return rowResult;
+
+  const tickets = rowResult.tickets;
+  const phone = guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`;
 
   const verifyBaseUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/tickets`;
   const ticketLabel = quantity === 1 ? 'ticket' : 'tickets';

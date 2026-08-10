@@ -145,13 +145,13 @@ EXCEPTION WHEN undefined_object THEN NULL;
 END $$;
 
 -- ═══════════════════════════════════════════════════════
--- Historical backfill: mark all existing successful payments as finalized
--- so the authority does not re-process them.
+-- Legacy fence: mark pre-authority successful payments as legacy.
+-- payment_authority_version distinguishes:
+--   NULL = legacy (pre-authority, business-finalization state unknown)
+--   1    = new-authority payment (normal Stage 1/2/3 lifecycle)
+-- Legacy payments entering the authority are safely rejected.
 -- ═══════════════════════════════════════════════════════
-UPDATE payments
-SET finalization_completed_at = COALESCE(paid_at, NOW())
-WHERE status = 'success'
-  AND finalization_completed_at IS NULL;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_authority_version INTEGER;
 
 -- ═══════════════════════════════════════════════════════
 -- Order stock application ledger: exactly-once stock decrement
@@ -186,8 +186,17 @@ DECLARE
   v_existing RECORD;
   v_item RECORD;
   v_count INTEGER := 0;
+  v_order RECORD;
 BEGIN
-  -- Check if already applied (idempotent guard)
+  -- 1. Acquire transaction-scoped serialization lock on the order row.
+  -- This guarantees two callers for the same order serialize, preventing
+  -- concurrent stock application before the UNIQUE marker is visible.
+  SELECT id INTO v_order FROM orders WHERE id = p_order_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('applied', false, 'reason', 'order_not_found');
+  END IF;
+
+  -- 2. Re-check under lock: already applied?
   SELECT id INTO v_existing
   FROM order_stock_applications
   WHERE payment_id = p_payment_id AND order_id = p_order_id;
@@ -196,7 +205,7 @@ BEGIN
     RETURN jsonb_build_object('applied', true, 'already_applied', true);
   END IF;
 
-  -- Apply stock decrements for all order items
+  -- 3. Apply ALL stock decrements atomically (single transaction)
   FOR v_item IN
     SELECT product_id, variant_id, quantity
     FROM order_items WHERE order_id = p_order_id
@@ -209,7 +218,7 @@ BEGIN
     v_count := v_count + 1;
   END LOOP;
 
-  -- Record durable application marker (UNIQUE prevents concurrent duplicate)
+  -- 4. Insert durable marker (UNIQUE is defense-in-depth, not primary sync)
   INSERT INTO order_stock_applications (payment_id, order_id, item_count)
   VALUES (p_payment_id, p_order_id, v_count);
 

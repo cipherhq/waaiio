@@ -121,7 +121,7 @@ export async function authorizeAndFinalize(
   // ── Stage 1: Load and authorize payment ──
   const { data: payment, error: paymentError } = await supabase
     .from('payments')
-    .select('id, amount, currency, gateway, status, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway_fee, finalization_completed_at')
+    .select('id, amount, currency, gateway, status, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway_fee, finalization_completed_at, payment_authority_version')
     .eq('gateway_reference', verified.waaiioReference)
     .maybeSingle();
 
@@ -132,6 +132,12 @@ export async function authorizeAndFinalize(
   }
   if (!payment) {
     return reject('Payment not found for reference: ' + verified.waaiioReference, 'payment_not_found');
+  }
+
+  // Legacy fence: reject pre-authority payments to prevent unsafe replay
+  if (payment.payment_authority_version == null && payment.status === 'success') {
+    logger.info(`${logPrefix} Legacy pre-authority payment ${payment.id} — skipping`);
+    return reject('Legacy pre-authority payment — finalization state unknown', 'legacy_finalization_unverified');
   }
 
   // Provider truth validation

@@ -23,6 +23,7 @@ const PAYMENT_ROW = {
   id: 'pay-1', amount: 5000, currency: 'NGN', gateway: 'paystack', status: 'pending',
   booking_id: 'bk-1', invoice_id: null, campaign_id: null, reservation_id: null,
   order_id: null, metadata: {}, gateway_fee: 0, finalization_completed_at: null,
+  payment_authority_version: 1,
 };
 
 // eslint-disable-next-line
@@ -230,7 +231,7 @@ describe('Payment Authority — Phase 1 Core', () => {
   it('14. fully completed retry → skips to Stage 3 (already_completed finalization)', async () => {
     const { authorizeAndFinalize } = await import('../authority');
     const supabase = buildSupabase({
-      paymentRow: { ...PAYMENT_ROW, status: 'success', finalization_completed_at: '2026-08-10T00:00:00Z' },
+      paymentRow: { ...PAYMENT_ROW, status: 'success', finalization_completed_at: '2026-08-10T00:00:00Z', payment_authority_version: 1 },
     });
     const r = await authorizeAndFinalize(supabase, makeVerified(), successProcess, completedConfirm);
     // processPayment should NOT be called (finalization already done)
@@ -273,11 +274,37 @@ describe('Payment Authority — Phase 1 Core', () => {
     expect(r.status).not.toBe('already_completed');
   });
 
+  // ── Legacy fence ──
+
+  it('18. legacy success payment (no authority version) → rejected, NOT replayed', async () => {
+    const { authorizeAndFinalize } = await import('../authority');
+    const supabase = buildSupabase({
+      paymentRow: { ...PAYMENT_ROW, status: 'success', payment_authority_version: null },
+    });
+    const r = await authorizeAndFinalize(supabase, makeVerified(), successProcess, completedConfirm);
+    expect(r.status).toBe('rejected');
+    expect(r.reason).toContain('legacy_finalization_unverified');
+    expect(successProcess).not.toHaveBeenCalled();
+    expect(completedConfirm).not.toHaveBeenCalled();
+  });
+
+  it('19. new-authority pending payment → normal Stage 2 proceeds', async () => {
+    const { authorizeAndFinalize } = await import('../authority');
+    const supabase = buildSupabase({
+      paymentRow: { ...PAYMENT_ROW, status: 'pending', payment_authority_version: 1 },
+      claimResult: { claimed: true, claim_token: 'tok', payment_id: 'pay-1', amount: 5000, booking_id: 'bk-1', invoice_id: null, campaign_id: null, reservation_id: null, order_id: null, gateway_fee: 0 },
+      completeResult: { completed: true, already_completed: false },
+    });
+    const r = await authorizeAndFinalize(supabase, makeVerified(), successProcess, completedConfirm);
+    expect(r.status).toBe('completed');
+    expect(successProcess).toHaveBeenCalled();
+  });
+
   it('17. not_deliverable on already-finalized retry → same truthful result', async () => {
     const { authorizeAndFinalize } = await import('../authority');
     const notDeliverableConfirm = vi.fn().mockResolvedValue({ status: 'not_deliverable', retryable: false, reason: 'no_phone_or_email' });
     const supabase = buildSupabase({
-      paymentRow: { ...PAYMENT_ROW, status: 'success', finalization_completed_at: '2026-08-10T00:00:00Z' },
+      paymentRow: { ...PAYMENT_ROW, status: 'success', finalization_completed_at: '2026-08-10T00:00:00Z', payment_authority_version: 1 },
     });
     const r = await authorizeAndFinalize(supabase, makeVerified(), successProcess, notDeliverableConfirm);
     expect(r.status).toBe('not_deliverable');
