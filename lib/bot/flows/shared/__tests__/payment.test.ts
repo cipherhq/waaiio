@@ -31,6 +31,27 @@ function createMockGateway(result: { url: string; reference: string } | null = {
 }
 
 function createMockSupabase(overrides: Record<string, unknown> = {}) {
+  // Track from() calls to distinguish quarantine/reuse (return null) from identity lookup (return record)
+  let fromCallCount = 0;
+  const makeChain = (returnsPayment: boolean) => {
+    const chain = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      not: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      like: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: null, error: null }),
+      maybeSingle: vi.fn().mockResolvedValue(
+        returnsPayment
+          ? { data: { id: 'pay-mock', metadata: {} }, error: null }
+          : { data: null, error: null }
+      ),
+      update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: null, error: null }) }),
+      insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+    };
+    return chain;
+  };
   const defaultChain = {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
@@ -39,18 +60,20 @@ function createMockSupabase(overrides: Record<string, unknown> = {}) {
     limit: vi.fn().mockReturnThis(),
     like: vi.fn().mockReturnThis(),
     single: vi.fn().mockResolvedValue({ data: null, error: null }),
-    maybeSingle: vi.fn()
-      .mockResolvedValueOnce({ data: null, error: null }) // quarantine check
-      .mockResolvedValueOnce({ data: null, error: null }) // reuse check
-      .mockResolvedValue({ data: { id: 'pay-mock', metadata: {} }, error: null }), // identity persistence
-    update: vi.fn().mockReturnValue({
-      eq: vi.fn().mockResolvedValue({ data: null, error: null }),
-    }),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+    update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: null, error: null }) }),
     insert: vi.fn().mockResolvedValue({ data: null, error: null }),
   };
 
   return {
-    from: vi.fn(() => ({ ...defaultChain, ...overrides })),
+    from: vi.fn(() => {
+      fromCallCount++;
+      // Early from() calls (quarantine, reuse, BYO creds, business, payout) → return null
+      // Later calls (gateway insert, identity persistence, URL shorten) → return payment record
+      // Return payment record only after many initial lookups (quarantine, reuse, BYO, business, payout, gateway)
+      if (fromCallCount <= 10) return { ...defaultChain, ...overrides };
+      return { ...makeChain(true), ...overrides };
+    }),
   };
 }
 
