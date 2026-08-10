@@ -18,6 +18,14 @@ vi.mock('@/lib/getPlatformFees', () => ({
   getPlatformFees: vi.fn().mockResolvedValue({ feePercentage: 2.0, feeFlat: 0, feeTotal: 100 }),
 }));
 
+vi.mock('@/lib/logger', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), withContext: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }) },
+}));
+
+vi.mock('../reconcile', () => ({
+  reconcilePayment: vi.fn().mockResolvedValue({ providerOutcome: 'verified', lifecycle: { status: 'completed', retryable: false, stages: { providerPaid: true, businessFinalized: true, customerConfirmed: true } }, acknowledgeSuccess: true }),
+}));
+
 import { processPaystackChargeSuccess } from '../webhook-handler';
 import * as Sentry from '@sentry/nextjs';
 

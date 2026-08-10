@@ -118,6 +118,7 @@ export async function ensureCanonicalTicketRows(opts: {
     logger.info('[TICKETS] All', quantity, 'tickets already exist for booking', bookingId);
   }
 
+  // Authoritative final re-read of canonical ticket state
   const { data: finalTickets, error: finalError } = await supabase
     .from('event_tickets')
     .select('ticket_code, ticket_number')
