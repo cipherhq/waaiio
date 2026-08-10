@@ -843,6 +843,35 @@ jobs:
           if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No Migration 312 DB tests passed."; exit 1; fi
           echo "✅ Migration 312 ticket-row identity concurrency tests complete — zero skips, zero failures."
 
+      - name: Migration 313 atomic reschedule DB tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m313_test
+          createdb --maintenance-db=waaiio_test waaiio_m313_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m313_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m313_test
+          echo "Running Migration 313 real PostgreSQL atomic reschedule tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/atomic-reschedule-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then echo "❌ Migration 313 DB tests failed."; exit "$TEST_EXIT"; fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 313 DB tests had $SKIP_COUNT skipped. All must execute."; exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No Migration 313 DB tests passed."; exit 1; fi
+          echo "✅ Migration 313 atomic reschedule tests complete — zero skips, zero failures."
+
   # ── Engineering Governance ──
   governance:
     name: Engineering governance

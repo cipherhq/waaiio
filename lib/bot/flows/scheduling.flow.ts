@@ -2019,36 +2019,25 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
 
-        // ── Reschedule existing booking ──
+        // ── Reschedule existing booking via atomic RPC ──
         if (d._reschedule_booking_id) {
           const rescheduleId = d._reschedule_booking_id as string;
 
-          // Fetch current booking to preserve original date/time
-          const { data: originalBooking, error: origError } = await ctx.supabase
-            .from('bookings')
-            .select('date, time')
-            .eq('id', rescheduleId)
-            .single();
+          const { data: rescheduleResult, error: rescheduleRpcError } = await ctx.supabase
+            .rpc('reschedule_booking_atomic', {
+              p_booking_id: rescheduleId,
+              p_business_id: ctx.business!.id,
+              p_new_date: d.date as string,
+              p_new_time: d.time as string,
+              p_new_party_size: (d.party_size as number) || null,
+            });
 
-          if (origError || !originalBooking) {
-            logger.withContext({ op: 'scheduling.reschedule-fetch', ...safeLogErrorContext(origError) }).error('[SCHEDULING] Failed to fetch original booking for reschedule');
-            return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
-          }
-
-          const { error: rescheduleError } = await ctx.supabase
-            .from('bookings')
-            .update({
-              date: d.date as string,
-              time: d.time as string,
-              party_size: (d.party_size as number) || 1,
-              original_date: originalBooking?.date ?? null,
-              original_time: originalBooking?.time ?? null,
-              rescheduled_at: new Date().toISOString(),
-            })
-            .eq('id', rescheduleId);
-
-          if (rescheduleError) {
-            logger.withContext({ op: 'scheduling.reschedule-update', ...safeLogErrorContext(rescheduleError) }).error('[SCHEDULING] Failed to reschedule booking');
+          if (rescheduleRpcError || !rescheduleResult?.rescheduled) {
+            const reason = rescheduleResult?.reason || 'unknown';
+            if (reason === 'slot_full' || reason === 'buffer_conflict') {
+              return [{ type: 'text', text: await ctx.t('Sorry, that time slot is no longer available. Send *Hi* to pick a different time.') }];
+            }
+            logger.withContext({ op: 'scheduling.reschedule-rpc', reason }).error('[SCHEDULING] Atomic reschedule failed');
             return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
           }
 
