@@ -3,8 +3,7 @@ import * as Sentry from '@sentry/nextjs';
 import { getServerPostHog } from '@/lib/posthog/server';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { logger } from '@/lib/logger';
-import { processSuccessfulPayment } from './process-success';
-import { sendProactiveConfirmation } from './send-confirmation';
+import { reconcilePayment } from './reconcile';
 
 /**
  * Shared webhook processing logic for both platform and BYO payment webhooks.
@@ -99,15 +98,27 @@ export async function processPaystackChargeSuccess(
     });
   }).catch(() => {});
 
-  // Confirm booking, record platform fees, process invoice/campaign
-  await processSuccessfulPayment(supabase, { ...existingPayment, gateway_fee: gatewayFee });
+  // ── Canonical Payment Authority: one engine for all payment completion ──
+  // Webhook data is already authenticated by signature — pass as pre-verified provider truth.
+  const result = await reconcilePayment(supabase, existingPayment.id, 'webhook', {
+    status: 'verified',
+    result: {
+      provider: 'paystack',
+      waaiioReference: reference,
+      providerTransactionId: String((data.id as number) || ''),
+      amount: webhookAmountKobo / 100, // kobo → naira
+      currency: ((data.currency as string) || 'NGN').toUpperCase(),
+      paymentMethod: (data.channel as string) || 'card',
+      cardLast4: (authorization?.last4 as string) || undefined,
+      cardBrand: (authorization?.brand as string) || undefined,
+      gatewayFee,
+      providerStatus: 'success',
+      verifiedAt: new Date().toISOString(),
+    },
+  });
 
-  // Proactive confirmation: send WhatsApp message to customer after payment
-  // This ensures customers get confirmation even if they never tap "I've Paid"
-  try {
-    await sendProactiveConfirmation(supabase, existingPayment, '[PAYSTACK WEBHOOK]');
-  } catch (confirmErr) {
-    logger.error('[PAYSTACK WEBHOOK] Proactive confirmation error:', confirmErr);
+  if (result.lifecycle) {
+    logger.info(`[PAYSTACK WEBHOOK] Authority result: ${result.lifecycle.status} | stages: paid=${result.lifecycle.stages.providerPaid} fin=${result.lifecycle.stages.businessFinalized} conf=${result.lifecycle.stages.customerConfirmed}`);
   }
 }
 

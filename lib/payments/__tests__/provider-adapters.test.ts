@@ -156,11 +156,11 @@ describe('Provider adapters', () => {
 
   it('15. Square merchant token → exact merchant credential', async () => {
     mockFetch.mockResolvedValueOnce({ json: () => ({ payment: { status: 'COMPLETED', id: 'sq_pay', amount_money: { amount: 5000, currency: 'USD' }, source_type: 'CARD' } }) });
-    const supabase = buildSupabase(null, { access_token: 'sq_merchant_encrypted', merchant_id: 'merch_1' });
+    const supabase = buildSupabase(null, { id: 'payout-sq-1', business_id: 'biz-sq', access_token: 'sq_merchant_encrypted', merchant_id: 'merch_1' });
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(supabase, {
       provider: 'square', gatewayReference: 'sq_ref', expectedAmount: 50, expectedCurrency: 'USD',
-      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-sq',
+      paymentMetadata: { payment_origin: 'connect' }, isNewAuthority: false, businessId: 'biz-sq',
     });
     expect(r.status).toBe('verified');
     expect(mockFetch.mock.calls[0][1].headers.Authorization).toContain('decrypted_sq_merchant_encrypted');

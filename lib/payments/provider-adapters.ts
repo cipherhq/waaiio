@@ -137,29 +137,37 @@ async function resolveFlutterwaveCredential(
 
 async function resolveSquareCredential(
   supabase: SupabaseClient,
+  paymentMeta: Record<string, unknown>,
   businessId: string | null,
 ): Promise<ResolvedCredential | null> {
-  // Square always uses merchant OAuth token from payout_accounts
-  if (businessId) {
-    const { data: payoutAccount } = await supabase
-      .from('payout_accounts')
-      .select('access_token, merchant_id')
-      .eq('business_id', businessId)
-      .eq('provider', 'square')
-      .eq('is_active', true)
-      .maybeSingle();
+  const origin = resolvePaymentOrigin(paymentMeta);
+  const connectionId = paymentMeta.provider_connection_id as string | undefined;
 
-    if (payoutAccount?.access_token) {
-      try {
-        const { decryptToken } = await import('@/lib/encryption');
-        return { secretKey: decryptToken(payoutAccount.access_token), isByo: false };
-      } catch {
-        return null;
+  if (origin === 'connect' || (origin === null && businessId)) {
+    // Merchant OAuth — load exact connection by ID if available, else by business
+    const query = connectionId
+      ? supabase.from('payout_accounts').select('id, business_id, access_token').eq('id', connectionId).maybeSingle()
+      : businessId
+        ? supabase.from('payout_accounts').select('id, business_id, access_token').eq('business_id', businessId).eq('provider', 'square').eq('is_active', true).maybeSingle()
+        : null;
+
+    if (query) {
+      const { data: payoutAccount, error } = await query;
+      if (!error && payoutAccount?.access_token) {
+        if (businessId && payoutAccount.business_id !== businessId) return null;
+        try {
+          const { decryptToken } = await import('@/lib/encryption');
+          return { secretKey: decryptToken(payoutAccount.access_token), isByo: false };
+        } catch {
+          return null;
+        }
       }
     }
+    // If merchant connection not found and origin was explicitly 'connect', fail closed
+    if (origin === 'connect') return null;
   }
 
-  // Fallback to platform token (only if payment was created in platform mode)
+  // Platform mode (origin === 'platform' or legacy null without merchant connection)
   const platformToken = process.env.SQUARE_ACCESS_TOKEN;
   if (!platformToken) return null;
   return { secretKey: platformToken, isByo: false };
@@ -239,7 +247,7 @@ export async function verifyWithProvider(
     case 'flutterwave':
       return verifyFlutterwave(supabase, gatewayReference, expectedAmount, expectedCurrency, paymentMetadata, businessId);
     case 'square':
-      return verifySquare(supabase, gatewayReference, expectedAmount, expectedCurrency, businessId);
+      return verifySquare(supabase, gatewayReference, expectedAmount, expectedCurrency, paymentMetadata, businessId);
     case 'paypal':
       return verifyPaypal(gatewayReference, expectedAmount, expectedCurrency);
     default:
@@ -394,9 +402,10 @@ async function verifySquare(
   reference: string,
   expectedAmount: number,
   expectedCurrency: string,
+  meta: Record<string, unknown>,
   businessId: string | null,
 ): Promise<ProviderVerificationOutcome> {
-  const cred = await resolveSquareCredential(supabase, businessId);
+  const cred = await resolveSquareCredential(supabase, meta, businessId);
   if (!cred) return { status: 'config_error', reason: 'square_credential_missing' };
 
   try {

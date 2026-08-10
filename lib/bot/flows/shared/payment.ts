@@ -121,6 +121,7 @@ export async function initializePayment(
     let byoBusinessId: string | undefined;
     let connectAccountId: string | undefined;
     let providerConnectionId: string | undefined;
+    let payoutAccountId: string | undefined;
 
     if (opts.businessId) {
       // Check for BYO (Bring Your Own) gateway credentials first
@@ -226,7 +227,7 @@ export async function initializePayment(
 
         const { data: payout } = await supabase
           .from('payout_accounts')
-          .select('subaccount_code, stripe_account_id, square_merchant_id, square_access_token, platform_percentage, gateway')
+          .select('id, subaccount_code, stripe_account_id, square_merchant_id, square_access_token, platform_percentage, gateway')
           .eq('business_id', opts.businessId)
           .eq('is_active', true)
           .maybeSingle();
@@ -243,6 +244,7 @@ export async function initializePayment(
             squareMerchantId = payout.square_merchant_id || undefined;
             squareAccessToken = payout.square_access_token || undefined;
             platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
+            payoutAccountId = payout.id;
           }
           // If gateways don't match (e.g., Paystack payout but Stripe payment),
           // skip split — platform collects full amount
@@ -334,10 +336,13 @@ export async function initializePayment(
         const existingMeta = (paymentRecord.metadata || {}) as Record<string, unknown>;
         existingMeta.checkout_url = result.url;
         // Persist exact payment origin + connection identity for Payment Authority verification
-        existingMeta.payment_origin = isByo ? 'byo' : connectAccountId ? 'connect' : 'platform';
+        existingMeta.payment_origin = isByo ? 'byo' : (connectAccountId || squareAccessToken || stripeAccountId) ? 'connect' : 'platform';
         if (providerConnectionId) existingMeta.provider_connection_id = providerConnectionId;
         if (connectAccountId) existingMeta.provider_account_id = connectAccountId;
         if (subaccountCode) existingMeta.provider_account_id = subaccountCode;
+        if (stripeAccountId) existingMeta.provider_account_id = stripeAccountId;
+        // Square/Stripe payout: persist exact payout_accounts.id for rotation-safe verification
+        if (payoutAccountId && !providerConnectionId) existingMeta.provider_connection_id = payoutAccountId;
         await supabase.from('payments').update({ metadata: existingMeta, payment_authority_version: 1 }).eq('id', paymentRecord.id);
       }
 
