@@ -3249,7 +3249,8 @@ export const schedulingFlow: FlowDefinition = {
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
-          const verified = await verifyPayment(ctx.supabase, ref, (ctx.business?.country_code || 'NG') as CountryCode);
+          const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
+          const verified = await verifyAndReconcilePayment(ctx.supabase, ref);
           if (verified) {
             const d = ctx.session.session_data;
 

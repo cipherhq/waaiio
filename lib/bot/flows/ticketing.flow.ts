@@ -962,8 +962,8 @@ export const ticketingFlow: FlowDefinition = {
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
-          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-          const verified = await verifyPayment(ctx.supabase, ref, cc);
+          const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
+          const verified = await verifyAndReconcilePayment(ctx.supabase, ref);
           if (verified) {
             const d = ctx.session.session_data;
 

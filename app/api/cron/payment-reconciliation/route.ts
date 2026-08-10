@@ -72,27 +72,9 @@ export async function GET(request: NextRequest) {
           .eq('id', payment.id)
           .eq('status', 'pending'); // Only update if still pending (idempotent)
 
-        await processSuccessfulPayment(supabase, {
-          id: payment.id,
-          amount: payment.amount,
-          booking_id: payment.booking_id,
-          invoice_id: payment.invoice_id,
-          campaign_id: payment.campaign_id,
-          order_id: payment.order_id,
-          metadata: payment.metadata as Record<string, unknown> | null,
-        });
-
-        try {
-          await sendProactiveConfirmation(supabase, {
-            id: payment.id,
-            amount: payment.amount,
-            booking_id: payment.booking_id,
-            invoice_id: payment.invoice_id,
-            campaign_id: payment.campaign_id,
-          }, '[RECONCILIATION]');
-        } catch (confirmErr) {
-          logger.error('[PAYMENT-RECONCILIATION] Confirmation error:', confirmErr);
-        }
+        // ── Canonical Payment Authority ──
+        const { reconcilePayment } = await import('@/lib/payments/reconcile');
+        await reconcilePayment(supabase, payment.id, 'cron');
 
         reconciled++;
         logger.info(`[PAYMENT-RECONCILIATION] Reconciled payment ${payment.id} (${payment.gateway})`);
