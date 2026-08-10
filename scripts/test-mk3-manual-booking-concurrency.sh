@@ -51,7 +51,7 @@ psql -v ON_ERROR_STOP=1 -q -c "DELETE FROM bookings WHERE business_id = '$BIZ_ID
 psql -t -A <<SESSION_A > /tmp/mk3_a.txt 2>&1 &
 BEGIN;
 SELECT * FROM book_slot_atomic(
-  '$BIZ_ID'::uuid, NULL::uuid, '$SVC_ID'::uuid, NULL::uuid,
+  '$BIZ_ID'::uuid, '$BIZ_OWNER'::uuid, '$SVC_ID'::uuid, NULL::uuid,
   '2027-06-15'::date, '10:00', 1, 1,
   'scheduling', 0, 'none', 'confirmed',
   'Customer A', '+2348000000001', NULL,
@@ -69,7 +69,7 @@ sleep 0.5
 # Session B: concurrent booking attempt
 psql -t -A <<SESSION_B > /tmp/mk3_b.txt 2>&1 &
 SELECT * FROM book_slot_atomic(
-  '$BIZ_ID'::uuid, NULL::uuid, '$SVC_ID'::uuid, NULL::uuid,
+  '$BIZ_ID'::uuid, '$BIZ_OWNER'::uuid, '$SVC_ID'::uuid, NULL::uuid,
   '2027-06-15'::date, '10:00', 1, 1,
   'scheduling', 0, 'none', 'confirmed',
   'Customer B', '+2348000000002', NULL,
@@ -126,7 +126,7 @@ psql -v ON_ERROR_STOP=1 -q -c "DELETE FROM bookings WHERE business_id = '$BIZ_ID
 psql -t -A <<SESSION_C > /tmp/mk3_c.txt 2>&1 &
 BEGIN;
 SELECT * FROM book_slot_atomic(
-  '$BIZ_ID'::uuid, NULL::uuid, '$SVC_ID'::uuid, NULL::uuid,
+  '$BIZ_ID'::uuid, '$BIZ_OWNER'::uuid, '$SVC_ID'::uuid, NULL::uuid,
   '2027-06-16'::date, '11:00', 1, 2,
   'scheduling', 0, 'none', 'confirmed',
   'Customer C', '+2348000000003', NULL,
@@ -142,7 +142,7 @@ sleep 0.5
 
 psql -t -A <<SESSION_D > /tmp/mk3_d.txt 2>&1 &
 SELECT * FROM book_slot_atomic(
-  '$BIZ_ID'::uuid, NULL::uuid, '$SVC_ID'::uuid, NULL::uuid,
+  '$BIZ_ID'::uuid, '$BIZ_OWNER'::uuid, '$SVC_ID'::uuid, NULL::uuid,
   '2027-06-16'::date, '11:00', 1, 2,
   'scheduling', 0, 'none', 'confirmed',
   'Customer D', '+2348000000004', NULL,

@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
     const { data: slotResult, error: slotError } = await serviceClient
       .rpc('book_slot_atomic', {
         p_business_id: businessId,
-        p_user_id: null, // manual bookings don't have a user_id
+        p_user_id: user.id, // business owner creating the booking
         p_service_id: serviceId,
         p_staff_id: staffId || null,
         p_date: date,
