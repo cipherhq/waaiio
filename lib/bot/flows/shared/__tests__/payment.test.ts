@@ -39,7 +39,10 @@ function createMockSupabase(overrides: Record<string, unknown> = {}) {
     limit: vi.fn().mockReturnThis(),
     like: vi.fn().mockReturnThis(),
     single: vi.fn().mockResolvedValue({ data: null, error: null }),
-    maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'pay-mock', metadata: {} }, error: null }),
+    maybeSingle: vi.fn()
+      .mockResolvedValueOnce({ data: null, error: null }) // quarantine check
+      .mockResolvedValueOnce({ data: null, error: null }) // reuse check
+      .mockResolvedValue({ data: { id: 'pay-mock', metadata: {} }, error: null }), // identity persistence
     update: vi.fn().mockReturnValue({
       eq: vi.fn().mockResolvedValue({ data: null, error: null }),
     }),
