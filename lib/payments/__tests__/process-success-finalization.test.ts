@@ -51,6 +51,10 @@ function buildSupabase(opts: {
       if (opts.campaignRpcError) return Promise.resolve({ data: null, error: opts.campaignRpcError });
       return Promise.resolve({ data: { applied: true, amount: 5000 }, error: null });
     }
+    if (name === 'apply_order_stock_once') {
+      if (opts.stockRpcError) return Promise.resolve({ data: null, error: opts.stockRpcError });
+      return Promise.resolve({ data: { applied: true, already_applied: false, items: 1 }, error: null });
+    }
     if (name === 'decrement_stock' || name === 'decrement_variant_stock') {
       if (opts.stockRpcError) return Promise.resolve({ data: null, error: opts.stockRpcError });
       return Promise.resolve({ data: null, error: null });
@@ -71,14 +75,7 @@ function buildSupabase(opts: {
     if (table === 'orders') {
       return mockChain({
         update: vi.fn().mockReturnValue(mockChain({
-          in: vi.fn().mockReturnValue(mockChain({
-            select: vi.fn().mockReturnValue(mockChain({
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: opts.orderUpdateError ? null : { id: 'ord-1' },
-                error: opts.orderUpdateError ?? null,
-              }),
-            })),
-          })),
+          in: vi.fn().mockResolvedValue({ data: null, error: opts.orderUpdateError ?? null }),
         })),
       });
     }
@@ -181,7 +178,7 @@ describe('processSuccessfulPayment — FinalizationResult', () => {
     const supabase = buildSupabase({ stockRpcError: { message: 'stock rpc failed' } });
     const r = await processSuccessfulPayment(supabase, { id: 'p1', amount: 5000, booking_id: null, invoice_id: null, campaign_id: null, order_id: 'ord1' });
     expect(r.criticalSuccess).toBe(false);
-    expect(r.errors?.some(e => e.startsWith('stock_decrement_failed'))).toBe(true);
+    expect(r.errors).toContain('order_stock_failed');
   });
 
   // ── Reservation ──

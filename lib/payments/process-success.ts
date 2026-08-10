@@ -85,6 +85,18 @@ export async function processSuccessfulPayment(
       // Noncritical — log but do not fail finalization
       logger.withContext({ op: 'process-success.waitlist-conversion', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Waitlist conversion tracking error');
     }
+
+    // CRITICAL: For paid ticket bookings, ensure inventory + canonical ticket rows (Stage 2)
+    try {
+      const { ensurePaidTicketState } = await import('./ticket-business-state');
+      const ticketState = await ensurePaidTicketState(supabase, { paymentBookingId: payment.booking_id });
+      if (!ticketState.success) {
+        criticalErrors.push(`ticket_business_state_failed:${ticketState.error}`);
+      }
+    } catch (err) {
+      criticalErrors.push('ticket_business_state_threw');
+      logger.withContext({ op: 'process-success.ticket-state', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Ticket business state error');
+    }
   }
 
   // 2. Process invoice payment
@@ -107,20 +119,16 @@ export async function processSuccessfulPayment(
     }
   }
 
-  // 4. Confirm order + stock decrement
+  // 4. Confirm order + stock decrement (exactly-once via apply_order_stock_once)
   const orderId = payment.order_id || (payment.metadata?.order_id as string) || null;
   if (orderId) {
     try {
-      const { data: confirmedOrder, error: orderErr } = await supabase
+      // Confirm order status (idempotent — only pending → confirmed)
+      const { error: orderErr } = await supabase
         .from('orders')
-        .update({
-          status: 'confirmed',
-          paid_at: new Date().toISOString(),
-        })
+        .update({ status: 'confirmed', paid_at: new Date().toISOString() })
         .eq('id', orderId)
-        .in('status', ['pending'])
-        .select('id')
-        .maybeSingle();
+        .in('status', ['pending']);
 
       if (orderErr) {
         criticalErrors.push('order_confirmation_failed');
@@ -129,38 +137,22 @@ export async function processSuccessfulPayment(
 
       try {
         await recordPlatformFee(supabase, {
-          orderId,
-          paymentId: payment.id,
-          paymentAmount: payment.amount,
-          gatewayFee: payment.gateway_fee,
+          orderId, paymentId: payment.id, paymentAmount: payment.amount, gatewayFee: payment.gateway_fee,
         });
       } catch (feeErr) {
         criticalErrors.push('order_platform_fee_failed');
         logger.withContext({ op: 'platform-fee.order', ...safeLogErrorContext(feeErr) }).error('[PLATFORM-FEE] Failed to record fee for order');
       }
 
-      // Stock decrement: only on first confirmation (confirmedOrder != null)
-      if (confirmedOrder) {
-        const { data: orderItems, error: itemsErr } = await supabase
-          .from('order_items')
-          .select('product_id, variant_id, quantity')
-          .eq('order_id', orderId);
-
-        if (itemsErr) {
-          criticalErrors.push('order_items_lookup_failed');
-        } else if (orderItems) {
-          for (const item of orderItems) {
-            const { error: stockErr } = item.variant_id
-              ? await supabase.rpc('decrement_variant_stock', { p_variant_id: item.variant_id, qty: item.quantity })
-              : item.product_id
-                ? await supabase.rpc('decrement_stock', { p_product_id: item.product_id, qty: item.quantity })
-                : { error: null };
-            if (stockErr) {
-              criticalErrors.push(`stock_decrement_failed:${item.variant_id || item.product_id}`);
-              logger.withContext({ op: 'process-success.stock', ...safeLogErrorContext(stockErr) }).error('[PROCESS-SUCCESS] Stock decrement RPC error');
-            }
-          }
-        }
+      // Stock decrement: exactly-once via durable application marker (crash-gap safe)
+      const { data: stockResult, error: stockErr } = await supabase.rpc('apply_order_stock_once', {
+        p_payment_id: payment.id, p_order_id: orderId,
+      });
+      if (stockErr) {
+        criticalErrors.push('order_stock_failed');
+        logger.withContext({ op: 'process-success.stock', ...safeLogErrorContext(stockErr) }).error('[PROCESS-SUCCESS] apply_order_stock_once RPC error');
+      } else if (stockResult?.already_applied) {
+        logger.info('[PROCESS-SUCCESS] Order stock already applied for payment ' + payment.id);
       }
     } catch (err) {
       criticalErrors.push('order_finalization_threw');

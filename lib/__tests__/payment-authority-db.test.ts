@@ -42,6 +42,9 @@ describe.skipIf(!canRun)('Migration 314: payment finalization lifecycle', () => 
         finalization_processing_at TIMESTAMPTZ,
         finalization_claim_token UUID
       );
+      CREATE TABLE IF NOT EXISTS products (id UUID PRIMARY KEY, stock INT DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS product_variants (id UUID PRIMARY KEY, stock INT DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS order_items (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), order_id UUID, product_id UUID, variant_id UUID, quantity INT DEFAULT 1);
     `);
     // Apply migration 314
     const fs = require('fs');
@@ -139,5 +142,39 @@ describe.skipIf(!canRun)('Migration 314: payment finalization lifecycle', () => 
     const r = psqlJson(`SET ROLE service_role; SELECT release_payment_finalization('${PAY_ID}', gen_random_uuid());`);
     expect(r.released).toBe(false);
     expect(r.reason).toBe('token_mismatch');
+  });
+
+  // ── Order Stock Application ──
+
+  const ORD_ID = '00000000-0000-0000-0314-000000000002';
+  const PROD_ID = '00000000-0000-0000-0314-000000000003';
+
+  it('11. apply_order_stock_once: first application decrements stock', () => {
+    psql(`INSERT INTO products (id, stock) VALUES ('${PROD_ID}', 10) ON CONFLICT (id) DO UPDATE SET stock = 10;`);
+    psql(`DELETE FROM order_items WHERE order_id = '${ORD_ID}';`);
+    psql(`DELETE FROM order_stock_applications WHERE order_id = '${ORD_ID}';`);
+    psql(`INSERT INTO order_items (order_id, product_id, quantity) VALUES ('${ORD_ID}', '${PROD_ID}', 3);`);
+    const r = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${PAY_ID}', '${ORD_ID}');`);
+    expect(r.applied).toBe(true);
+    expect(r.already_applied).toBe(false);
+    const stock = psql(`SELECT stock FROM products WHERE id = '${PROD_ID}';`);
+    expect(parseInt(stock)).toBe(7); // 10 - 3
+  });
+
+  it('12. apply_order_stock_once: retry is idempotent (no double decrement)', () => {
+    const r = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${PAY_ID}', '${ORD_ID}');`);
+    expect(r.applied).toBe(true);
+    expect(r.already_applied).toBe(true);
+    const stock = psql(`SELECT stock FROM products WHERE id = '${PROD_ID}';`);
+    expect(parseInt(stock)).toBe(7); // Still 7, not 4
+  });
+
+  it('13. historical backfill logic: success payments get finalization_completed_at', () => {
+    // Simulate what the migration backfill does for a payment that existed before migration
+    psql(`UPDATE payments SET finalization_completed_at = NULL WHERE id = '${PAY_ID}';`);
+    // Run the same backfill SQL
+    psql(`UPDATE payments SET finalization_completed_at = COALESCE(paid_at, NOW()) WHERE status = 'success' AND finalization_completed_at IS NULL;`);
+    const completed = psql(`SELECT finalization_completed_at IS NOT NULL FROM payments WHERE id = '${PAY_ID}';`);
+    expect(completed).toBe('t');
   });
 });
