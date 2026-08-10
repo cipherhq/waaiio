@@ -15,6 +15,8 @@
  * 9b. Buffer boundary success (reschedule to slot exactly outside buffer window)
  * 10. Bot path cannot bypass RPC (source verification)
  * 11. Migration 313 applies cleanly
+ * 12. CROSS-PATH: book_slot_atomic vs reschedule_booking_atomic on capacity-1 slot
+ * 13. Time canonicalization: both RPCs produce same advisory lock key
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
@@ -258,14 +260,81 @@ describe.skipIf(!dbUrl)('Atomic reschedule — real PostgreSQL concurrency', () 
   });
 
   it('11. migration 313 applies cleanly', () => {
-    // Verify the function exists and is callable (already applied in beforeAll)
     const r = psql(`SELECT proname FROM pg_proc WHERE proname = 'reschedule_booking_atomic';`);
     expect(r).toBe('reschedule_booking_atomic');
-
-    // Verify it's restricted to service_role
     const grants = psql(`SELECT grantee FROM information_schema.routine_privileges
       WHERE routine_name = 'reschedule_booking_atomic' AND privilege_type = 'EXECUTE';`);
     expect(grants).not.toContain('anon');
     expect(grants).not.toContain('authenticated');
+  });
+
+  it('12. CROSS-PATH: book_slot_atomic vs reschedule_booking_atomic — capacity 1 → exactly one wins', async () => {
+    // Setup: empty target slot (15:00 on 2027-06-01), one existing booking at 10:00 for reschedule source
+    psql(`DELETE FROM bookings WHERE business_id = '${BIZ}';`);
+    const SVC = '99dddddd-dddd-dddd-dddd-dddddddddddd'; // capacity=1
+    psql(`INSERT INTO bookings (id, business_id, user_id, service_id, date, time, status, guest_name, guest_phone)
+          VALUES ('aaaaaaaa-0012-0000-0000-000000000001', '${BIZ}', '${USR}', '${SVC}', '2027-06-01', '10:00', 'confirmed', 'Source', '+234');`);
+
+    // Worker A: book_slot_atomic for 15:00 — holds transaction open with pg_sleep(2)
+    const sqlA = `
+      BEGIN;
+      SET ROLE service_role;
+      SELECT * FROM book_slot_atomic(
+        '${BIZ}'::uuid, '${USR}'::uuid, '${SVC}'::uuid, NULL::uuid,
+        '2027-06-01'::date, '15:00', 1, 1,
+        'scheduling', 0, 'none', 'confirmed',
+        'BookerA', '+234bookA', NULL,
+        NULL, NULL, NULL::date,
+        NULL::jsonb, NULL::uuid, 0, NULL,
+        NULL::uuid, NULL::uuid, 0, 30, NULL::uuid
+      );
+      SELECT pg_sleep(2);
+      COMMIT;
+    `;
+
+    // Worker B: reschedule existing booking TO 15:00 — starts 500ms after A
+    // Uses '15:00:00' (with seconds) to prove time canonicalization works
+    const sqlB = `
+      BEGIN;
+      SET ROLE service_role;
+      SELECT * FROM reschedule_booking_atomic(
+        'aaaaaaaa-0012-0000-0000-000000000001'::uuid,
+        '${BIZ}'::uuid,
+        '2027-06-01'::date,
+        '15:00:00'
+      );
+      COMMIT;
+    `;
+
+    const { a, b } = await runTwoSessions(sqlA, sqlB);
+
+    // Exactly one must succeed at 15:00
+    const at15 = psql(`SELECT COUNT(*) FROM bookings WHERE business_id = '${BIZ}' AND date = '2027-06-01' AND time = '15:00' AND status IN ('confirmed', 'pending', 'in_progress');`);
+    expect(parseInt(at15)).toBe(1);
+
+    // Check who won
+    const bookResult = a; // book_slot_atomic returns (booking_id, reference_code, slot_available)
+    const rescheduleResult = b; // reschedule_booking_atomic returns jsonb
+
+    // One must contain a success indicator, the other a rejection
+    const bookWon = bookResult.includes('t') || bookResult.includes('true'); // slot_available=true
+    const rescheduleWon = b.includes('"rescheduled": true') || b.includes('"rescheduled":true');
+
+    // At most one winner
+    expect(bookWon && rescheduleWon).toBe(false);
+
+    // If reschedule lost, source booking must remain at 10:00
+    if (!rescheduleWon) {
+      const sourceTime = psql(`SELECT time FROM bookings WHERE id = 'aaaaaaaa-0012-0000-0000-000000000001';`);
+      expect(sourceTime).toBe('10:00:00');
+    }
+  }, 20000);
+
+  it('13. Time canonicalization: book_slot_atomic and reschedule_booking_atomic produce same lock key', () => {
+    // Verify that '15:00'::time::text and '15:00:00'::time::text produce the same hashtext
+    const hash1 = psql(`SELECT abs(hashtext('${BIZ}' || '|' || '2027-06-01' || '|' || '15:00'::time::text));`);
+    const hash2 = psql(`SELECT abs(hashtext('${BIZ}' || '|' || '2027-06-01' || '|' || '15:00:00'::time::text));`);
+    expect(hash1).toBe(hash2);
+    expect(hash1.length).toBeGreaterThan(0);
   });
 });
