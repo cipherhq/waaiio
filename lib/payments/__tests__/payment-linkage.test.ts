@@ -403,18 +403,25 @@ describe('Shared payment wrapper forwarding', () => {
 
     const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
 
-    // Deep chainable mock that supports all query patterns (.eq, .not, .is, .single, .maybeSingle)
-    const chainable = (): Record<string, unknown> => {
-      const self: Record<string, unknown> = {};
-      for (const m of ['select', 'eq', 'not', 'is', 'single', 'maybeSingle', 'insert', 'update', 'in', 'order', 'limit', 'like']) {
-        self[m] = vi.fn(() => self);
-      }
-      self.single = vi.fn().mockResolvedValue({ data: null, error: null });
-      self.maybeSingle = vi.fn().mockResolvedValueOnce({ data: null, error: null }).mockResolvedValueOnce({ data: null, error: null }).mockResolvedValue({ data: { id: 'pay-mock', metadata: {} }, error: null });
-      self.insert = vi.fn().mockResolvedValue({ data: null, error: null });
-      return self;
+    // Query-intent-aware mock: tracks predicates to determine maybeSingle response
+    const createQuery = (table: string): Record<string, unknown> => {
+      const preds = new Map<string, string>();
+      const q: Record<string, unknown> = {};
+      for (const m of ['select', 'not', 'is', 'order', 'limit', 'in', 'neq']) q[m] = vi.fn(() => q);
+      q.eq = vi.fn((col: string, val: unknown) => { preds.set(`eq:${col}`, String(val)); return q; });
+      q.like = vi.fn((col: string, val: unknown) => { preds.set(`like:${col}`, String(val)); return q; });
+      q.single = vi.fn().mockResolvedValue({ data: null, error: null });
+      q.maybeSingle = vi.fn(() => {
+        if (table === 'payments' && preds.has('like:gateway_status')) return Promise.resolve({ data: null, error: null });
+        if (table === 'payments' && preds.get('eq:status') === 'pending') return Promise.resolve({ data: null, error: null });
+        if (table === 'payments' && preds.has('eq:gateway_reference')) return Promise.resolve({ data: { id: 'pay-mock', metadata: {} }, error: null });
+        return Promise.resolve({ data: null, error: null });
+      });
+      q.update = vi.fn(() => ({ eq: vi.fn(() => ({ is: vi.fn().mockResolvedValue({ data: null, error: null }), neq: vi.fn().mockResolvedValue({ data: null, error: null }) })) }));
+      q.insert = vi.fn().mockResolvedValue({ data: null, error: null });
+      return q;
     };
-    const wrapperSupabase = { from: vi.fn(() => chainable()) };
+    const wrapperSupabase = { from: vi.fn((t: string) => createQuery(t)) };
 
     const result = await initializePayment(wrapperSupabase as unknown as SupabaseClient, {
       orderId: 'order-123',
@@ -472,17 +479,24 @@ describe('Shared payment wrapper forwarding', () => {
 
     const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
 
-    const chainable = (): Record<string, unknown> => {
-      const self: Record<string, unknown> = {};
-      for (const m of ['select', 'eq', 'not', 'is', 'single', 'maybeSingle', 'insert', 'update', 'in', 'order', 'limit', 'like']) {
-        self[m] = vi.fn(() => self);
-      }
-      self.single = vi.fn().mockResolvedValue({ data: null, error: null });
-      self.maybeSingle = vi.fn().mockResolvedValueOnce({ data: null, error: null }).mockResolvedValueOnce({ data: null, error: null }).mockResolvedValue({ data: { id: 'pay-mock', metadata: {} }, error: null });
-      self.insert = vi.fn().mockResolvedValue({ data: null, error: null });
-      return self;
+    const createQuery2 = (table: string): Record<string, unknown> => {
+      const preds = new Map<string, string>();
+      const q: Record<string, unknown> = {};
+      for (const m of ['select', 'not', 'is', 'order', 'limit', 'in', 'neq']) q[m] = vi.fn(() => q);
+      q.eq = vi.fn((col: string, val: unknown) => { preds.set(`eq:${col}`, String(val)); return q; });
+      q.like = vi.fn((col: string, val: unknown) => { preds.set(`like:${col}`, String(val)); return q; });
+      q.single = vi.fn().mockResolvedValue({ data: null, error: null });
+      q.maybeSingle = vi.fn(() => {
+        if (table === 'payments' && preds.has('like:gateway_status')) return Promise.resolve({ data: null, error: null });
+        if (table === 'payments' && preds.get('eq:status') === 'pending') return Promise.resolve({ data: null, error: null });
+        if (table === 'payments' && preds.has('eq:gateway_reference')) return Promise.resolve({ data: { id: 'pay-mock', metadata: {} }, error: null });
+        return Promise.resolve({ data: null, error: null });
+      });
+      q.update = vi.fn(() => ({ eq: vi.fn(() => ({ is: vi.fn().mockResolvedValue({ data: null, error: null }), neq: vi.fn().mockResolvedValue({ data: null, error: null }) })) }));
+      q.insert = vi.fn().mockResolvedValue({ data: null, error: null });
+      return q;
     };
-    const wrapperSupabase = { from: vi.fn(() => chainable()) };
+    const wrapperSupabase = { from: vi.fn((t: string) => createQuery2(t)) };
 
     const result = await initializePayment(wrapperSupabase as unknown as SupabaseClient, {
       userId: 'user-1',
