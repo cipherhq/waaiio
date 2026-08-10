@@ -119,16 +119,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Amount mismatch' }, { status: 400 });
     }
 
-    // Update payment status
+    // Persist non-authoritative metadata — authority owns Stage 1 transition
     await supabase
       .from('payments')
       .update({
-        status: 'success',
-        gateway_status: 'successful',
         payment_method: (data.payment_type as string) || 'card',
         card_last_four: data.card?.last_4digits || null,
         card_brand: data.card?.type || null,
-        paid_at: new Date().toISOString(),
       })
       .eq('id', payment.id);
 

@@ -154,6 +154,10 @@ END $$;
 --   1    = new-authority payment (normal Stage 1/2/3 lifecycle)
 -- Legacy payments entering the authority are safely rejected.
 -- ═══════════════════════════════════════════════════════
+-- payment_authority_version:
+--   NULL = historical pre-authority state (legacy fence for already-successful)
+--   0    = adopted cutover payment (pre-authority pending, paid after rollout)
+--   1    = strict new-authority payment (exact persisted connection identity)
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_authority_version INTEGER;
 
 -- ═══════════════════════════════════════════════════════

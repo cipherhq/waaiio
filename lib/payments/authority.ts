@@ -141,12 +141,16 @@ export async function authorizeAndFinalize(
   }
 
   // Cutover adoption: pre-authority pending payment being paid now → adopt as version 0
-  // Version 0 = adopted by authority, legacy credential fallback allowed, Stage 2/3 retry safe
   if (payment.payment_authority_version == null && payment.status !== 'success') {
-    await supabase.from('payments')
+    const { error: adoptErr } = await supabase.from('payments')
       .update({ payment_authority_version: 0 })
       .eq('id', payment.id)
       .is('payment_authority_version', null);
+    if (adoptErr) {
+      logger.withContext({ op: 'authority.cutover-adopt', ...safeLogErrorContext(adoptErr) })
+        .error(`${logPrefix} Version-0 adoption failed — cannot proceed without durable version`);
+      return retryable('cutover_adoption_failed', { providerPaid: false, businessFinalized: false, customerConfirmed: false });
+    }
     payment.payment_authority_version = 0;
   }
 
@@ -186,7 +190,7 @@ export async function authorizeAndFinalize(
       campaign_id: payment.campaign_id, reservation_id: payment.reservation_id,
       order_id: payment.order_id,
     });
-    return mapConfirmationResult(confirmResult, { ...stagesPaid, businessFinalized: true });
+    return mapConfirmationResult(supabase, payment.id, confirmResult, { ...stagesPaid, businessFinalized: true });
   }
 
   // Claim finalization
@@ -208,7 +212,7 @@ export async function authorizeAndFinalize(
         campaign_id: payment.campaign_id, reservation_id: payment.reservation_id,
         order_id: payment.order_id,
       });
-      return mapConfirmationResult(confirmResult, { ...stagesPaid, businessFinalized: true });
+      return mapConfirmationResult(supabase, payment.id, confirmResult, { ...stagesPaid, businessFinalized: true });
     }
     return processing(claim?.reason || 'finalization_claim_not_granted', stagesPaid);
   }
@@ -270,20 +274,26 @@ export async function authorizeAndFinalize(
     order_id: payment.order_id,
   });
 
-  // Mark terminal confirmation states to prevent infinite cron retry
-  if (confirmResult.status === 'not_deliverable') {
-    await supabase.from('payments')
-      .update({ confirmation_terminal_reason: 'not_deliverable' })
-      .eq('id', payment.id);
-  }
-
-  return mapConfirmationResult(confirmResult, stagesFinalized);
+  return mapConfirmationResult(supabase, payment.id, confirmResult, stagesFinalized);
 }
 
-function mapConfirmationResult(
+async function mapConfirmationResult(
+  supabase: SupabaseClient,
+  paymentId: string,
   result: ConfirmationResult,
   stages: PaymentLifecycleResult['stages'],
-): PaymentLifecycleResult {
+): Promise<PaymentLifecycleResult> {
+  // Persist terminal confirmation state for ALL paths into Stage 3
+  if (result.status === 'not_deliverable') {
+    const { error: termErr } = await supabase.from('payments')
+      .update({ confirmation_terminal_reason: 'not_deliverable' })
+      .eq('id', paymentId);
+    if (termErr) {
+      logger.withContext({ op: 'authority.terminal-persist', ...safeLogErrorContext(termErr) })
+        .error('[PAY-AUTHORITY] Failed to persist confirmation_terminal_reason');
+      return retryable('confirmation_terminal_persist_failed', stages);
+    }
+  }
   switch (result.status) {
     case 'completed':
       return { status: 'completed', retryable: false, stages: { ...stages, customerConfirmed: true } };

@@ -338,11 +338,12 @@ export async function initializePayment(
         .maybeSingle();
 
       if (paymentLookupErr || !paymentRecord) {
-        // Payment row not found or lookup failed — log warning but still return URL
-        // The quarantine/reuse guards are the primary duplicate-charge protection
-        // Identity persistence is defense-in-depth; provider has already accepted the transaction
-        logger.warn('[PAYMENT] Payment record not found/lookup failed after provider creation — identity not persisted');
-      } else {
+        // Payment row not found or lookup failed — cannot prove local payment exists
+        // Do NOT expose checkout URL when Waaiio cannot verify the payment
+        logger.error('[PAYMENT] Payment record not found/lookup failed after provider creation — checkout URL suppressed');
+        return null;
+      }
+      {
         const existingMeta = (paymentRecord.metadata || {}) as Record<string, unknown>;
         existingMeta.checkout_url = result.url;
         // Persist exact payment origin + connection identity for Payment Authority verification

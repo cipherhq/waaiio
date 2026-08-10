@@ -100,13 +100,11 @@ export async function POST(request: NextRequest) {
 
         const sourceType = payment.source_type as string | undefined;
 
+        // Persist non-authoritative metadata — authority owns Stage 1 transition
         await supabase
           .from('payments')
           .update({
-            status: 'success',
-            gateway_status: 'completed',
             payment_method: sourceType === 'CASH_APP' ? 'cash_app_pay' : sourceType?.toLowerCase() || 'card',
-            paid_at: new Date().toISOString(),
           })
           .eq('id', matchedPayment.id);
 

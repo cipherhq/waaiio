@@ -201,14 +201,10 @@ export async function POST(request: NextRequest) {
       }
 
       // Update payment status
+      // Persist non-authoritative metadata — authority owns Stage 1 transition
       await supabase
         .from('payments')
-        .update({
-          status: 'success',
-          gateway_status: 'completed',
-          payment_method: 'paypal',
-          paid_at: new Date().toISOString(),
-        })
+        .update({ payment_method: 'paypal' })
         .eq('id', payment.id);
 
       // Fetch invoice_id, campaign_id, reservation_id (not on the initial select)

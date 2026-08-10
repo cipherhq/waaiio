@@ -105,14 +105,10 @@ export async function POST(request: NextRequest) {
             await supabase.from('payments').update({ status: 'failed', gateway_status: 'amount_mismatch' }).eq('id', payment.id);
             return NextResponse.json({ received: true, error: 'amount_mismatch' });
           }
+          // Persist non-authoritative metadata only — authority owns Stage 1 transition
           await supabase
             .from('payments')
-            .update({
-              status: 'success',
-              gateway_status: 'paid',
-              payment_method: 'card',
-              paid_at: new Date().toISOString(),
-            })
+            .update({ payment_method: 'card' })
             .eq('id', payment.id);
 
           // Fetch actual Stripe fee from PaymentIntent → Charge → BalanceTransaction

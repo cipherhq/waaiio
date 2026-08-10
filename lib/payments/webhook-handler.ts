@@ -47,17 +47,16 @@ export async function processPaystackChargeSuccess(
     return;
   }
 
+  // Persist non-authoritative provider metadata (card info, fee) WITHOUT setting status.
+  // Authority owns the pending → success transition (Stage 1).
   const authorization = data.authorization as Record<string, unknown> | undefined;
   await supabase
     .from('payments')
     .update({
-      status: 'success',
-      gateway_status: 'success',
       payment_method: (data.channel as string) || 'card',
       card_last_four: (authorization?.last4 as string) || null,
       card_brand: (authorization?.brand as string) || null,
       gateway_fee: gatewayFee,
-      paid_at: new Date().toISOString(),
     })
     .eq('gateway_reference', reference);
 
