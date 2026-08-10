@@ -53,7 +53,7 @@ BEGIN;
 SELECT * FROM book_slot_atomic(
   '$BIZ_ID'::uuid, NULL::uuid, '$SVC_ID'::uuid, NULL::uuid,
   '2027-06-15'::date, '10:00', 1, 1,
-  'scheduling', 0, 'not_required', 'confirmed',
+  'scheduling', 0, 'none', 'confirmed',
   'Customer A', '+2348000000001', NULL,
   NULL, NULL, NULL,
   NULL, NULL, 5000, NULL,
@@ -71,7 +71,7 @@ psql -t -A <<SESSION_B > /tmp/mk3_b.txt 2>&1 &
 SELECT * FROM book_slot_atomic(
   '$BIZ_ID'::uuid, NULL::uuid, '$SVC_ID'::uuid, NULL::uuid,
   '2027-06-15'::date, '10:00', 1, 1,
-  'scheduling', 0, 'not_required', 'confirmed',
+  'scheduling', 0, 'none', 'confirmed',
   'Customer B', '+2348000000002', NULL,
   NULL, NULL, NULL,
   NULL, NULL, 5000, NULL,
@@ -128,7 +128,7 @@ BEGIN;
 SELECT * FROM book_slot_atomic(
   '$BIZ_ID'::uuid, NULL::uuid, '$SVC_ID'::uuid, NULL::uuid,
   '2027-06-16'::date, '11:00', 1, 2,
-  'scheduling', 0, 'not_required', 'confirmed',
+  'scheduling', 0, 'none', 'confirmed',
   'Customer C', '+2348000000003', NULL,
   NULL, NULL, NULL,
   NULL, NULL, 5000, NULL,
@@ -144,7 +144,7 @@ psql -t -A <<SESSION_D > /tmp/mk3_d.txt 2>&1 &
 SELECT * FROM book_slot_atomic(
   '$BIZ_ID'::uuid, NULL::uuid, '$SVC_ID'::uuid, NULL::uuid,
   '2027-06-16'::date, '11:00', 1, 2,
-  'scheduling', 0, 'not_required', 'confirmed',
+  'scheduling', 0, 'none', 'confirmed',
   'Customer D', '+2348000000004', NULL,
   NULL, NULL, NULL,
   NULL, NULL, 5000, NULL,
