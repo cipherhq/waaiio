@@ -7,6 +7,18 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-10
 
+### refactor(PAY-AUTHORITY): unified Waaiio Payment Authority (migration 314)
+
+- **Architecture:** ONE canonical payment completion engine for all 5 provider webhooks + payment-success + "I've Paid" + reconciliation cron. Gateways authenticate money; Waaiio authorizes business state.
+- **Three-stage lifecycle:** Stage 1 provider-paid → Stage 2 business-finalized → Stage 3 customer-confirmed. Resume from first incomplete stage.
+- **Migration 314:** `314_payment_finalization_lifecycle.sql` — finalization claim/complete/release RPCs, `order_stock_applications` table for exactly-once stock decrement, `payment_authority_version` for legacy fence.
+- **Critical finalization:** `processSuccessfulPayment` returns `FinalizationResult` with `criticalSuccess` flag. Nested DB/RPC failures propagate. Platform fee non-duplicate errors throw.
+- **Provider adapters:** Read-only verification for Paystack/Stripe/Flutterwave/Square/PayPal. Payment-scoped credential resolution via `provider_connection_id`. Rotation-safe.
+- **Paid-ticket Stage 2:** Inventory finalization + canonical ticket rows in Stage 2 (business state). Customer delivery in Stage 3.
+- **Legacy fence:** `payment_authority_version=NULL` → rejected by authority (no historical replay).
+- **Order stock:** `apply_order_stock_once` RPC with `SELECT FOR UPDATE` + durable marker. Crash-gap safe.
+- **Files:** `lib/payments/authority.ts`, `lib/payments/reconcile.ts`, `lib/payments/provider-adapters.ts`, `lib/payments/bot-recovery.ts`, `lib/payments/ticket-business-state.ts`, `lib/payments/process-success.ts`, all 5 webhook routes, `app/payment-success/page.tsx`, `lib/bot/flows/scheduling.flow.ts`, `lib/bot/flows/ticketing.flow.ts`, `app/api/cron/payment-reconciliation/route.ts`
+
 ### migration(312): canonical ticket-row identity constraint
 
 - **Migration:** `312_ticket_row_identity.sql` — `UNIQUE(booking_id, ticket_number)` on `event_tickets`.
