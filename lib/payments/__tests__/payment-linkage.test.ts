@@ -57,7 +57,7 @@ function createTestSupabase() {
       limit: vi.fn().mockReturnThis(),
       like: vi.fn().mockReturnThis(),
       single: vi.fn().mockResolvedValue({ data: null, error: null }),
-      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'pay-mock', metadata: {} }, error: null }),
       update: vi.fn().mockReturnValue({
         eq: vi.fn().mockResolvedValue({ data: null, error: null }),
       }),
@@ -407,7 +407,7 @@ describe('Shared payment wrapper forwarding', () => {
         self[m] = vi.fn(() => self);
       }
       self.single = vi.fn().mockResolvedValue({ data: null, error: null });
-      self.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      self.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pay-mock', metadata: {} }, error: null });
       self.insert = vi.fn().mockResolvedValue({ data: null, error: null });
       return self;
     };
@@ -475,7 +475,7 @@ describe('Shared payment wrapper forwarding', () => {
         self[m] = vi.fn(() => self);
       }
       self.single = vi.fn().mockResolvedValue({ data: null, error: null });
-      self.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      self.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pay-mock', metadata: {} }, error: null });
       self.insert = vi.fn().mockResolvedValue({ data: null, error: null });
       return self;
     };

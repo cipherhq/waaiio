@@ -39,7 +39,7 @@ function createMockSupabase(overrides: Record<string, unknown> = {}) {
     limit: vi.fn().mockReturnThis(),
     like: vi.fn().mockReturnThis(),
     single: vi.fn().mockResolvedValue({ data: null, error: null }),
-    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+    maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'pay-mock', metadata: {} }, error: null }),
     update: vi.fn().mockReturnValue({
       eq: vi.fn().mockResolvedValue({ data: null, error: null }),
     }),
