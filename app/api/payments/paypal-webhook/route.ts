@@ -160,25 +160,23 @@ export async function POST(request: NextRequest) {
       const referenceId = purchaseUnits?.[0]?.reference_id;
 
       // Find payment by PayPal order ID
-      let payment: { id: string; booking_id: string | null; order_id: string | null; amount: number; status: string } | null = null;
+      let payment: { id: string; booking_id: string | null; order_id: string | null; amount: number; status: string; gateway_reference?: string; payment_authority_version?: number; finalization_completed_at?: string } | null = null;
 
       if (orderId) {
         const { data } = await supabase
           .from('payments')
-          .select('id, booking_id, order_id, amount, status')
+          .select('id, booking_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
           .eq('gateway_reference', orderId)
           .eq('gateway', 'paypal')
           .maybeSingle();
         payment = data;
       }
 
-      // Fallback: search by metadata paypal_order_id
       if (!payment && orderId) {
         const { data: payments } = await supabase
           .from('payments')
-          .select('id, booking_id, order_id, amount, status, metadata')
-          .eq('gateway', 'paypal')
-          .neq('status', 'success');
+          .select('id, booking_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at')
+          .eq('gateway', 'paypal');
 
         payment = payments?.find(p => {
           const meta = p.metadata as Record<string, string> | null;
@@ -186,7 +184,9 @@ export async function POST(request: NextRequest) {
         }) || null;
       }
 
-      if (!payment || payment.status === 'success') {
+      if (!payment) return NextResponse.json({ received: true });
+      // Skip only if fully finalized (not just provider-paid)
+      if (payment.status === 'success' && (payment.payment_authority_version !== 1 || payment.finalization_completed_at)) {
         return NextResponse.json({ received: true });
       }
 
@@ -201,14 +201,10 @@ export async function POST(request: NextRequest) {
       }
 
       // Update payment status
+      // Persist non-authoritative metadata — authority owns Stage 1 transition
       await supabase
         .from('payments')
-        .update({
-          status: 'success',
-          gateway_status: 'completed',
-          payment_method: 'paypal',
-          paid_at: new Date().toISOString(),
-        })
+        .update({ payment_method: 'paypal' })
         .eq('id', payment.id);
 
       // Fetch invoice_id, campaign_id, reservation_id (not on the initial select)
@@ -242,15 +238,19 @@ export async function POST(request: NextRequest) {
         gateway_fee: paypalGatewayFee,
       };
 
-      // Confirm booking, record platform fees, process invoice/campaign
-      await processSuccessfulPayment(supabase, paymentForShared);
-
-      // Proactive confirmation: send WhatsApp message + post-completion
-      try {
-        await sendProactiveConfirmation(supabase, paymentForShared, '[PAYPAL WEBHOOK]');
-      } catch (confirmErr) {
-        logger.error('[PAYPAL WEBHOOK] Proactive confirmation error:', confirmErr);
-      }
+      // ── Canonical Payment Authority ──
+      const { reconcilePayment } = await import('@/lib/payments/reconcile');
+      await reconcilePayment(supabase, payment.id, 'webhook', {
+        status: 'verified',
+        result: {
+          provider: 'paypal', waaiioReference: payment.gateway_reference || orderId,
+          providerTransactionId: (resource.id as string) || '',
+          amount: webhookAmount,
+          currency: (captureAmount?.currency_code || 'USD').toUpperCase(),
+          paymentMethod: 'paypal', gatewayFee: paypalGatewayFee,
+          providerStatus: 'COMPLETED', verifiedAt: new Date().toISOString(),
+        },
+      });
     }
 
     // PAYMENT.CAPTURE.DENIED — payment failed

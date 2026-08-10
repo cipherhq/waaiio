@@ -33,14 +33,17 @@ export async function GET(request: NextRequest) {
   const twoHoursAgo = new Date();
   twoHoursAgo.setHours(twoHoursAgo.getHours() - 2);
 
-  // Find stale pending payments (only Stripe and Paystack — we can verify those)
+  // Find payments needing reconciliation:
+  // A. Stale pending payments (provider may have been paid)
+  // B. New-authority success + incomplete Stage 2 (finalization_completed_at IS NULL)
+  // C. New-authority success + Stage 2 complete + incomplete Stage 3 (confirmation_sent_at IS NULL)
+  //    but NOT not_deliverable (terminal — no contact info to retry with)
   const { data: stalePayments, error: queryError } = await supabase
     .from('payments')
-    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata')
-    .eq('status', 'pending')
+    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata, status, payment_authority_version, finalization_completed_at, confirmation_sent_at')
+    .or(`status.eq.pending,and(status.eq.success,payment_authority_version.not.is.null,finalization_completed_at.is.null),and(status.eq.success,payment_authority_version.not.is.null,finalization_completed_at.not.is.null,confirmation_sent_at.is.null,confirmation_terminal_reason.is.null)`)
     .lt('created_at', twoHoursAgo.toISOString())
-    .in('gateway', ['stripe', 'paystack'])
-    .limit(50); // Process in batches to stay within maxDuration
+    .limit(50);
 
   if (queryError) {
     cron.failed(queryError);
@@ -56,61 +59,26 @@ export async function GET(request: NextRequest) {
   let markedFailed = 0;
   let errors = 0;
 
+  const { reconcilePayment } = await import('@/lib/payments/reconcile');
+
   for (const payment of stalePayments) {
     try {
-      const gatewayStatus = await verifyWithGateway(payment.gateway, payment.gateway_reference);
+      // Use canonical reconciliation (provider adapter + Payment Authority)
+      const result = await reconcilePayment(supabase, payment.id, 'cron');
 
-      if (gatewayStatus === 'paid') {
-        // Gateway says paid — update status and run post-payment pipeline
-        await supabase
-          .from('payments')
-          .update({
-            status: 'success',
-            gateway_status: 'reconciled',
-            paid_at: new Date().toISOString(),
-          })
-          .eq('id', payment.id)
-          .eq('status', 'pending'); // Only update if still pending (idempotent)
-
-        await processSuccessfulPayment(supabase, {
-          id: payment.id,
-          amount: payment.amount,
-          booking_id: payment.booking_id,
-          invoice_id: payment.invoice_id,
-          campaign_id: payment.campaign_id,
-          order_id: payment.order_id,
-          metadata: payment.metadata as Record<string, unknown> | null,
-        });
-
-        try {
-          await sendProactiveConfirmation(supabase, {
-            id: payment.id,
-            amount: payment.amount,
-            booking_id: payment.booking_id,
-            invoice_id: payment.invoice_id,
-            campaign_id: payment.campaign_id,
-          }, '[RECONCILIATION]');
-        } catch (confirmErr) {
-          logger.error('[PAYMENT-RECONCILIATION] Confirmation error:', confirmErr);
-        }
-
+      if (result.lifecycle?.status === 'completed' || result.lifecycle?.status === 'already_completed') {
         reconciled++;
         logger.info(`[PAYMENT-RECONCILIATION] Reconciled payment ${payment.id} (${payment.gateway})`);
-      } else if (gatewayStatus === 'failed' || gatewayStatus === 'expired') {
-        // Gateway says failed/expired — mark as failed
-        await supabase
-          .from('payments')
-          .update({
-            status: 'failed',
-            gateway_status: gatewayStatus,
-          })
-          .eq('id', payment.id)
-          .eq('status', 'pending');
-
-        markedFailed++;
-        logger.info(`[PAYMENT-RECONCILIATION] Marked payment ${payment.id} as ${gatewayStatus}`);
+      } else if (result.providerOutcome === 'not_paid') {
+        // Generic not_paid is NOT proof of terminal failure.
+        // Leave as pending — provider may still be processing, or the check was ambiguous.
+        // Do NOT destructively mark as failed from ambiguous provider state.
+        logger.info(`[PAYMENT-RECONCILIATION] Payment ${payment.id} not confirmed by provider — leaving for next cycle`);
+      } else if (result.providerOutcome === 'retryable_error' || result.providerOutcome === 'config_error') {
+        // Transient/config error — leave for next cycle, do not mark failed
+        logger.info(`[PAYMENT-RECONCILIATION] Payment ${payment.id} provider ${result.providerOutcome} — leaving for next cycle`);
       }
-      // If gatewayStatus === 'pending', leave it alone — gateway is still processing
+      // retryable/config errors: leave payment for next cron cycle
     } catch (err) {
       errors++;
       logger.error(`[PAYMENT-RECONCILIATION] Error reconciling payment ${payment.id}:`, err);

@@ -85,11 +85,16 @@ export async function POST(request: NextRequest) {
       if (paymentStatus === 'paid' && sessionId) {
         const { data: payment } = await supabase
           .from('payments')
-          .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status')
+          .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
           .eq('gateway_reference', sessionId)
           .single();
 
-        if (payment && payment.status !== 'success') {
+        // Allow new-authority success payments through for Stage 2/3 resume
+        const needsReconciliation = payment && (
+          payment.status !== 'success'
+          || (payment.payment_authority_version != null && !payment.finalization_completed_at)
+        );
+        if (payment && needsReconciliation) {
           // Verify amount matches (Stripe amount_total is in cents)
           const stripeAmountCents = (data.amount_total as number) || 0;
           const stripeCurrency = ((data.currency as string) || '').toUpperCase();
@@ -100,14 +105,10 @@ export async function POST(request: NextRequest) {
             await supabase.from('payments').update({ status: 'failed', gateway_status: 'amount_mismatch' }).eq('id', payment.id);
             return NextResponse.json({ received: true, error: 'amount_mismatch' });
           }
+          // Persist non-authoritative metadata only — authority owns Stage 1 transition
           await supabase
             .from('payments')
-            .update({
-              status: 'success',
-              gateway_status: 'paid',
-              payment_method: 'card',
-              paid_at: new Date().toISOString(),
-            })
+            .update({ payment_method: 'card' })
             .eq('id', payment.id);
 
           // Fetch actual Stripe fee from PaymentIntent → Charge → BalanceTransaction
@@ -146,15 +147,19 @@ export async function POST(request: NextRequest) {
             gateway_fee: stripeGatewayFee,
           };
 
-          // Confirm booking, record platform fees, process invoice/campaign
-          await processSuccessfulPayment(supabase, paymentForShared);
-
-          // Proactive confirmation: send WhatsApp message + post-completion
-          try {
-            await sendProactiveConfirmation(supabase, paymentForShared, '[STRIPE WEBHOOK]');
-          } catch (confirmErr) {
-            logger.error('[STRIPE WEBHOOK] Proactive confirmation error:', confirmErr);
-          }
+          // ── Canonical Payment Authority ──
+          const { reconcilePayment } = await import('@/lib/payments/reconcile');
+          await reconcilePayment(supabase, payment.id, 'webhook', {
+            status: 'verified',
+            result: {
+              provider: 'stripe', waaiioReference: payment.gateway_reference,
+              providerTransactionId: (data.payment_intent as string) || sessionId,
+              amount: ((data.amount_total as number) || 0) / 100,
+              currency: ((data.currency as string) || '').toUpperCase(),
+              paymentMethod: 'card', gatewayFee: stripeGatewayFee,
+              providerStatus: 'success', verifiedAt: new Date().toISOString(),
+            },
+          });
         }
 
         // Handle subscription payments (business tier upgrades)

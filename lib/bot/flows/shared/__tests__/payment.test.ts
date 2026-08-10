@@ -30,24 +30,62 @@ function createMockGateway(result: { url: string; reference: string } | null = {
   };
 }
 
+/**
+ * Query-intent-aware Supabase mock for initializePayment tests.
+ * Each from() call creates a query that tracks predicates.
+ * maybeSingle() returns data based on query intent, not call position.
+ */
 function createMockSupabase(overrides: Record<string, unknown> = {}) {
-  const defaultChain = {
-    select: vi.fn().mockReturnThis(),
-    eq: vi.fn().mockReturnThis(),
-    not: vi.fn().mockReturnThis(),
-    order: vi.fn().mockReturnThis(),
-    limit: vi.fn().mockReturnThis(),
-    like: vi.fn().mockReturnThis(),
-    single: vi.fn().mockResolvedValue({ data: null, error: null }),
-    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-    update: vi.fn().mockReturnValue({
-      eq: vi.fn().mockResolvedValue({ data: null, error: null }),
-    }),
-    insert: vi.fn().mockResolvedValue({ data: null, error: null }),
-  };
+  function createQuery(table: string) {
+    const predicates = new Map<string, string>();
+    const q: Record<string, unknown> = {};
+    // Chainable methods that record predicates
+    for (const m of ['select', 'not', 'order', 'limit', 'in', 'neq', 'is']) {
+      q[m] = vi.fn().mockReturnValue(q);
+    }
+    q.eq = vi.fn().mockImplementation((col: string, val: unknown) => {
+      predicates.set(`eq:${col}`, String(val));
+      return q;
+    });
+    q.like = vi.fn().mockImplementation((col: string, val: unknown) => {
+      predicates.set(`like:${col}`, String(val));
+      return q;
+    });
+    q.single = vi.fn().mockResolvedValue({ data: null, error: null });
+    q.maybeSingle = vi.fn().mockImplementation(() => {
+      if (table === 'payments') {
+        // A. Quarantine query: has like:gateway_status → no quarantined payments
+        if (predicates.has('like:gateway_status')) {
+          return Promise.resolve({ data: null, error: null });
+        }
+        // B. Pending reuse: has eq:status=pending → no matching pending payment
+        if (predicates.get('eq:status') === 'pending') {
+          return Promise.resolve({ data: null, error: null });
+        }
+        // C. Identity lookup: has eq:gateway_reference → return mock payment record
+        if (predicates.has('eq:gateway_reference')) {
+          return Promise.resolve({ data: { id: 'pay-mock', metadata: {} }, error: null });
+        }
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    q.update = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        is: vi.fn().mockResolvedValue({ data: null, error: null }),
+        neq: vi.fn().mockResolvedValue({ data: null, error: null }),
+      }),
+    });
+    q.insert = vi.fn().mockResolvedValue({ data: null, error: null });
+    return q;
+  }
 
   return {
-    from: vi.fn(() => ({ ...defaultChain, ...overrides })),
+    from: vi.fn((table: string) => {
+      const q = createQuery(table);
+      // Apply any test-specific overrides
+      Object.assign(q, overrides);
+      return q;
+    }),
   };
 }
 

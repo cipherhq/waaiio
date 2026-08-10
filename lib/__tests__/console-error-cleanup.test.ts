@@ -492,13 +492,14 @@ describe('Executable: recordPlatformFee Sentry preservation', () => {
     });
 
     const { recordPlatformFee } = await import('@/lib/payments/process-success');
-    await recordPlatformFee(mockSupabase as any, {
+    // recordPlatformFee now throws on non-duplicate errors (Payment Authority propagation)
+    await expect(recordPlatformFee(mockSupabase as any, {
       bookingId: 'booking-002',
       businessId: 'biz-123',
       paymentAmount: 5000,
-    });
+    })).rejects.toThrow();
 
-    // Sentry IS called for non-duplicate
+    // Sentry IS called for non-duplicate (before throw)
     expect(sentryCapture).toHaveBeenCalledTimes(1);
     const [sentryErr, sentryCtx] = sentryCapture.mock.calls[0];
     // Existing tags preserved

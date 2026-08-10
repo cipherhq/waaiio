@@ -3,8 +3,7 @@ import * as Sentry from '@sentry/nextjs';
 import { getServerPostHog } from '@/lib/posthog/server';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { logger } from '@/lib/logger';
-import { processSuccessfulPayment } from './process-success';
-import { sendProactiveConfirmation } from './send-confirmation';
+import { reconcilePayment } from './reconcile';
 
 /**
  * Shared webhook processing logic for both platform and BYO payment webhooks.
@@ -18,11 +17,19 @@ export async function processPaystackChargeSuccess(
 ): Promise<void> {
   const { data: existingPayment } = await supabase
     .from('payments')
-    .select('id, status, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway')
+    .select('id, status, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway, payment_authority_version, finalization_completed_at')
     .eq('gateway_reference', reference)
     .single();
 
-  if (!existingPayment || existingPayment.status === 'success') return;
+  if (!existingPayment) return;
+
+  // For new-authority payments: always reconcile (Stage 2/3 may be incomplete even if provider-paid)
+  // For legacy payments: skip if already success (preserve existing behavior)
+  if (existingPayment.status === 'success' && existingPayment.payment_authority_version !== 1) return;
+  if (existingPayment.status === 'success' && existingPayment.finalization_completed_at) {
+    // Fully finalized — safe to skip (confirmation has its own lifecycle)
+    return;
+  }
 
   // Extract Paystack processing fee (in kobo) and convert to naira
   const paystackFeeKobo = (data.fees as number) || 0;
@@ -40,17 +47,16 @@ export async function processPaystackChargeSuccess(
     return;
   }
 
+  // Persist non-authoritative provider metadata (card info, fee) WITHOUT setting status.
+  // Authority owns the pending → success transition (Stage 1).
   const authorization = data.authorization as Record<string, unknown> | undefined;
   await supabase
     .from('payments')
     .update({
-      status: 'success',
-      gateway_status: 'success',
       payment_method: (data.channel as string) || 'card',
       card_last_four: (authorization?.last4 as string) || null,
       card_brand: (authorization?.brand as string) || null,
       gateway_fee: gatewayFee,
-      paid_at: new Date().toISOString(),
     })
     .eq('gateway_reference', reference);
 
@@ -99,15 +105,27 @@ export async function processPaystackChargeSuccess(
     });
   }).catch(() => {});
 
-  // Confirm booking, record platform fees, process invoice/campaign
-  await processSuccessfulPayment(supabase, { ...existingPayment, gateway_fee: gatewayFee });
+  // ── Canonical Payment Authority: one engine for all payment completion ──
+  // Webhook data is already authenticated by signature — pass as pre-verified provider truth.
+  const result = await reconcilePayment(supabase, existingPayment.id, 'webhook', {
+    status: 'verified',
+    result: {
+      provider: 'paystack',
+      waaiioReference: reference,
+      providerTransactionId: String((data.id as number) || ''),
+      amount: webhookAmountKobo / 100, // kobo → naira
+      currency: ((data.currency as string) || 'NGN').toUpperCase(),
+      paymentMethod: (data.channel as string) || 'card',
+      cardLast4: (authorization?.last4 as string) || undefined,
+      cardBrand: (authorization?.brand as string) || undefined,
+      gatewayFee,
+      providerStatus: 'success',
+      verifiedAt: new Date().toISOString(),
+    },
+  });
 
-  // Proactive confirmation: send WhatsApp message to customer after payment
-  // This ensures customers get confirmation even if they never tap "I've Paid"
-  try {
-    await sendProactiveConfirmation(supabase, existingPayment, '[PAYSTACK WEBHOOK]');
-  } catch (confirmErr) {
-    logger.error('[PAYSTACK WEBHOOK] Proactive confirmation error:', confirmErr);
+  if (result.lifecycle) {
+    logger.info(`[PAYSTACK WEBHOOK] Authority result: ${result.lifecycle.status} | stages: paid=${result.lifecycle.stages.providerPaid} fin=${result.lifecycle.stages.businessFinalized} conf=${result.lifecycle.stages.customerConfirmed}`);
   }
 }
 

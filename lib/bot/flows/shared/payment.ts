@@ -99,6 +99,12 @@ export async function initializePayment(
             const shortRef = existingPayment.gateway_reference.slice(-8);
             return { url: `${appUrl}/api/pay?ref=${shortRef}`, reference: existingPayment.gateway_reference };
           }
+          // Matching pending payment exists but has no usable checkout URL — provider may have
+          // accepted a transaction whose identity persistence failed. Do NOT create another charge.
+          if (existingPayment.gateway_reference) {
+            logger.warn('[PAYMENT] Matching pending payment without checkout URL for ' + entityCol + '=' + entityId + ' — blocking new charge');
+            return null;
+          }
         }
       } catch (lookupErr) {
         logger.withContext({ op: 'payment.reuse-lookup-throw', ...safeLogErrorContext(lookupErr) })
@@ -120,12 +126,14 @@ export async function initializePayment(
     let isByo = false;
     let byoBusinessId: string | undefined;
     let connectAccountId: string | undefined;
+    let providerConnectionId: string | undefined;
+    let payoutAccountId: string | undefined;
 
     if (opts.businessId) {
       // Check for BYO (Bring Your Own) gateway credentials first
       const { data: byoCreds } = await supabase
         .from('business_payment_credentials')
-        .select('secret_key, platform_subaccount_code, gateway, connect_account_id, connection_type')
+        .select('id, secret_key, platform_subaccount_code, gateway, connect_account_id, connection_type')
         .eq('business_id', opts.businessId)
         .eq('is_active', true)
         .not('verified_at', 'is', null)
@@ -160,6 +168,7 @@ export async function initializePayment(
         // True Connect mode: use platform key + X-Connect-Account header
         connectAccountId = byoCreds.connect_account_id;
         byoBusinessId = opts.businessId;
+        providerConnectionId = byoCreds.id;
 
         const { data: business, error: bizError2 } = await supabase
           .from('businesses')
@@ -187,6 +196,7 @@ export async function initializePayment(
         byoSecretKey = byoCreds.secret_key;
         byoPlatformSubaccount = byoCreds.platform_subaccount_code;
         byoBusinessId = opts.businessId;
+        providerConnectionId = byoCreds.id;
 
         // Calculate platform fee based on business tier
         const { data: business, error: bizError3 } = await supabase
@@ -223,7 +233,7 @@ export async function initializePayment(
 
         const { data: payout } = await supabase
           .from('payout_accounts')
-          .select('subaccount_code, stripe_account_id, square_merchant_id, square_access_token, platform_percentage, gateway')
+          .select('id, subaccount_code, stripe_account_id, square_merchant_id, square_access_token, platform_percentage, gateway')
           .eq('business_id', opts.businessId)
           .eq('is_active', true)
           .maybeSingle();
@@ -240,6 +250,7 @@ export async function initializePayment(
             squareMerchantId = payout.square_merchant_id || undefined;
             squareAccessToken = payout.square_access_token || undefined;
             platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
+            payoutAccountId = payout.id;
           }
           // If gateways don't match (e.g., Paystack payout but Stripe payment),
           // skip split — platform collects full amount
@@ -320,17 +331,41 @@ export async function initializePayment(
 
     // Store original gateway URL in payment metadata, then shorten for WhatsApp
     if (result?.url && result.reference) {
-      // Save the real checkout URL before shortening
-      const { data: paymentRecord } = await supabase
+      const { data: paymentRecord, error: paymentLookupErr } = await supabase
         .from('payments')
         .select('id, metadata')
         .eq('gateway_reference', result.reference)
         .maybeSingle();
 
-      if (paymentRecord) {
+      if (paymentLookupErr || !paymentRecord) {
+        // Payment row not found or lookup failed — cannot prove local payment exists
+        // Do NOT expose checkout URL when Waaiio cannot verify the payment
+        logger.error('[PAYMENT] Payment record not found/lookup failed after provider creation — checkout URL suppressed');
+        return null;
+      }
+      {
         const existingMeta = (paymentRecord.metadata || {}) as Record<string, unknown>;
         existingMeta.checkout_url = result.url;
-        await supabase.from('payments').update({ metadata: existingMeta }).eq('id', paymentRecord.id);
+        // Persist exact payment origin + connection identity for Payment Authority verification
+        existingMeta.payment_origin = isByo ? 'byo' : (connectAccountId || squareAccessToken || stripeAccountId) ? 'connect' : 'platform';
+        if (providerConnectionId) existingMeta.provider_connection_id = providerConnectionId;
+        if (connectAccountId) existingMeta.provider_account_id = connectAccountId;
+        if (subaccountCode) existingMeta.provider_account_id = subaccountCode;
+        if (stripeAccountId) existingMeta.provider_account_id = stripeAccountId;
+        // Square/Stripe payout: persist exact payout_accounts.id for rotation-safe verification
+        if (payoutAccountId && !providerConnectionId) existingMeta.provider_connection_id = payoutAccountId;
+        const { error: identityError } = await supabase.from('payments').update({ metadata: existingMeta, payment_authority_version: 1 }).eq('id', paymentRecord.id);
+        if (identityError) {
+          // Identity persistence failed — do NOT return checkout URL
+          // Mark for review so quarantine guard prevents duplicate provider transactions
+          const { error: quarantineErr } = await supabase.from('payments').update({ gateway_status: 'review_required:identity_persist_failed' }).eq('id', paymentRecord.id);
+          if (quarantineErr) {
+            logger.error('[PAYMENT] Quarantine write also failed — checkout URL still suppressed');
+          }
+          logger.withContext({ op: 'payment.identity-persist', ...safeLogErrorContext(identityError) })
+            .error('[PAYMENT] Failed to persist payment authority identity — checkout URL suppressed');
+          return null;
+        }
       }
 
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';

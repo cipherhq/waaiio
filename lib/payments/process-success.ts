@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { isSafeIdentifier } from '@/lib/redact';
 import { markWaitlistConverted } from '@/lib/waitlist/auto-notify';
+import type { FinalizationResult } from './authority';
 
 interface PaymentRecord {
   id: string;
@@ -21,21 +22,21 @@ interface PaymentRecord {
 
 /**
  * Shared post-verification pipeline for all payment gateways.
- * Called after a payment is verified as successful.
+ * Returns FinalizationResult so the Payment Authority can determine
+ * whether Stage 2 (business finalization) completed.
  *
- * Handles:
- * 1. Confirm booking (deposit_status: paid, status: confirmed)
- * 2. Record platform fee (for booking, invoice, or campaign)
- * 3. Process invoice partial payment accumulation
- * 4. Process campaign donation (mark success + increment stats)
+ * CRITICAL effects must propagate failures.
+ * NONCRITICAL effects (waitlist attribution) may log and continue.
  */
 export async function processSuccessfulPayment(
   supabase: SupabaseClient,
   payment: PaymentRecord,
-): Promise<void> {
+): Promise<FinalizationResult> {
+  const criticalErrors: string[] = [];
+
   // 1. Confirm booking (only if still pending — idempotent)
   if (payment.booking_id) {
-    await supabase
+    const { error: bookingErr } = await supabase
       .from('bookings')
       .update({
         deposit_status: 'paid',
@@ -45,6 +46,11 @@ export async function processSuccessfulPayment(
       .eq('id', payment.booking_id)
       .in('status', ['pending']);
 
+    if (bookingErr) {
+      criticalErrors.push('booking_confirmation_failed');
+      logger.withContext({ op: 'process-success.booking', ...safeLogErrorContext(bookingErr) }).error('[PROCESS-SUCCESS] Booking confirmation DB error');
+    }
+
     try {
       await recordPlatformFee(supabase, {
         bookingId: payment.booking_id,
@@ -53,12 +59,12 @@ export async function processSuccessfulPayment(
         gatewayFee: payment.gateway_fee,
       });
     } catch (feeErr) {
+      criticalErrors.push('booking_platform_fee_failed');
       Sentry.captureException(feeErr, { tags: { type: 'platform_fee_failure', entity: 'booking' } });
       logger.withContext({ op: 'platform-fee.booking', ...safeLogErrorContext(feeErr) }).error('[PLATFORM-FEE] Failed to record fee for booking');
-      // Don't block the booking confirmation — but ops is alerted via Sentry
     }
 
-    // Track waitlist conversion: if this customer was notified via waitlist, mark as converted
+    // NONCRITICAL: waitlist conversion tracking
     try {
       const { data: booking } = await supabase
         .from('bookings')
@@ -76,74 +82,84 @@ export async function processSuccessfulPayment(
         });
       }
     } catch (err) {
+      // Noncritical — log but do not fail finalization
       logger.withContext({ op: 'process-success.waitlist-conversion', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Waitlist conversion tracking error');
-      Sentry.captureException(err, { tags: { component: 'process-success', operation: 'waitlist-conversion' } });
+    }
+
+    // CRITICAL: For paid ticket bookings, ensure inventory + canonical ticket rows (Stage 2)
+    try {
+      const { ensurePaidTicketState } = await import('./ticket-business-state');
+      const ticketState = await ensurePaidTicketState(supabase, { paymentBookingId: payment.booking_id });
+      if (!ticketState.success) {
+        criticalErrors.push(`ticket_business_state_failed:${ticketState.error}`);
+      }
+    } catch (err) {
+      criticalErrors.push('ticket_business_state_threw');
+      logger.withContext({ op: 'process-success.ticket-state', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Ticket business state error');
     }
   }
 
-  // 2. Process invoice payment (guard: only if payment not already marked success)
+  // 2. Process invoice payment
   if (payment.invoice_id) {
-    const { data: paymentRecord } = await supabase
-      .from('payments')
-      .select('status')
-      .eq('id', payment.id)
-      .single();
-    // Only process invoice accumulation if this payment hasn't already been applied.
-    // The webhook handler marks payment as 'success' before calling this function,
-    // so on first call it will be 'success'. On retry, we check the invoice's amount_paid
-    // to see if it already includes this payment's amount.
-    if (paymentRecord) {
+    try {
       await processInvoicePayment(supabase, payment.invoice_id, payment.id, payment.amount, payment.gateway_fee);
+    } catch (err) {
+      criticalErrors.push('invoice_payment_failed');
+      logger.withContext({ op: 'process-success.invoice', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Invoice payment error');
     }
   }
 
   // 3. Process campaign donation
   if (payment.campaign_id) {
-    await processCampaignDonation(supabase, payment.id, payment.campaign_id, payment.amount, payment.gateway_fee);
+    try {
+      await processCampaignDonation(supabase, payment.id, payment.campaign_id, payment.amount, payment.gateway_fee);
+    } catch (err) {
+      criticalErrors.push('campaign_donation_failed');
+      logger.withContext({ op: 'process-success.campaign', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Campaign donation error');
+    }
   }
 
-  // 4. Confirm order
+  // 4. Confirm order + stock decrement (exactly-once via apply_order_stock_once)
   const orderId = payment.order_id || (payment.metadata?.order_id as string) || null;
   if (orderId) {
     try {
-      // Only confirm if still pending (idempotent). Check if update actually matched.
-      const { data: confirmedOrder } = await supabase
+      // Confirm order status (idempotent — only pending → confirmed)
+      const { error: orderErr } = await supabase
         .from('orders')
-        .update({
-          status: 'confirmed',
-          paid_at: new Date().toISOString(),
-        })
+        .update({ status: 'confirmed', paid_at: new Date().toISOString() })
         .eq('id', orderId)
-        .in('status', ['pending'])
-        .select('id')
-        .maybeSingle();
+        .in('status', ['pending']);
 
-      await recordPlatformFee(supabase, {
-        orderId,
-        paymentId: payment.id,
-        paymentAmount: payment.amount,
-        gatewayFee: payment.gateway_fee,
+      if (orderErr) {
+        criticalErrors.push('order_confirmation_failed');
+        logger.withContext({ op: 'process-success.order', ...safeLogErrorContext(orderErr) }).error('[PROCESS-SUCCESS] Order confirmation DB error');
+      }
+
+      try {
+        await recordPlatformFee(supabase, {
+          orderId, paymentId: payment.id, paymentAmount: payment.amount, gatewayFee: payment.gateway_fee,
+        });
+      } catch (feeErr) {
+        criticalErrors.push('order_platform_fee_failed');
+        logger.withContext({ op: 'platform-fee.order', ...safeLogErrorContext(feeErr) }).error('[PLATFORM-FEE] Failed to record fee for order');
+      }
+
+      // Stock decrement: exactly-once via durable application marker (crash-gap safe)
+      const { data: stockResult, error: stockErr } = await supabase.rpc('apply_order_stock_once', {
+        p_payment_id: payment.id, p_order_id: orderId,
       });
-
-      // Decrement stock only if we actually confirmed the order (prevents double-decrement
-      // when bot "I've Paid" path already decremented stock before webhook fires)
-      if (confirmedOrder) {
-        const { data: orderItems } = await supabase
-          .from('order_items')
-          .select('product_id, variant_id, quantity')
-          .eq('order_id', orderId);
-
-        if (orderItems) {
-          for (const item of orderItems) {
-            if (item.variant_id) {
-              await supabase.rpc('decrement_variant_stock', { p_variant_id: item.variant_id, qty: item.quantity });
-            } else if (item.product_id) {
-              await supabase.rpc('decrement_stock', { p_product_id: item.product_id, qty: item.quantity });
-            }
-          }
-        }
+      if (stockErr) {
+        criticalErrors.push('order_stock_failed');
+        logger.withContext({ op: 'process-success.stock', ...safeLogErrorContext(stockErr) }).error('[PROCESS-SUCCESS] apply_order_stock_once RPC error');
+      } else if (!stockResult?.applied) {
+        // Semantic failure (e.g. order_not_found, payment/order mismatch)
+        criticalErrors.push(`order_stock_semantic_failure:${stockResult?.reason || 'unknown'}`);
+        logger.error('[PROCESS-SUCCESS] apply_order_stock_once returned applied=false:', stockResult?.reason);
+      } else if (stockResult.already_applied) {
+        logger.info('[PROCESS-SUCCESS] Order stock already applied for payment ' + payment.id);
       }
     } catch (err) {
+      criticalErrors.push('order_finalization_threw');
       logger.withContext({ op: 'process-success.order-confirmation', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Order confirmation error');
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'order-confirmation' } });
     }
@@ -152,7 +168,7 @@ export async function processSuccessfulPayment(
   // 5. Confirm reservation
   if (payment.reservation_id) {
     try {
-      await supabase
+      const { error: resErr } = await supabase
         .from('reservations')
         .update({
           deposit_status: 'paid',
@@ -160,19 +176,35 @@ export async function processSuccessfulPayment(
           confirmed_at: new Date().toISOString(),
         })
         .eq('id', payment.reservation_id)
-        .in('status', ['pending']); // Only confirm if still pending (idempotent)
+        .in('status', ['pending']);
 
-      await recordPlatformFee(supabase, {
-        reservationId: payment.reservation_id,
-        paymentId: payment.id,
-        paymentAmount: payment.amount,
-        gatewayFee: payment.gateway_fee,
-      });
+      if (resErr) {
+        criticalErrors.push('reservation_confirmation_failed');
+        logger.withContext({ op: 'process-success.reservation', ...safeLogErrorContext(resErr) }).error('[PROCESS-SUCCESS] Reservation confirmation DB error');
+      }
+
+      try {
+        await recordPlatformFee(supabase, {
+          reservationId: payment.reservation_id,
+          paymentId: payment.id,
+          paymentAmount: payment.amount,
+          gatewayFee: payment.gateway_fee,
+        });
+      } catch (feeErr) {
+        criticalErrors.push('reservation_platform_fee_failed');
+        logger.withContext({ op: 'platform-fee.reservation', ...safeLogErrorContext(feeErr) }).error('[PLATFORM-FEE] Failed to record fee for reservation');
+      }
     } catch (err) {
+      criticalErrors.push('reservation_finalization_threw');
       logger.withContext({ op: 'process-success.reservation-confirmation', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Reservation confirmation error');
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'reservation-confirmation' } });
     }
   }
+
+  return {
+    criticalSuccess: criticalErrors.length === 0,
+    errors: criticalErrors.length > 0 ? criticalErrors : undefined,
+  };
 }
 
 /**
@@ -314,14 +346,17 @@ export async function recordPlatformFee(
     reseller_commission: resellerCommission,
   });
   if (feeErr) {
+    const isDuplicate = feeErr.message?.includes('duplicate') || feeErr.message?.includes('unique');
     logger.withContext({ op: 'platform-fee.insert', ...(typeof feeErr?.code === 'string' && isSafeIdentifier(feeErr.code) ? { errorCode: feeErr.code } : {}) }).error('[PLATFORM-FEE] Insert error (possible duplicate)');
-    // Only report to Sentry if it's not a duplicate key violation
-    if (!feeErr.message?.includes('duplicate') && !feeErr.message?.includes('unique')) {
+    if (!isDuplicate) {
       Sentry.captureException(new Error(`Platform fee insert error: ${feeErr.message}`), {
         tags: { component: 'process-success', operation: 'platform-fee' },
         extra: { businessId, bookingId: opts.bookingId, invoiceId: opts.invoiceId },
       });
+      // Throw on non-duplicate errors so callers can track critical failure
+      throw new Error(`Platform fee insert failed: ${feeErr.message}`);
     }
+    // Duplicate is idempotent success — do not throw
   }
 }
 
@@ -354,7 +389,7 @@ export async function processInvoicePayment(
       tags: { component: 'process-success', operation: 'invoice-payment' },
       extra: { invoiceId, paymentId },
     });
-    return;
+    throw new Error(`apply_invoice_payment RPC failed: ${rpcError.message}`);
   }
 
   // Fee retry logic:
@@ -409,7 +444,7 @@ export async function processCampaignDonation(
       tags: { component: 'process-success', operation: 'campaign-donation' },
       extra: { campaignId, paymentId, amount },
     });
-    return;
+    throw new Error(`apply_campaign_donation RPC failed: ${rpcError.message}`);
   }
 
   // Fee retry logic: same as invoice — skip legacy, ensure for new/post-migration

@@ -18,6 +18,15 @@ vi.mock('@/lib/getPlatformFees', () => ({
   getPlatformFees: vi.fn().mockResolvedValue({ feePercentage: 2.5, feeFlat: 0.5, feeTotal: 3 }),
 }));
 
+vi.mock('@/lib/logger', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), withContext: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }) },
+}));
+
+const mockReconcile = vi.fn().mockResolvedValue({ providerOutcome: 'verified', lifecycle: { status: 'completed', retryable: false, stages: { providerPaid: true, businessFinalized: true, customerConfirmed: true } }, acknowledgeSuccess: true });
+vi.mock('../reconcile', () => ({
+  reconcilePayment: (...args: unknown[]) => mockReconcile(...args),
+}));
+
 import { processPaystackChargeSuccess, processPaystackChargeFailed } from '../webhook-handler';
 import { createAlert } from '@/lib/alerts/create-alert';
 
@@ -56,8 +65,12 @@ describe('processPaystackChargeSuccess', () => {
       supabase as any,
     );
 
-    // Should call from('payments') at least twice (select + update)
-    expect(supabase.from).toHaveBeenCalledWith('payments');
+    // Should converge through shared reconciliation
+    expect(mockReconcile).toHaveBeenCalledTimes(1);
+    expect(mockReconcile).toHaveBeenCalledWith(
+      supabase, 'pay-1', 'webhook',
+      expect.objectContaining({ status: 'verified' }),
+    );
   });
 
   it('marks payment as failed on amount mismatch', async () => {

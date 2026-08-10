@@ -2,7 +2,7 @@ import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
-import { processSuccessfulPayment } from '@/lib/payments/process-success';
+// processSuccessfulPayment is now called inside reconcilePayment (Payment Authority)
 import { isWhiteLabel } from '@/lib/whitelabel';
 
 export const metadata = {
@@ -83,48 +83,21 @@ export default async function PaymentSuccessPage({
         }
         if (!businessPhone) businessPhone = biz?.phone || undefined;
 
-        // If payment is still pending, verify and confirm it now
-        if (payment.status !== 'success') {
-          // Verify with gateway using the actual gateway_reference, not the booking ref
-          const { data: fullPayment } = await supabase
-            .from('payments')
-            .select('gateway_reference')
-            .eq('id', payment.id)
-            .single();
+        // ── Canonical Payment Authority: server-side reconciliation ──
+        // Browser redirect alone is NOT proof of payment.
+        // Reconcile through the shared authority which handles:
+        // provider verification, business finalization, and customer confirmation.
+        const { reconcilePayment } = await import('@/lib/payments/reconcile');
+        const reconcileResult = await reconcilePayment(supabase, payment.id, 'payment_success');
 
-          let isVerified = false;
-          if (fullPayment?.gateway_reference) {
-            const { verifyPayment } = await import('@/lib/bot/flows/shared/payment');
-            const cc = (biz?.country_code || 'US') as import('@/lib/constants').CountryCode;
-            isVerified = await verifyPayment(supabase, fullPayment.gateway_reference, cc);
-          }
-
-          // If gateway verification fails, do NOT blindly trust the redirect.
-          // The webhook will handle confirmation when it arrives.
-          if (!isVerified) {
-            logger.warn(`[PAYMENT-SUCCESS] Gateway verify failed for ${params.ref}, waiting for webhook`);
-          }
-
-          if (isVerified) {
-            // Update payment status
-            await supabase.from('payments')
-              .update({ status: 'success', paid_at: new Date().toISOString() })
-              .eq('id', payment.id)
-              .neq('status', 'success');
-
-            // Update booking/order status
-            if (payment.booking_id) {
-              await supabase.from('bookings')
-                .update({ status: 'confirmed', deposit_status: 'paid', confirmed_at: new Date().toISOString() })
-                .eq('id', payment.booking_id)
-                .neq('deposit_status', 'paid');
-            }
-
-            confirmed = true;
-          }
-        } else {
+        if (reconcileResult.lifecycle?.status === 'completed' || reconcileResult.lifecycle?.status === 'already_completed') {
+          confirmed = true;
+        } else if (reconcileResult.lifecycle?.status === 'not_deliverable') {
+          // Business state is finalized but no delivery channel
           confirmed = true;
         }
+        // Do NOT fall back to payment.status='success' as "confirmed"
+        // Stage 1 (provider-paid) is not Stage 2/3 (business-finalized + customer-confirmed)
 
         // Fetch booking channel and ticket info for UI rendering
         if (confirmed && payment.booking_id) {
@@ -138,7 +111,6 @@ export default async function PaymentSuccessPage({
             isTicketing = bookingInfo?.flow_type === 'ticketing';
             hasPhone = !!bookingInfo?.guest_phone;
 
-            // Fetch ticket codes for ticketing bookings (for "View Tickets" link)
             if (isTicketing) {
               const { data: tickets } = await supabase
                 .from('event_tickets')
@@ -148,29 +120,6 @@ export default async function PaymentSuccessPage({
             }
           } catch (infoErr) {
             logger.error('[PAYMENT-SUCCESS] Failed to fetch booking info:', infoErr);
-          }
-        }
-
-        // Process payment pipeline + send WhatsApp confirmation (awaited, not fire-and-forget)
-        if (confirmed) {
-          try {
-            await processSuccessfulPayment(supabase, {
-              id: payment.id,
-              amount: payment.amount,
-              booking_id: payment.booking_id,
-              invoice_id: payment.invoice_id,
-              campaign_id: payment.campaign_id,
-              order_id: payment.order_id || null,
-              reservation_id: payment.reservation_id || null,
-            });
-          } catch (pipeErr) {
-            logger.error('[PAYMENT-SUCCESS] Pipeline error:', pipeErr);
-          }
-
-          try {
-            await triggerWhatsAppConfirmation(supabase, payment);
-          } catch (waErr) {
-            logger.error('[PAYMENT-SUCCESS] WhatsApp confirmation error:', waErr);
           }
         }
       }

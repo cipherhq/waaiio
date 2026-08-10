@@ -18,6 +18,14 @@ vi.mock('@/lib/getPlatformFees', () => ({
   getPlatformFees: vi.fn().mockResolvedValue({ feePercentage: 2.0, feeFlat: 0, feeTotal: 100 }),
 }));
 
+vi.mock('@/lib/logger', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), withContext: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }) },
+}));
+
+vi.mock('../reconcile', () => ({
+  reconcilePayment: vi.fn().mockResolvedValue({ providerOutcome: 'verified', lifecycle: { status: 'completed', retryable: false, stages: { providerPaid: true, businessFinalized: true, customerConfirmed: true } }, acknowledgeSuccess: true }),
+}));
+
 import { processPaystackChargeSuccess } from '../webhook-handler';
 import * as Sentry from '@sentry/nextjs';
 
@@ -196,7 +204,8 @@ describe('Webhook Amount Validation', () => {
     expect(supabase._updateFn).toHaveBeenCalled();
   });
 
-  it('updates booking to confirmed on successful payment with booking_id', async () => {
+  it('updates booking via authority on successful payment with booking_id', async () => {
+    const { reconcilePayment } = await import('../reconcile');
     const supabase = createMockSupabase({
       payment: { id: 'pay-5', status: 'pending', amount: 5000, booking_id: 'book-1', invoice_id: null, campaign_id: null, gateway: 'paystack' },
     });
@@ -207,7 +216,9 @@ describe('Webhook Amount Validation', () => {
       supabase as any,
     );
 
-    // Should call from('bookings') to update status
-    expect(supabase.from).toHaveBeenCalledWith('bookings');
+    // Booking update now happens inside reconcilePayment → authority
+    expect(reconcilePayment).toHaveBeenCalledWith(
+      supabase, 'pay-5', 'webhook', expect.objectContaining({ status: 'verified' }),
+    );
   });
 });
