@@ -99,6 +99,12 @@ export async function initializePayment(
             const shortRef = existingPayment.gateway_reference.slice(-8);
             return { url: `${appUrl}/api/pay?ref=${shortRef}`, reference: existingPayment.gateway_reference };
           }
+          // Matching pending payment exists but has no usable checkout URL — provider may have
+          // accepted a transaction whose identity persistence failed. Do NOT create another charge.
+          if (existingPayment.gateway_reference) {
+            logger.warn('[PAYMENT] Matching pending payment without checkout URL for ' + entityCol + '=' + entityId + ' — blocking new charge');
+            return null;
+          }
         }
       } catch (lookupErr) {
         logger.withContext({ op: 'payment.reuse-lookup-throw', ...safeLogErrorContext(lookupErr) })
@@ -325,14 +331,20 @@ export async function initializePayment(
 
     // Store original gateway URL in payment metadata, then shorten for WhatsApp
     if (result?.url && result.reference) {
-      // Save the real checkout URL before shortening
-      const { data: paymentRecord } = await supabase
+      const { data: paymentRecord, error: paymentLookupErr } = await supabase
         .from('payments')
         .select('id, metadata')
         .eq('gateway_reference', result.reference)
         .maybeSingle();
 
-      if (paymentRecord) {
+      if (paymentLookupErr || !paymentRecord) {
+        // Payment row not found or lookup failed — cannot persist authority identity
+        // Suppress checkout URL to prevent unverifiable provider transaction
+        logger.error('[PAYMENT] Payment record not found/lookup failed after provider creation — checkout URL suppressed');
+        return null;
+      }
+
+      {
         const existingMeta = (paymentRecord.metadata || {}) as Record<string, unknown>;
         existingMeta.checkout_url = result.url;
         // Persist exact payment origin + connection identity for Payment Authority verification
@@ -347,7 +359,10 @@ export async function initializePayment(
         if (identityError) {
           // Identity persistence failed — do NOT return checkout URL
           // Mark for review so quarantine guard prevents duplicate provider transactions
-          await supabase.from('payments').update({ gateway_status: 'review_required:identity_persist_failed' }).eq('id', paymentRecord.id);
+          const { error: quarantineErr } = await supabase.from('payments').update({ gateway_status: 'review_required:identity_persist_failed' }).eq('id', paymentRecord.id);
+          if (quarantineErr) {
+            logger.error('[PAYMENT] Quarantine write also failed — checkout URL still suppressed');
+          }
           logger.withContext({ op: 'payment.identity-persist', ...safeLogErrorContext(identityError) })
             .error('[PAYMENT] Failed to persist payment authority identity — checkout URL suppressed');
           return null;

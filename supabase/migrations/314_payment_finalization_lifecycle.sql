@@ -19,6 +19,9 @@
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS finalization_completed_at TIMESTAMPTZ;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS finalization_processing_at TIMESTAMPTZ;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS finalization_claim_token UUID;
+-- confirmation_terminal_reason: set when confirmation cannot/should not be retried
+-- e.g. 'not_deliverable' — no phone/email for customer delivery
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS confirmation_terminal_reason TEXT;
 
 -- ═══════════════════════════════════════════════════════
 -- Claim: atomically win business-finalization processing rights

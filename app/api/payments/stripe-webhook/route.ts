@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
         // Allow new-authority success payments through for Stage 2/3 resume
         const needsReconciliation = payment && (
           payment.status !== 'success'
-          || (payment.payment_authority_version === 1 && !payment.finalization_completed_at)
+          || (payment.payment_authority_version != null && !payment.finalization_completed_at)
         );
         if (payment && needsReconciliation) {
           // Verify amount matches (Stripe amount_total is in cents)

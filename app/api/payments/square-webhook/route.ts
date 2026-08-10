@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
       if (!matchedPayment) return NextResponse.json({ received: true });
 
       const sqNeedsReconciliation = matchedPayment.status !== 'success'
-        || (matchedPayment.payment_authority_version === 1 && !matchedPayment.finalization_completed_at);
+        || (matchedPayment.payment_authority_version != null && !matchedPayment.finalization_completed_at);
       if (paymentStatus === 'COMPLETED' && sqNeedsReconciliation) {
         // Verify amount matches (Square amount is in cents)
         const totalMoney = payment.total_money as { amount?: number } | undefined;

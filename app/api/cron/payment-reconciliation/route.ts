@@ -35,11 +35,13 @@ export async function GET(request: NextRequest) {
 
   // Find payments needing reconciliation:
   // A. Stale pending payments (provider may have been paid)
-  // B. New-authority success payments with incomplete Stage 2
+  // B. New-authority success + incomplete Stage 2 (finalization_completed_at IS NULL)
+  // C. New-authority success + Stage 2 complete + incomplete Stage 3 (confirmation_sent_at IS NULL)
+  //    but NOT not_deliverable (terminal — no contact info to retry with)
   const { data: stalePayments, error: queryError } = await supabase
     .from('payments')
-    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata, status, payment_authority_version, finalization_completed_at')
-    .or(`status.eq.pending,and(status.eq.success,payment_authority_version.eq.1,finalization_completed_at.is.null)`)
+    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata, status, payment_authority_version, finalization_completed_at, confirmation_sent_at')
+    .or(`status.eq.pending,and(status.eq.success,payment_authority_version.not.is.null,finalization_completed_at.is.null),and(status.eq.success,payment_authority_version.not.is.null,finalization_completed_at.not.is.null,confirmation_sent_at.is.null,confirmation_terminal_reason.is.null)`)
     .lt('created_at', twoHoursAgo.toISOString())
     .limit(50);
 
@@ -68,11 +70,13 @@ export async function GET(request: NextRequest) {
         reconciled++;
         logger.info(`[PAYMENT-RECONCILIATION] Reconciled payment ${payment.id} (${payment.gateway})`);
       } else if (result.providerOutcome === 'not_paid') {
-        // Provider says not paid — mark as failed for pending payments only
-        if (payment.status === 'pending') {
-          await supabase.from('payments').update({ status: 'failed', gateway_status: 'reconciled_not_paid' }).eq('id', payment.id).eq('status', 'pending');
-          markedFailed++;
-        }
+        // Generic not_paid is NOT proof of terminal failure.
+        // Leave as pending — provider may still be processing, or the check was ambiguous.
+        // Do NOT destructively mark as failed from ambiguous provider state.
+        logger.info(`[PAYMENT-RECONCILIATION] Payment ${payment.id} not confirmed by provider — leaving for next cycle`);
+      } else if (result.providerOutcome === 'retryable_error' || result.providerOutcome === 'config_error') {
+        // Transient/config error — leave for next cycle, do not mark failed
+        logger.info(`[PAYMENT-RECONCILIATION] Payment ${payment.id} provider ${result.providerOutcome} — leaving for next cycle`);
       }
       // retryable/config errors: leave payment for next cron cycle
     } catch (err) {

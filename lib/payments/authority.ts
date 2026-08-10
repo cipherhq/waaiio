@@ -134,10 +134,20 @@ export async function authorizeAndFinalize(
     return reject('Payment not found for reference: ' + verified.waaiioReference, 'payment_not_found');
   }
 
-  // Legacy fence: reject pre-authority payments to prevent unsafe replay
+  // Legacy fence: reject pre-authority ALREADY-SUCCESSFUL payments (unknown finalization state)
   if (payment.payment_authority_version == null && payment.status === 'success') {
     logger.info(`${logPrefix} Legacy pre-authority payment ${payment.id} — skipping`);
     return reject('Legacy pre-authority payment — finalization state unknown', 'legacy_finalization_unverified');
+  }
+
+  // Cutover adoption: pre-authority pending payment being paid now → adopt as version 0
+  // Version 0 = adopted by authority, legacy credential fallback allowed, Stage 2/3 retry safe
+  if (payment.payment_authority_version == null && payment.status !== 'success') {
+    await supabase.from('payments')
+      .update({ payment_authority_version: 0 })
+      .eq('id', payment.id)
+      .is('payment_authority_version', null);
+    payment.payment_authority_version = 0;
   }
 
   // Provider truth validation
@@ -259,6 +269,13 @@ export async function authorizeAndFinalize(
     campaign_id: payment.campaign_id, reservation_id: payment.reservation_id,
     order_id: payment.order_id,
   });
+
+  // Mark terminal confirmation states to prevent infinite cron retry
+  if (confirmResult.status === 'not_deliverable') {
+    await supabase.from('payments')
+      .update({ confirmation_terminal_reason: 'not_deliverable' })
+      .eq('id', payment.id);
+  }
 
   return mapConfirmationResult(confirmResult, stagesFinalized);
 }
