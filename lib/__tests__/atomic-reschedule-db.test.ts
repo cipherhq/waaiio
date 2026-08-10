@@ -14,7 +14,7 @@
  * 9. Buffer conflict rejected (real DB — service with buffer_minutes=15, duration=60)
  * 9b. Buffer boundary success (reschedule to slot exactly outside buffer window)
  * 10. Bot path cannot bypass RPC (source verification)
- * 11. Migration 312 applies cleanly
+ * 11. Migration 313 applies cleanly
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
@@ -91,8 +91,8 @@ describe.skipIf(!dbUrl)('Atomic reschedule — real PostgreSQL concurrency', () 
       INSERT INTO services (id, business_id, max_capacity, buffer_minutes, duration_minutes) VALUES ('99ffffff-ffff-ffff-ffff-ffffffffffff', '${BIZ}', 1, 15, 60) ON CONFLICT DO NOTHING;
       INSERT INTO appointments (id, business_id, max_capacity, duration_minutes) VALUES ('99eeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '${BIZ}', 1, 30) ON CONFLICT DO NOTHING;
     `);
-    // Apply migration 312
-    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "supabase/migrations/312_atomic_reschedule.sql"`, { encoding: 'utf-8', timeout: 15000 });
+    // Apply migration 313
+    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "supabase/migrations/313_atomic_reschedule.sql"`, { encoding: 'utf-8', timeout: 15000 });
   });
 
   afterAll(() => {
@@ -257,7 +257,7 @@ describe.skipIf(!dbUrl)('Atomic reschedule — real PostgreSQL concurrency', () 
     expect(source).not.toMatch(/reschedule_booking_id[\s\S]{0,500}\.from\(['"]bookings['"]\)\s*\n?\s*\.update/);
   });
 
-  it('11. migration 312 applies cleanly', () => {
+  it('11. migration 313 applies cleanly', () => {
     // Verify the function exists and is callable (already applied in beforeAll)
     const r = psql(`SELECT proname FROM pg_proc WHERE proname = 'reschedule_booking_atomic';`);
     expect(r).toBe('reschedule_booking_atomic');

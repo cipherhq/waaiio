@@ -1,4 +1,4 @@
--- Migration 312: Atomic booking reschedule with capacity enforcement
+-- Migration 313: Atomic booking reschedule with capacity enforcement
 --
 -- Prevents concurrent oversubscription during rescheduling.
 -- Uses advisory lock on the TARGET slot (same pattern as book_slot_atomic)

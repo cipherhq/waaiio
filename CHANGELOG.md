@@ -67,17 +67,6 @@ If something breaks, check this log to find what changed and when.
 - **Root cause:** Terminal G may quarantine a provider-paid payment with `gateway_status LIKE 'review_required:%'`. If customer re-enters payment flow, `initializePayment` would create another charge.
 - **Fix:** Before gateway call, checks for existing success+review_required payments on same entity. If found, returns null (blocks new charge). Guard infrastructure ready for Terminal G to populate.
 - **Files changed:** `lib/bot/flows/shared/payment.ts`
-=======
-## 2026-08-08
-
-### fix(RS-1/RS-2/RS-5): atomic booking reschedule with capacity enforcement
-
-- **Root cause:** Booking reschedule had three concurrency/capacity defects: (RS-1) dashboard API used separate COUNT + UPDATE with no advisory lock — concurrent reschedules could oversubscribe; (RS-2) appointment-centric bookings with `service_id=NULL` caused malformed capacity query — capacity was never enforced; (RS-5) bot rescheduling used a plain UPDATE that skipped all capacity enforcement.
-- **Fix:** New `reschedule_booking_atomic` RPC (migration 312) that atomically: locks target slot via advisory lock, validates booking ownership/business/status, resolves capacity from services OR appointments table (handles NULL service_id), checks capacity + buffer overlap, and moves booking in one transaction. Both the dashboard API route and bot flow now call this RPC exclusively.
-- **Files:** `supabase/migrations/312_atomic_reschedule.sql`, `app/api/bookings/[id]/reschedule/route.ts`, `lib/bot/flows/scheduling.flow.ts`
-- **Tests:** 10 real PostgreSQL concurrency tests including: concurrent final-capacity race (one winner), failed reschedule leaves old slot intact, appointment-centric capacity enforcement, idempotent retry, cross-business rejection, source verification (bot uses RPC).
-- Could break: Reschedule now returns capacity errors that were previously silently bypassed.
->>>>>>> 70888fe0 (fix(RS-1/RS-2/RS-5): atomic booking reschedule with capacity enforcement)
 
 ## 2026-08-07
 
