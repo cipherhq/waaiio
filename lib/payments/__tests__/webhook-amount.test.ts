@@ -204,7 +204,8 @@ describe('Webhook Amount Validation', () => {
     expect(supabase._updateFn).toHaveBeenCalled();
   });
 
-  it('updates booking to confirmed on successful payment with booking_id', async () => {
+  it('updates booking via authority on successful payment with booking_id', async () => {
+    const { reconcilePayment } = await import('../reconcile');
     const supabase = createMockSupabase({
       payment: { id: 'pay-5', status: 'pending', amount: 5000, booking_id: 'book-1', invoice_id: null, campaign_id: null, gateway: 'paystack' },
     });
@@ -215,7 +216,9 @@ describe('Webhook Amount Validation', () => {
       supabase as any,
     );
 
-    // Should call from('bookings') to update status
-    expect(supabase.from).toHaveBeenCalledWith('bookings');
+    // Booking update now happens inside reconcilePayment → authority
+    expect(reconcilePayment).toHaveBeenCalledWith(
+      supabase, 'pay-5', 'webhook', expect.objectContaining({ status: 'verified' }),
+    );
   });
 });
