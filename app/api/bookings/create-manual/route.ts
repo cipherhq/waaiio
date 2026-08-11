@@ -78,37 +78,29 @@ export async function POST(request: NextRequest) {
       staffName = staffMember?.name || null;
     }
 
-    // ── Atomic booking via canonical RPC (prevents race conditions) ──
+    // ── Atomic manual booking via wrapper RPC ──
+    // book_manual_slot_atomic calls book_slot_atomic internally for capacity/serialization,
+    // then sets channel='dashboard', confirmed_at, and notes in the SAME transaction.
+    // If any step fails, the entire booking rolls back.
     const maxCapacity = service.max_capacity ?? 1;
     const { data: slotResult, error: slotError } = await serviceClient
-      .rpc('book_slot_atomic', {
+      .rpc('book_manual_slot_atomic', {
         p_business_id: businessId,
-        p_user_id: user.id, // business owner creating the booking
+        p_user_id: user.id,
         p_service_id: serviceId,
         p_staff_id: staffId || null,
         p_date: date,
         p_time: time,
         p_party_size: partySize || 1,
         p_max_capacity: maxCapacity,
-        p_flow_type: 'scheduling',
-        p_deposit_amount: 0,
-        p_deposit_status: 'none',
-        p_status: 'confirmed',
         p_guest_name: customerName,
         p_guest_phone: customerPhone,
         p_guest_email: customerEmail || null,
-        p_special_requests: notes || null,
-        p_venue_address: null,
-        p_end_date: null,
-        p_addons_snapshot: null,
-        p_promo_code_id: null,
+        p_notes: notes || null,
         p_total_amount: service.price ?? 0,
         p_staff_name: staffName,
-        p_location_id: null,
-        p_appointment_id: null,
         p_buffer_minutes: service.buffer_minutes ?? 0,
         p_duration: service.duration_minutes ?? 30,
-        p_bot_session_id: null,
       })
       .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 
@@ -120,15 +112,6 @@ export async function POST(request: NextRequest) {
     if (!slotResult.slot_available) {
       return NextResponse.json({ error: 'This time slot is already booked' }, { status: 409 });
     }
-
-    // Set dashboard-specific fields (channel, confirmed_at) that the RPC doesn't handle
-    await serviceClient
-      .from('bookings')
-      .update({
-        channel: 'dashboard',
-        confirmed_at: new Date().toISOString(),
-      })
-      .eq('id', slotResult.booking_id);
 
     const booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
 

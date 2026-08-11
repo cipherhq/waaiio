@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════
 # MK-3: Manual Booking Atomicity — Real PostgreSQL Concurrency Test
-# Proves book_slot_atomic prevents double-booking when two concurrent
-# dashboard requests target the last available capacity.
+# Proves book_manual_slot_atomic prevents double-booking and atomically
+# sets dashboard-specific fields (channel, confirmed_at, notes).
 # ═══════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -43,21 +43,18 @@ SETUP
 # TEST 1: Two concurrent bookings for capacity=1 slot
 # ════════════════════════════════════════
 echo ""
-echo "--- Test 1: Two concurrent bookings, capacity=1 ---"
+echo "--- Test 1: Two concurrent manual bookings, capacity=1 ---"
 
 psql -v ON_ERROR_STOP=1 -q -c "DELETE FROM bookings WHERE business_id = '$BIZ_ID';"
 
-# Session A: book_slot_atomic with pg_sleep to hold advisory lock
+# Session A: book_manual_slot_atomic with pg_sleep to hold advisory lock
 psql -t -A <<SESSION_A > /tmp/mk3_a.txt 2>&1 &
 BEGIN;
-SELECT * FROM book_slot_atomic(
+SELECT * FROM book_manual_slot_atomic(
   '$BIZ_ID'::uuid, '$BIZ_OWNER'::uuid, '$SVC_ID'::uuid, NULL::uuid,
   '2027-06-15'::date, '10:00', 1, 1,
-  'scheduling', 0, 'none', 'confirmed',
   'Customer A', '+2348000000001', NULL,
-  NULL, NULL, NULL,
-  NULL, NULL, 5000, NULL,
-  NULL, NULL, 0, 30, NULL
+  'Test notes A', 5000, NULL, 0, 30
 );
 SELECT pg_sleep(2);
 COMMIT;
@@ -66,16 +63,13 @@ PID_A=$!
 
 sleep 0.5
 
-# Session B: concurrent booking attempt
+# Session B: concurrent manual booking attempt
 psql -t -A <<SESSION_B > /tmp/mk3_b.txt 2>&1 &
-SELECT * FROM book_slot_atomic(
+SELECT * FROM book_manual_slot_atomic(
   '$BIZ_ID'::uuid, '$BIZ_OWNER'::uuid, '$SVC_ID'::uuid, NULL::uuid,
   '2027-06-15'::date, '10:00', 1, 1,
-  'scheduling', 0, 'none', 'confirmed',
   'Customer B', '+2348000000002', NULL,
-  NULL, NULL, NULL,
-  NULL, NULL, 5000, NULL,
-  NULL, NULL, 0, 30, NULL
+  'Test notes B', 5000, NULL, 0, 30
 );
 SESSION_B
 PID_B=$!
@@ -83,40 +77,29 @@ PID_B=$!
 wait $PID_A || true
 wait $PID_B || true
 
-echo "  Session A output: $(cat /tmp/mk3_a.txt | tr '\n' ' ')"
-echo "  Session B output: $(cat /tmp/mk3_b.txt | tr '\n' ' ')"
-
 # Count bookings — must be exactly 1
 BOOKING_COUNT=$(psql -t -A -c "SELECT COUNT(*) FROM bookings WHERE business_id='$BIZ_ID' AND date='2027-06-15' AND time='10:00:00' AND status IN ('confirmed','pending')")
 
 echo "  Final booking count: $BOOKING_COUNT"
 
-# One should have slot_available=t, other slot_available=f
-A_AVAIL=$(grep -o 't$\|f$' /tmp/mk3_a.txt | tail -1 || echo "?")
-B_AVAIL=$(grep -o 't$\|f$' /tmp/mk3_b.txt | tail -1 || echo "?")
+# Verify dashboard metadata on the winner
+WINNER_CHANNEL=$(psql -t -A -c "SELECT channel FROM bookings WHERE business_id='$BIZ_ID' AND date='2027-06-15' AND time='10:00:00' AND status = 'confirmed' LIMIT 1")
+WINNER_CONFIRMED=$(psql -t -A -c "SELECT confirmed_at IS NOT NULL FROM bookings WHERE business_id='$BIZ_ID' AND date='2027-06-15' AND time='10:00:00' AND status = 'confirmed' LIMIT 1")
+WINNER_NOTES=$(psql -t -A -c "SELECT notes IS NOT NULL FROM bookings WHERE business_id='$BIZ_ID' AND date='2027-06-15' AND time='10:00:00' AND status = 'confirmed' LIMIT 1")
 
-echo "  Session A slot_available: $A_AVAIL"
-echo "  Session B slot_available: $B_AVAIL"
+echo "  Winner channel: $WINNER_CHANNEL"
+echo "  Winner confirmed_at set: $WINNER_CONFIRMED"
+echo "  Winner notes set: $WINNER_NOTES"
 
-if [ "$BOOKING_COUNT" -ne 1 ]; then
-  echo "FAIL: exactly 1 booking expected, got $BOOKING_COUNT"
-  FAILED=1
-fi
-
-# Exactly one true, one false
-AVAIL_COUNT=0
-[ "$A_AVAIL" = "t" ] && AVAIL_COUNT=$((AVAIL_COUNT+1))
-[ "$B_AVAIL" = "t" ] && AVAIL_COUNT=$((AVAIL_COUNT+1))
-
-if [ "$AVAIL_COUNT" -ne 1 ]; then
-  echo "FAIL: exactly one slot_available=true expected, got $AVAIL_COUNT"
-  FAILED=1
-fi
+if [ "$BOOKING_COUNT" -ne 1 ]; then echo "FAIL: exactly 1 booking expected, got $BOOKING_COUNT"; FAILED=1; fi
+if [ "$WINNER_CHANNEL" != "dashboard" ]; then echo "FAIL: channel should be dashboard, got $WINNER_CHANNEL"; FAILED=1; fi
+if [ "$WINNER_CONFIRMED" != "t" ]; then echo "FAIL: confirmed_at should be set"; FAILED=1; fi
+if [ "$WINNER_NOTES" != "t" ]; then echo "FAIL: notes should be set"; FAILED=1; fi
 
 [ "$FAILED" -eq 0 ] && echo "  ✅ Test 1 PASSED"
 
 # ════════════════════════════════════════
-# TEST 2: Two concurrent bookings for capacity=2 (both succeed)
+# TEST 2: Both succeed for capacity=2
 # ════════════════════════════════════════
 echo ""
 echo "--- Test 2: Two concurrent bookings, capacity=2 ---"
@@ -125,14 +108,11 @@ psql -v ON_ERROR_STOP=1 -q -c "DELETE FROM bookings WHERE business_id = '$BIZ_ID
 
 psql -t -A <<SESSION_C > /tmp/mk3_c.txt 2>&1 &
 BEGIN;
-SELECT * FROM book_slot_atomic(
+SELECT * FROM book_manual_slot_atomic(
   '$BIZ_ID'::uuid, '$BIZ_OWNER'::uuid, '$SVC_ID'::uuid, NULL::uuid,
   '2027-06-16'::date, '11:00', 1, 2,
-  'scheduling', 0, 'none', 'confirmed',
   'Customer C', '+2348000000003', NULL,
-  NULL, NULL, NULL,
-  NULL, NULL, 5000, NULL,
-  NULL, NULL, 0, 30, NULL
+  'Notes C', 5000, NULL, 0, 30
 );
 SELECT pg_sleep(2);
 COMMIT;
@@ -141,14 +121,11 @@ PID_C=$!
 sleep 0.5
 
 psql -t -A <<SESSION_D > /tmp/mk3_d.txt 2>&1 &
-SELECT * FROM book_slot_atomic(
+SELECT * FROM book_manual_slot_atomic(
   '$BIZ_ID'::uuid, '$BIZ_OWNER'::uuid, '$SVC_ID'::uuid, NULL::uuid,
   '2027-06-16'::date, '11:00', 1, 2,
-  'scheduling', 0, 'none', 'confirmed',
   'Customer D', '+2348000000004', NULL,
-  NULL, NULL, NULL,
-  NULL, NULL, 5000, NULL,
-  NULL, NULL, 0, 30, NULL
+  'Notes D', 5000, NULL, 0, 30
 );
 SESSION_D
 PID_D=$!
@@ -157,13 +134,13 @@ wait $PID_C || true
 wait $PID_D || true
 
 BOOKING_COUNT2=$(psql -t -A -c "SELECT COUNT(*) FROM bookings WHERE business_id='$BIZ_ID' AND date='2027-06-16' AND time='11:00:00' AND status IN ('confirmed','pending')")
+ALL_DASHBOARD=$(psql -t -A -c "SELECT COUNT(*) FROM bookings WHERE business_id='$BIZ_ID' AND date='2027-06-16' AND channel = 'dashboard'")
 
 echo "  Final booking count: $BOOKING_COUNT2"
+echo "  All have channel=dashboard: $ALL_DASHBOARD"
 
-if [ "$BOOKING_COUNT2" -ne 2 ]; then
-  echo "FAIL: expected 2 bookings, got $BOOKING_COUNT2"
-  FAILED=1
-fi
+if [ "$BOOKING_COUNT2" -ne 2 ]; then echo "FAIL: expected 2 bookings, got $BOOKING_COUNT2"; FAILED=1; fi
+if [ "$ALL_DASHBOARD" -ne 2 ]; then echo "FAIL: both should have channel=dashboard, got $ALL_DASHBOARD"; FAILED=1; fi
 
 [ "$FAILED" -eq 0 ] && echo "  ✅ Test 2 PASSED"
 
