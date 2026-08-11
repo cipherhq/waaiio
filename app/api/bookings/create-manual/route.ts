@@ -78,15 +78,33 @@ export async function POST(request: NextRequest) {
       staffName = staffMember?.name || null;
     }
 
+    // ── Resolve customer identity (bookings.user_id = customer, not operator) ──
+    // Uses the canonical createWhatsAppUser helper: finds existing profile by
+    // phone/email, or creates a new auth user + profile. Same mechanism used by
+    // the bot scheduling flow and public booking route.
+    const { createWhatsAppUser } = await import('@/lib/bot/flows/shared/user');
+    const nameParts = customerName.trim().split(/\s+/);
+    const firstName = nameParts[0] || customerName;
+    const lastName = nameParts.slice(1).join(' ') || '';
+
+    const customerId = await createWhatsAppUser(
+      serviceClient,
+      customerPhone,
+      firstName,
+      lastName,
+      customerEmail || undefined,
+    );
+
+    if (!customerId) {
+      return NextResponse.json({ error: 'Failed to resolve customer identity' }, { status: 500 });
+    }
+
     // ── Atomic manual booking via wrapper RPC ──
-    // book_manual_slot_atomic calls book_slot_atomic internally for capacity/serialization,
-    // then sets channel='dashboard', confirmed_at, and notes in the SAME transaction.
-    // If any step fails, the entire booking rolls back.
     const maxCapacity = service.max_capacity ?? 1;
     const { data: slotResult, error: slotError } = await serviceClient
       .rpc('book_manual_slot_atomic', {
         p_business_id: businessId,
-        p_user_id: user.id,
+        p_user_id: customerId,
         p_service_id: serviceId,
         p_staff_id: staffId || null,
         p_date: date,

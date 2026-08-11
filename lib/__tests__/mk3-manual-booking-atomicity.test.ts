@@ -18,6 +18,7 @@ import { readFileSync } from 'fs';
 const mockRpc = vi.fn();
 const mockAuthGetUser = vi.fn();
 const mockCapabilityGuard = vi.fn();
+const mockCreateWhatsAppUser = vi.fn();
 
 // Service lookup mocks (configurable per test)
 const mockServiceLookup = vi.fn();
@@ -55,6 +56,10 @@ vi.mock('@/lib/logger', () => ({
 vi.mock('@/lib/rate-limit', () => ({
   rateLimitResponseAsync: vi.fn().mockResolvedValue(null),
   getRateLimitKey: vi.fn(() => 'test'),
+}));
+
+vi.mock('@/lib/bot/flows/shared/user', () => ({
+  createWhatsAppUser: (...args: unknown[]) => mockCreateWhatsAppUser(...args),
 }));
 
 vi.mock('@/lib/channels/channel-resolver', () => ({
@@ -95,6 +100,7 @@ function setupDefaults() {
   mockBusinessLookup.mockResolvedValue({ data: { name: 'Test Biz', country_code: 'NG' }, error: null });
   mockServiceLookup.mockResolvedValue({ data: { name: 'Haircut', price: 5000, duration_minutes: 30, max_capacity: 1, buffer_minutes: 0 }, error: null });
   mockStaffLookup.mockResolvedValue({ data: { name: 'John Staff' }, error: null });
+  mockCreateWhatsAppUser.mockResolvedValue('customer-profile-123'); // canonical customer profile ID
   mockRpc.mockReturnValue({
     single: vi.fn().mockResolvedValue({
       data: { booking_id: 'book-1', reference_code: 'REF-001', slot_available: true },
@@ -137,8 +143,22 @@ describe('MK-3: route source verification', () => {
     expect(src).not.toContain('p_special_requests');
   });
 
-  it('passes user.id as p_user_id', () => {
-    expect(src).toContain('p_user_id: user.id');
+  it('passes customerId (not user.id) as p_user_id', () => {
+    expect(src).toContain('p_user_id: customerId');
+    expect(src).not.toContain('p_user_id: user.id');
+  });
+
+  it('resolves customer identity via createWhatsAppUser before booking', () => {
+    expect(src).toContain('createWhatsAppUser');
+    // Customer resolution must happen BEFORE the RPC call
+    const resolveIdx = src.indexOf('createWhatsAppUser');
+    const rpcIdx = src.indexOf('book_manual_slot_atomic');
+    expect(resolveIdx).toBeLessThan(rpcIdx);
+  });
+
+  it('fails with 500 if customer resolution fails (no fallback to owner)', () => {
+    expect(src).toContain('Failed to resolve customer identity');
+    expect(src).toContain('!customerId');
   });
 });
 
@@ -196,7 +216,7 @@ describe('MK-3: route behavior', () => {
       expect.objectContaining({
         p_business_id: 'biz-1',
         p_service_id: 'svc-1',
-        p_user_id: 'owner-1',
+        p_user_id: 'customer-profile-123',
         p_guest_name: 'Test Customer',
         p_guest_phone: '+2348000000000',
         p_notes: 'Window seat please',
@@ -264,5 +284,82 @@ describe('MK-3: route behavior', () => {
     const res = await POST(makeReq({ ...VALID_BODY, date: '2020-01-01' }));
     expect(res.status).toBe(400);
     expect(mockRpc).not.toHaveBeenCalled();
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// Customer identity tests
+// ══════════════════════════════════════════════════════════
+
+describe('MK-3: customer identity resolution', () => {
+  it('p_user_id is the CUSTOMER profile ID, not the business owner', async () => {
+    // Owner is 'owner-1', customer profile resolved as 'customer-profile-123'
+    await POST(makeReq(VALID_BODY));
+    expect(mockRpc).toHaveBeenCalledWith(
+      'book_manual_slot_atomic',
+      expect.objectContaining({ p_user_id: 'customer-profile-123' }),
+    );
+    // Must NOT be the owner
+    const rpcCall = mockRpc.mock.calls.find((c: unknown[]) => c[0] === 'book_manual_slot_atomic');
+    expect(rpcCall).toBeDefined();
+    expect((rpcCall as unknown[])[1]).toHaveProperty('p_user_id', 'customer-profile-123');
+    expect((rpcCall as unknown[])[1]).not.toHaveProperty('p_user_id', 'owner-1');
+  });
+
+  it('calls createWhatsAppUser with customer details', async () => {
+    await POST(makeReq({
+      ...VALID_BODY,
+      customerName: 'John Doe',
+      customerEmail: 'john@example.com',
+    }));
+    expect(mockCreateWhatsAppUser).toHaveBeenCalledTimes(1);
+    expect(mockCreateWhatsAppUser).toHaveBeenCalledWith(
+      expect.anything(), // serviceClient
+      '+2348000000000',  // phone
+      'John',            // firstName
+      'Doe',             // lastName
+      'john@example.com', // email
+    );
+  });
+
+  it('existing customer is reused (same profile ID returned)', async () => {
+    mockCreateWhatsAppUser.mockResolvedValue('existing-customer-456');
+    await POST(makeReq(VALID_BODY));
+    expect(mockRpc).toHaveBeenCalledWith(
+      'book_manual_slot_atomic',
+      expect.objectContaining({ p_user_id: 'existing-customer-456' }),
+    );
+  });
+
+  it('customer resolution failure returns 500 and does NOT call RPC', async () => {
+    mockCreateWhatsAppUser.mockResolvedValue(null);
+    const res = await POST(makeReq(VALID_BODY));
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.error).toContain('customer identity');
+    // RPC must NOT be called when customer resolution fails
+    expect(mockRpc).not.toHaveBeenCalledWith('book_manual_slot_atomic', expect.anything());
+  });
+
+  it('parses multi-word name into first/last', async () => {
+    await POST(makeReq({ ...VALID_BODY, customerName: 'Jane Marie Smith' }));
+    expect(mockCreateWhatsAppUser).toHaveBeenCalledWith(
+      expect.anything(),
+      '+2348000000000',
+      'Jane',
+      'Marie Smith',
+      undefined,
+    );
+  });
+
+  it('handles single-word name (empty lastName)', async () => {
+    await POST(makeReq({ ...VALID_BODY, customerName: 'Madonna' }));
+    expect(mockCreateWhatsAppUser).toHaveBeenCalledWith(
+      expect.anything(),
+      '+2348000000000',
+      'Madonna',
+      '',
+      undefined,
+    );
   });
 });
