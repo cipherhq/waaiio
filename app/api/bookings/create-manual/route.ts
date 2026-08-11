@@ -61,70 +61,77 @@ export async function POST(request: NextRequest) {
     if (!biz) return NextResponse.json({ error: 'Business data unavailable' }, { status: 500 });
     const { data: service } = await serviceClient
       .from('services')
-      .select('name, price, duration_minutes')
+      .select('name, price, duration_minutes, max_capacity, buffer_minutes')
       .eq('id', serviceId)
       .eq('business_id', businessId)
       .single();
     if (!service) return NextResponse.json({ error: 'Service not found' }, { status: 404 });
 
-    // Check for time conflicts
-    const { count: conflictCount } = await serviceClient
-      .from('bookings')
-      .select('id', { count: 'exact', head: true })
-      .eq('business_id', businessId)
-      .eq('date', date)
-      .eq('time', time.padStart(5, '0'))
-      .in('status', ['confirmed', 'pending', 'in_progress']);
-
-    if ((conflictCount ?? 0) > 0) {
-      return NextResponse.json({ error: 'This time slot is already booked' }, { status: 409 });
-    }
-
-    // Generate reference code
-    const refCode = `${businessId.slice(0, 4).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
-
-    // Insert booking directly (simpler than RPC for manual bookings -- no slot contention from dashboard)
-    const { data: booking, error: insertErr } = await serviceClient.from('bookings').insert({
-      business_id: businessId,
-      service_id: serviceId,
-      date,
-      time,
-      guest_name: customerName,
-      guest_phone: customerPhone,
-      guest_email: customerEmail || null,
-      party_size: partySize || 1,
-      staff_id: staffId || null,
-      staff_name: staffId ? undefined : null,
-      notes: notes || null,
-      reference_code: refCode,
-      status: 'confirmed',
-      flow_type: 'scheduling',
-      channel: 'dashboard',
-      total_amount: service.price ?? 0,
-      deposit_amount: 0,
-      deposit_status: 'not_required',
-      confirmed_at: new Date().toISOString(),
-    }).select('id, reference_code').single();
-
-    if (insertErr) {
-      logger.error('[MANUAL BOOKING] Insert error:', insertErr);
-      return NextResponse.json({ error: 'Failed to create booking' }, { status: 500 });
-    }
-
-    // If staffId provided, look up staff name and update
+    // Look up staff name if staffId provided
+    let staffName: string | null = null;
     if (staffId) {
       const { data: staffMember } = await serviceClient
         .from('business_staff')
         .select('name')
         .eq('id', staffId)
         .single();
-      if (staffMember) {
-        await serviceClient
-          .from('bookings')
-          .update({ staff_name: staffMember.name })
-          .eq('id', booking.id);
-      }
+      staffName = staffMember?.name || null;
     }
+
+    // ── Resolve customer identity (bookings.user_id = customer, not operator) ──
+    // Uses the canonical createWhatsAppUser helper: finds existing profile by
+    // phone/email, or creates a new auth user + profile. Same mechanism used by
+    // the bot scheduling flow and public booking route.
+    const { createWhatsAppUser } = await import('@/lib/bot/flows/shared/user');
+    const nameParts = customerName.trim().split(/\s+/);
+    const firstName = nameParts[0] || customerName;
+    const lastName = nameParts.slice(1).join(' ') || '';
+
+    const customerId = await createWhatsAppUser(
+      serviceClient,
+      customerPhone,
+      firstName,
+      lastName,
+      customerEmail || undefined,
+    );
+
+    if (!customerId) {
+      return NextResponse.json({ error: 'Failed to resolve customer identity' }, { status: 500 });
+    }
+
+    // ── Atomic manual booking via wrapper RPC ──
+    const maxCapacity = service.max_capacity ?? 1;
+    const { data: slotResult, error: slotError } = await serviceClient
+      .rpc('book_manual_slot_atomic', {
+        p_business_id: businessId,
+        p_user_id: customerId,
+        p_service_id: serviceId,
+        p_staff_id: staffId || null,
+        p_date: date,
+        p_time: time,
+        p_party_size: partySize || 1,
+        p_max_capacity: maxCapacity,
+        p_guest_name: customerName,
+        p_guest_phone: customerPhone,
+        p_guest_email: customerEmail || null,
+        p_notes: notes || null,
+        p_total_amount: service.price ?? 0,
+        p_staff_name: staffName,
+        p_buffer_minutes: service.buffer_minutes ?? 0,
+        p_duration: service.duration_minutes ?? 30,
+      })
+      .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
+
+    if (slotError || !slotResult) {
+      logger.error('[MANUAL BOOKING] Atomic booking RPC error:', slotError);
+      return NextResponse.json({ error: 'Failed to create booking' }, { status: 500 });
+    }
+
+    if (!slotResult.slot_available) {
+      return NextResponse.json({ error: 'This time slot is already booked' }, { status: 409 });
+    }
+
+    const booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
 
     // Send confirmation via WhatsApp (with email fallback) if requested
     let whatsappSent = false;
@@ -146,7 +153,7 @@ export async function POST(request: NextRequest) {
             `${service.name}`,
             `${dateLabel}`,
             `${time}`,
-            `Ref: *${refCode}*`,
+            `Ref: *${booking.reference_code}*`,
             '',
             'See you there!',
           ].join('\n');
@@ -172,7 +179,7 @@ export async function POST(request: NextRequest) {
                   'Service': service.name,
                   'Date': dateLabel,
                   'Time': time,
-                  'Reference': refCode,
+                  'Reference': booking.reference_code,
                 },
               }).html,
             } : null,
