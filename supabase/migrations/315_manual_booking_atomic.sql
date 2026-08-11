@@ -33,9 +33,9 @@ DECLARE
   v_booking_id uuid;
   v_ref text;
   v_available boolean;
+  v_updated_rows int;
 BEGIN
   -- 1. Delegate to canonical book_slot_atomic for capacity check + INSERT
-  --    Pass notes as p_special_requests=NULL (we set the correct column below)
   SELECT bsa.booking_id, bsa.reference_code, bsa.slot_available
   INTO v_booking_id, v_ref, v_available
   FROM book_slot_atomic(
@@ -60,20 +60,33 @@ BEGIN
     NULL           -- p_bot_session_id
   ) bsa;
 
-  -- 2. If slot was not available, return immediately (no booking was created)
-  IF NOT v_available THEN
+  -- 2. Defensive: treat anything other than slot_available = TRUE as unavailable
+  IF v_available IS NOT TRUE THEN
     RETURN QUERY SELECT NULL::uuid, NULL::text, false;
     RETURN;
   END IF;
 
-  -- 3. Apply manual-dashboard-specific fields in the SAME transaction
-  --    This UPDATE is atomic with the INSERT above — if it fails,
-  --    the entire transaction rolls back including the booking.
+  -- Defensive: booking_id must be valid after a successful slot claim
+  IF v_booking_id IS NULL THEN
+    RAISE EXCEPTION 'book_manual_slot_atomic: book_slot_atomic returned slot_available=true but booking_id is NULL'
+      USING ERRCODE = 'data_exception';
+  END IF;
+
+  -- 3. Apply manual-dashboard-specific fields in the SAME transaction.
+  --    Verify exactly one row was updated — if not, the booking state
+  --    is inconsistent and we must fail (rolling back the INSERT too).
   UPDATE bookings
   SET channel = 'dashboard'::booking_channel,
       confirmed_at = NOW(),
       notes = p_notes
   WHERE id = v_booking_id;
+
+  GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
+
+  IF v_updated_rows <> 1 THEN
+    RAISE EXCEPTION 'book_manual_slot_atomic: expected 1 row updated for manual metadata, got %', v_updated_rows
+      USING ERRCODE = 'data_exception';
+  END IF;
 
   RETURN QUERY SELECT v_booking_id, v_ref, true;
 END;

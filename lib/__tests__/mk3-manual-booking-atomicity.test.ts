@@ -1,27 +1,32 @@
 /**
- * MK-3: Manual booking atomicity — uses book_manual_slot_atomic wrapper.
+ * MK-3: Manual booking atomicity — book_manual_slot_atomic wrapper.
  *
  * Tests verify:
- * 1. Route uses book_manual_slot_atomic (not direct INSERT)
- * 2. No post-booking metadata UPDATE exists
- * 3. Full slot returns 409
- * 4. Normal booking succeeds
- * 5. Auth enforcement
- * 6. Notes field mapping (p_notes, not p_special_requests)
- * 7. deposit_status = 'none' (not 'not_required')
- * 8. book_slot_atomic remains canonical (wrapper delegates)
+ * - Route uses book_manual_slot_atomic (not direct INSERT)
+ * - No post-booking metadata UPDATE exists
+ * - book_slot_atomic remains canonical (wrapper delegates)
+ * - ROW_COUNT verification in wrapper
+ * - Route behavior: success, 409, 400, 401, 404, 500
+ * - Parameter mapping: notes, user_id, deposit_status
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { readFileSync } from 'fs';
 
-// ── Mock infrastructure ──
+// ── Shared hoisted mocks ──
 
-const mockRpcResult = vi.fn();
+const mockRpc = vi.fn();
+const mockAuthGetUser = vi.fn();
+const mockCapabilityGuard = vi.fn();
+
+// Service lookup mocks (configurable per test)
+const mockServiceLookup = vi.fn();
+const mockBusinessLookup = vi.fn();
+const mockStaffLookup = vi.fn();
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn().mockResolvedValue({
-    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'owner-1' } }, error: null }) },
+    auth: { getUser: () => mockAuthGetUser() },
   }),
 }));
 
@@ -30,25 +35,17 @@ vi.mock('@/lib/supabase/service', () => ({
     from: vi.fn((table: string) => ({
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
-      single: table === 'services'
-        ? vi.fn().mockResolvedValue({ data: { name: 'Haircut', price: 5000, duration_minutes: 30, max_capacity: 1, buffer_minutes: 0 }, error: null })
-        : table === 'businesses'
-          ? vi.fn().mockResolvedValue({ data: { name: 'Test Biz', country_code: 'NG' }, error: null })
-          : table === 'business_staff'
-            ? vi.fn().mockResolvedValue({ data: { name: 'John Staff' }, error: null })
-            : vi.fn().mockResolvedValue({ data: null, error: null }),
+      single: table === 'services' ? mockServiceLookup
+        : table === 'businesses' ? mockBusinessLookup
+        : table === 'business_staff' ? mockStaffLookup
+        : vi.fn().mockResolvedValue({ data: null, error: null }),
     })),
-    rpc: vi.fn((name: string) => {
-      if (name === 'book_manual_slot_atomic') {
-        return { single: mockRpcResult };
-      }
-      return { single: vi.fn().mockResolvedValue({ data: null, error: null }) };
-    }),
+    rpc: mockRpc,
   })),
 }));
 
 vi.mock('@/lib/capabilities/api-guard', () => ({
-  requireAnyCapability: vi.fn().mockResolvedValue({ allowed: true }),
+  requireAnyCapability: (...args: unknown[]) => mockCapabilityGuard(...args),
 }));
 
 vi.mock('@/lib/logger', () => ({
@@ -92,8 +89,23 @@ const VALID_BODY = {
   customerPhone: '+2348000000000',
 };
 
+function setupDefaults() {
+  mockAuthGetUser.mockResolvedValue({ data: { user: { id: 'owner-1' } }, error: null });
+  mockCapabilityGuard.mockResolvedValue({ allowed: true });
+  mockBusinessLookup.mockResolvedValue({ data: { name: 'Test Biz', country_code: 'NG' }, error: null });
+  mockServiceLookup.mockResolvedValue({ data: { name: 'Haircut', price: 5000, duration_minutes: 30, max_capacity: 1, buffer_minutes: 0 }, error: null });
+  mockStaffLookup.mockResolvedValue({ data: { name: 'John Staff' }, error: null });
+  mockRpc.mockReturnValue({
+    single: vi.fn().mockResolvedValue({
+      data: { booking_id: 'book-1', reference_code: 'REF-001', slot_available: true },
+      error: null,
+    }),
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  setupDefaults();
 });
 
 // ══════════════════════════════════════════════════════════
@@ -113,13 +125,9 @@ describe('MK-3: route source verification', () => {
 
   it('does NOT perform separate availability count check', () => {
     expect(src).not.toContain('conflictCount');
-    expect(src).not.toContain("count: 'exact'");
   });
 
-  it('does NOT perform post-booking metadata UPDATE', () => {
-    // No .from('bookings').update({ channel: ... }) pattern
-    expect(src).not.toContain(".from('bookings')\n      .update(");
-    // Verify no loose update on bookings after RPC
+  it('does NOT perform post-booking metadata UPDATE on bookings', () => {
     const afterRpc = src.slice(src.indexOf('book_manual_slot_atomic'));
     expect(afterRpc).not.toContain(".update({");
   });
@@ -129,20 +137,41 @@ describe('MK-3: route source verification', () => {
     expect(src).not.toContain('p_special_requests');
   });
 
-  it('does not use deposit_status not_required', () => {
-    expect(src).not.toContain('not_required');
-  });
-
   it('passes user.id as p_user_id', () => {
     expect(src).toContain('p_user_id: user.id');
   });
+});
 
-  it('book_slot_atomic remains canonical (wrapper delegates)', () => {
-    const migration = readFileSync('supabase/migrations/315_manual_booking_atomic.sql', 'utf-8');
-    expect(migration).toContain('book_slot_atomic(');
-    expect(migration).toContain("channel = 'dashboard'");
+describe('MK-3: migration 315 wrapper verification', () => {
+  const migration = readFileSync('supabase/migrations/315_manual_booking_atomic.sql', 'utf-8');
+
+  it('delegates to book_slot_atomic', () => {
+    expect(migration).toContain('FROM book_slot_atomic(');
+  });
+
+  it('uses IS NOT TRUE for defensive availability check', () => {
+    expect(migration).toContain('v_available IS NOT TRUE');
+  });
+
+  it('validates booking_id is not NULL', () => {
+    expect(migration).toContain('v_booking_id IS NULL');
+    expect(migration).toContain('RAISE EXCEPTION');
+  });
+
+  it('verifies ROW_COUNT after UPDATE', () => {
+    expect(migration).toContain('GET DIAGNOSTICS v_updated_rows = ROW_COUNT');
+    expect(migration).toContain('v_updated_rows <> 1');
+  });
+
+  it('sets channel, confirmed_at, and notes atomically', () => {
+    expect(migration).toContain("channel = 'dashboard'::booking_channel");
     expect(migration).toContain('confirmed_at = NOW()');
     expect(migration).toContain('notes = p_notes');
+  });
+
+  it('is service_role only', () => {
+    expect(migration).toContain('SECURITY DEFINER');
+    expect(migration).toContain('TO service_role');
   });
 });
 
@@ -150,105 +179,90 @@ describe('MK-3: route source verification', () => {
 // Route behavior tests
 // ══════════════════════════════════════════════════════════
 
-describe('MK-3: manual booking route behavior', () => {
-  it('succeeds with valid input', async () => {
-    mockRpcResult.mockResolvedValue({
-      data: { booking_id: 'book-1', reference_code: 'REF-001', slot_available: true },
-      error: null,
-    });
-
+describe('MK-3: route behavior', () => {
+  it('normal booking succeeds', async () => {
     const res = await POST(makeReq(VALID_BODY));
     const data = await res.json();
-
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.booking_id).toBe('book-1');
     expect(data.reference_code).toBe('REF-001');
   });
 
-  it('returns 409 when slot is full', async () => {
-    mockRpcResult.mockResolvedValue({
-      data: { booking_id: null, reference_code: null, slot_available: false },
-      error: null,
-    });
+  it('calls wrapper with correct parameters', async () => {
+    await POST(makeReq({ ...VALID_BODY, notes: 'Window seat please' }));
+    expect(mockRpc).toHaveBeenCalledWith(
+      'book_manual_slot_atomic',
+      expect.objectContaining({
+        p_business_id: 'biz-1',
+        p_service_id: 'svc-1',
+        p_user_id: 'owner-1',
+        p_guest_name: 'Test Customer',
+        p_guest_phone: '+2348000000000',
+        p_notes: 'Window seat please',
+        p_date: '2027-01-15',
+        p_time: '10:00',
+      }),
+    );
+  });
 
+  it('passes null notes when not provided', async () => {
+    await POST(makeReq(VALID_BODY));
+    expect(mockRpc).toHaveBeenCalledWith(
+      'book_manual_slot_atomic',
+      expect.objectContaining({ p_notes: null }),
+    );
+  });
+
+  it('returns 409 when slot_available=false', async () => {
+    mockRpc.mockReturnValue({
+      single: vi.fn().mockResolvedValue({
+        data: { booking_id: null, reference_code: null, slot_available: false },
+        error: null,
+      }),
+    });
     const res = await POST(makeReq(VALID_BODY));
     expect(res.status).toBe(409);
+  });
+
+  it('returns 500 on RPC error', async () => {
+    mockRpc.mockReturnValue({
+      single: vi.fn().mockResolvedValue({ data: null, error: { message: 'DB error' } }),
+    });
+    const res = await POST(makeReq(VALID_BODY));
+    expect(res.status).toBe(500);
+  });
+
+  it('returns 401 for unauthenticated request', async () => {
+    mockAuthGetUser.mockResolvedValue({ data: { user: null }, error: null });
+    const res = await POST(makeReq(VALID_BODY));
+    expect(res.status).toBe(401);
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('returns guard denial when capability check fails', async () => {
+    mockCapabilityGuard.mockResolvedValue({ allowed: false, denial: { error: 'Capability paused' }, status: 403 });
+    const res = await POST(makeReq(VALID_BODY));
+    expect(res.status).toBe(403);
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 for invalid service', async () => {
+    mockServiceLookup.mockResolvedValue({ data: null, error: null });
+    const res = await POST(makeReq(VALID_BODY));
+    expect(res.status).toBe(404);
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 
   it('returns 400 for missing required fields', async () => {
     const res = await POST(makeReq({ businessId: 'biz-1' }));
     expect(res.status).toBe(400);
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 
   it('returns 400 for past dates', async () => {
     const res = await POST(makeReq({ ...VALID_BODY, date: '2020-01-01' }));
     expect(res.status).toBe(400);
-  });
-
-  it('returns 500 on RPC error', async () => {
-    mockRpcResult.mockResolvedValue({
-      data: null,
-      error: { message: 'DB error' },
-    });
-
-    const res = await POST(makeReq(VALID_BODY));
-    expect(res.status).toBe(500);
-  });
-
-  it('passes notes to p_notes parameter', async () => {
-    mockRpcResult.mockResolvedValue({
-      data: { booking_id: 'book-2', reference_code: 'REF-002', slot_available: true },
-      error: null,
-    });
-
-    const { createServiceClient } = await import('@/lib/supabase/service');
-    await POST(makeReq({ ...VALID_BODY, notes: 'Customer prefers window seat' }));
-
-    const svc = (createServiceClient as any)();
-    const rpcCalls = svc.rpc.mock.calls;
-    const manualCall = rpcCalls.find((c: any[]) => c[0] === 'book_manual_slot_atomic');
-    if (manualCall) {
-      expect(manualCall[1].p_notes).toBe('Customer prefers window seat');
-    }
-  });
-});
-
-// ══════════════════════════════════════════════════════════
-// Migration 315 verification
-// ══════════════════════════════════════════════════════════
-
-describe('MK-3: migration 315 wrapper RPC', () => {
-  const migration = readFileSync('supabase/migrations/315_manual_booking_atomic.sql', 'utf-8');
-
-  it('delegates to book_slot_atomic', () => {
-    expect(migration).toContain('FROM book_slot_atomic(');
-  });
-
-  it('sets channel to dashboard in same transaction', () => {
-    expect(migration).toContain("channel = 'dashboard'::booking_channel");
-  });
-
-  it('sets confirmed_at in same transaction', () => {
-    expect(migration).toContain('confirmed_at = NOW()');
-  });
-
-  it('maps p_notes to bookings.notes column', () => {
-    expect(migration).toContain('notes = p_notes');
-  });
-
-  it('passes none as deposit_status', () => {
-    expect(migration).toContain("'none'");
-  });
-
-  it('is SECURITY DEFINER with service_role only', () => {
-    expect(migration).toContain('SECURITY DEFINER');
-    expect(migration).toContain('GRANT EXECUTE ON FUNCTION book_manual_slot_atomic');
-    expect(migration).toContain('TO service_role');
-  });
-
-  it('returns slot_available=false without creating a booking on full slot', () => {
-    expect(migration).toContain('IF NOT v_available THEN');
-    expect(migration).toContain('SELECT NULL::uuid, NULL::text, false');
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 });

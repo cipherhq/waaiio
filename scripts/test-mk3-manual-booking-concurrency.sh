@@ -145,6 +145,67 @@ if [ "$ALL_DASHBOARD" -ne 2 ]; then echo "FAIL: both should have channel=dashboa
 [ "$FAILED" -eq 0 ] && echo "  ✅ Test 2 PASSED"
 
 # ════════════════════════════════════════
+# TEST 3: Forced metadata failure => ZERO surviving bookings (rollback proof)
+# ════════════════════════════════════════
+echo ""
+echo "--- Test 3: Forced metadata failure => atomic rollback ---"
+
+psql -v ON_ERROR_STOP=1 -q -c "DELETE FROM bookings WHERE business_id = '$BIZ_ID';"
+
+# Create a test-only trigger that forces the dashboard metadata UPDATE to fail
+psql -v ON_ERROR_STOP=1 -q <<TRIGGER_SETUP
+CREATE OR REPLACE FUNCTION _mk3_test_force_metadata_failure()
+RETURNS TRIGGER AS \$t\$
+BEGIN
+  -- Only fire when the wrapper sets channel to dashboard
+  IF NEW.channel = 'dashboard' AND OLD.channel = 'whatsapp' THEN
+    RAISE EXCEPTION 'MK3_TEST: forced metadata failure for rollback proof';
+  END IF;
+  RETURN NEW;
+END;
+\$t\$ LANGUAGE plpgsql;
+
+CREATE TRIGGER _mk3_test_metadata_fail
+  BEFORE UPDATE ON bookings
+  FOR EACH ROW EXECUTE FUNCTION _mk3_test_force_metadata_failure();
+TRIGGER_SETUP
+
+# Attempt a manual booking — should fail due to the trigger
+RESULT=$(psql -t -A -c "SELECT * FROM book_manual_slot_atomic(
+  '$BIZ_ID'::uuid, '$BIZ_OWNER'::uuid, '$SVC_ID'::uuid, NULL::uuid,
+  '2027-06-17'::date, '10:00', 1, 1,
+  'Rollback Customer', '+2348000000005', NULL,
+  'Should not survive', 5000, NULL, 0, 30
+)" 2>&1 || true)
+
+echo "  RPC result: $(echo "$RESULT" | head -3)"
+
+# Verify ZERO bookings survived (the INSERT from book_slot_atomic must have rolled back)
+ROLLBACK_COUNT=$(psql -t -A -c "SELECT COUNT(*) FROM bookings WHERE business_id='$BIZ_ID' AND date='2027-06-17'")
+
+echo "  Bookings after forced failure: $ROLLBACK_COUNT"
+
+if [ "$ROLLBACK_COUNT" -ne 0 ]; then
+  echo "FAIL: expected 0 bookings after metadata failure, got $ROLLBACK_COUNT"
+  FAILED=1
+fi
+
+# Verify the error was the expected one
+if echo "$RESULT" | grep -q "MK3_TEST: forced metadata failure"; then
+  echo "  Expected error received: YES"
+else
+  echo "  Expected error received: NO"
+  echo "FAIL: did not receive expected metadata failure error"
+  FAILED=1
+fi
+
+# Cleanup: remove test trigger
+psql -q -c "DROP TRIGGER IF EXISTS _mk3_test_metadata_fail ON bookings;" 2>/dev/null || true
+psql -q -c "DROP FUNCTION IF EXISTS _mk3_test_force_metadata_failure();" 2>/dev/null || true
+
+[ "$FAILED" -eq 0 ] && echo "  ✅ Test 3 PASSED"
+
+# ════════════════════════════════════════
 # FINAL RESULT
 # ════════════════════════════════════════
 echo ""
