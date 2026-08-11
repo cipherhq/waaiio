@@ -828,6 +828,33 @@ jobs:
           echo "Running MK-3 manual booking concurrency tests..."
           bash scripts/test-mk3-manual-booking-concurrency.sh
 
+      - name: CONFLICT-1 slot authority agreement DB tests
+        if: hashFiles('lib/__tests__/conflict-1-slot-authority-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running CONFLICT-1 slot authority DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/conflict-1-slot-authority-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ CONFLICT-1 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ CONFLICT-1 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No CONFLICT-1 DB tests passed."; exit 1; fi
+          echo "✅ CONFLICT-1 slot authority DB tests complete."
+
       - name: Migration 312 ticket-row identity concurrency tests
         if: hashFiles('lib/__tests__/ticket-row-identity-db.test.ts') != ''
         env:
