@@ -59,9 +59,9 @@ describe('Capabilities page: save and rollback', () => {
     expect(src).toContain('deriveCapabilityConfiguration(');
   });
 
-  it('passes explicit config to saveCapabilities (not reading closure state)', () => {
-    // saveCapabilities receives config object, does not read orderedCaps or enabled
-    expect(src).toContain('saveCapabilities(config)');
+  it('Save button passes explicit config to saveCapabilities', () => {
+    // handleToggle is local-only (no auto-save). Save button commits via saveCapabilities.
+    expect(src).toContain('saveCapabilities(deriveCapabilityConfiguration(');
     // The save function signature takes explicit config
     expect(src).toContain('async function saveCapabilities(config:');
   });
