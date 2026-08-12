@@ -131,14 +131,16 @@ export default function QueuePage() {
 
   async function togglePause() {
     setPauseLoading(true);
-    const newPaused = !isPaused;
     try {
-      const supabase = createClient();
-      await supabase
-        .from('businesses')
-        .update({ metadata: { ...meta, queue_paused: newPaused } })
-        .eq('id', business.id);
-      setIsPaused(newPaused);
+      const res = await fetch('/api/queue/toggle-pause', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ businessId: business.id }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setIsPaused(data.paused);
+      }
     } finally {
       setPauseLoading(false);
     }
@@ -231,6 +233,7 @@ export default function QueuePage() {
   const serving = entries.filter(e => e.status === 'serving');
   const completed = entries.filter(e => e.status === 'completed');
   const noShows = entries.filter(e => e.status === 'no_show');
+  const cancelled = entries.filter(e => e.status === 'cancelled');
 
   const avgWait = completed.length > 0
     ? Math.round(
@@ -388,9 +391,10 @@ export default function QueuePage() {
                     e.status === 'serving' ? 'bg-brand-50 text-brand-700' :
                     e.status === 'completed' ? 'bg-green-50 text-green-700' :
                     e.status === 'no_show' ? 'bg-red-50 text-red-700' :
+                    e.status === 'cancelled' ? 'bg-gray-100 text-gray-600' :
                     'bg-yellow-50 text-yellow-700'
                   }`}>
-                    {e.status === 'no_show' ? 'No Show' : e.status}
+                    {e.status === 'no_show' ? 'No Show' : e.status === 'cancelled' ? 'Left' : e.status}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-gray-500">{e.channel}</td>
@@ -463,8 +467,13 @@ export default function QueuePage() {
       </div>
 
       {/* No-show count */}
-      {noShows.length > 0 && (
-        <p className="mt-3 text-xs text-gray-400">{noShows.length} no-show{noShows.length !== 1 ? 's' : ''} today</p>
+      {(noShows.length > 0 || cancelled.length > 0) && (
+        <p className="mt-3 text-xs text-gray-400">
+          {noShows.length > 0 && `${noShows.length} no-show${noShows.length !== 1 ? 's' : ''}`}
+          {noShows.length > 0 && cancelled.length > 0 && ' · '}
+          {cancelled.length > 0 && `${cancelled.length} left queue`}
+          {' today'}
+        </p>
       )}
     </div>
   );

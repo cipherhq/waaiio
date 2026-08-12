@@ -5,6 +5,25 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-12
+
+### fix(P1-QUEUE-1): queue leave writes valid 'cancelled' status
+
+- **Bug:** `queue-checkin.flow.ts` wrote `status='cancelled'` to `queue_entries`, but the CHECK constraint only allowed `waiting|serving|completed|no_show`. The UPDATE silently failed — customers believed they left the queue but their entry stayed as `waiting`.
+- **Fix:** Migration 316 adds `cancelled` to the CHECK constraint. It's a first-class terminal state distinct from `no_show` (called but absent).
+- **Consumers updated:** API route `queue/update` accepts `cancelled`, allows `waiting→cancelled` transition, triggers wait-time recalculation. Dashboard shows "Left" badge. Admin filter includes "Cancelled".
+- **Active unique index** `idx_queue_entries_customer_active` (`WHERE status IN ('waiting','serving')`) already excludes `cancelled` — rejoining works.
+- **Files:** `supabase/migrations/316_queue_schema_contracts.sql`, `app/api/queue/update/route.ts`, `app/dashboard/queue/page.tsx`, `admin/src/pages/QueueManagement.tsx`
+
+### fix(P1-QUEUE-2): queue reopen subscription uses dedicated table
+
+- **Bug:** `queue-checkin.flow.ts` inserted into `waitlist_entries` with `type='queue_reopen_notify'`, but `waitlist_entries` has no `type` column. INSERT failed silently. Even if it worked, nothing ever queried or sent the notification — the unpause path just flips a metadata boolean.
+- **Fix:** New `queue_reopen_subscriptions` table (migration 316) with `business_id`, `customer_phone`, `status` (`waiting|notified`), unique active index per customer/business, RLS. Bot flow inserts into correct table. New `/api/queue/toggle-pause` route handles pause toggle + sends WhatsApp notifications to all waiting subscribers on unpause, marks them `notified`. Dashboard uses API route instead of direct DB update.
+- **Separation from waitlist:** `waitlist_entries` is purpose-built for booking waitlists (service_id, event_id, auto-notify, conversion tracking, different unique index). Queue reopen is a fundamentally different subscription model.
+- **Files:** `supabase/migrations/316_queue_schema_contracts.sql`, `lib/bot/flows/queue-checkin.flow.ts`, `app/api/queue/toggle-pause/route.ts`, `app/dashboard/queue/page.tsx`
+
+---
+
 ## 2026-08-10
 
 ### refactor(PAY-AUTHORITY): unified Waaiio Payment Authority (migration 314)
