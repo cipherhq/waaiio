@@ -110,6 +110,8 @@ export default function CapabilitiesPage() {
     setDragOverIndex(null);
 
     if (fromIndex === null || fromIndex === dropIndex) return;
+    // Don't auto-save order while there are unsaved selection changes
+    if (saving) return;
 
     // Snapshot current state synchronously
     const previousOrder = [...orderedCaps];
@@ -180,7 +182,7 @@ export default function CapabilitiesPage() {
   };
 
   function handleToggle(capId: CapabilityId) {
-    if (!canToggle(capId)) return;
+    if (!canToggle(capId) || saving) return;
 
     let nextEnabled = enabled.includes(capId)
       ? enabled.filter(c => c !== capId)
@@ -198,19 +200,8 @@ export default function CapabilitiesPage() {
     // Must have at least one capability
     if (nextEnabled.length === 0) return;
 
-    // Derive the full configuration synchronously from current state
-    const config = deriveCapabilityConfiguration(
-      [...enabled],      // previous enabled (snapshot)
-      [...orderedCaps],  // previous order (snapshot)
-      nextEnabled,
-    );
-
-    // Optimistic UI update
-    setEnabled(config.capabilities);
-    setOrderedCaps(config.order);
-
-    // Save with explicit transaction snapshot (no stale closure reads)
-    saveCapabilities(config);
+    // Update local state only — no auto-save. User commits via Save Changes.
+    setEnabled(nextEnabled);
   }
 
   async function saveCapabilities(config: {
@@ -256,19 +247,16 @@ export default function CapabilitiesPage() {
         return;
       }
 
-      // Auto-provision templates only for genuinely new capabilities
+      // Auto-provision templates only for genuinely new capabilities (best-effort)
       for (const cap of newlyEnabled) {
-        try {
-          await fetch('/api/whatsapp/templates/provision', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ business_id: business.id, capability: cap }),
-          });
-        } catch {
-          // Template provisioning is best-effort — capability is still enabled
-        }
+        fetch('/api/whatsapp/templates/provision', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ business_id: business.id, capability: cap }),
+        }).catch(() => {});
       }
 
+      // Reload to get fresh server state (selectedCapabilities, capabilities, pausedCapabilities)
       window.location.reload();
     } catch {
       // Network error — rollback to exact previous snapshots
@@ -302,10 +290,12 @@ export default function CapabilitiesPage() {
   const enabledCount = enabled.length;
   const totalCount = CAPABILITIES.length;
 
+  // Compare against server-selected (includes paused), NOT effective
+  const serverSelected = (business.selectedCapabilities || business.capabilities) as CapabilityId[];
   const hasChanges = (() => {
-    if (enabled.length !== business.capabilities.length) return true;
+    if (enabled.length !== serverSelected.length) return true;
     const sorted1 = [...enabled].sort();
-    const sorted2 = [...business.capabilities].sort();
+    const sorted2 = [...serverSelected].sort();
     return sorted1.some((v, i) => v !== sorted2[i]);
   })();
 
@@ -484,7 +474,10 @@ export default function CapabilitiesPage() {
             </p>
             <div className="flex items-center gap-3">
               <button
-                onClick={() => setEnabled([...business.capabilities])}
+                onClick={() => {
+                  setEnabled([...serverSelected]);
+                  setOrderedCaps([...serverSelected]);
+                }}
                 className="rounded-lg border border-gray-300 dark:border-gray-600 px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
               >
                 Discard
@@ -492,7 +485,7 @@ export default function CapabilitiesPage() {
               <button
                 id="cap-save-btn"
                 onClick={() => saveCapabilities(deriveCapabilityConfiguration(
-                  selected as CapabilityId[],
+                  [...serverSelected],
                   [...orderedCaps],
                   enabled,
                 ))}
