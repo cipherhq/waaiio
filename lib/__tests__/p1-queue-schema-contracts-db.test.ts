@@ -77,18 +77,25 @@ describeDb('P1-QUEUE: Real PostgreSQL schema contract tests', () => {
   beforeAll(() => {
     applyMigrations();
 
-    // Create prerequisite data — profiles first (businesses.owner_id FK)
+    // Create prerequisite data — auth.users → profiles → businesses (FK chain)
+    const OWNER_1 = '0a300000-0000-0000-0000-000000aa0001';
+    const OWNER_2 = '0a300000-0000-0000-0000-000000aa0002';
+
     psql(`
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      INSERT INTO auth.users (id) VALUES ('${OWNER_1}'), ('${OWNER_2}') ON CONFLICT DO NOTHING;
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
+
       INSERT INTO profiles (id, first_name, last_name, email)
       VALUES
-        ('0a300000-0000-0000-0000-000000aa0001', 'Q1', 'Test', 'q1@test.local'),
-        ('0a300000-0000-0000-0000-000000aa0002', 'Q2', 'Test', 'q2@test.local')
+        ('${OWNER_1}', 'Q1', 'Test', 'q1@test.local'),
+        ('${OWNER_2}', 'Q2', 'Test', 'q2@test.local')
       ON CONFLICT (id) DO NOTHING;
 
       INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code, category, subscription_tier)
       VALUES
-        ('${BIZ_ID}', 'Queue Test Biz', 'queue-test-1', '0a300000-0000-0000-0000-000000aa0001', '1 Test', 'Lagos', 'VI', '+2341111111111', 'active', 'NG', 'salon', 'growth'),
-        ('${BIZ_ID_2}', 'Queue Test Biz 2', 'queue-test-2', '0a300000-0000-0000-0000-000000aa0002', '2 Test', 'Lagos', 'VI', '+2342222222222', 'active', 'NG', 'salon', 'growth')
+        ('${BIZ_ID}', 'Queue Test Biz', 'queue-test-1', '${OWNER_1}', '1 Test', 'Lagos', 'VI', '+2341111111111', 'active', 'NG', 'salon', 'growth'),
+        ('${BIZ_ID_2}', 'Queue Test Biz 2', 'queue-test-2', '${OWNER_2}', '2 Test', 'Lagos', 'VI', '+2342222222222', 'active', 'NG', 'salon', 'growth')
       ON CONFLICT (id) DO NOTHING;
     `);
   });
@@ -99,6 +106,9 @@ describeDb('P1-QUEUE: Real PostgreSQL schema contract tests', () => {
       DELETE FROM queue_reopen_subscriptions WHERE business_id IN ('${BIZ_ID}', '${BIZ_ID_2}');
       DELETE FROM businesses WHERE id IN ('${BIZ_ID}', '${BIZ_ID_2}');
       DELETE FROM profiles WHERE id IN ('0a300000-0000-0000-0000-000000aa0001', '0a300000-0000-0000-0000-000000aa0002');
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      DELETE FROM auth.users WHERE id IN ('0a300000-0000-0000-0000-000000aa0001', '0a300000-0000-0000-0000-000000aa0002');
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
     `);
   });
 
