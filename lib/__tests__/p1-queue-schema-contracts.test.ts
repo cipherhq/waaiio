@@ -300,35 +300,52 @@ describe('P1-QUEUE-2: Queue Reopen Subscription', () => {
     expect(reopenCalls.length).toBe(0);
   });
 
-  it('10. insert error is logged but does not crash flow', async () => {
+  it('10. duplicate 23505 opt-in is idempotent — no error log, user gets confirmation', async () => {
     const { queueCheckinFlow } = await import('@/lib/bot/flows/queue-checkin.flow');
     const startStep = queueCheckinFlow.steps[0];
 
+    const mockWithContext = vi.mocked((await import('@/lib/logger')).logger.withContext);
+    const mockWithContextError = vi.fn();
+    mockWithContext.mockReturnValue({ error: mockWithContextError, info: vi.fn(), warn: vi.fn() });
+
     const { ctx, sendTextMock } = buildMockContext({
       paused: true,
-      insertResult: { error: { code: '23505', message: 'duplicate key' } },
+      insertResult: { error: { code: '23505', message: 'duplicate key value violates unique constraint' } },
     });
 
-    // Should not throw
     await startStep.validate!('notify_reopen', ctx as any);
 
-    // User still gets confirmation (graceful degradation)
-    // Note: currently the flow sends the message even on insert error
-    // This is acceptable UX — the duplicate means they're already subscribed
+    // User still gets confirmation — they're already subscribed
     expect(sendTextMock).toHaveBeenCalled();
+    // 23505 is NOT logged as an error (idempotent no-op)
+    expect(mockWithContextError).not.toHaveBeenCalled();
   });
 
-  it('11. toggle-pause API route exists and handles queue reopen notifications', async () => {
-    const routeSource = await import('fs').then(fs =>
-      fs.readFileSync('app/api/queue/toggle-pause/route.ts', 'utf-8')
-    );
-    // Verify it queries queue_reopen_subscriptions
-    expect(routeSource).toContain('queue_reopen_subscriptions');
-    // Verify it sends notifications
-    expect(routeSource).toContain('sendText');
-    // Verify it marks as notified
-    expect(routeSource).toContain("status: 'notified'");
-    expect(routeSource).toContain('notified_at');
+  it('10b. non-23505 insert error IS logged', async () => {
+    const { queueCheckinFlow } = await import('@/lib/bot/flows/queue-checkin.flow');
+    const startStep = queueCheckinFlow.steps[0];
+
+    const mockWithContext = vi.mocked((await import('@/lib/logger')).logger.withContext);
+    const mockWithContextError = vi.fn();
+    mockWithContext.mockReturnValue({ error: mockWithContextError, info: vi.fn(), warn: vi.fn() });
+
+    const { ctx, sendTextMock } = buildMockContext({
+      paused: true,
+      insertResult: { error: { code: '42P01', message: 'relation does not exist' } },
+    });
+
+    await startStep.validate!('notify_reopen', ctx as any);
+
+    // User still gets confirmation (graceful)
+    expect(sendTextMock).toHaveBeenCalled();
+    // Non-23505 error IS logged
+    expect(mockWithContextError).toHaveBeenCalled();
+  });
+
+  it('11. toggle-pause route tests are in p1-queue-toggle-pause-route.test.ts', async () => {
+    // Executable route tests live in their own file — verify it exists
+    const fs = await import('fs');
+    expect(fs.existsSync('lib/__tests__/p1-queue-toggle-pause-route.test.ts')).toBe(true);
   });
 
   it('12. admin filter includes cancelled option', async () => {

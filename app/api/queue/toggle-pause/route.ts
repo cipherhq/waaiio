@@ -75,14 +75,21 @@ export async function POST(request: NextRequest) {
                   text: `The queue at *${bizName}* is now open! Send *Hi* to join the queue.`,
                 });
 
-                // Mark as notified
-                await supabase
+                // Mark as notified — only count if bookkeeping succeeds
+                const { error: markError } = await supabase
                   .from('queue_reopen_subscriptions')
                   .update({ status: 'notified', notified_at: new Date().toISOString() })
-                  .eq('id', sub.id);
+                  .eq('id', sub.id)
+                  .eq('status', 'waiting');
 
-                notifiedCount++;
+                if (markError) {
+                  logger.withContext({ op: 'queue.reopen-mark-notified', subId: sub.id }).error('[QUEUE] Failed to mark subscription as notified');
+                  // Leave subscription in waiting state for retry — do NOT increment
+                } else {
+                  notifiedCount++;
+                }
               } catch (err) {
+                // sendText threw — subscription stays waiting (retryable)
                 logger.error('[QUEUE] Reopen notification error for', sub.customer_phone, err);
               }
             }

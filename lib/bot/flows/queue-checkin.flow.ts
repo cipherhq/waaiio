@@ -134,7 +134,10 @@ const queueStartStep: FlowStepConfig = {
               customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
               status: 'waiting',
             });
-          if (subError) logger.withContext({ op: 'queue.reopen-sub-insert', ...safeLogErrorContext(subError) }).error('[QUEUE] Reopen subscription insert error');
+          // 23505 = unique_violation — customer already subscribed, treat as idempotent success
+          if (subError && (subError as any).code !== '23505') {
+            logger.withContext({ op: 'queue.reopen-sub-insert', ...safeLogErrorContext(subError) }).error('[QUEUE] Reopen subscription insert error');
+          }
         }
         await ctx.sender.sendText({
           to: ctx.from,
