@@ -363,16 +363,16 @@ export default function Businesses() {
         return;
       }
 
-      // Update local state
-      if (action === 'grant') {
-        setSelectedCaps(prev => [...prev.filter(c => c !== capId), capId]);
-        const requiredTier = CAPABILITY_TIER_REQUIREMENTS[capId as keyof typeof CAPABILITY_TIER_REQUIREMENTS] || 'free';
-        if (!tierMeetsRequirement(bizTier as SubscriptionTier, requiredTier)) {
-          setSelectedOverrides(prev => [...prev.filter(c => c !== capId), capId]);
-        }
+      // Re-fetch authoritative state from server (RPC may cascade dependencies)
+      const refreshRes = await fetch(`${apiUrl}/api/admin/businesses/${bizId}/capabilities`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (refreshRes.ok) {
+        const state = await refreshRes.json();
+        setSelectedCaps(state.capabilities || []);
+        setSelectedOverrides(state.overrides || []);
       } else {
-        setSelectedCaps(prev => prev.filter(c => c !== capId));
-        setSelectedOverrides(prev => prev.filter(c => c !== capId));
+        alert('Capability updated but failed to refresh state. Please reload the page.');
       }
     } catch (err) {
       console.error('Capability toggle error:', err);

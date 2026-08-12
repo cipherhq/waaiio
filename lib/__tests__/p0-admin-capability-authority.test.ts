@@ -322,4 +322,46 @@ describe('P0-ADMIN: Admin capability route security', () => {
     expect(json).toHaveProperty('overrides');
     expect(mockCreateClient).not.toHaveBeenCalled();
   });
+
+  it('23. handleCapToggle re-fetches authoritative state after successful mutation', async () => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('admin/src/pages/Businesses.tsx', 'utf-8');
+    const handleCapFn = source.slice(
+      source.indexOf('async function handleCapToggle'),
+      source.indexOf('setCapSaving(null);\n    }')
+    );
+    // After successful POST, must GET authoritative state
+    expect(handleCapFn).toContain('/api/admin/businesses/');
+    expect(handleCapFn).toContain('state.capabilities');
+    expect(handleCapFn).toContain('state.overrides');
+    // Must NOT manually guess local state after mutation
+    expect(handleCapFn).not.toContain("prev => [...prev.filter");
+    expect(handleCapFn).not.toContain("prev => prev.filter");
+  });
+
+  it('24. failed POST does not mutate displayed capability state', async () => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('admin/src/pages/Businesses.tsx', 'utf-8');
+    const handleCapFn = source.slice(
+      source.indexOf('async function handleCapToggle'),
+      source.indexOf('setCapSaving(null);\n    }')
+    );
+    // On !res.ok, must return before any state mutation
+    const failBlock = handleCapFn.slice(
+      handleCapFn.indexOf('if (!res.ok)'),
+      handleCapFn.indexOf('if (!res.ok)') + 200
+    );
+    expect(failBlock).toContain('return');
+  });
+
+  it('25. failed refresh after successful mutation shows clear fallback', async () => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('admin/src/pages/Businesses.tsx', 'utf-8');
+    const handleCapFn = source.slice(
+      source.indexOf('async function handleCapToggle'),
+      source.indexOf('setCapSaving(null);\n    }')
+    );
+    // Must handle refresh failure explicitly
+    expect(handleCapFn).toContain('failed to refresh');
+  });
 });
