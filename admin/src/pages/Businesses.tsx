@@ -9,49 +9,10 @@ import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
 import { Building2, CheckCircle, Clock, Ban, Search, FlaskConical, Shield } from 'lucide-react';
 import { getCurrencyCode, type CountryCode } from '@/lib/verification';
 import { logAudit } from '@/lib/auditLog';
+import { CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, PLAN_LABELS, tierMeetsRequirement, type SubscriptionTier } from '@shared/capabilities';
 
-// ── Capability definitions (mirrors lib/capabilities/types.ts) ──
-const ALL_CAPABILITIES = [
-  { id: 'scheduling', label: 'Scheduling', icon: '📅' },
-  { id: 'payment', label: 'Payments', icon: '💳' },
-  { id: 'ordering', label: 'Online Store', icon: '🛒' },
-  { id: 'ticketing', label: 'Ticketing', icon: '🎟️' },
-  { id: 'reservation', label: 'Reservations', icon: '🏘️' },
-  { id: 'whatsapp_sign', label: 'WhatsApp Sign', icon: '✍️' },
-  { id: 'feedback', label: 'Feedback', icon: '⭐' },
-  { id: 'chat', label: 'Chat', icon: '💬' },
-  { id: 'reminders', label: 'Reminders', icon: '🔔' },
-  { id: 'loyalty', label: 'Loyalty', icon: '🏆' },
-  { id: 'referral', label: 'Referral', icon: '🤝' },
-  { id: 'queue', label: 'Queue', icon: '📋' },
-  { id: 'waitlist', label: 'Waitlist', icon: '📝' },
-  { id: 'reports', label: 'Reports', icon: '📄' },
-  { id: 'staff', label: 'Staff', icon: '👥' },
-  { id: 'crowdfunding', label: 'Crowdfunding', icon: '❤️' },
-  { id: 'invoice', label: 'Invoices', icon: '🧾' },
-  { id: 'survey', label: 'Surveys', icon: '📊' },
-  { id: 'poll', label: 'Polls', icon: '🗳️' },
-  { id: 'giving', label: 'Giving', icon: '🙏' },
-  { id: 'broadcast', label: 'Broadcasts', icon: '📢' },
-  { id: 'recurring', label: 'Subscriptions', icon: '🔄' },
-  { id: 'auto_reply', label: 'Auto-Reply', icon: '🤖' },
-  { id: 'membership', label: 'Membership', icon: '🏅' },
-] as const;
-
-const TIER_REQUIREMENTS: Record<string, string> = {
-  // Free
-  appointment: 'free', scheduling: 'free', payment: 'free', ordering: 'free',
-  ticketing: 'free', giving: 'free', chat: 'free', feedback: 'free', poll: 'free',
-  // Pro (Growth)
-  reservation: 'growth', recurring: 'growth', broadcast: 'growth', membership: 'growth',
-  survey: 'growth', invoice: 'growth', auto_reply: 'growth', loyalty: 'growth',
-  referral: 'growth', reminders: 'growth',
-  // Premium (Business)
-  staff: 'business', whatsapp_sign: 'business', reports: 'business',
-  waitlist: 'business', queue: 'business', crowdfunding: 'business',
-};
-
-const TIER_RANK: Record<string, number> = { free: 0, growth: 1, business: 2 };
+// Canonical capability catalog imported from @shared/capabilities
+// ALL_CAPABILITIES, TIER_REQUIREMENTS, TIER_RANK are no longer hardcoded here
 
 const TIER_BADGE_STYLE: Record<string, string> = {
   free: 'bg-gray-100 text-gray-600',
@@ -379,48 +340,46 @@ export default function Businesses() {
 
   async function handleCapToggle(bizId: string, bizTier: string, capId: string, isCurrentlyEnabled: boolean) {
     setCapSaving(capId);
-    const requiredTier = TIER_REQUIREMENTS[capId] || 'free';
-    const withinTier = TIER_RANK[bizTier] >= TIER_RANK[requiredTier];
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) { alert('Session expired. Please log in again.'); return; }
 
-    if (!isCurrentlyEnabled) {
-      // Enabling
-      if (!withinTier) {
-        // Above tier — create override
-        await adminDb
-          .from('capability_overrides')
-          .upsert(
-            { business_id: bizId, capability: capId, granted_by: (await supabase.auth.getSession()).data.session?.user?.id, reason: 'Admin granted' },
-            { onConflict: 'business_id,capability' },
-          );
-        setSelectedOverrides(prev => [...prev.filter(c => c !== capId), capId]);
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const action = isCurrentlyEnabled ? 'revoke' : 'grant';
+
+      const res = await fetch(`${apiUrl}/api/admin/businesses/${bizId}/capabilities`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ capability: capId, action, reason: 'Admin toggled' }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        alert(`Failed to ${action} capability: ${err.error || 'Unknown error'}`);
+        return;
       }
-      await adminDb
-        .from('business_capabilities')
-        .upsert(
-          { business_id: bizId, capability: capId, is_enabled: true },
-          { onConflict: 'business_id,capability' },
-        );
-      setSelectedCaps(prev => [...prev.filter(c => c !== capId), capId]);
-      logAudit({ action: 'grant_capability', entity_type: 'business', entity_id: bizId, details: { capability: capId } });
-    } else {
-      // Disabling
-      if (selectedOverrides.includes(capId)) {
-        await adminDb
-          .from('capability_overrides')
-          .delete()
-          .eq('business_id', bizId)
-          .eq('capability', capId);
+
+      // Update local state
+      if (action === 'grant') {
+        setSelectedCaps(prev => [...prev.filter(c => c !== capId), capId]);
+        const requiredTier = CAPABILITY_TIER_REQUIREMENTS[capId as keyof typeof CAPABILITY_TIER_REQUIREMENTS] || 'free';
+        if (!tierMeetsRequirement(bizTier as SubscriptionTier, requiredTier)) {
+          setSelectedOverrides(prev => [...prev.filter(c => c !== capId), capId]);
+        }
+      } else {
+        setSelectedCaps(prev => prev.filter(c => c !== capId));
         setSelectedOverrides(prev => prev.filter(c => c !== capId));
       }
-      await adminDb
-        .from('business_capabilities')
-        .update({ is_enabled: false })
-        .eq('business_id', bizId)
-        .eq('capability', capId);
-      setSelectedCaps(prev => prev.filter(c => c !== capId));
-      logAudit({ action: 'revoke_capability', entity_type: 'business', entity_id: bizId, details: { capability: capId } });
+    } catch (err) {
+      console.error('Capability toggle error:', err);
+      alert('Failed to update capability. Please try again.');
+    } finally {
+      setCapSaving(null);
     }
-    setCapSaving(null);
   }
 
   // Separate real vs demo
@@ -1086,15 +1045,15 @@ export default function Businesses() {
               <div className="flex items-center gap-2 mb-3">
                 <Shield className="h-4 w-4 text-gray-500" />
                 <p className="text-xs font-semibold text-gray-500 uppercase">Capabilities</p>
-                <span className="rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-600 capitalize">
-                  {selected.subscription_tier} tier
+                <span className="rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-600">
+                  {PLAN_LABELS[selected.subscription_tier as SubscriptionTier] || selected.subscription_tier}
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                {ALL_CAPABILITIES.map(cap => {
+                {CAPABILITIES.map(cap => {
                   const isEnabled = selectedCaps.includes(cap.id);
                   const isOverridden = selectedOverrides.includes(cap.id);
-                  const requiredTier = TIER_REQUIREMENTS[cap.id] || 'free';
+                  const requiredTier = CAPABILITY_TIER_REQUIREMENTS[cap.id];
                   const isSaving = capSaving === cap.id;
 
                   return (
@@ -1108,8 +1067,8 @@ export default function Businesses() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-xs font-semibold text-gray-900">{cap.label}</span>
-                          <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold capitalize ${TIER_BADGE_STYLE[requiredTier]}`}>
-                            {requiredTier}
+                          <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${TIER_BADGE_STYLE[requiredTier] || 'bg-gray-100 text-gray-600'}`}>
+                            {PLAN_LABELS[requiredTier as SubscriptionTier] || requiredTier}
                           </span>
                           {isOverridden && (
                             <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[9px] font-bold text-green-700">
