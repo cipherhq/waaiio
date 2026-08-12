@@ -77,8 +77,14 @@ describeDb('P1-QUEUE: Real PostgreSQL schema contract tests', () => {
   beforeAll(() => {
     applyMigrations();
 
-    // Create prerequisite data
+    // Create prerequisite data — profiles first (businesses.owner_id FK)
     psql(`
+      INSERT INTO profiles (id, first_name, last_name, email)
+      VALUES
+        ('0a300000-0000-0000-0000-000000aa0001', 'Q1', 'Test', 'q1@test.local'),
+        ('0a300000-0000-0000-0000-000000aa0002', 'Q2', 'Test', 'q2@test.local')
+      ON CONFLICT (id) DO NOTHING;
+
       INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code, category, subscription_tier)
       VALUES
         ('${BIZ_ID}', 'Queue Test Biz', 'queue-test-1', '0a300000-0000-0000-0000-000000aa0001', '1 Test', 'Lagos', 'VI', '+2341111111111', 'active', 'NG', 'salon', 'growth'),
@@ -92,6 +98,7 @@ describeDb('P1-QUEUE: Real PostgreSQL schema contract tests', () => {
       DELETE FROM queue_entries WHERE business_id IN ('${BIZ_ID}', '${BIZ_ID_2}');
       DELETE FROM queue_reopen_subscriptions WHERE business_id IN ('${BIZ_ID}', '${BIZ_ID_2}');
       DELETE FROM businesses WHERE id IN ('${BIZ_ID}', '${BIZ_ID_2}');
+      DELETE FROM profiles WHERE id IN ('0a300000-0000-0000-0000-000000aa0001', '0a300000-0000-0000-0000-000000aa0002');
     `);
   });
 
