@@ -18,7 +18,7 @@ const state = {
   bizData: null as { metadata: Record<string, unknown>; name: string } | null,
   subData: [] as Array<{ id: string; customer_phone: string }>,
   resolvedSender: null as { sender: { sendText: ReturnType<typeof vi.fn> } } | null,
-  subUpdateErrors: {} as Record<string, { error: unknown }>,
+  subUpdateResults: {} as Record<string, { data: unknown; error: unknown }>,
   sendText: vi.fn(),
   loggerWarn: vi.fn(),
   withContext: vi.fn(),
@@ -73,7 +73,11 @@ vi.mock('@/lib/supabase/service', () => ({
           }) }),
           update: () => ({
             eq: (_col: string, subId: string) => ({
-              eq: () => Promise.resolve(state.subUpdateErrors[subId] || { error: null }),
+              eq: () => ({
+                select: () => Promise.resolve(
+                  state.subUpdateResults[subId] || { data: [{ id: subId }], error: null }
+                ),
+              }),
             }),
           }),
         };
@@ -97,7 +101,7 @@ describe('POST /api/queue/toggle-pause — executable route tests', () => {
     state.bizData = null;
     state.subData = [];
     state.resolvedSender = null;
-    state.subUpdateErrors = {};
+    state.subUpdateResults = {};
     state.sendText = vi.fn();
   });
 
@@ -142,7 +146,7 @@ describe('POST /api/queue/toggle-pause — executable route tests', () => {
     state.subData = [{ id: 'sub-fail', customer_phone: '+2348033333333' }];
     state.sendText.mockResolvedValue(undefined);
     state.resolvedSender = { sender: { sendText: state.sendText } };
-    state.subUpdateErrors = { 'sub-fail': { error: { message: 'db error' } } };
+    state.subUpdateResults = { 'sub-fail': { data: null, error: { message: 'db error' } } };
 
     const { POST } = await import('@/app/api/queue/toggle-pause/route');
     const res = await POST(makeRequest({ businessId: 'biz-001' }));
@@ -218,5 +222,27 @@ describe('POST /api/queue/toggle-pause — executable route tests', () => {
     expect(json.paused).toBe(false);
     expect(json.notifiedCount).toBe(0);
     expect(state.sendText).not.toHaveBeenCalled();
+  });
+
+  it('8. send succeeds but UPDATE matches zero rows → notifiedCount NOT incremented', async () => {
+    state.bizData = { metadata: { queue_paused: true }, name: 'Test Biz' };
+    state.subData = [{ id: 'sub-ghost', customer_phone: '+2348099999999' }];
+    state.sendText.mockResolvedValue(undefined);
+    state.resolvedSender = { sender: { sendText: state.sendText } };
+    // UPDATE returns no error but zero rows matched (subscription already notified or deleted)
+    state.subUpdateResults = { 'sub-ghost': { data: [], error: null } };
+
+    const { POST } = await import('@/app/api/queue/toggle-pause/route');
+    const res = await POST(makeRequest({ businessId: 'biz-001' }));
+    const json = await res.json();
+
+    // sendText was called (message sent)
+    expect(state.sendText).toHaveBeenCalledTimes(1);
+    // But bookkeeping didn't transition a row → not counted
+    expect(json.notifiedCount).toBe(0);
+    // Zero-row case logged
+    expect(state.withContext).toHaveBeenCalledWith(
+      expect.objectContaining({ op: 'queue.reopen-mark-notified', subId: 'sub-ghost', rowsUpdated: 0 })
+    );
   });
 });

@@ -75,18 +75,22 @@ export async function POST(request: NextRequest) {
                   text: `The queue at *${bizName}* is now open! Send *Hi* to join the queue.`,
                 });
 
-                // Mark as notified — only count if bookkeeping succeeds
-                const { error: markError } = await supabase
+                // Mark as notified — only count if exactly one row transitioned
+                const { data: updated, error: markError } = await supabase
                   .from('queue_reopen_subscriptions')
                   .update({ status: 'notified', notified_at: new Date().toISOString() })
                   .eq('id', sub.id)
-                  .eq('status', 'waiting');
+                  .eq('status', 'waiting')
+                  .select('id');
 
                 if (markError) {
                   logger.withContext({ op: 'queue.reopen-mark-notified', subId: sub.id }).error('[QUEUE] Failed to mark subscription as notified');
                   // Leave subscription in waiting state for retry — do NOT increment
-                } else {
+                } else if (updated && updated.length === 1) {
                   notifiedCount++;
+                } else {
+                  // Zero rows matched — subscription was not in expected state
+                  logger.withContext({ op: 'queue.reopen-mark-notified', subId: sub.id, rowsUpdated: updated?.length ?? 0 }).error('[QUEUE] Mark-notified matched zero rows');
                 }
               } catch (err) {
                 // sendText threw — subscription stays waiting (retryable)
