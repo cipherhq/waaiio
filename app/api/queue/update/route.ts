@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     const updateData: Record<string, unknown> = {};
 
     if (status) {
-      const validStatuses = ['waiting', 'serving', 'completed', 'no_show'];
+      const validStatuses = ['waiting', 'serving', 'completed', 'no_show', 'cancelled'];
       if (!validStatuses.includes(status)) {
         return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
       }
@@ -42,10 +42,11 @@ export async function POST(request: NextRequest) {
         .single();
 
       const validTransitions: Record<string, string[]> = {
-        waiting: ['serving', 'no_show'],
+        waiting: ['serving', 'no_show', 'cancelled'],
         serving: ['completed', 'no_show'],
         completed: [],
         no_show: [],
+        cancelled: [],
       };
 
       if (current && !validTransitions[current.status]?.includes(status)) {
@@ -77,7 +78,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Recalculate estimated wait for remaining waiting customers
-    if (status === 'serving' || status === 'completed' || status === 'no_show') {
+    if (status === 'serving' || status === 'completed' || status === 'no_show' || status === 'cancelled') {
       try {
         // Get average service time from today's completed entries
         const { data: completed } = await supabase

@@ -127,17 +127,14 @@ const queueStartStep: FlowStepConfig = {
       if (normalized === 'notify_reopen') {
         // Save the customer's phone for reopen notification
         if (ctx.business) {
-          await ctx.supabase
-            .from('waitlist_entries')
+          const { error: subError } = await ctx.supabase
+            .from('queue_reopen_subscriptions')
             .insert({
               business_id: ctx.business.id,
               customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-              type: 'queue_reopen_notify',
               status: 'waiting',
-            })
-            .then(({ error }) => {
-              if (error) logger.withContext({ op: 'queue.waitlist-notify-insert', ...safeLogErrorContext(error) }).error('[QUEUE] Waitlist notify insert error');
             });
+          if (subError) logger.withContext({ op: 'queue.reopen-sub-insert', ...safeLogErrorContext(subError) }).error('[QUEUE] Reopen subscription insert error');
         }
         await ctx.sender.sendText({
           to: ctx.from,

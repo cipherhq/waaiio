@@ -140,6 +140,7 @@ export default function QueueManagement() {
           <option value="serving">Serving</option>
           <option value="completed">Completed</option>
           <option value="no_show">No Show</option>
+          <option value="cancelled">Cancelled</option>
         </select>
       </div>
 
@@ -172,7 +173,7 @@ export default function QueueManagement() {
                 </td>
                 <td className="px-4 py-3 font-bold text-gray-900">{e.queue_number}</td>
                 <td className="px-4 py-3">
-                  <StatusBadge status={e.status === 'no_show' ? 'cancelled' : e.status} />
+                  <StatusBadge status={e.status} />
                 </td>
                 <td className="px-4 py-3 text-gray-500">{e.channel}</td>
                 <td className="px-4 py-3 text-gray-500">{fmtDateTime(e.checked_in_at)}</td>
