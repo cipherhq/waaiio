@@ -11,7 +11,7 @@ import {
   getRequiredTier,
   TIER_LABELS,
 } from '@/lib/capabilities/types';
-import { deriveCapabilityConfiguration, deriveNextOrder } from '@/lib/capabilities/derive-configuration';
+
 import type { SubscriptionTier } from '@/lib/constants';
 
 // ── Capability Groups ──
@@ -173,37 +173,32 @@ export default function CapabilitiesPage() {
     setEnabled(nextEnabled);
   }
 
-  async function saveCapabilities(config: {
-    capabilities: CapabilityId[];
-    order: CapabilityId[];
-    previousCapabilities: CapabilityId[];
-    previousOrder: CapabilityId[];
-  }) {
+  async function handleSave() {
     setSaving(true);
     setError('');
 
     try {
       // Detect newly enabled vs previous SELECTED state (not effective).
       // A paused selected capability is NOT newly activated.
-      const previousSelected = new Set(business.selectedCapabilities || business.capabilities);
-      const newlyEnabled = config.capabilities.filter(cap => !previousSelected.has(cap));
+      const previousSelected = new Set(serverSelected);
+      const newlyEnabled = enabled.filter(cap => !previousSelected.has(cap));
 
-      // Use atomic bulk configuration endpoint with explicit snapshot
+      // Use atomic bulk configuration endpoint
       const res = await fetch('/api/capabilities/configure', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           businessId: business.id,
-          capabilities: config.capabilities,
-          order: config.order,
+          capabilities: enabled,
+          order: orderedCaps,
         }),
       });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({ reason: 'unknown' }));
-        // Rollback to exact previous snapshots
-        setEnabled(config.previousCapabilities);
-        setOrderedCaps(config.previousOrder);
+        // Rollback to SERVER state (not local draft)
+        setEnabled([...serverSelected]);
+        setOrderedCaps([...serverOrder]);
         setError(
           data.reason === 'capabilities_denied'
             ? 'Some capabilities require a higher plan. Please upgrade.'
@@ -228,9 +223,9 @@ export default function CapabilitiesPage() {
       // Reload to get fresh server state (selectedCapabilities, capabilities, pausedCapabilities)
       window.location.reload();
     } catch {
-      // Network error — rollback to exact previous snapshots
-      setEnabled(config.previousCapabilities);
-      setOrderedCaps(config.previousOrder);
+      // Network error — rollback to SERVER state
+      setEnabled([...serverSelected]);
+      setOrderedCaps([...serverOrder]);
       setError('Network error. Please check your connection and try again.');
     } finally {
       setSaving(false);
@@ -457,11 +452,7 @@ export default function CapabilitiesPage() {
               </button>
               <button
                 id="cap-save-btn"
-                onClick={() => saveCapabilities(deriveCapabilityConfiguration(
-                  [...serverSelected],
-                  [...orderedCaps],
-                  enabled,
-                ))}
+                onClick={handleSave}
                 disabled={saving}
                 className="rounded-lg bg-brand px-6 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
               >

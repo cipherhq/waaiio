@@ -55,20 +55,15 @@ describe('AccountTab: post-upgrade capability save', () => {
 describe('Capabilities page: save and rollback', () => {
   const src = readSource('app/dashboard/capabilities/page.tsx');
 
-  it('uses deriveCapabilityConfiguration for toggle', () => {
-    expect(src).toContain('deriveCapabilityConfiguration(');
+  it('Save button calls handleSave directly', () => {
+    expect(src).toContain('onClick={handleSave}');
+    expect(src).toContain('async function handleSave');
   });
 
-  it('Save button passes explicit config to saveCapabilities', () => {
-    // handleToggle is local-only (no auto-save). Save button commits via saveCapabilities.
-    expect(src).toContain('saveCapabilities(deriveCapabilityConfiguration(');
-    // The save function signature takes explicit config
-    expect(src).toContain('async function saveCapabilities(config:');
-  });
-
-  it('restores previous state from config on API failure', () => {
-    expect(src).toContain('setEnabled(config.previousCapabilities)');
-    expect(src).toContain('setOrderedCaps(config.previousOrder)');
+  it('failed save rolls back to server state (not local draft)', () => {
+    const handleSaveFn = src.slice(src.indexOf('async function handleSave'), src.indexOf('async function handleSave') + 2000);
+    expect(handleSaveFn).toContain('setEnabled([...serverSelected])');
+    expect(handleSaveFn).toContain('setOrderedCaps([...serverOrder])');
   });
 
   it('wraps fetch in try/catch with finally', () => {
@@ -76,9 +71,9 @@ describe('Capabilities page: save and rollback', () => {
     expect(src).toMatch(/} finally \{[\s\S]*?setSaving\(false\)/);
   });
 
-  it('detects newly enabled against selectedCapabilities not effective', () => {
-    expect(src).toContain('business.selectedCapabilities || business.capabilities');
-    expect(src).toContain('const previousSelected = new Set(');
+  it('detects newly enabled against serverSelected', () => {
+    expect(src).toContain('new Set(serverSelected)');
+    expect(src).toContain('newlyEnabled');
   });
 
   it('paused selected capability is NOT newly activated', () => {
@@ -100,13 +95,9 @@ describe('Capabilities page: save and rollback', () => {
     expect(src).not.toContain('savingOrder');
   });
 
-  it('order in API payload uses synchronously derived newOrder (not stale state)', () => {
-    // In handleToggle, order comes from deriveCapabilityConfiguration
-    // In handleDrop, order comes from the synchronous splice
-    // Neither reads orderedCaps at fetch-time from closure
-    const saveSection = src.slice(src.indexOf('async function saveCapabilities'));
-    expect(saveSection).toContain('order: config.order');
-    expect(saveSection).not.toContain('order: orderedCaps');
+  it('Save uses current local orderedCaps in API payload', () => {
+    const saveSection = src.slice(src.indexOf('async function handleSave'));
+    expect(saveSection).toContain('order: orderedCaps');
   });
 });
 
