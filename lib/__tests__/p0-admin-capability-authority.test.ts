@@ -119,22 +119,26 @@ vi.mock('@/lib/admin-auth', () => ({
   requirePlatformAdmin: (...args: unknown[]) => mockRequirePlatformAdmin(...args),
 }));
 
+// Route must NOT use cookie-based createClient — only service client
+const mockCreateClient = vi.fn();
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: () => Promise.resolve({
-    from: vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({ data: { id: 'biz-1', subscription_tier: 'growth' }, error: null }),
-          eq: vi.fn().mockResolvedValue({ data: [], error: null }),
-        }),
-      }),
-    }),
-  }),
+  createClient: (...args: unknown[]) => { mockCreateClient(...args); return Promise.resolve({}); },
 }));
 
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     rpc: (...args: unknown[]) => mockRpc(...args),
+    from: (table: string) => ({
+      select: () => ({
+        eq: (_col: string, _val: string) => ({
+          single: () => Promise.resolve({
+            data: table === 'businesses' ? { id: 'biz-1', subscription_tier: 'growth' } : null,
+            error: null,
+          }),
+          eq: () => Promise.resolve({ data: [], error: null }),
+        }),
+      }),
+    }),
   }),
 }));
 
@@ -279,5 +283,43 @@ describe('P0-ADMIN: Admin capability route security', () => {
       }
     }
     expect(foundDependencyCheck).toBe(true);
+  });
+
+  it('20. route does NOT use cookie-based createClient (Bearer-only)', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1' });
+    mockRpc.mockResolvedValue({ data: { success: true }, error: null });
+
+    const { POST } = await import('@/app/api/admin/businesses/[id]/capabilities/route');
+    await POST(
+      makeAdminRequest('biz-1', { capability: 'chat', action: 'grant' }),
+      { params: Promise.resolve({ id: 'biz-1' }) },
+    );
+
+    // createClient (cookie-based) must never be called
+    expect(mockCreateClient).not.toHaveBeenCalled();
+  });
+
+  it('21. route source has no createClient import from supabase/server', async () => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('app/api/admin/businesses/[id]/capabilities/route.ts', 'utf-8');
+    expect(source).not.toContain("from '@/lib/supabase/server'");
+    expect(source).toContain("from '@/lib/supabase/service'");
+  });
+
+  it('22. GET works with Bearer-only (no cookies)', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1' });
+
+    const { GET } = await import('@/app/api/admin/businesses/[id]/capabilities/route');
+    const req = new NextRequest('http://localhost/api/admin/businesses/biz-1/capabilities', {
+      headers: { Authorization: 'Bearer test-token' },
+    });
+    const res = await GET(req, { params: Promise.resolve({ id: 'biz-1' }) });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json).toHaveProperty('tier');
+    expect(json).toHaveProperty('capabilities');
+    expect(json).toHaveProperty('overrides');
+    expect(mockCreateClient).not.toHaveBeenCalled();
   });
 });
