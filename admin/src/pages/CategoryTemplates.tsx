@@ -57,22 +57,7 @@ const FLOW_BADGE_COLORS: Record<string, string> = {
   queue: 'bg-orange-100 text-orange-700',
 };
 
-const ALL_CAPABILITIES = [
-  { id: 'scheduling', label: 'Scheduling', icon: '📅' },
-  { id: 'payment', label: 'Payments', icon: '💳' },
-  { id: 'ordering', label: 'Online Store', icon: '🛒' },
-  { id: 'ticketing', label: 'Ticketing', icon: '🎟️' },
-  { id: 'feedback', label: 'Feedback', icon: '⭐' },
-  { id: 'chat', label: 'Chat', icon: '💬' },
-  { id: 'reminders', label: 'Reminders', icon: '🔔' },
-  { id: 'loyalty', label: 'Loyalty', icon: '🏆' },
-  { id: 'referral', label: 'Referral', icon: '🤝' },
-  { id: 'queue', label: 'Queue', icon: '📋' },
-  { id: 'waitlist', label: 'Waitlist', icon: '📝' },
-  { id: 'reports', label: 'Reports', icon: '📄' },
-  { id: 'staff', label: 'Staff', icon: '👥' },
-  { id: 'crowdfunding', label: 'Crowdfunding', icon: '❤️' },
-] as const;
+import { CAPABILITIES as ALL_CAPABILITIES } from '@shared/capabilities';
 
 const EMPTY_SERVICE: DefaultService = {
   name: '',

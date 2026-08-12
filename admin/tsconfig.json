@@ -23,13 +23,17 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@shared/*": [
+        "../shared/*"
       ]
     },
     "baseUrl": "."
   },
   "include": [
     "src/**/*.ts",
-    "src/**/*.tsx"
+    "src/**/*.tsx",
+    "../shared/**/*.ts"
   ],
   "exclude": [
     "node_modules"

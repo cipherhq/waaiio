@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { CAPABILITIES } from '@/lib/capabilities/types';
@@ -15,7 +14,8 @@ export async function GET(
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
-  const supabase = await createClient();
+  // Use service client — Admin auth is via Bearer token, not Dashboard cookies
+  const supabase = createServiceClient();
 
   const { data: biz } = await supabase
     .from('businesses')
@@ -66,8 +66,8 @@ export async function POST(
     return NextResponse.json({ error: 'Action must be grant or revoke' }, { status: 400 });
   }
 
-  // Verify business exists
-  const supabase = await createClient();
+  // Verify business exists — use service client (Admin auth is Bearer, not cookie)
+  const supabase = createServiceClient();
   const { data: biz } = await supabase
     .from('businesses')
     .select('id')
