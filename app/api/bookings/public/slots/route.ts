@@ -6,6 +6,12 @@ import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 /**
  * GET /api/bookings/public/slots?businessId=X&serviceId=Y&date=YYYY-MM-DD
  * Returns available time slots for a given business, service, and date.
+ *
+ * Availability rules match the canonical book_slot_atomic authority:
+ * - Capacity: count ALL active bookings at each time (cross-service)
+ * - Buffer: bidirectional overlap — a candidate is blocked if its
+ *   [time, time+duration) range (with buffer margin) overlaps any
+ *   existing booking's [time, time+duration) range (with buffer margin)
  */
 export async function GET(request: NextRequest) {
   const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'bookings-public-slots'), 60, 60_000);
@@ -48,7 +54,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Business not found' }, { status: 404 });
     }
 
-    // Fetch service details
+    // Fetch service details (for the candidate slot's duration/buffer/capacity)
     const { data: service, error: svcError } = await supabase
       .from('services')
       .select('duration_minutes, buffer_minutes, max_capacity, metadata')
@@ -91,50 +97,86 @@ export async function GET(request: NextRequest) {
     const isDropoff = svcMeta.is_dropoff === true;
     const maxCapacity = isDropoff ? 9999 : (service.max_capacity || 1);
 
-    // Fetch existing bookings for this date + service
+    // Candidate slot duration and buffer (for the service being booked)
+    const candidateDuration = service.duration_minutes || 30;
+    const candidateBuffer = service.buffer_minutes || 0;
+
+    // Fetch ALL existing bookings for this business+date (cross-service, matching book_slot_atomic)
+    // book_slot_atomic does NOT filter by service_id — capacity is business-wide per time slot
     const { data: existingBookings } = await supabase
       .from('bookings')
-      .select('time, services(duration_minutes, buffer_minutes)')
+      .select('time, staff_id, services(duration_minutes, buffer_minutes)')
       .eq('business_id', businessId)
-      .eq('service_id', serviceId)
       .eq('date', date)
       .in('status', ['confirmed', 'pending', 'in_progress']);
 
-    // Count bookings per slot — accounting for duration + buffer overlap
-    const slotCounts = new Map<string, number>();
-    for (const b of existingBookings || []) {
-      if (b.time) {
-        const timeStr = typeof b.time === 'string' ? b.time.slice(0, 5) : '';
-        const [bH, bM] = timeStr.split(':').map(Number);
-        const bookingStart = bH * 60 + bM;
-        const svc = b.services as unknown as {
-          duration_minutes?: number;
-          buffer_minutes?: number;
-        } | null;
-        const bookingDuration =
-          (svc?.duration_minutes || service.duration_minutes || 30) +
-          (svc?.buffer_minutes || service.buffer_minutes || 0);
-
-        for (const slot of allSlots) {
-          const [sH, sM] = slot.split(':').map(Number);
-          const slotStart = sH * 60 + sM;
-          if (slotStart >= bookingStart && slotStart < bookingStart + bookingDuration) {
-            slotCounts.set(slot, (slotCounts.get(slot) || 0) + 1);
-          }
-        }
-      }
-    }
-
-    // Filter out fully booked slots. Also filter past times if date is today.
+    // For each candidate slot, check availability using the same rules as book_slot_atomic:
+    //
+    // 1. CAPACITY: count bookings at exact same time (no staff filter for public booking)
+    //    Matches: WHERE time = p_time AND (p_staff_id IS NULL OR staff_id = p_staff_id)
+    //    Public booking has no staff_id → counts ALL bookings at that time
+    //
+    // 2. BUFFER OVERLAP: bidirectional check for bookings at DIFFERENT times
+    //    candidateTime < (existingTime + existingDuration + buffer)
+    //    AND (candidateTime + candidateDuration) > (existingTime - buffer)
+    //    Matches book_slot_atomic lines 153-155
     const now = new Date();
     const isToday = date === today;
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
     const availableSlots = allSlots
-      .map((t) => {
-        const booked = slotCounts.get(t) || 0;
-        const available = maxCapacity - booked;
-        return { time: t, available: Math.max(0, available) };
+      .map((slotTime) => {
+        const [sH, sM] = slotTime.split(':').map(Number);
+        const slotMinutes = sH * 60 + sM;
+
+        // 1. Exact-time capacity count (matching book_slot_atomic capacity check)
+        let exactCount = 0;
+        for (const b of existingBookings || []) {
+          if (!b.time) continue;
+          const bTimeStr = typeof b.time === 'string' ? b.time.slice(0, 5) : '';
+          if (bTimeStr === slotTime) {
+            exactCount++;
+          }
+        }
+
+        if (exactCount >= maxCapacity) {
+          return { time: slotTime, available: 0 };
+        }
+
+        // 2. Buffer overlap check (matching book_slot_atomic buffer check)
+        if (candidateBuffer > 0) {
+          let bufferBlocked = false;
+          for (const b of existingBookings || []) {
+            if (!b.time) continue;
+            const bTimeStr = typeof b.time === 'string' ? b.time.slice(0, 5) : '';
+            if (bTimeStr === slotTime) continue; // same-time handled by capacity above
+
+            const [bH, bM] = bTimeStr.split(':').map(Number);
+            const existingMinutes = bH * 60 + bM;
+
+            const svc = b.services as unknown as {
+              duration_minutes?: number;
+              buffer_minutes?: number;
+            } | null;
+            const existingDuration = svc?.duration_minutes || candidateDuration;
+
+            // Bidirectional overlap with buffer:
+            // candidate < (existing + existingDuration + buffer)
+            // AND (candidate + candidateDuration) > (existing - buffer)
+            if (
+              slotMinutes < existingMinutes + existingDuration + candidateBuffer &&
+              slotMinutes + candidateDuration > existingMinutes - candidateBuffer
+            ) {
+              bufferBlocked = true;
+              break;
+            }
+          }
+          if (bufferBlocked) {
+            return { time: slotTime, available: 0 };
+          }
+        }
+
+        return { time: slotTime, available: maxCapacity - exactCount };
       })
       .filter((s) => {
         if (s.available <= 0) return false;
