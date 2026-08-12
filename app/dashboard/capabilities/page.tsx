@@ -276,7 +276,7 @@ export default function CapabilitiesPage() {
             Add Features
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Turn features on or off to customize what your WhatsApp bot can do. Enable a feature and it instantly appears in your bot menu.
+            Choose the features you want, then click Save Changes to update your account and WhatsApp bot.
             {isInTrial && ' Your 30-day trial includes everything — try them all.'}
           </p>
         </div>
