@@ -70,10 +70,10 @@ export default function CapabilitiesPage() {
   const [search, setSearch] = useState('');
 
   // ── Drag-and-drop reorder state ──
-  const [orderedCaps, setOrderedCaps] = useState<CapabilityId[]>(selected);
+  const serverOrder = (selected || []) as CapabilityId[];
+  const [orderedCaps, setOrderedCaps] = useState<CapabilityId[]>(serverOrder);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  const [savingOrder, setSavingOrder] = useState(false);
   const [error, setError] = useState('');
 
   // Sync orderedCaps when enabled changes
@@ -103,51 +103,20 @@ export default function CapabilitiesPage() {
     setDragOverIndex(null);
   }, []);
 
-  const handleDrop = useCallback(async (e: React.DragEvent, dropIndex: number) => {
+  const handleDrop = useCallback((e: React.DragEvent, dropIndex: number) => {
     e.preventDefault();
     const fromIndex = dragIndex;
     setDragIndex(null);
     setDragOverIndex(null);
 
     if (fromIndex === null || fromIndex === dropIndex) return;
-    // Don't auto-save order while there are unsaved selection changes
-    if (saving) return;
 
-    // Snapshot current state synchronously
-    const previousOrder = [...orderedCaps];
-    const currentEnabled = [...enabled];
-
-    // Derive new order via splice
+    // Local-only reorder — no network request. User commits via Save Changes.
     const newOrder = [...orderedCaps];
     const [moved] = newOrder.splice(fromIndex, 1);
     newOrder.splice(dropIndex, 0, moved);
-
-    // Optimistic UI
     setOrderedCaps(newOrder);
-
-    // Send explicit snapshot (not reading from potentially stale state)
-    setSavingOrder(true);
-    try {
-      const res = await fetch('/api/capabilities/configure', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          businessId: business.id,
-          capabilities: currentEnabled,
-          order: newOrder,
-        }),
-      });
-      if (!res.ok) {
-        setOrderedCaps(previousOrder);
-        setError('Failed to save order. Please try again.');
-      }
-    } catch {
-      setOrderedCaps(previousOrder);
-      setError('Network error saving order. Please try again.');
-    } finally {
-      setSavingOrder(false);
-    }
-  }, [dragIndex, orderedCaps, business.id, enabled]);
+  }, [dragIndex, orderedCaps]);
 
   const handleDragEnd = useCallback(() => {
     setDragIndex(null);
@@ -293,10 +262,14 @@ export default function CapabilitiesPage() {
   // Compare against server-selected (includes paused), NOT effective
   const serverSelected = (business.selectedCapabilities || business.capabilities) as CapabilityId[];
   const hasChanges = (() => {
+    // Selection changed?
     if (enabled.length !== serverSelected.length) return true;
     const sorted1 = [...enabled].sort();
     const sorted2 = [...serverSelected].sort();
-    return sorted1.some((v, i) => v !== sorted2[i]);
+    if (sorted1.some((v, i) => v !== sorted2[i])) return true;
+    // Order changed?
+    if (orderedCaps.length !== serverOrder.length) return true;
+    return orderedCaps.some((v, i) => v !== serverOrder[i]);
   })();
 
   return (
@@ -476,7 +449,7 @@ export default function CapabilitiesPage() {
               <button
                 onClick={() => {
                   setEnabled([...serverSelected]);
-                  setOrderedCaps([...serverSelected]);
+                  setOrderedCaps([...serverOrder]);
                 }}
                 className="rounded-lg border border-gray-300 dark:border-gray-600 px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
               >

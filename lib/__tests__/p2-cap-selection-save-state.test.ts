@@ -9,12 +9,16 @@ import * as fs from 'fs';
 
 const PAGE_SOURCE = fs.readFileSync('app/dashboard/capabilities/page.tsx', 'utf-8');
 
+// Extract handleDrop function body for targeted assertions
+const handleDropStart = PAGE_SOURCE.indexOf('const handleDrop');
+const handleDropBody = PAGE_SOURCE.slice(handleDropStart, handleDropStart + 600);
+
 describe('P2-CAP-1: Add Features state model', () => {
+  // ── Selection state ──
+
   it('1. hasChanges compares against serverSelected (not business.capabilities)', () => {
-    // Must use serverSelected (selectedCapabilities || capabilities)
     expect(PAGE_SOURCE).toContain('serverSelected');
     expect(PAGE_SOURCE).toContain('enabled.length !== serverSelected.length');
-    // Must NOT compare against business.capabilities for hasChanges
     expect(PAGE_SOURCE).not.toMatch(/hasChanges[\s\S]*?business\.capabilities\.length/);
   });
 
@@ -23,13 +27,12 @@ describe('P2-CAP-1: Add Features state model', () => {
     expect(PAGE_SOURCE).toContain('const serverSelected');
   });
 
-  it('3. Discard restores serverSelected (not business.capabilities)', () => {
-    // Discard onClick must reference serverSelected
+  it('3. Discard restores serverSelected AND serverOrder', () => {
     expect(PAGE_SOURCE).toContain('setEnabled([...serverSelected])');
-    expect(PAGE_SOURCE).toContain('setOrderedCaps([...serverSelected])');
+    expect(PAGE_SOURCE).toContain('setOrderedCaps([...serverOrder])');
   });
 
-  it('4. handleToggle does NOT auto-save (no saveCapabilities call)', () => {
+  it('4. handleToggle does NOT auto-save (no saveCapabilities call, no fetch)', () => {
     const handleToggleFn = PAGE_SOURCE.slice(
       PAGE_SOURCE.indexOf('function handleToggle('),
       PAGE_SOURCE.indexOf('function handleToggle(') + PAGE_SOURCE.slice(PAGE_SOURCE.indexOf('function handleToggle(')).indexOf('\n  }') + 4
@@ -38,7 +41,7 @@ describe('P2-CAP-1: Add Features state model', () => {
     expect(handleToggleFn).not.toContain('fetch(');
   });
 
-  it('5. handleToggle is guarded by saving state (no concurrent toggles during save)', () => {
+  it('5. handleToggle is guarded by saving state', () => {
     const handleToggleFn = PAGE_SOURCE.slice(
       PAGE_SOURCE.indexOf('function handleToggle('),
       PAGE_SOURCE.indexOf('function handleToggle(') + 200
@@ -46,52 +49,80 @@ describe('P2-CAP-1: Add Features state model', () => {
     expect(handleToggleFn).toContain('saving');
   });
 
-  it('6. Save button is disabled while saving', () => {
+  // ── Order state ──
+
+  it('6. handleDrop is local-only (ZERO network requests)', () => {
+    expect(handleDropBody).not.toContain('fetch(');
+    expect(handleDropBody).not.toContain('fetch(');
+    expect(handleDropBody).not.toContain("'/api/");
+    expect(handleDropBody).toContain('setOrderedCaps(newOrder)');
+  });
+
+  it('7. no savingOrder state (removed — ordering is local-only)', () => {
+    expect(PAGE_SOURCE).not.toContain('savingOrder');
+    expect(PAGE_SOURCE).not.toContain('setSavingOrder');
+  });
+
+  it('8. hasChanges considers order changes', () => {
+    // Must compare orderedCaps against serverOrder
+    expect(PAGE_SOURCE).toContain('orderedCaps.length !== serverOrder.length');
+    expect(PAGE_SOURCE).toContain('orderedCaps.some');
+  });
+
+  it('9. serverOrder snapshot exists', () => {
+    expect(PAGE_SOURCE).toContain('const serverOrder');
+  });
+
+  // ── Save behavior ──
+
+  it('10. Save button is disabled while saving', () => {
     expect(PAGE_SOURCE).toContain('disabled={saving}');
   });
 
-  it('7. Save sends one configuration request (explicit atomic save)', () => {
-    // Save button calls saveCapabilities which POSTs to /api/capabilities/configure
+  it('11. Save sends ONE configuration request (explicit atomic save)', () => {
     expect(PAGE_SOURCE).toContain("'/api/capabilities/configure'");
   });
 
-  it('8. Save uses serverSelected as previous snapshot (not effective)', () => {
-    // The Save button's onClick uses serverSelected for deriveCapabilityConfiguration
+  it('12. Save uses serverSelected as previous snapshot', () => {
     expect(PAGE_SOURCE).toContain('[...serverSelected]');
   });
 
-  it('9. newlyEnabled compares against selectedCapabilities (not effective)', () => {
-    expect(PAGE_SOURCE).toContain('business.selectedCapabilities || business.capabilities');
+  it('13. newlyEnabled compares against selectedCapabilities (not effective)', () => {
     expect(PAGE_SOURCE).toContain('previousSelected');
     expect(PAGE_SOURCE).toContain('newlyEnabled');
   });
 
-  it('10. membership/loyalty dependency bundling exists in handleToggle', () => {
+  it('14. membership/loyalty dependency bundling in handleToggle', () => {
     expect(PAGE_SOURCE).toContain("capId === 'membership'");
     expect(PAGE_SOURCE).toContain("capId === 'loyalty'");
   });
 
-  it('11. ordering auto-save is guarded by saving state', () => {
-    const handleDropFn = PAGE_SOURCE.slice(
-      PAGE_SOURCE.indexOf('const handleDrop'),
-      PAGE_SOURCE.indexOf('const handleDrop') + 500
-    );
-    expect(handleDropFn).toContain('if (saving) return');
-  });
+  // ── Error handling ──
 
-  it('12. failed save shows specific error messages', () => {
+  it('15. failed save shows specific error messages', () => {
     expect(PAGE_SOURCE).toContain('capabilities_denied');
     expect(PAGE_SOURCE).toContain('dependency_missing');
     expect(PAGE_SOURCE).toContain('configuration_conflict');
   });
 
-  it('13. failed save rolls back to previous snapshot', () => {
+  it('16. failed save rolls back to previous snapshot', () => {
     expect(PAGE_SOURCE).toContain('config.previousCapabilities');
     expect(PAGE_SOURCE).toContain('config.previousOrder');
   });
 
-  it('14. template provisioning is best-effort (catch swallowed)', () => {
+  it('17. template provisioning is best-effort (catch swallowed)', () => {
     expect(PAGE_SOURCE).toContain("'/api/whatsapp/templates/provision'");
     expect(PAGE_SOURCE).toContain('.catch(() => {})');
+  });
+
+  // ── Integration: toggle then drag has zero network calls ──
+
+  it('18. neither handleToggle nor handleDrop calls fetch', () => {
+    const handleToggleFn = PAGE_SOURCE.slice(
+      PAGE_SOURCE.indexOf('function handleToggle('),
+      PAGE_SOURCE.indexOf('function handleToggle(') + PAGE_SOURCE.slice(PAGE_SOURCE.indexOf('function handleToggle(')).indexOf('\n  }') + 4
+    );
+    expect(handleToggleFn).not.toContain('fetch(');
+    expect(handleDropBody).not.toContain('fetch(');
   });
 });

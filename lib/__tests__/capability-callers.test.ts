@@ -90,16 +90,14 @@ describe('Capabilities page: save and rollback', () => {
     expect(src).toContain('refresh the page');
   });
 
-  it('uses atomic configure endpoint for reorder (not multiple toggle calls)', () => {
+  it('reorder is local-only (no network request in handleDrop)', () => {
     const handleDropSection = src.slice(src.indexOf('const handleDrop'), src.indexOf('const handleDragEnd'));
-    expect(handleDropSection).toContain('/api/capabilities/configure');
-    expect(handleDropSection).not.toContain('Promise.all');
+    expect(handleDropSection).not.toContain('fetch(');
+    expect(handleDropSection).toContain('setOrderedCaps(newOrder)');
   });
 
-  it('reorder sends explicit currentEnabled snapshot', () => {
-    const handleDropSection = src.slice(src.indexOf('const handleDrop'), src.indexOf('const handleDragEnd'));
-    expect(handleDropSection).toContain('const currentEnabled = [...enabled]');
-    expect(handleDropSection).toContain('capabilities: currentEnabled');
+  it('no savingOrder state (ordering is local-only until Save)', () => {
+    expect(src).not.toContain('savingOrder');
   });
 
   it('order in API payload uses synchronously derived newOrder (not stale state)', () => {
