@@ -27,8 +27,6 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
-import * as path from 'path';
-import * as fs from 'fs';
 
 const dbUrl = process.env.TEST_DATABASE_URL;
 
@@ -51,21 +49,9 @@ function psqlSafe(sql: string): { stdout: string; error: boolean } {
   }
 }
 
-function applyMigrations(): void {
-  const migrationsDir = path.resolve('supabase/migrations');
-  const files = fs.readdirSync(migrationsDir).sort();
-  for (const file of files) {
-    if (!file.endsWith('.sql')) continue;
-    const filePath = path.join(migrationsDir, file);
-    try {
-      execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${filePath}"`, {
-        encoding: 'utf-8', timeout: 30000, stdio: 'pipe',
-      });
-    } catch {
-      // Some migrations may fail due to missing extensions/functions — continue
-    }
-  }
-}
+// Migrations are applied by CI's "Apply all migrations" step before tests run.
+// For local usage, apply migrations first:
+//   psql "$TEST_DATABASE_URL" -f supabase/migrations/*.sql
 
 const BIZ_ID = '0a300000-0000-0000-0000-000000000001';
 const BIZ_ID_2 = '0a300000-0000-0000-0000-000000000002';
@@ -75,8 +61,6 @@ const describeDb = dbUrl ? describe : describe.skip;
 
 describeDb('P1-QUEUE: Real PostgreSQL schema contract tests', () => {
   beforeAll(() => {
-    applyMigrations();
-
     // Create prerequisite data — auth.users → profiles → businesses (FK chain)
     const OWNER_1 = '0a300000-0000-0000-0000-000000aa0001';
     const OWNER_2 = '0a300000-0000-0000-0000-000000aa0002';
