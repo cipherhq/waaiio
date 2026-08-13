@@ -40,19 +40,23 @@ function asUser(userId: string, sql: string): string {
   `);
 }
 
-/** Run SQL as service_role */
+/** Run SQL as service_role (overrides both auth.role() and actual role) */
 function asServiceRole(sql: string): string {
   return psql(`
     BEGIN;
+    CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $fn$ SELECT 'service_role'::TEXT; $fn$ LANGUAGE SQL STABLE;
     SET LOCAL ROLE service_role;
     ${sql}
     COMMIT;
   `);
 }
 
-/** Reset auth.uid() to CI default */
-function resetAuthUid(): void {
-  psql(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;`);
+/** Reset auth.uid() and auth.role() to CI defaults */
+function resetAuth(): void {
+  psql(`
+    CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;
+    CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
+  `);
 }
 
 const OWNER_1 = '0a300000-0000-0000-0000-000000cc0001';
@@ -102,7 +106,7 @@ describeDb('P1-CHAT-1: chat_messages team-member mark-read RLS (Real PostgreSQL)
   });
 
   afterAll(() => {
-    resetAuthUid();
+    resetAuth();
     psql(`
       DELETE FROM chat_messages WHERE business_id IN ('${BIZ_1}', '${BIZ_2}');
       DELETE FROM business_members WHERE business_id IN ('${BIZ_1}', '${BIZ_2}');
@@ -118,14 +122,14 @@ describeDb('P1-CHAT-1: chat_messages team-member mark-read RLS (Real PostgreSQL)
     psql(`UPDATE chat_messages SET is_read = false WHERE id = '${MSG_1}';`);
     const result = asUser(OWNER_1, `UPDATE chat_messages SET is_read = true WHERE id = '${MSG_1}' RETURNING id;`);
     expect(result).toContain(MSG_1);
-    resetAuthUid();
+    resetAuth();
   });
 
   it('2. authorized team member can mark messages as read', () => {
     psql(`UPDATE chat_messages SET is_read = false WHERE id = '${MSG_1}';`);
     const result = asUser(TEAM_MEMBER, `UPDATE chat_messages SET is_read = true WHERE id = '${MSG_1}' RETURNING id;`);
     expect(result).toContain(MSG_1);
-    resetAuthUid();
+    resetAuth();
   });
 
   it('3. team member cannot update another business messages', () => {
@@ -134,14 +138,14 @@ describeDb('P1-CHAT-1: chat_messages team-member mark-read RLS (Real PostgreSQL)
     expect(result).toBe('');
     const isRead = psql(`SELECT is_read FROM chat_messages WHERE id = '${MSG_3}';`);
     expect(isRead).toBe('f');
-    resetAuthUid();
+    resetAuth();
   });
 
   it('4. unrelated authenticated user cannot update messages', () => {
     psql(`UPDATE chat_messages SET is_read = false WHERE id = '${MSG_1}';`);
     const result = asUser(UNRELATED_USER, `UPDATE chat_messages SET is_read = true WHERE id = '${MSG_1}' RETURNING id;`);
     expect(result).toBe('');
-    resetAuthUid();
+    resetAuth();
   });
 
   it('5. service role can update messages', () => {
@@ -153,7 +157,7 @@ describeDb('P1-CHAT-1: chat_messages team-member mark-read RLS (Real PostgreSQL)
   it('6. mark-read is idempotent (already-read message)', () => {
     const result = asUser(OWNER_1, `UPDATE chat_messages SET is_read = true WHERE id = '${MSG_2}' RETURNING id;`);
     expect(result).toContain(MSG_2);
-    resetAuthUid();
+    resetAuth();
   });
 
   it('7. team member mark-read actually changes is_read state', () => {
@@ -161,7 +165,7 @@ describeDb('P1-CHAT-1: chat_messages team-member mark-read RLS (Real PostgreSQL)
     const before = psql(`SELECT is_read FROM chat_messages WHERE id = '${MSG_1}';`);
     expect(before).toBe('f');
     asUser(TEAM_MEMBER, `UPDATE chat_messages SET is_read = true WHERE id = '${MSG_1}';`);
-    resetAuthUid();
+    resetAuth();
     const after = psql(`SELECT is_read FROM chat_messages WHERE id = '${MSG_1}';`);
     expect(after).toBe('t');
   });
