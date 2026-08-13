@@ -7,6 +7,10 @@
 -- This migration adds a team-member UPDATE policy scoped to the same
 -- business_members authorization used by existing team-member policies.
 
+-- Ensure authenticated role has UPDATE privilege on chat_messages
+-- (Supabase auto-grants this, but CI test databases may not)
+GRANT UPDATE ON chat_messages TO authenticated;
+
 -- Team members can update chat messages for their authorized businesses
 CREATE POLICY "team_members_update_messages"
   ON chat_messages
