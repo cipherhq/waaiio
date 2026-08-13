@@ -5,7 +5,9 @@ import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 /**
  * GET /api/bookings/public/slots?businessId=X&serviceId=Y&date=YYYY-MM-DD
- * Returns available time slots for a given business, service, and date.
+ * GET /api/bookings/public/slots?businessId=X&appointmentId=Y&date=YYYY-MM-DD
+ *
+ * Returns available time slots for a given business, service/appointment, and date.
  *
  * Availability rules match the canonical book_slot_atomic authority:
  * - Capacity: count ALL active bookings at each time (cross-service)
@@ -21,11 +23,24 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const businessId = searchParams.get('businessId');
     const serviceId = searchParams.get('serviceId');
+    const appointmentId = searchParams.get('appointmentId');
     const date = searchParams.get('date');
 
-    if (!businessId || !serviceId || !date) {
+    if (!businessId || !date) {
       return NextResponse.json(
-        { error: 'Missing required params: businessId, serviceId, date' },
+        { error: 'Missing required params: businessId, serviceId or appointmentId, date' },
+        { status: 400 },
+      );
+    }
+    if (!serviceId && !appointmentId) {
+      return NextResponse.json(
+        { error: 'Exactly one of serviceId or appointmentId is required' },
+        { status: 400 },
+      );
+    }
+    if (serviceId && appointmentId) {
+      return NextResponse.json(
+        { error: 'Provide serviceId or appointmentId, not both' },
         { status: 400 },
       );
     }
@@ -54,17 +69,51 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Business not found' }, { status: 404 });
     }
 
-    // Fetch service details (for the candidate slot's duration/buffer/capacity)
-    const { data: service, error: svcError } = await supabase
-      .from('services')
-      .select('duration_minutes, buffer_minutes, max_capacity, metadata')
-      .eq('id', serviceId)
-      .eq('business_id', businessId)
-      .eq('is_active', true)
-      .single();
+    // Fetch bookable item details — service or appointment
+    let itemDuration: number;
+    let itemBuffer: number;
+    let itemMaxCapacity: number | null;
+    let itemMetadata: Record<string, unknown> | null;
+    // Appointment-specific availability overrides
+    let itemAvailableDays: string[] | null = null;
+    let itemAvailableFrom: string | null = null;
+    let itemAvailableTo: string | null = null;
 
-    if (svcError || !service) {
-      return NextResponse.json({ error: 'Service not found' }, { status: 404 });
+    if (appointmentId) {
+      const { data: appt, error: apptError } = await supabase
+        .from('appointments')
+        .select('duration_minutes, buffer_minutes, max_capacity, metadata, available_days, available_from, available_to')
+        .eq('id', appointmentId)
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .single();
+
+      if (apptError || !appt) {
+        return NextResponse.json({ error: 'Appointment type not found' }, { status: 404 });
+      }
+      itemDuration = appt.duration_minutes || 30;
+      itemBuffer = appt.buffer_minutes || 0;
+      itemMaxCapacity = appt.max_capacity;
+      itemMetadata = appt.metadata as Record<string, unknown> | null;
+      itemAvailableDays = appt.available_days;
+      itemAvailableFrom = appt.available_from;
+      itemAvailableTo = appt.available_to;
+    } else {
+      const { data: service, error: svcError } = await supabase
+        .from('services')
+        .select('duration_minutes, buffer_minutes, max_capacity, metadata')
+        .eq('id', serviceId!)
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .single();
+
+      if (svcError || !service) {
+        return NextResponse.json({ error: 'Service not found' }, { status: 404 });
+      }
+      itemDuration = service.duration_minutes || 30;
+      itemBuffer = service.buffer_minutes || 0;
+      itemMaxCapacity = service.max_capacity;
+      itemMetadata = service.metadata as Record<string, unknown> | null;
     }
 
     // Determine operating hours for the selected day
@@ -81,25 +130,32 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ slots: [] });
     }
 
-    const openTime = dayHours?.open || '08:00';
-    const closeTime = dayHours?.close || '22:00';
+    // Check appointment-specific available_days restriction
+    if (itemAvailableDays && itemAvailableDays.length > 0) {
+      if (!itemAvailableDays.includes(selectedDay)) {
+        return NextResponse.json({ slots: [] });
+      }
+    }
 
-    // Determine slot interval from service duration or business metadata
+    // Use appointment-specific hours if set, otherwise business operating hours
+    const openTime = itemAvailableFrom || dayHours?.open || '08:00';
+    const closeTime = itemAvailableTo || dayHours?.close || '22:00';
+
+    // Determine slot interval from item duration or business metadata
     const bizMeta = (business.metadata || {}) as Record<string, unknown>;
     const slotInterval =
-      (bizMeta.slot_interval_minutes as number) || service.duration_minutes || 60;
+      (bizMeta.slot_interval_minutes as number) || itemDuration || 60;
 
     // Generate all possible slots
     const allSlots = generateTimeSlots(openTime, closeTime, slotInterval);
 
     // For drop-off services, skip time selection (all slots available with high capacity)
-    const svcMeta = (service.metadata || {}) as Record<string, unknown>;
-    const isDropoff = svcMeta.is_dropoff === true;
-    const maxCapacity = isDropoff ? 9999 : (service.max_capacity || 1);
+    const isDropoff = itemMetadata?.is_dropoff === true;
+    const maxCapacity = isDropoff ? 9999 : (itemMaxCapacity || 1);
 
-    // Candidate slot duration and buffer (for the service being booked)
-    const candidateDuration = service.duration_minutes || 30;
-    const candidateBuffer = service.buffer_minutes || 0;
+    // Candidate slot duration and buffer
+    const candidateDuration = itemDuration;
+    const candidateBuffer = itemBuffer;
 
     // Fetch ALL existing bookings for this business+date (cross-service, matching book_slot_atomic)
     // book_slot_atomic does NOT filter by service_id — capacity is business-wide per time slot

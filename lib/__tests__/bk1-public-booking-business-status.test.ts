@@ -188,11 +188,18 @@ describe('BK-1: Public booking business status check', () => {
     const routePath = resolve(__dirname, '../../app/api/bookings/public/create/route.ts');
     const src = readFileSync(routePath, 'utf-8');
 
-    // Find the businesses query block (between "Fetch business" and "Fetch service")
-    const bizSection = src.slice(
-      src.indexOf('// Fetch business'),
-      src.indexOf('// Fetch service'),
-    );
+    // Find the businesses query block — ends at the next major section
+    // (could be "Fetch service", "Fetch bookable item", or similar)
+    const bizStart = src.indexOf('// Fetch business');
+    expect(bizStart).toBeGreaterThan(-1);
+
+    // Find end of business section: the next comment starting a new section
+    // Look for the first "// Fetch" or "// Validate" after the business section start
+    const afterBiz = src.slice(bizStart + 20);
+    const nextSectionMatch = afterBiz.match(/\/\/\s+(Fetch |Validate )/);
+    const bizSection = nextSectionMatch
+      ? src.slice(bizStart, bizStart + 20 + nextSectionMatch.index!)
+      : src.slice(bizStart, bizStart + 500);
 
     expect(bizSection).not.toContain("eq('is_active'");
     expect(bizSection).toContain("eq('status', 'active')");

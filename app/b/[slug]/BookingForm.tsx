@@ -26,6 +26,7 @@ interface ServiceInfo {
   duration_minutes: number;
   image_url: string | null;
   is_dropoff: boolean;
+  is_appointment?: boolean;
 }
 
 interface TimeSlot {
@@ -154,11 +155,12 @@ export default function BookingForm({ business, services }: BookingFormProps) {
     setSelectedTime('');
 
     try {
-      const params = new URLSearchParams({
-        businessId: business.id,
-        serviceId: selectedService.id,
-        date: selectedDate,
-      });
+      const params = new URLSearchParams({ businessId: business.id, date: selectedDate });
+      if (selectedService.is_appointment) {
+        params.set('appointmentId', selectedService.id);
+      } else {
+        params.set('serviceId', selectedService.id);
+      }
       const res = await fetch(`/api/bookings/public/slots?${params}`);
       const data = await res.json();
       setSlots(data.slots || []);
@@ -260,7 +262,9 @@ export default function BookingForm({ business, services }: BookingFormProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           businessSlug: business.slug,
-          serviceId: selectedService.id,
+          ...(selectedService.is_appointment
+            ? { appointmentId: selectedService.id }
+            : { serviceId: selectedService.id }),
           date: selectedDate,
           time: selectedTime,
           guestName: guestName.trim(),

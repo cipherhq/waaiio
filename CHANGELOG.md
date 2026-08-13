@@ -7,6 +7,39 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-13
 
+### fix(P1-APPT-1): appointments.buffer_minutes schema + canonical schedule enforcement
+
+- **Bug:** `buffer_minutes` column did not exist on `appointments` table. Appointment `available_days`/`available_from`/`available_to` not enforced at booking authority layer. Bot flow never stored `_service_buffer_minutes`. `reschedule_booking_atomic` hardcoded `0` for buffer.
+- **Fix:** Migration 318: adds `buffer_minutes`. Creates `check_appointment_schedule` shared helper (deterministic `EXTRACT(DOW)`). `book_slot_atomic` calls helper when `p_appointment_id IS NOT NULL`. `reschedule_booking_atomic` does the same. Bot `appointment.flow.ts` stores buffer + schedule data. Services unchanged.
+- **Architecture:** ONE canonical schedule helper. DB is final authority. Public slots mirrors for UX.
+- **Files:** `supabase/migrations/318_appointment_buffer_booking_authority.sql`, `lib/bot/flows/appointment.flow.ts`
+- **Affects:** Appointment buffer + schedule enforcement in slot calculation, booking authority, rescheduling, bot flow
+- **Could break:** Appointments with configured schedule now enforce at booking time
+
+### fix(P1-APPT-3): dashboard manual booking for appointment-only businesses
+
+- **Bug:** Manual booking API required `serviceId` (400 if missing), queried only `services` table, and `book_manual_slot_atomic` hardcoded `p_appointment_id = NULL`. Appointment-only businesses could not create dashboard manual bookings.
+- **Fix:** API now accepts `appointmentId` as alternative to `serviceId` (XOR validation). Queries `appointments` table when `appointmentId` provided. `book_manual_slot_atomic` extended with `p_appointment_id uuid DEFAULT NULL` parameter. Dashboard reservations page loads both services and appointments in the manual booking form.
+- **MK-3 preserved:** Still uses `book_manual_slot_atomic` RPC (no direct INSERT), `createWhatsAppUser` for customer identity, atomic booking authority.
+- **Files:** `app/api/bookings/create-manual/route.ts`, `app/dashboard/reservations/page.tsx`, `supabase/migrations/318_appointment_buffer_booking_authority.sql`
+- **Affects:** Dashboard manual booking, booking notifications
+- **Could break:** Nothing — existing service bookings use `serviceId` path unchanged
+
+### fix(P1-APPT-4): public booking for appointment-only businesses
+
+- **Bug:** Public booking page (`/b/[slug]`) only queried `services` table. Appointment-only businesses showed "No services available." Slots endpoint required `serviceId`. Booking creation hardcoded `p_appointment_id: null`.
+- **Fix:** Public page uses `get_active_appointments_public` RPC (least-privilege, SECURITY DEFINER) — returns only 14 public-safe columns. Does NOT expose: staff_ids, auto_approve, metadata, buffer_minutes, requires_staff, allow_staff_selection, created_at, updated_at. No broad anon table SELECT. BookingForm sends `appointmentId` to slots/create. Slots endpoint respects appointment schedule.
+- **CONFLICT-1 preserved:** Cross-service capacity check unchanged. Buffer overlap algorithm unchanged.
+- **Files:** `app/b/[slug]/page.tsx`, `app/b/[slug]/BookingForm.tsx`, `app/api/bookings/public/slots/route.ts`, `app/api/bookings/public/create/route.ts`, `supabase/migrations/318_appointment_buffer_booking_authority.sql`
+- **Affects:** Public booking discovery, slot availability, booking creation
+- **Could break:** Nothing — existing service bookings unchanged
+
+### fix(BK-1): public booking business-status test scope regression
+
+- **Bug:** `bk1-public-booking-business-status.test.ts` used hardcoded `'// Fetch service'` comment to scope the business query. Comment changed to `'// Fetch bookable item'`, test scope leaked into service query.
+- **Fix:** Regex-based next-section detection. Runtime business-status requirement unchanged.
+- **Files:** `lib/__tests__/bk1-public-booking-business-status.test.ts`
+
 ### fix(P1-CHAT-1): narrow mark-read RPC for team members
 
 - **Bug:** Team members had chat SELECT/INSERT but no UPDATE authority. Dashboard `markAsRead` silently failed for team members.
@@ -27,17 +60,6 @@ If something breaks, check this log to find what changed and when.
 - **Auto-save removed:** `handleToggle` no longer auto-saves on every toggle. Selection changes are local draft state until user clicks Save Changes.
 - **Concurrent save prevention:** Toggles disabled during save. Drag-drop ordering blocked during save.
 - **Files:** `app/dashboard/capabilities/page.tsx`, `lib/__tests__/p2-cap-selection-save-state.test.ts`
-
-### fix(P0-ADMIN, P0-CAP): admin capability authority + canonical shared catalog
-
-- **Shared catalog:** `shared/capabilities.ts` — ONE canonical source for all 31 capability IDs, labels, tiers, icons, descriptions, dependencies. Consumed by both root Next.js app and Admin Vite app.
-- **Root types.ts refactored:** `lib/capabilities/types.ts` re-exports from shared. Category defaults remain app-specific.
-- **Admin mutation fixed:** `handleCapToggle` now calls `/api/admin/businesses/{id}/capabilities` (atomic RPCs) instead of broken direct DB writes via anon-key client (silently failed due to RLS lockdown).
-- **Bearer/service authority:** Admin route uses `requirePlatformAdmin` + `createServiceClient` only — no cookie dependency.
-- **Authoritative refresh:** After grant/revoke, Admin re-fetches server state via GET — no manual state guessing.
-- **7 missing capabilities restored, 6 label mismatches fixed, 4 tier mismatches fixed.**
-- **Drift prevention:** 25 executable tests proving catalog identity, security, and no cookie dependency.
-- **Files:** `shared/capabilities.ts`, `lib/capabilities/types.ts`, `admin/src/pages/Businesses.tsx`, `admin/src/pages/CategoryTemplates.tsx`, `admin/vite.config.js`, `admin/tsconfig.json`, `app/api/admin/businesses/[id]/capabilities/route.ts`, `lib/__tests__/p0-admin-capability-authority.test.ts`
 
 ### fix(P1-QUEUE-1): queue leave writes valid 'cancelled' status
 
