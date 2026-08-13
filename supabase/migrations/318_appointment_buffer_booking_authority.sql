@@ -5,7 +5,7 @@
 -- P1-APPT-1: Canonical appointment schedule validation in book_slot_atomic.
 -- P1-APPT-1: Update reschedule_booking_atomic for buffer + schedule.
 -- P1-APPT-3: Extend book_manual_slot_atomic with p_appointment_id.
--- P1-APPT-4: Public SELECT policy for appointment discovery.
+-- P1-APPT-4: Public least-privilege appointment read RPC.
 --
 -- Architecture: ONE shared helper (check_appointment_schedule) validates
 -- available_days, available_from, available_to using PostgreSQL's

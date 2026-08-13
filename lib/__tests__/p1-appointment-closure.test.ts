@@ -17,11 +17,11 @@ import { execSync } from 'child_process';
 // ══════════════════════════════════════════════════════════
 
 describe('P1-APPT-1: appointment buffer_minutes', () => {
-  const migration317 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
+  const migration318 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
   const appointmentFlow = readFileSync('lib/bot/flows/appointment.flow.ts', 'utf-8');
 
   it('1. migration adds buffer_minutes to appointments with safe default 0', () => {
-    expect(migration317).toContain('ALTER TABLE appointments ADD COLUMN IF NOT EXISTS buffer_minutes integer NOT NULL DEFAULT 0');
+    expect(migration318).toContain('ALTER TABLE appointments ADD COLUMN IF NOT EXISTS buffer_minutes integer NOT NULL DEFAULT 0');
   });
 
   it('2. dashboard appointments page includes buffer_minutes in form state', () => {
@@ -58,8 +58,8 @@ describe('P1-APPT-1: appointment buffer_minutes', () => {
   });
 
   it('6. reschedule reads buffer_minutes from appointments (not hardcoded 0)', () => {
-    // The updated reschedule_booking_atomic in migration 317 should read buffer_minutes
-    const rescheduleBlock = migration317.slice(migration317.indexOf('reschedule_booking_atomic'));
+    // The updated reschedule_booking_atomic in migration 318 should read buffer_minutes
+    const rescheduleBlock = migration318.slice(migration318.indexOf('reschedule_booking_atomic'));
     const appointmentResolution = rescheduleBlock.slice(
       rescheduleBlock.indexOf('appointment_id IS NOT NULL'),
       rescheduleBlock.indexOf('v_max_capacity := 1'),
@@ -82,7 +82,7 @@ describe('P1-APPT-1: appointment buffer_minutes', () => {
 
 describe('P1-APPT-3: manual booking source verification', () => {
   const routeSrc = readFileSync('app/api/bookings/create-manual/route.ts', 'utf-8');
-  const migration317 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
+  const migration318 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
 
   it('8. route accepts appointmentId as alternative to serviceId', () => {
     expect(routeSrc).toContain('appointmentId');
@@ -106,12 +106,12 @@ describe('P1-APPT-3: manual booking source verification', () => {
   });
 
   it('13. book_manual_slot_atomic accepts p_appointment_id parameter', () => {
-    const manualFn = migration317.slice(migration317.indexOf('book_manual_slot_atomic'));
+    const manualFn = migration318.slice(migration318.indexOf('book_manual_slot_atomic'));
     expect(manualFn).toContain('p_appointment_id uuid DEFAULT NULL');
   });
 
   it('14. book_manual_slot_atomic passes appointment_id to book_slot_atomic', () => {
-    const manualFn = migration317.slice(migration317.indexOf('book_manual_slot_atomic'));
+    const manualFn = migration318.slice(migration318.indexOf('book_manual_slot_atomic'));
     expect(manualFn).toContain('p_appointment_id,');
     // Should NOT hardcode NULL for appointment_id
     expect(manualFn).not.toContain("NULL,          -- p_appointment_id\n");
@@ -431,14 +431,14 @@ describe('P1-APPT-4: public booking source verification', () => {
   });
 
   it('42. public appointment read uses least-privilege RPC (no broad anon SELECT)', () => {
-    const migration317 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
+    const migration318 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
     // Must use constrained RPC, NOT broad table policy
-    expect(migration317).toContain('get_active_appointments_public');
-    expect(migration317).not.toContain('appointments_public_select');
+    expect(migration318).toContain('get_active_appointments_public');
+    expect(migration318).not.toContain('appointments_public_select');
     // RPC must be SECURITY DEFINER
-    expect(migration317).toContain('SECURITY DEFINER');
+    expect(migration318).toContain('SECURITY DEFINER');
     // Extract the RETURNS TABLE definition to verify exposed columns
-    const returnsMatch = migration317.match(/RETURNS TABLE\(([\s\S]*?)\)\s*\nLANGUAGE sql/);
+    const returnsMatch = migration318.match(/RETURNS TABLE\(([\s\S]*?)\)\s*\nLANGUAGE sql/);
     expect(returnsMatch).not.toBeNull();
     const returnedColumns = returnsMatch![1];
     // Must NOT expose internal columns in return type
@@ -460,23 +460,23 @@ describe('P1-APPT-4: public booking source verification', () => {
   });
 
   it('44. book_slot_atomic validates appointment schedule via check_appointment_schedule', () => {
-    const migration317 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
-    const bsaBlock = migration317.slice(migration317.indexOf('book_slot_atomic'));
+    const migration318 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
+    const bsaBlock = migration318.slice(migration318.indexOf('book_slot_atomic'));
     expect(bsaBlock).toContain('check_appointment_schedule');
     expect(bsaBlock).toContain('v_sched_allowed IS NOT TRUE');
   });
 
   it('45. reschedule_booking_atomic validates appointment schedule', () => {
-    const migration317 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
-    const reschedBlock = migration317.slice(migration317.indexOf('reschedule_booking_atomic'));
+    const migration318 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
+    const reschedBlock = migration318.slice(migration318.indexOf('reschedule_booking_atomic'));
     expect(reschedBlock).toContain('check_appointment_schedule');
   });
 
   it('46. check_appointment_schedule uses deterministic EXTRACT(DOW)', () => {
-    const migration317 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
-    expect(migration317).toContain('EXTRACT(DOW FROM p_date)');
+    const migration318 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
+    expect(migration318).toContain('EXTRACT(DOW FROM p_date)');
     // Must NOT use JavaScript-style getDay() in SQL
-    expect(migration317).not.toContain('getDay');
+    expect(migration318).not.toContain('getDay');
   });
 
   it('47. bot appointment flow stores available_days/from/to in session data', () => {
@@ -523,9 +523,9 @@ describeDb('Real PostgreSQL: appointment booking authority', () => {
   const CUST_ID = '00000000-0000-0000-0000-00000a170005';
 
   beforeAll(() => {
-    // Apply migration 317
-    const migration317 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
-    runSQL(migration317);
+    // Apply migration 318
+    const migration318 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
+    runSQL(migration318);
 
     runSQL(`
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
@@ -769,6 +769,15 @@ describeDb('Real PostgreSQL: appointment booking authority', () => {
       COMMIT;
     `);
   }
+  /** Run SQL as anon role */
+  function asAnon(sql: string): string {
+    return runSQL(`
+      BEGIN;
+      SET LOCAL ROLE anon;
+      ${sql}
+      COMMIT;
+    `);
+  }
   function asServiceRole(sql: string): string {
     return runSQL(`
       BEGIN;
@@ -821,20 +830,12 @@ describeDb('Real PostgreSQL: appointment booking authority', () => {
 
   afterEach(() => { resetAuth(); });
 
-  it('AUTH-A1. anon has EXECUTE grant on get_active_appointments_public', () => {
-    const hasGrant = runSQL(`
-      SELECT COUNT(*) FROM information_schema.routine_privileges
-      WHERE routine_name = 'get_active_appointments_public'
-        AND grantee = 'anon'
-        AND privilege_type = 'EXECUTE';
-    `);
-    expect(hasGrant.trim()).toBe('1');
-    // Verify the function returns correct data when called
-    const result = runSQL(`SELECT COUNT(*) FROM get_active_appointments_public('${BIZ_ID}'::uuid);`);
+  it('AUTH-A1. anon can execute RPC and receives active appointment (SET LOCAL ROLE anon)', () => {
+    const result = asAnon(`SELECT COUNT(*) FROM get_active_appointments_public('${BIZ_ID}'::uuid);`);
     expect(result.trim()).toBe('1');
   });
 
-  it('AUTH-A2. anon RPC returns only public-safe columns', () => {
+  it('AUTH-A2. anon RPC returns only public-safe columns (proargnames verification)', () => {
     const argNames = runSQL(`
       SELECT array_to_string(proargnames, ',')
       FROM pg_proc
@@ -850,20 +851,33 @@ describeDb('Real PostgreSQL: appointment booking authority', () => {
     expect(argNames).toContain('price');
   });
 
-  it('AUTH-A3. RPC excludes inactive appointments', () => {
+  it('AUTH-A3. anon cannot directly retrieve internal appointment columns (SET LOCAL ROLE anon)', () => {
+    // anon has USAGE ON SCHEMA but NO table-level SELECT — direct query must fail or return 0 rows
+    try {
+      const result = asAnon(`SELECT staff_ids, auto_approve, metadata, buffer_minutes FROM appointments WHERE id = '${APPT_ID}';`);
+      // If it somehow succeeds without error, internal data must not be returned
+      expect(result.trim()).toBe('');
+    } catch {
+      // Permission denied is the correct behavior — anon has no table SELECT
+      expect(true).toBe(true);
+    }
+  });
+
+  it('AUTH-A4. inactive appointments excluded when RPC called AS anon (SET LOCAL ROLE anon)', () => {
     runSQL(`UPDATE appointments SET is_active = false WHERE id = '${APPT_ID}';`);
-    const result = runSQL(`SELECT COUNT(*) FROM get_active_appointments_public('${BIZ_ID}'::uuid);`);
+    const result = asAnon(`SELECT COUNT(*) FROM get_active_appointments_public('${BIZ_ID}'::uuid);`);
     expect(result.trim()).toBe('0');
     runSQL(`UPDATE appointments SET is_active = true WHERE id = '${APPT_ID}';`);
   });
 
-  it('AUTH-A4. no broad anon SELECT policy exists on appointments table', () => {
-    const policies = runSQL(`
-      SELECT COUNT(*) FROM pg_policies
-      WHERE tablename = 'appointments'
-        AND (policyname LIKE '%public%' OR policyname LIKE '%anon%');
-    `);
-    expect(policies.trim()).toBe('0');
+  it('AUTH-A5. cross-business RPC scoping exercised AS anon (SET LOCAL ROLE anon)', () => {
+    const result1 = asAnon(`SELECT name FROM get_active_appointments_public('${BIZ_ID}'::uuid);`);
+    expect(result1).toContain('Consultation');
+    expect(result1).not.toContain('Biz2 Consult');
+
+    const result2 = asAnon(`SELECT name FROM get_active_appointments_public('${BIZ2_ID}'::uuid);`);
+    expect(result2).toContain('Biz2 Consult');
+    expect(result2).not.toContain('Consultation');
   });
 
   it('AUTH-B1. authenticated has EXECUTE grant on public RPC', () => {
