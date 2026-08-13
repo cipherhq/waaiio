@@ -7,18 +7,13 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-12
 
-### fix(P0-ADMIN, P0-CAP): admin capability authority + canonical shared catalog
+### fix(P2-CAP-1, P1-PLAN-2): Add Features explicit save model + correct state comparison
 
-- **Shared catalog:** New `shared/capabilities.ts` — ONE canonical source for capability IDs, labels, tiers, icons, descriptions, dependencies. Consumed by both root Next.js app (via `@/shared/capabilities`) and Admin Vite app (via `@shared/capabilities`).
-- **Root types.ts refactored:** `lib/capabilities/types.ts` now re-exports from `shared/capabilities.ts`. Category defaults remain app-specific.
-- **Admin mutation fixed:** `handleCapToggle` in `admin/src/pages/Businesses.tsx` now calls `/api/admin/businesses/{id}/capabilities` API route (atomic RPCs: `admin_grant_capability`, `admin_revoke_capability`) instead of broken direct DB writes via anon-key client (which silently failed due to RLS lockdown in migrations 036/299).
-- **7 missing capabilities restored:** Admin now shows all 31 canonical capabilities including `appointment`, `table_reservation`, `estimates`, `packages`, `class_booking`, `multi_location`, `waiver`.
-- **6 label mismatches fixed:** Admin now uses canonical labels (Services, Reviews, E-Signatures, Documents, Campaigns, Loyalty Tiers).
-- **4 tier mismatches fixed:** `packages`, `class_booking`, `multi_location`, `waiver` now correctly show as Pro (growth) tier.
-- **User-facing plan labels:** DB stores `free/growth/business`, UI shows `Free/Pro/Premium`.
-- **CategoryTemplates.tsx:** Also imports from shared catalog — all 31 capabilities available for category defaults.
-- **Drift prevention test:** 19 executable tests proving catalog identity, no duplicates, tier completeness, shared import proof, API route security, dependency enforcement.
-- **Files:** `shared/capabilities.ts`, `lib/capabilities/types.ts`, `admin/src/pages/Businesses.tsx`, `admin/src/pages/CategoryTemplates.tsx`, `admin/vite.config.js`, `admin/tsconfig.json`, `lib/__tests__/p0-admin-capability-authority.test.ts`
+- **hasChanges bug fixed:** Was comparing against `business.capabilities` (effective). Now compares against `serverSelected` (= `selectedCapabilities || capabilities`). Paused capabilities no longer falsely trigger "unsaved changes" on load.
+- **Discard bug fixed:** Was restoring `business.capabilities` (effective), silently dropping paused caps. Now restores `serverSelected` and resets `orderedCaps`.
+- **Auto-save removed:** `handleToggle` no longer auto-saves on every toggle. Selection changes are local draft state until user clicks Save Changes.
+- **Concurrent save prevention:** Toggles disabled during save. Drag-drop ordering blocked during save.
+- **Files:** `app/dashboard/capabilities/page.tsx`, `lib/__tests__/p2-cap-selection-save-state.test.ts`
 
 ### fix(P1-QUEUE-1): queue leave writes valid 'cancelled' status
 

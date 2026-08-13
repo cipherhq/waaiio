@@ -11,7 +11,7 @@ import {
   getRequiredTier,
   TIER_LABELS,
 } from '@/lib/capabilities/types';
-import { deriveCapabilityConfiguration, deriveNextOrder } from '@/lib/capabilities/derive-configuration';
+
 import type { SubscriptionTier } from '@/lib/constants';
 
 // ── Capability Groups ──
@@ -70,10 +70,10 @@ export default function CapabilitiesPage() {
   const [search, setSearch] = useState('');
 
   // ── Drag-and-drop reorder state ──
-  const [orderedCaps, setOrderedCaps] = useState<CapabilityId[]>(selected);
+  const serverOrder = (selected || []) as CapabilityId[];
+  const [orderedCaps, setOrderedCaps] = useState<CapabilityId[]>(serverOrder);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  const [savingOrder, setSavingOrder] = useState(false);
   const [error, setError] = useState('');
 
   // Sync orderedCaps when enabled changes
@@ -103,7 +103,7 @@ export default function CapabilitiesPage() {
     setDragOverIndex(null);
   }, []);
 
-  const handleDrop = useCallback(async (e: React.DragEvent, dropIndex: number) => {
+  const handleDrop = useCallback((e: React.DragEvent, dropIndex: number) => {
     e.preventDefault();
     const fromIndex = dragIndex;
     setDragIndex(null);
@@ -111,41 +111,12 @@ export default function CapabilitiesPage() {
 
     if (fromIndex === null || fromIndex === dropIndex) return;
 
-    // Snapshot current state synchronously
-    const previousOrder = [...orderedCaps];
-    const currentEnabled = [...enabled];
-
-    // Derive new order via splice
+    // Local-only reorder — no network request. User commits via Save Changes.
     const newOrder = [...orderedCaps];
     const [moved] = newOrder.splice(fromIndex, 1);
     newOrder.splice(dropIndex, 0, moved);
-
-    // Optimistic UI
     setOrderedCaps(newOrder);
-
-    // Send explicit snapshot (not reading from potentially stale state)
-    setSavingOrder(true);
-    try {
-      const res = await fetch('/api/capabilities/configure', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          businessId: business.id,
-          capabilities: currentEnabled,
-          order: newOrder,
-        }),
-      });
-      if (!res.ok) {
-        setOrderedCaps(previousOrder);
-        setError('Failed to save order. Please try again.');
-      }
-    } catch {
-      setOrderedCaps(previousOrder);
-      setError('Network error saving order. Please try again.');
-    } finally {
-      setSavingOrder(false);
-    }
-  }, [dragIndex, orderedCaps, business.id, enabled]);
+  }, [dragIndex, orderedCaps]);
 
   const handleDragEnd = useCallback(() => {
     setDragIndex(null);
@@ -180,7 +151,7 @@ export default function CapabilitiesPage() {
   };
 
   function handleToggle(capId: CapabilityId) {
-    if (!canToggle(capId)) return;
+    if (!canToggle(capId) || saving) return;
 
     let nextEnabled = enabled.includes(capId)
       ? enabled.filter(c => c !== capId)
@@ -198,52 +169,36 @@ export default function CapabilitiesPage() {
     // Must have at least one capability
     if (nextEnabled.length === 0) return;
 
-    // Derive the full configuration synchronously from current state
-    const config = deriveCapabilityConfiguration(
-      [...enabled],      // previous enabled (snapshot)
-      [...orderedCaps],  // previous order (snapshot)
-      nextEnabled,
-    );
-
-    // Optimistic UI update
-    setEnabled(config.capabilities);
-    setOrderedCaps(config.order);
-
-    // Save with explicit transaction snapshot (no stale closure reads)
-    saveCapabilities(config);
+    // Update local state only — no auto-save. User commits via Save Changes.
+    setEnabled(nextEnabled);
   }
 
-  async function saveCapabilities(config: {
-    capabilities: CapabilityId[];
-    order: CapabilityId[];
-    previousCapabilities: CapabilityId[];
-    previousOrder: CapabilityId[];
-  }) {
+  async function handleSave() {
     setSaving(true);
     setError('');
 
     try {
       // Detect newly enabled vs previous SELECTED state (not effective).
       // A paused selected capability is NOT newly activated.
-      const previousSelected = new Set(business.selectedCapabilities || business.capabilities);
-      const newlyEnabled = config.capabilities.filter(cap => !previousSelected.has(cap));
+      const previousSelected = new Set(serverSelected);
+      const newlyEnabled = enabled.filter(cap => !previousSelected.has(cap));
 
-      // Use atomic bulk configuration endpoint with explicit snapshot
+      // Use atomic bulk configuration endpoint
       const res = await fetch('/api/capabilities/configure', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           businessId: business.id,
-          capabilities: config.capabilities,
-          order: config.order,
+          capabilities: enabled,
+          order: orderedCaps,
         }),
       });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({ reason: 'unknown' }));
-        // Rollback to exact previous snapshots
-        setEnabled(config.previousCapabilities);
-        setOrderedCaps(config.previousOrder);
+        // Rollback to SERVER state (not local draft)
+        setEnabled([...serverSelected]);
+        setOrderedCaps([...serverOrder]);
         setError(
           data.reason === 'capabilities_denied'
             ? 'Some capabilities require a higher plan. Please upgrade.'
@@ -256,24 +211,21 @@ export default function CapabilitiesPage() {
         return;
       }
 
-      // Auto-provision templates only for genuinely new capabilities
+      // Auto-provision templates only for genuinely new capabilities (best-effort)
       for (const cap of newlyEnabled) {
-        try {
-          await fetch('/api/whatsapp/templates/provision', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ business_id: business.id, capability: cap }),
-          });
-        } catch {
-          // Template provisioning is best-effort — capability is still enabled
-        }
+        fetch('/api/whatsapp/templates/provision', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ business_id: business.id, capability: cap }),
+        }).catch(() => {});
       }
 
+      // Reload to get fresh server state (selectedCapabilities, capabilities, pausedCapabilities)
       window.location.reload();
     } catch {
-      // Network error — rollback to exact previous snapshots
-      setEnabled(config.previousCapabilities);
-      setOrderedCaps(config.previousOrder);
+      // Network error — rollback to SERVER state
+      setEnabled([...serverSelected]);
+      setOrderedCaps([...serverOrder]);
       setError('Network error. Please check your connection and try again.');
     } finally {
       setSaving(false);
@@ -302,11 +254,17 @@ export default function CapabilitiesPage() {
   const enabledCount = enabled.length;
   const totalCount = CAPABILITIES.length;
 
+  // Compare against server-selected (includes paused), NOT effective
+  const serverSelected = (business.selectedCapabilities || business.capabilities) as CapabilityId[];
   const hasChanges = (() => {
-    if (enabled.length !== business.capabilities.length) return true;
+    // Selection changed?
+    if (enabled.length !== serverSelected.length) return true;
     const sorted1 = [...enabled].sort();
-    const sorted2 = [...business.capabilities].sort();
-    return sorted1.some((v, i) => v !== sorted2[i]);
+    const sorted2 = [...serverSelected].sort();
+    if (sorted1.some((v, i) => v !== sorted2[i])) return true;
+    // Order changed?
+    if (orderedCaps.length !== serverOrder.length) return true;
+    return orderedCaps.some((v, i) => v !== serverOrder[i]);
   })();
 
   return (
@@ -318,7 +276,7 @@ export default function CapabilitiesPage() {
             Add Features
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Turn features on or off to customize what your WhatsApp bot can do. Enable a feature and it instantly appears in your bot menu.
+            Choose the features you want, then click Save Changes to update your account and WhatsApp bot.
             {isInTrial && ' Your 30-day trial includes everything — try them all.'}
           </p>
         </div>
@@ -484,18 +442,17 @@ export default function CapabilitiesPage() {
             </p>
             <div className="flex items-center gap-3">
               <button
-                onClick={() => setEnabled([...business.capabilities])}
+                onClick={() => {
+                  setEnabled([...serverSelected]);
+                  setOrderedCaps([...serverOrder]);
+                }}
                 className="rounded-lg border border-gray-300 dark:border-gray-600 px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
               >
                 Discard
               </button>
               <button
                 id="cap-save-btn"
-                onClick={() => saveCapabilities(deriveCapabilityConfiguration(
-                  selected as CapabilityId[],
-                  [...orderedCaps],
-                  enabled,
-                ))}
+                onClick={handleSave}
                 disabled={saving}
                 className="rounded-lg bg-brand px-6 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
               >
