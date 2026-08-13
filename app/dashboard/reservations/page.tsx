@@ -19,6 +19,7 @@ interface ServiceOption {
   requires_staff: boolean;
   staff_ids: string[];
   allow_staff_selection: boolean;
+  _isAppointment?: boolean;
 }
 
 interface StaffOption {
@@ -213,18 +214,28 @@ export default function BookingsPage() {
     return slots;
   })();
 
-  // Load services when new booking form opens
+  // Load services AND appointments when new booking form opens
   async function loadNewBookingServices() {
     setNbLoadingServices(true);
     const supabase = createClient();
-    const { data } = await supabase
-      .from('services')
-      .select('id, name, price, duration_minutes, requires_staff, staff_ids, allow_staff_selection')
-      .eq('business_id', business.id)
-      .eq('is_active', true)
-      .is('deleted_at', null)
-      .order('sort_order');
-    setNbServices((data || []) as ServiceOption[]);
+    const [{ data: svcData }, { data: apptData }] = await Promise.all([
+      supabase
+        .from('services')
+        .select('id, name, price, duration_minutes, requires_staff, staff_ids, allow_staff_selection')
+        .eq('business_id', business.id)
+        .eq('is_active', true)
+        .is('deleted_at', null)
+        .order('sort_order'),
+      supabase
+        .from('appointments')
+        .select('id, name, price, duration_minutes, requires_staff, staff_ids, allow_staff_selection')
+        .eq('business_id', business.id)
+        .eq('is_active', true)
+        .order('sort_order'),
+    ]);
+    const services = (svcData || []).map(s => ({ ...s, _isAppointment: false })) as ServiceOption[];
+    const appointments = (apptData || []).map(a => ({ ...a, _isAppointment: true })) as ServiceOption[];
+    setNbServices([...services, ...appointments]);
     setNbLoadingServices(false);
   }
 
@@ -275,12 +286,14 @@ export default function BookingsPage() {
     }
     setNbSubmitting(true);
     try {
+      const selectedItem = nbServices.find(s => s.id === nbForm.serviceId);
+      const isAppt = selectedItem?._isAppointment === true;
       const res = await fetch('/api/bookings/create-manual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           businessId: business.id,
-          serviceId: nbForm.serviceId,
+          ...(isAppt ? { appointmentId: nbForm.serviceId } : { serviceId: nbForm.serviceId }),
           date: nbForm.date,
           time: nbForm.time,
           customerName: nbForm.customerName,
@@ -1025,10 +1038,10 @@ export default function BookingsPage() {
                     </div>
                   )}
 
-                  {/* Service */}
+                  {/* Service / Appointment */}
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                      Service <span className="text-red-500">*</span>
+                      Service / Appointment <span className="text-red-500">*</span>
                     </label>
                     {nbLoadingServices ? (
                       <div className="flex items-center gap-2 text-sm text-gray-400">
@@ -1046,10 +1059,10 @@ export default function BookingsPage() {
                         }}
                         className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
                       >
-                        <option value="">Select a service</option>
+                        <option value="">Select a service or appointment</option>
                         {nbServices.map(s => (
                           <option key={s.id} value={s.id}>
-                            {s.name} - {formatCurrency(s.price, (business.country_code || 'NG') as CountryCode)}
+                            {s._isAppointment ? '📅 ' : ''}{s.name} - {formatCurrency(s.price, (business.country_code || 'NG') as CountryCode)}
                             {s.duration_minutes ? ` (${s.duration_minutes}min)` : ''}
                           </option>
                         ))}

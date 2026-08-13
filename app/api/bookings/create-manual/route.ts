@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
     const {
       businessId,
       serviceId,
+      appointmentId,
       date,
       time,
       customerName,
@@ -32,9 +33,15 @@ export async function POST(request: NextRequest) {
       sendConfirmation,
     } = body;
 
-    // Validate required fields
-    if (!businessId || !serviceId || !date || !time || !customerName || !customerPhone) {
+    // Validate required fields — exactly one of serviceId or appointmentId
+    if (!businessId || !date || !time || !customerName || !customerPhone) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+    if (!serviceId && !appointmentId) {
+      return NextResponse.json({ error: 'Either serviceId or appointmentId is required' }, { status: 400 });
+    }
+    if (serviceId && appointmentId) {
+      return NextResponse.json({ error: 'Provide serviceId or appointmentId, not both' }, { status: 400 });
     }
 
     // Reject past dates
@@ -59,13 +66,41 @@ export async function POST(request: NextRequest) {
       .eq('id', businessId)
       .single();
     if (!biz) return NextResponse.json({ error: 'Business data unavailable' }, { status: 500 });
-    const { data: service } = await serviceClient
-      .from('services')
-      .select('name, price, duration_minutes, max_capacity, buffer_minutes')
-      .eq('id', serviceId)
-      .eq('business_id', businessId)
-      .single();
-    if (!service) return NextResponse.json({ error: 'Service not found' }, { status: 404 });
+
+    // Resolve the bookable item — service or appointment
+    let itemName: string;
+    let itemPrice: number;
+    let itemDuration: number;
+    let itemMaxCapacity: number;
+    let itemBufferMinutes: number;
+
+    if (appointmentId) {
+      const { data: appt } = await serviceClient
+        .from('appointments')
+        .select('name, price, duration_minutes, max_capacity, buffer_minutes')
+        .eq('id', appointmentId)
+        .eq('business_id', businessId)
+        .single();
+      if (!appt) return NextResponse.json({ error: 'Appointment type not found' }, { status: 404 });
+      itemName = appt.name;
+      itemPrice = appt.price ?? 0;
+      itemDuration = appt.duration_minutes ?? 30;
+      itemMaxCapacity = appt.max_capacity ?? 1;
+      itemBufferMinutes = appt.buffer_minutes ?? 0;
+    } else {
+      const { data: service } = await serviceClient
+        .from('services')
+        .select('name, price, duration_minutes, max_capacity, buffer_minutes')
+        .eq('id', serviceId)
+        .eq('business_id', businessId)
+        .single();
+      if (!service) return NextResponse.json({ error: 'Service not found' }, { status: 404 });
+      itemName = service.name;
+      itemPrice = service.price ?? 0;
+      itemDuration = service.duration_minutes ?? 30;
+      itemMaxCapacity = service.max_capacity ?? 1;
+      itemBufferMinutes = service.buffer_minutes ?? 0;
+    }
 
     // Look up staff name if staffId provided
     let staffName: string | null = null;
@@ -100,25 +135,25 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Atomic manual booking via wrapper RPC ──
-    const maxCapacity = service.max_capacity ?? 1;
     const { data: slotResult, error: slotError } = await serviceClient
       .rpc('book_manual_slot_atomic', {
         p_business_id: businessId,
         p_user_id: customerId,
-        p_service_id: serviceId,
+        p_service_id: appointmentId ? null : serviceId,
         p_staff_id: staffId || null,
         p_date: date,
         p_time: time,
         p_party_size: partySize || 1,
-        p_max_capacity: maxCapacity,
+        p_max_capacity: itemMaxCapacity,
         p_guest_name: customerName,
         p_guest_phone: customerPhone,
         p_guest_email: customerEmail || null,
         p_notes: notes || null,
-        p_total_amount: service.price ?? 0,
+        p_total_amount: itemPrice,
         p_staff_name: staffName,
-        p_buffer_minutes: service.buffer_minutes ?? 0,
-        p_duration: service.duration_minutes ?? 30,
+        p_buffer_minutes: itemBufferMinutes,
+        p_duration: itemDuration,
+        p_appointment_id: appointmentId || null,
       })
       .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 
@@ -150,7 +185,7 @@ export async function POST(request: NextRequest) {
             '*Booking Confirmed!*',
             '',
             `${biz.name}`,
-            `${service.name}`,
+            `${itemName}`,
             `${dateLabel}`,
             `${time}`,
             `Ref: *${booking.reference_code}*`,
@@ -176,7 +211,7 @@ export async function POST(request: NextRequest) {
                 title: 'Booking Confirmed',
                 message: `Your booking at ${biz.name} has been confirmed.`,
                 details: {
-                  'Service': service.name,
+                  [appointmentId ? 'Appointment' : 'Service']: itemName,
                   'Date': dateLabel,
                   'Time': time,
                   'Reference': booking.reference_code,
@@ -197,7 +232,7 @@ export async function POST(request: NextRequest) {
         p_business_id: businessId,
         p_phone: customerPhone,
         p_name: customerName,
-        p_booking_amount: service.price ?? 0,
+        p_booking_amount: itemPrice,
         p_is_booking: true,
         p_is_order: false,
       });

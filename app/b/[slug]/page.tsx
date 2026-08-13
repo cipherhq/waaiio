@@ -61,14 +61,18 @@ export default async function PublicBookingPage({ params }: PageProps) {
     );
   }
 
-  const { data: services } = await supabase
-    .from('services')
-    .select(
-      'id, name, description, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, image_url, metadata',
-    )
-    .eq('business_id', business.id)
-    .eq('is_active', true)
-    .order('sort_order');
+  const [{ data: services }, { data: appointments }] = await Promise.all([
+    supabase
+      .from('services')
+      .select(
+        'id, name, description, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, image_url, metadata',
+      )
+      .eq('business_id', business.id)
+      .eq('is_active', true)
+      .order('sort_order'),
+    // Use public-safe RPC — does NOT expose staff_ids, auto_approve, metadata, etc.
+    supabase.rpc('get_active_appointments_public', { p_business_id: business.id }),
+  ]);
 
   const serializedServices = (services || []).map((s) => ({
     id: s.id,
@@ -79,7 +83,22 @@ export default async function PublicBookingPage({ params }: PageProps) {
     duration_minutes: s.duration_minutes,
     image_url: s.image_url,
     is_dropoff: (s.metadata as Record<string, unknown>)?.is_dropoff === true,
+    is_appointment: false,
   }));
+
+  const serializedAppointments = (appointments || []).map((a: Record<string, unknown>) => ({
+    id: a.id as string,
+    name: a.name as string,
+    description: a.description as string | null,
+    price: (a.price as number) || 0,
+    deposit_amount: (a.deposit_amount as number) || 0,
+    duration_minutes: (a.duration_minutes as number) || 30,
+    image_url: a.image_url as string | null,
+    is_dropoff: false,
+    is_appointment: true,
+  }));
+
+  const allBookableItems = [...serializedServices, ...serializedAppointments];
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -110,7 +129,7 @@ export default async function PublicBookingPage({ params }: PageProps) {
         > | null,
         country_code: business.country_code,
       }}
-      services={serializedServices}
+      services={allBookableItems}
     />
     </>
   );

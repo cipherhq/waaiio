@@ -7,6 +7,35 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-13
 
+### fix(P1-APPT-1): appointments.buffer_minutes schema + canonical schedule enforcement
+
+- **Bug:** `buffer_minutes` column did not exist on `appointments` table. Appointment `available_days`/`available_from`/`available_to` not enforced at booking authority layer. Bot flow never stored `_service_buffer_minutes`. `reschedule_booking_atomic` hardcoded `0` for buffer.
+- **Fix:** Migration 318: adds `buffer_minutes`. Creates `check_appointment_schedule` shared helper (deterministic `EXTRACT(DOW)`). `book_slot_atomic` calls helper when `p_appointment_id IS NOT NULL`. `reschedule_booking_atomic` does the same. Bot `appointment.flow.ts` stores buffer + schedule data. Services unchanged.
+- **Architecture:** ONE canonical schedule helper. DB is final authority. Public slots mirrors for UX.
+- **Files:** `supabase/migrations/318_appointment_buffer_booking_authority.sql`, `lib/bot/flows/appointment.flow.ts`
+- **Affects:** Appointment buffer + schedule enforcement in slot calculation, booking authority, rescheduling, bot flow
+- **Could break:** Appointments with configured schedule now enforce at booking time
+
+### fix(P1-APPT-3): dashboard manual booking for appointment-only businesses
+
+- **Bug:** Manual booking API required `serviceId`, queried only `services` table, `book_manual_slot_atomic` hardcoded `p_appointment_id = NULL`.
+- **Fix:** API accepts `appointmentId` XOR `serviceId`. `book_manual_slot_atomic` extended with `p_appointment_id`. Dashboard loads both services and appointments.
+- **MK-3 preserved:** Atomic RPC, `createWhatsAppUser`, no direct INSERT.
+- **Files:** `app/api/bookings/create-manual/route.ts`, `app/dashboard/reservations/page.tsx`, `supabase/migrations/318_appointment_buffer_booking_authority.sql`
+
+### fix(P1-APPT-4): public booking for appointment-only businesses
+
+- **Bug:** Public page only queried `services`. Slots/create required `serviceId`. Booking creation hardcoded `p_appointment_id: null`.
+- **Fix:** Public page uses `get_active_appointments_public` SECURITY DEFINER RPC (14 public-safe columns only). No broad anon table SELECT. BookingForm sends `appointmentId`. Slots endpoint respects appointment schedule.
+- **CONFLICT-1 preserved:** Cross-service capacity, buffer overlap unchanged.
+- **Files:** `app/b/[slug]/page.tsx`, `app/b/[slug]/BookingForm.tsx`, `app/api/bookings/public/slots/route.ts`, `app/api/bookings/public/create/route.ts`, `supabase/migrations/318_appointment_buffer_booking_authority.sql`
+
+### fix(BK-1): public booking business-status test scope regression
+
+- **Bug:** `bk1-public-booking-business-status.test.ts` used hardcoded comment marker. Comment changed, test scope leaked.
+- **Fix:** Regex-based next-section detection. Runtime business-status requirement unchanged.
+- **Files:** `lib/__tests__/bk1-public-booking-business-status.test.ts`
+
 ### fix(P1-CHAT-1): narrow mark-read RPC for team members
 
 - **Bug:** Team members had chat SELECT/INSERT but no UPDATE authority. Dashboard `markAsRead` silently failed for team members.

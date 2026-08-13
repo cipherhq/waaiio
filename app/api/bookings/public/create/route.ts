@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
     const {
       businessSlug,
       serviceId,
+      appointmentId,
       date,
       time,
       guestName,
@@ -30,7 +31,8 @@ export async function POST(request: NextRequest) {
       otpToken,
     } = body as {
       businessSlug: string;
-      serviceId: string;
+      serviceId?: string;
+      appointmentId?: string;
       date: string;
       time: string;
       guestName: string;
@@ -40,12 +42,18 @@ export async function POST(request: NextRequest) {
       otpToken?: string;
     };
 
-    // Basic validation
-    if (!businessSlug || !serviceId || !date || !time || !guestName || !guestEmail) {
+    // Basic validation — exactly one of serviceId or appointmentId required
+    if (!businessSlug || !date || !time || !guestName || !guestEmail) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 },
       );
+    }
+    if (!serviceId && !appointmentId) {
+      return NextResponse.json({ error: 'Either serviceId or appointmentId is required' }, { status: 400 });
+    }
+    if (serviceId && appointmentId) {
+      return NextResponse.json({ error: 'Provide serviceId or appointmentId, not both' }, { status: 400 });
     }
 
     // Verify server-side OTP token (proves email was verified)
@@ -95,17 +103,57 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Business not found' }, { status: 404 });
     }
 
-    // Fetch service
-    const { data: service, error: svcError } = await supabase
-      .from('services')
-      .select('id, name, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, metadata')
-      .eq('id', serviceId)
-      .eq('business_id', business.id)
-      .eq('is_active', true)
-      .single();
+    // Fetch bookable item — service or appointment
+    let itemId: string;
+    let itemName: string;
+    let itemPrice: number;
+    let itemDeposit: number;
+    let itemDuration: number;
+    let itemBuffer: number;
+    let itemMaxCapacity: number | null;
+    let itemMetadata: Record<string, unknown> | null;
+    const isAppointmentBooking = !!appointmentId;
 
-    if (svcError || !service) {
-      return NextResponse.json({ error: 'Service not found' }, { status: 404 });
+    if (appointmentId) {
+      const { data: appt, error: apptError } = await supabase
+        .from('appointments')
+        .select('id, name, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, metadata')
+        .eq('id', appointmentId)
+        .eq('business_id', business.id)
+        .eq('is_active', true)
+        .single();
+
+      if (apptError || !appt) {
+        return NextResponse.json({ error: 'Appointment type not found' }, { status: 404 });
+      }
+      itemId = appt.id;
+      itemName = appt.name;
+      itemPrice = appt.price || 0;
+      itemDeposit = appt.deposit_amount || appt.price || 0;
+      itemDuration = appt.duration_minutes || 30;
+      itemBuffer = appt.buffer_minutes || 0;
+      itemMaxCapacity = appt.max_capacity;
+      itemMetadata = appt.metadata as Record<string, unknown> | null;
+    } else {
+      const { data: service, error: svcError } = await supabase
+        .from('services')
+        .select('id, name, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, metadata')
+        .eq('id', serviceId!)
+        .eq('business_id', business.id)
+        .eq('is_active', true)
+        .single();
+
+      if (svcError || !service) {
+        return NextResponse.json({ error: 'Service not found' }, { status: 404 });
+      }
+      itemId = service.id;
+      itemName = service.name;
+      itemPrice = service.price || 0;
+      itemDeposit = service.deposit_amount || service.price || 0;
+      itemDuration = service.duration_minutes || 30;
+      itemBuffer = service.buffer_minutes || 0;
+      itemMaxCapacity = service.max_capacity;
+      itemMetadata = service.metadata as Record<string, unknown> | null;
     }
 
     // Validate time is within operating hours
@@ -175,18 +223,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Determine pricing
-    const svcMeta = (service.metadata || {}) as Record<string, unknown>;
-    const isDropoff = svcMeta.is_dropoff === true;
-    const maxCapacity = isDropoff ? 9999 : (service.max_capacity || 1);
-    const depositAmount = service.deposit_amount || service.price || 0;
-    const totalDeposit = depositAmount * partySize;
+    const isDropoff = itemMetadata?.is_dropoff === true;
+    const maxCapacity = isDropoff ? 9999 : (itemMaxCapacity || 1);
+    const totalDeposit = itemDeposit * partySize;
 
     // Use atomic booking RPC to prevent race conditions
     const { data: slotResult, error: slotError } = await supabase
       .rpc('book_slot_atomic' as string, {
         p_business_id: business.id,
         p_user_id: userId,
-        p_service_id: serviceId,
+        p_service_id: isAppointmentBooking ? null : itemId,
         p_staff_id: null,
         p_date: date,
         p_time: isDropoff ? '00:00' : time,
@@ -206,9 +252,9 @@ export async function POST(request: NextRequest) {
         p_promo_code_id: null,
         p_total_amount: totalDeposit,
         p_staff_name: null,
-        p_appointment_id: null,
-        p_buffer_minutes: service.buffer_minutes || 0,
-        p_duration: service.duration_minutes || 30,
+        p_appointment_id: isAppointmentBooking ? itemId : null,
+        p_buffer_minutes: itemBuffer,
+        p_duration: itemDuration,
       })
       .single() as {
         data: { booking_id: string; reference_code: string; slot_available: boolean } | null;
