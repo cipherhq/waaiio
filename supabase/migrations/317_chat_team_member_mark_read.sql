@@ -12,8 +12,8 @@
 -- (Supabase auto-grants these, but CI test databases may not)
 GRANT SELECT, INSERT, UPDATE ON chat_messages TO authenticated;
 GRANT ALL ON chat_messages TO service_role;
-GRANT SELECT ON businesses TO authenticated;
-GRANT SELECT ON business_members TO authenticated;
+GRANT SELECT ON businesses TO authenticated, service_role;
+GRANT SELECT ON business_members TO authenticated, service_role;
 
 -- Team members can update chat messages for their authorized businesses
 CREATE POLICY "team_members_update_messages"
