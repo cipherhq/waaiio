@@ -45,7 +45,15 @@ If something breaks, check this log to find what changed and when.
 - **Security hardening:** SECURITY DEFINER, `SET search_path = public`, `REVOKE FROM PUBLIC/anon`, `GRANT TO authenticated/service_role`.
 - **Files:** `supabase/migrations/317_chat_team_member_mark_read.sql`, `app/dashboard/chat/page.tsx`
 
----
+### fix(P1-AUTO-1): instant_reply_message runtime connection + entitlement gate
+
+- **Bug:** Dashboard UI configures `instant_reply_message` and `instant_reply_enabled` in `whatsapp_config`, and `standalone.service.ts` loads them into `WhatsAppConfigBundle`, but `bot.service.ts` never reads or sends the instant reply. The setting was dead configuration.
+- **Entitlement fix:** The entire auto-reply block (both away message AND instant reply) is now gated on the effective `auto_reply` capability from the canonical resolver. Previously, the away-message fired without checking capability entitlement, allowing free/downgraded businesses with persisted config to receive a paid feature. Away-message mechanics are preserved but now correctly respect the effective Auto-Reply entitlement.
+- **Instant reply:** Added runtime consumption for `instant_reply_message`. Sends the configured instant reply on first contact (no active session) during business hours, mirroring the away-message dedup pattern.
+- **Guards:** `capabilities.includes('auto_reply')` (canonical resolver) + `auto_reply_enabled` + `business_hours` configured + `instant_reply_enabled` + non-empty `instant_reply_message`.
+- **No interference:** Normal bot intent routing continues after auto-reply messages. No effect on chat handoff (requires active session). No loop risk (fires once per session lifecycle).
+- **Files:** `lib/bot/bot.service.ts`, `lib/bot/__tests__/p1-auto-reply-instant.test.ts`
+- **Tests:** 13 focused tests covering: entitlement gate for away message and instant reply, canonical resolver authority, config guards, dedup, normal flow continuation.
 
 ## 2026-08-12
 

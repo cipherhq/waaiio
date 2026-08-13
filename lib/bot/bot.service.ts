@@ -1074,20 +1074,25 @@ export class BotService {
         tierInfo = tier;
       }
 
-      // Outside business hours: send a note but DON'T block the bot
-      // Customers must be able to book, order, and browse 24/7
+      // Auto-reply: away message (outside hours) and instant reply (during hours)
+      // Both only fire on first contact (no active session) to avoid spam
       if (business && waConfig?.auto_reply_enabled && waConfig.business_hours) {
         const isOpen = isWithinBusinessHours(
           waConfig.business_hours as BusinessHours,
           (waConfig.business_hours as BusinessHours).timezone,
         );
         if (!isOpen && !session) {
-          // Only send away message once (no active session = first message)
-          // Then continue the flow — don't return
+          // Outside business hours: send away message once, then continue the flow
           await this.sendText(
             from,
             waConfig.away_message || 'We\'re currently outside business hours, but you can still browse, book, and order! 🕐',
           );
+        } else if (isOpen && !session && waConfig.instant_reply_enabled && waConfig.instant_reply_message) {
+          // P1-AUTO-1: During business hours, send instant acknowledgment on first contact
+          // Requires auto_reply capability entitlement
+          if (capabilities.includes('auto_reply')) {
+            await this.sendText(from, waConfig.instant_reply_message);
+          }
         }
       }
 
