@@ -1075,8 +1075,9 @@ export class BotService {
       }
 
       // Auto-reply: away message (outside hours) and instant reply (during hours)
+      // Both gated on effective auto_reply capability entitlement (canonical resolver)
       // Both only fire on first contact (no active session) to avoid spam
-      if (business && waConfig?.auto_reply_enabled && waConfig.business_hours) {
+      if (business && capabilities.includes('auto_reply') && waConfig?.auto_reply_enabled && waConfig.business_hours) {
         const isOpen = isWithinBusinessHours(
           waConfig.business_hours as BusinessHours,
           (waConfig.business_hours as BusinessHours).timezone,
@@ -1089,10 +1090,7 @@ export class BotService {
           );
         } else if (isOpen && !session && waConfig.instant_reply_enabled && waConfig.instant_reply_message) {
           // P1-AUTO-1: During business hours, send instant acknowledgment on first contact
-          // Requires auto_reply capability entitlement
-          if (capabilities.includes('auto_reply')) {
-            await this.sendText(from, waConfig.instant_reply_message);
-          }
+          await this.sendText(from, waConfig.instant_reply_message);
         }
       }
 

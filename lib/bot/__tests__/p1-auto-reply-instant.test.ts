@@ -162,19 +162,56 @@ const CAPS_WITHOUT_AUTO_REPLY = [
 ];
 
 // ═══════════════════════════════════════════════════════
-// P1-AUTO-1: INSTANT REPLY TESTS
+// P1-AUTO-1: AUTO-REPLY ENTITLEMENT + INSTANT REPLY TESTS
 // ═══════════════════════════════════════════════════════
 
-describe('P1-AUTO-1: Instant reply runtime', () => {
+describe('P1-AUTO-1: Auto-reply entitlement and instant reply runtime', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIsWithinBusinessHours.mockReturnValue(true); // default: during business hours
   });
 
-  it('1. sends instant reply on first contact during business hours', async () => {
+  // ── Entitlement gate (both away + instant) ──
+
+  it('1. effective auto_reply + outside hours → away message fires', async () => {
+    mockIsWithinBusinessHours.mockReturnValue(false);
     const sender = createCaptureSender();
     const supabase = createTableMock({
-      activeSession: null, // no session = first contact
+      activeSession: null,
+      business: BIZ_GROWTH,
+      capabilities: CAPS_WITH_AUTO_REPLY,
+      enabledLanguages: ['en'],
+    });
+    const standalone = createMockStandalone();
+    const bot = new BotService(supabase, sender, standalone, createMockIntelligence());
+    await bot.handleMessage(PHONE, 'hello', 'text', undefined, BIZ_ID);
+
+    const texts = sender.getTextMessages();
+    expect(texts).toContain('We are closed.');
+    expect(texts).not.toContain('Thanks for reaching out! We\'ll be with you shortly.');
+  });
+
+  it('2. NO effective auto_reply + outside hours → away message does NOT fire', async () => {
+    mockIsWithinBusinessHours.mockReturnValue(false);
+    const sender = createCaptureSender();
+    const supabase = createTableMock({
+      activeSession: null,
+      business: BIZ_FREE,
+      capabilities: CAPS_WITHOUT_AUTO_REPLY,
+      enabledLanguages: ['en'],
+    });
+    const standalone = createMockStandalone();
+    const bot = new BotService(supabase, sender, standalone, createMockIntelligence());
+    await bot.handleMessage(PHONE, 'hello', 'text', undefined, BIZ_ID);
+
+    const texts = sender.getTextMessages();
+    expect(texts).not.toContain('We are closed.');
+  });
+
+  it('3. effective auto_reply + inside hours + instant enabled → instant reply fires', async () => {
+    const sender = createCaptureSender();
+    const supabase = createTableMock({
+      activeSession: null,
       business: BIZ_GROWTH,
       capabilities: CAPS_WITH_AUTO_REPLY,
       enabledLanguages: ['en'],
@@ -187,15 +224,15 @@ describe('P1-AUTO-1: Instant reply runtime', () => {
     expect(texts).toContain('Thanks for reaching out! We\'ll be with you shortly.');
   });
 
-  it('2. does NOT send instant reply when instant_reply_message is empty', async () => {
+  it('4. NO effective auto_reply + inside hours → instant reply does NOT fire', async () => {
     const sender = createCaptureSender();
     const supabase = createTableMock({
       activeSession: null,
-      business: BIZ_GROWTH,
-      capabilities: CAPS_WITH_AUTO_REPLY,
+      business: BIZ_FREE,
+      capabilities: CAPS_WITHOUT_AUTO_REPLY,
       enabledLanguages: ['en'],
     });
-    const standalone = createMockStandalone({ instant_reply_message: null });
+    const standalone = createMockStandalone();
     const bot = new BotService(supabase, sender, standalone, createMockIntelligence());
     await bot.handleMessage(PHONE, 'hello', 'text', undefined, BIZ_ID);
 
@@ -203,7 +240,27 @@ describe('P1-AUTO-1: Instant reply runtime', () => {
     expect(texts).not.toContain('Thanks for reaching out! We\'ll be with you shortly.');
   });
 
-  it('3. does NOT send instant reply when there is an active session (dedup)', async () => {
+  it('5. auto_reply_enabled=false → neither away nor instant fires', async () => {
+    mockIsWithinBusinessHours.mockReturnValue(false);
+    const sender = createCaptureSender();
+    const supabase = createTableMock({
+      activeSession: null,
+      business: BIZ_GROWTH,
+      capabilities: CAPS_WITH_AUTO_REPLY,
+      enabledLanguages: ['en'],
+    });
+    const standalone = createMockStandalone({ auto_reply_enabled: false });
+    const bot = new BotService(supabase, sender, standalone, createMockIntelligence());
+    await bot.handleMessage(PHONE, 'hello', 'text', undefined, BIZ_ID);
+
+    const texts = sender.getTextMessages();
+    expect(texts).not.toContain('We are closed.');
+    expect(texts).not.toContain('Thanks for reaching out! We\'ll be with you shortly.');
+  });
+
+  it('6. active session → neither away nor instant fires (first-contact dedup)', async () => {
+    // Test outside hours with session
+    mockIsWithinBusinessHours.mockReturnValue(false);
     const sender = createCaptureSender();
     const supabase = createTableMock({
       activeSession: {
@@ -220,33 +277,15 @@ describe('P1-AUTO-1: Instant reply runtime', () => {
     await bot.handleMessage(PHONE, 'hello', 'text', undefined, BIZ_ID);
 
     const texts = sender.getTextMessages();
+    expect(texts).not.toContain('We are closed.');
     expect(texts).not.toContain('Thanks for reaching out! We\'ll be with you shortly.');
   });
 
-  it('4. sends away message (not instant reply) when outside business hours', async () => {
-    mockIsWithinBusinessHours.mockReturnValue(false);
+  it('7. normal bot routing continues when no auto_reply entitlement', async () => {
     const sender = createCaptureSender();
     const supabase = createTableMock({
       activeSession: null,
-      business: BIZ_GROWTH,
-      capabilities: CAPS_WITH_AUTO_REPLY,
-      enabledLanguages: ['en'],
-    });
-    const standalone = createMockStandalone();
-    const bot = new BotService(supabase, sender, standalone, createMockIntelligence());
-    await bot.handleMessage(PHONE, 'hello', 'text', undefined, BIZ_ID);
-
-    const texts = sender.getTextMessages();
-    // Away message sent, not instant reply
-    expect(texts).toContain('We are closed.');
-    expect(texts).not.toContain('Thanks for reaching out! We\'ll be with you shortly.');
-  });
-
-  it('5. does NOT send instant reply when auto_reply capability is not enabled', async () => {
-    const sender = createCaptureSender();
-    const supabase = createTableMock({
-      activeSession: null,
-      business: BIZ_FREE, // free tier — auto_reply requires growth
+      business: BIZ_FREE,
       capabilities: CAPS_WITHOUT_AUTO_REPLY,
       enabledLanguages: ['en'],
     });
@@ -254,11 +293,55 @@ describe('P1-AUTO-1: Instant reply runtime', () => {
     const bot = new BotService(supabase, sender, standalone, createMockIntelligence());
     await bot.handleMessage(PHONE, 'hello', 'text', undefined, BIZ_ID);
 
+    const msgs = sender.getMessages();
+    // Bot still sends greeting/menu — not blocked by missing auto_reply
+    expect(msgs.length).toBeGreaterThanOrEqual(1);
+    // No auto-reply messages leaked
+    const texts = sender.getTextMessages();
+    expect(texts).not.toContain('We are closed.');
+    expect(texts).not.toContain('Thanks for reaching out! We\'ll be with you shortly.');
+  });
+
+  it('8. entitlement comes from canonical resolver, not manual tier check', async () => {
+    // Business on free tier BUT with auto_reply override (e.g. admin-granted)
+    // The canonical resolver sees the override and includes auto_reply in effective caps
+    // → auto-reply should fire because the resolver grants it, not because of manual tier check
+    const sender = createCaptureSender();
+    const supabase = createTableMock({
+      activeSession: null,
+      business: BIZ_FREE, // free tier
+      capabilities: CAPS_WITH_AUTO_REPLY,
+      overrides: ['auto_reply'], // admin override grants auto_reply despite free tier
+      enabledLanguages: ['en'],
+    });
+    const standalone = createMockStandalone();
+    const bot = new BotService(supabase, sender, standalone, createMockIntelligence());
+    await bot.handleMessage(PHONE, 'hello', 'text', undefined, BIZ_ID);
+
+    const texts = sender.getTextMessages();
+    // Should fire because canonical resolver includes auto_reply via override
+    expect(texts).toContain('Thanks for reaching out! We\'ll be with you shortly.');
+  });
+
+  // ── Instant reply config guards ──
+
+  it('9. does NOT send instant reply when instant_reply_message is empty', async () => {
+    const sender = createCaptureSender();
+    const supabase = createTableMock({
+      activeSession: null,
+      business: BIZ_GROWTH,
+      capabilities: CAPS_WITH_AUTO_REPLY,
+      enabledLanguages: ['en'],
+    });
+    const standalone = createMockStandalone({ instant_reply_message: null });
+    const bot = new BotService(supabase, sender, standalone, createMockIntelligence());
+    await bot.handleMessage(PHONE, 'hello', 'text', undefined, BIZ_ID);
+
     const texts = sender.getTextMessages();
     expect(texts).not.toContain('Thanks for reaching out! We\'ll be with you shortly.');
   });
 
-  it('6. does NOT send instant reply when instant_reply_enabled is false', async () => {
+  it('10. does NOT send instant reply when instant_reply_enabled is false', async () => {
     const sender = createCaptureSender();
     const supabase = createTableMock({
       activeSession: null,
@@ -274,7 +357,7 @@ describe('P1-AUTO-1: Instant reply runtime', () => {
     expect(texts).not.toContain('Thanks for reaching out! We\'ll be with you shortly.');
   });
 
-  it('7. does NOT send instant reply when auto_reply_enabled is false', async () => {
+  it('11. does NOT send instant reply when business_hours is null', async () => {
     const sender = createCaptureSender();
     const supabase = createTableMock({
       activeSession: null,
@@ -282,7 +365,7 @@ describe('P1-AUTO-1: Instant reply runtime', () => {
       capabilities: CAPS_WITH_AUTO_REPLY,
       enabledLanguages: ['en'],
     });
-    const standalone = createMockStandalone({ auto_reply_enabled: false });
+    const standalone = createMockStandalone({ business_hours: null });
     const bot = new BotService(supabase, sender, standalone, createMockIntelligence());
     await bot.handleMessage(PHONE, 'hello', 'text', undefined, BIZ_ID);
 
@@ -290,7 +373,7 @@ describe('P1-AUTO-1: Instant reply runtime', () => {
     expect(texts).not.toContain('Thanks for reaching out! We\'ll be with you shortly.');
   });
 
-  it('8. normal bot flow still runs after instant reply', async () => {
+  it('12. normal bot flow still runs after instant reply', async () => {
     const sender = createCaptureSender();
     const supabase = createTableMock({
       activeSession: null,
@@ -309,23 +392,7 @@ describe('P1-AUTO-1: Instant reply runtime', () => {
     expect(msgs[0].text).toBe('Thanks for reaching out! We\'ll be with you shortly.');
   });
 
-  it('9. does NOT send instant reply when business_hours is null', async () => {
-    const sender = createCaptureSender();
-    const supabase = createTableMock({
-      activeSession: null,
-      business: BIZ_GROWTH,
-      capabilities: CAPS_WITH_AUTO_REPLY,
-      enabledLanguages: ['en'],
-    });
-    const standalone = createMockStandalone({ business_hours: null });
-    const bot = new BotService(supabase, sender, standalone, createMockIntelligence());
-    await bot.handleMessage(PHONE, 'hello', 'text', undefined, BIZ_ID);
-
-    const texts = sender.getTextMessages();
-    expect(texts).not.toContain('Thanks for reaching out! We\'ll be with you shortly.');
-  });
-
-  it('10. sends custom instant reply message', async () => {
+  it('13. sends custom instant reply message', async () => {
     const customMsg = 'Welcome to our salon! A team member will assist you soon.';
     const sender = createCaptureSender();
     const supabase = createTableMock({
