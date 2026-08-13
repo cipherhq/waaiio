@@ -537,10 +537,12 @@ export default function ChatPage() {
 
       if (unreadIds.length === 0) return;
 
-      await supabase
-        .from('chat_messages')
-        .update({ is_read: true })
-        .in('id', unreadIds);
+      const { error } = await supabase.rpc('mark_chat_messages_read', {
+        p_business_id: business.id,
+        p_message_ids: unreadIds,
+      });
+
+      if (error) return; // Messages stay unread in UI — correct fallback
 
       setMessages((prev) =>
         prev.map((m) =>
@@ -548,7 +550,7 @@ export default function ChatPage() {
         )
       );
     },
-    [messages]
+    [messages, business.id]
   );
 
   function handleSelectConversation(phone: string) {

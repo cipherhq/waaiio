@@ -5,6 +5,19 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-13
+
+### fix(P1-CHAT-1): narrow mark-read RPC for team members
+
+- **Bug:** Team members had chat SELECT/INSERT but no UPDATE authority. Dashboard `markAsRead` silently failed for team members.
+- **Fix:** SECURITY DEFINER RPC `mark_chat_messages_read(p_business_id, p_message_ids)` that ONLY sets `is_read=true` on inbound messages. No general team-member UPDATE policy — team members cannot mutate message_text, business_id, direction, or other fields via direct UPDATE.
+- **Authorization:** Caller must be business owner OR active `business_members` entry. Anonymous/unrelated/inactive denied. Cross-business denied.
+- **Dashboard:** `markAsRead` now calls the RPC with explicit error handling instead of direct `.update()`.
+- **Security hardening:** SECURITY DEFINER, `SET search_path = public`, `REVOKE FROM PUBLIC/anon`, `GRANT TO authenticated/service_role`.
+- **Files:** `supabase/migrations/317_chat_team_member_mark_read.sql`, `app/dashboard/chat/page.tsx`
+
+---
+
 ## 2026-08-12
 
 ### fix(P2-CAP-1, P1-PLAN-2): Add Features explicit save model + correct state comparison
@@ -14,6 +27,17 @@ If something breaks, check this log to find what changed and when.
 - **Auto-save removed:** `handleToggle` no longer auto-saves on every toggle. Selection changes are local draft state until user clicks Save Changes.
 - **Concurrent save prevention:** Toggles disabled during save. Drag-drop ordering blocked during save.
 - **Files:** `app/dashboard/capabilities/page.tsx`, `lib/__tests__/p2-cap-selection-save-state.test.ts`
+
+### fix(P0-ADMIN, P0-CAP): admin capability authority + canonical shared catalog
+
+- **Shared catalog:** `shared/capabilities.ts` — ONE canonical source for all 31 capability IDs, labels, tiers, icons, descriptions, dependencies. Consumed by both root Next.js app and Admin Vite app.
+- **Root types.ts refactored:** `lib/capabilities/types.ts` re-exports from shared. Category defaults remain app-specific.
+- **Admin mutation fixed:** `handleCapToggle` now calls `/api/admin/businesses/{id}/capabilities` (atomic RPCs) instead of broken direct DB writes via anon-key client (silently failed due to RLS lockdown).
+- **Bearer/service authority:** Admin route uses `requirePlatformAdmin` + `createServiceClient` only — no cookie dependency.
+- **Authoritative refresh:** After grant/revoke, Admin re-fetches server state via GET — no manual state guessing.
+- **7 missing capabilities restored, 6 label mismatches fixed, 4 tier mismatches fixed.**
+- **Drift prevention:** 25 executable tests proving catalog identity, security, and no cookie dependency.
+- **Files:** `shared/capabilities.ts`, `lib/capabilities/types.ts`, `admin/src/pages/Businesses.tsx`, `admin/src/pages/CategoryTemplates.tsx`, `admin/vite.config.js`, `admin/tsconfig.json`, `app/api/admin/businesses/[id]/capabilities/route.ts`, `lib/__tests__/p0-admin-capability-authority.test.ts`
 
 ### fix(P1-QUEUE-1): queue leave writes valid 'cancelled' status
 
