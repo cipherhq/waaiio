@@ -12,7 +12,7 @@
  * 5. Service role can update messages
  * 6. Mark-read is idempotent (already-read message)
  * 7. Team member mark-read actually changes is_read state
- * 8. Cross-business isolation is enforced
+ * 8. Policy exists on chat_messages
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
@@ -25,17 +25,34 @@ function psql(sql: string): string {
   });
   return raw.split('\n').filter(l => {
     const t = l.trim();
-    return t !== '' && !/^(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE|DO|SET|COMMENT)\b/.test(t);
+    return t !== '' && !/^(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE|DO|SET|COMMENT|BEGIN|COMMIT)\b/.test(t);
   }).join('\n').trim();
 }
 
-function psqlSafe(sql: string): { stdout: string; error: boolean } {
-  try {
-    const stdout = psql(sql);
-    return { stdout, error: false };
-  } catch (e: any) {
-    return { stdout: e.stderr || e.message || '', error: true };
-  }
+/** Run SQL as a specific authenticated user (overrides auth.uid()) */
+function asUser(userId: string, sql: string): string {
+  return psql(`
+    BEGIN;
+    CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$ SELECT '${userId}'::UUID; $fn$ LANGUAGE SQL STABLE;
+    SET LOCAL ROLE authenticated;
+    ${sql}
+    COMMIT;
+  `);
+}
+
+/** Run SQL as service_role */
+function asServiceRole(sql: string): string {
+  return psql(`
+    BEGIN;
+    SET LOCAL ROLE service_role;
+    ${sql}
+    COMMIT;
+  `);
+}
+
+/** Reset auth.uid() to CI default */
+function resetAuthUid(): void {
+  psql(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;`);
 }
 
 const OWNER_1 = '0a300000-0000-0000-0000-000000cc0001';
@@ -44,57 +61,48 @@ const TEAM_MEMBER = '0a300000-0000-0000-0000-000000cc0003';
 const UNRELATED_USER = '0a300000-0000-0000-0000-000000cc0004';
 const BIZ_1 = '0a300000-0000-0000-0000-0000000cc001';
 const BIZ_2 = '0a300000-0000-0000-0000-0000000cc002';
+const MSG_1 = '0a300000-0000-0000-0000-00000ccc0001';
+const MSG_2 = '0a300000-0000-0000-0000-00000ccc0002';
+const MSG_3 = '0a300000-0000-0000-0000-00000ccc0003';
 
 const describeDb = dbUrl ? describe : describe.skip;
 
 describeDb('P1-CHAT-1: chat_messages team-member mark-read RLS (Real PostgreSQL)', () => {
   beforeAll(() => {
-    // Create auth users
     psql(`
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
       INSERT INTO auth.users (id) VALUES
         ('${OWNER_1}'), ('${OWNER_2}'), ('${TEAM_MEMBER}'), ('${UNRELATED_USER}')
       ON CONFLICT DO NOTHING;
       ALTER TABLE auth.users ENABLE TRIGGER ALL;
-    `);
 
-    // Create profiles
-    psql(`
       INSERT INTO profiles (id, first_name, last_name, email) VALUES
-        ('${OWNER_1}', 'Owner', 'One', 'owner1@test.local'),
-        ('${OWNER_2}', 'Owner', 'Two', 'owner2@test.local'),
-        ('${TEAM_MEMBER}', 'Team', 'Member', 'team@test.local'),
-        ('${UNRELATED_USER}', 'Unrelated', 'User', 'unrelated@test.local')
+        ('${OWNER_1}', 'Owner', 'One', 'chatowner1@test.local'),
+        ('${OWNER_2}', 'Owner', 'Two', 'chatowner2@test.local'),
+        ('${TEAM_MEMBER}', 'Team', 'Member', 'chatteam@test.local'),
+        ('${UNRELATED_USER}', 'Unrelated', 'User', 'chatunrel@test.local')
       ON CONFLICT (id) DO NOTHING;
-    `);
 
-    // Create businesses
-    psql(`
       INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code)
       VALUES
-        ('${BIZ_1}', 'Chat Test Biz 1', 'chat-test-1', '${OWNER_1}', '1 Test', 'Lagos', 'VI', '+2340001', 'active', 'NG'),
-        ('${BIZ_2}', 'Chat Test Biz 2', 'chat-test-2', '${OWNER_2}', '2 Test', 'Lagos', 'VI', '+2340002', 'active', 'NG')
+        ('${BIZ_1}', 'Chat Test Biz 1', 'chat-rls-1', '${OWNER_1}', '1 Test', 'Lagos', 'VI', '+2340001111', 'active', 'NG'),
+        ('${BIZ_2}', 'Chat Test Biz 2', 'chat-rls-2', '${OWNER_2}', '2 Test', 'Lagos', 'VI', '+2340002222', 'active', 'NG')
       ON CONFLICT (id) DO NOTHING;
-    `);
 
-    // Add team member to biz_1
-    psql(`
       INSERT INTO business_members (business_id, user_id, email, role, status)
-      VALUES ('${BIZ_1}', '${TEAM_MEMBER}', 'team@test.local', 'admin', 'active')
+      VALUES ('${BIZ_1}', '${TEAM_MEMBER}', 'chatteam@test.local', 'admin', 'active')
       ON CONFLICT DO NOTHING;
-    `);
 
-    // Create test chat messages
-    psql(`
       INSERT INTO chat_messages (id, business_id, customer_phone, direction, message_text, is_read) VALUES
-        ('0a300000-0000-0000-0000-00000ccc0001', '${BIZ_1}', '+234801', 'inbound', 'Hello from customer', false),
-        ('0a300000-0000-0000-0000-00000ccc0002', '${BIZ_1}', '+234801', 'inbound', 'Already read', true),
-        ('0a300000-0000-0000-0000-00000ccc0003', '${BIZ_2}', '+234802', 'inbound', 'Other business msg', false)
+        ('${MSG_1}', '${BIZ_1}', '+234801', 'inbound', 'Hello from customer', false),
+        ('${MSG_2}', '${BIZ_1}', '+234801', 'inbound', 'Already read', true),
+        ('${MSG_3}', '${BIZ_2}', '+234802', 'inbound', 'Other business msg', false)
       ON CONFLICT DO NOTHING;
     `);
   });
 
   afterAll(() => {
+    resetAuthUid();
     psql(`
       DELETE FROM chat_messages WHERE business_id IN ('${BIZ_1}', '${BIZ_2}');
       DELETE FROM business_members WHERE business_id IN ('${BIZ_1}', '${BIZ_2}');
@@ -107,108 +115,58 @@ describeDb('P1-CHAT-1: chat_messages team-member mark-read RLS (Real PostgreSQL)
   });
 
   it('1. owner can mark messages as read', () => {
-    // Reset
-    psql(`UPDATE chat_messages SET is_read = false WHERE id = '0a300000-0000-0000-0000-00000ccc0001';`);
-
-    // Simulate owner auth context and update
-    const result = psql(`
-      SET LOCAL ROLE authenticated;
-      SET LOCAL request.jwt.claim.sub = '${OWNER_1}';
-      SET LOCAL request.jwt.claims = '{"sub": "${OWNER_1}"}';
-      UPDATE chat_messages SET is_read = true WHERE id = '0a300000-0000-0000-0000-00000ccc0001' RETURNING id;
-    `);
-    expect(result).toContain('0a300000-0000-0000-0000-00000ccc0001');
-
-    // Verify
-    const isRead = psql(`SELECT is_read FROM chat_messages WHERE id = '0a300000-0000-0000-0000-00000ccc0001';`);
-    expect(isRead).toBe('t');
+    psql(`UPDATE chat_messages SET is_read = false WHERE id = '${MSG_1}';`);
+    const result = asUser(OWNER_1, `UPDATE chat_messages SET is_read = true WHERE id = '${MSG_1}' RETURNING id;`);
+    expect(result).toContain(MSG_1);
+    resetAuthUid();
   });
 
   it('2. authorized team member can mark messages as read', () => {
-    // Reset
-    psql(`UPDATE chat_messages SET is_read = false WHERE id = '0a300000-0000-0000-0000-00000ccc0001';`);
-
-    // Simulate team member auth context
-    const result = psql(`
-      SET LOCAL ROLE authenticated;
-      SET LOCAL request.jwt.claim.sub = '${TEAM_MEMBER}';
-      SET LOCAL request.jwt.claims = '{"sub": "${TEAM_MEMBER}"}';
-      UPDATE chat_messages SET is_read = true WHERE id = '0a300000-0000-0000-0000-00000ccc0001' RETURNING id;
-    `);
-    expect(result).toContain('0a300000-0000-0000-0000-00000ccc0001');
+    psql(`UPDATE chat_messages SET is_read = false WHERE id = '${MSG_1}';`);
+    const result = asUser(TEAM_MEMBER, `UPDATE chat_messages SET is_read = true WHERE id = '${MSG_1}' RETURNING id;`);
+    expect(result).toContain(MSG_1);
+    resetAuthUid();
   });
 
   it('3. team member cannot update another business messages', () => {
-    // Team member is in biz_1, not biz_2
-    const result = psql(`
-      SET LOCAL ROLE authenticated;
-      SET LOCAL request.jwt.claim.sub = '${TEAM_MEMBER}';
-      SET LOCAL request.jwt.claims = '{"sub": "${TEAM_MEMBER}"}';
-      UPDATE chat_messages SET is_read = true WHERE id = '0a300000-0000-0000-0000-00000ccc0003' RETURNING id;
-    `);
-    // Should return empty (0 rows updated)
+    psql(`UPDATE chat_messages SET is_read = false WHERE id = '${MSG_3}';`);
+    const result = asUser(TEAM_MEMBER, `UPDATE chat_messages SET is_read = true WHERE id = '${MSG_3}' RETURNING id;`);
     expect(result).toBe('');
-
-    // Verify message is still unread
-    const isRead = psql(`SELECT is_read FROM chat_messages WHERE id = '0a300000-0000-0000-0000-00000ccc0003';`);
+    const isRead = psql(`SELECT is_read FROM chat_messages WHERE id = '${MSG_3}';`);
     expect(isRead).toBe('f');
+    resetAuthUid();
   });
 
   it('4. unrelated authenticated user cannot update messages', () => {
-    psql(`UPDATE chat_messages SET is_read = false WHERE id = '0a300000-0000-0000-0000-00000ccc0001';`);
-
-    const result = psql(`
-      SET LOCAL ROLE authenticated;
-      SET LOCAL request.jwt.claim.sub = '${UNRELATED_USER}';
-      SET LOCAL request.jwt.claims = '{"sub": "${UNRELATED_USER}"}';
-      UPDATE chat_messages SET is_read = true WHERE id = '0a300000-0000-0000-0000-00000ccc0001' RETURNING id;
-    `);
+    psql(`UPDATE chat_messages SET is_read = false WHERE id = '${MSG_1}';`);
+    const result = asUser(UNRELATED_USER, `UPDATE chat_messages SET is_read = true WHERE id = '${MSG_1}' RETURNING id;`);
     expect(result).toBe('');
+    resetAuthUid();
   });
 
   it('5. service role can update messages', () => {
-    psql(`UPDATE chat_messages SET is_read = false WHERE id = '0a300000-0000-0000-0000-00000ccc0001';`);
-
-    const result = psql(`
-      SET LOCAL ROLE service_role;
-      UPDATE chat_messages SET is_read = true WHERE id = '0a300000-0000-0000-0000-00000ccc0001' RETURNING id;
-    `);
-    expect(result).toContain('0a300000-0000-0000-0000-00000ccc0001');
+    psql(`UPDATE chat_messages SET is_read = false WHERE id = '${MSG_1}';`);
+    const result = asServiceRole(`UPDATE chat_messages SET is_read = true WHERE id = '${MSG_1}' RETURNING id;`);
+    expect(result).toContain(MSG_1);
   });
 
   it('6. mark-read is idempotent (already-read message)', () => {
-    // Message is already read
-    const result = psql(`
-      SET LOCAL ROLE authenticated;
-      SET LOCAL request.jwt.claim.sub = '${OWNER_1}';
-      SET LOCAL request.jwt.claims = '{"sub": "${OWNER_1}"}';
-      UPDATE chat_messages SET is_read = true WHERE id = '0a300000-0000-0000-0000-00000ccc0002' RETURNING id;
-    `);
-    // Returns the row even though no actual change
-    expect(result).toContain('0a300000-0000-0000-0000-00000ccc0002');
+    const result = asUser(OWNER_1, `UPDATE chat_messages SET is_read = true WHERE id = '${MSG_2}' RETURNING id;`);
+    expect(result).toContain(MSG_2);
+    resetAuthUid();
   });
 
   it('7. team member mark-read actually changes is_read state', () => {
-    psql(`UPDATE chat_messages SET is_read = false WHERE id = '0a300000-0000-0000-0000-00000ccc0001';`);
-
-    // Before: unread
-    const before = psql(`SELECT is_read FROM chat_messages WHERE id = '0a300000-0000-0000-0000-00000ccc0001';`);
+    psql(`UPDATE chat_messages SET is_read = false WHERE id = '${MSG_1}';`);
+    const before = psql(`SELECT is_read FROM chat_messages WHERE id = '${MSG_1}';`);
     expect(before).toBe('f');
-
-    // Team member marks as read
-    psql(`
-      SET LOCAL ROLE authenticated;
-      SET LOCAL request.jwt.claim.sub = '${TEAM_MEMBER}';
-      SET LOCAL request.jwt.claims = '{"sub": "${TEAM_MEMBER}"}';
-      UPDATE chat_messages SET is_read = true WHERE id = '0a300000-0000-0000-0000-00000ccc0001';
-    `);
-
-    // After: read
-    const after = psql(`SELECT is_read FROM chat_messages WHERE id = '0a300000-0000-0000-0000-00000ccc0001';`);
+    asUser(TEAM_MEMBER, `UPDATE chat_messages SET is_read = true WHERE id = '${MSG_1}';`);
+    resetAuthUid();
+    const after = psql(`SELECT is_read FROM chat_messages WHERE id = '${MSG_1}';`);
     expect(after).toBe('t');
   });
 
-  it('8. policy name exists on chat_messages', () => {
+  it('8. team_members_update_messages policy exists', () => {
     const policies = psql(`
       SELECT policyname FROM pg_policies WHERE tablename = 'chat_messages' AND policyname = 'team_members_update_messages';
     `);
