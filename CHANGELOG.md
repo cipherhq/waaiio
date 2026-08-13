@@ -7,11 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-13
 
-### fix(P1-CHAT-1): team-member chat_messages mark-read RLS
+### fix(P1-CHAT-1): narrow mark-read RPC for team members
 
-- **Bug:** Team members (business_members) had SELECT and INSERT policies on `chat_messages` (migration 168) but no UPDATE policy. Dashboard `markAsRead` uses the authenticated browser client, so team-member mark-read silently failed — unread badges never cleared for team-member users.
-- **Fix:** Migration 317 adds `team_members_update_messages` policy on `chat_messages` FOR UPDATE, scoped via `business_members WHERE user_id = auth.uid() AND status = 'active'`. Same authorization pattern as existing team-member SELECT/INSERT policies.
-- **Files:** `supabase/migrations/317_chat_team_member_mark_read.sql`
+- **Bug:** Team members had chat SELECT/INSERT but no UPDATE authority. Dashboard `markAsRead` silently failed for team members.
+- **Fix:** SECURITY DEFINER RPC `mark_chat_messages_read(p_business_id, p_message_ids)` that ONLY sets `is_read=true` on inbound messages. No general team-member UPDATE policy — team members cannot mutate message_text, business_id, direction, or other fields via direct UPDATE.
+- **Authorization:** Caller must be business owner OR active `business_members` entry. Anonymous/unrelated/inactive denied. Cross-business denied.
+- **Dashboard:** `markAsRead` now calls the RPC with explicit error handling instead of direct `.update()`.
+- **Security hardening:** SECURITY DEFINER, `SET search_path = public`, `REVOKE FROM PUBLIC/anon`, `GRANT TO authenticated/service_role`.
+- **Files:** `supabase/migrations/317_chat_team_member_mark_read.sql`, `app/dashboard/chat/page.tsx`
 
 ---
 
