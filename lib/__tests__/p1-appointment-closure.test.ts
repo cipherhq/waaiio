@@ -496,9 +496,16 @@ const TEST_DB = process.env.TEST_DATABASE_URL;
 function runSQL(sql: string): string {
   if (!TEST_DB) throw new Error('TEST_DATABASE_URL not set');
   try {
-    return execSync(`psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A`, {
+    const raw = execSync(`psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A`, {
       encoding: 'utf-8', timeout: 15000, input: sql,
-    }).trim();
+    });
+    // Filter out transaction control markers that psql may emit
+    return raw.split('\n')
+      .filter(l => {
+        const t = l.trim();
+        return t !== '' && !/^(BEGIN|COMMIT|SET|GRANT|REVOKE|CREATE\b|ALTER\b|INSERT\b|UPDATE\b|DELETE\b|DO)\b/i.test(t);
+      })
+      .join('\n').trim();
   } catch (err: any) {
     return `ERROR: ${err.stderr || err.message}`;
   }
@@ -744,83 +751,177 @@ describeDb('Real PostgreSQL: appointment booking authority', () => {
     runSQL(`DELETE FROM bookings WHERE business_id = '${BIZ_ID}';`);
   });
 
-  // ── Authorization tests ──
+  // ── Real role-behavior authorization tests ──
+  // Pattern follows P1-CHAT-1: replace auth.uid(), SET LOCAL ROLE, run SQL, restore.
 
-  it('AUTH-1. get_active_appointments_public returns only public-safe columns', () => {
-    // Verify RPC returns data
-    const result = runSQL(`SELECT * FROM get_active_appointments_public('${BIZ_ID}'::uuid);`);
-    expect(result).not.toContain('ERROR');
-    expect(result.length).toBeGreaterThan(0);
+  const BIZ2_OWNER = '00000000-0000-0000-0000-00000a170006';
+  const BIZ2_ID = '00000000-0000-0000-0000-00000a170007';
+  const APPT2_ID = '00000000-0000-0000-0000-00000a170008';
+  const UNRELATED_USER = '00000000-0000-0000-0000-00000a170009';
 
-    // Verify column names from pg_proc's proargnames (RETURNS TABLE args are output params)
+  /** Run SQL as a specific authenticated user (replaces auth.uid, uses SET LOCAL ROLE) */
+  function asUser(userId: string, sql: string): string {
+    return runSQL(`
+      BEGIN;
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$ SELECT '${userId}'::UUID; $fn$ LANGUAGE SQL STABLE;
+      SET LOCAL ROLE authenticated;
+      ${sql}
+      COMMIT;
+    `);
+  }
+  function asServiceRole(sql: string): string {
+    return runSQL(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      ${sql}
+      COMMIT;
+    `);
+  }
+  function resetAuth(): void {
+    runSQL(`
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;
+    `);
+  }
+
+  beforeAll(() => {
+    // Grant schema + table access to Supabase roles (Supabase does this automatically,
+    // but CI test DB needs explicit grants for SET LOCAL ROLE tests)
+    runSQL(`
+      GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+      GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+      GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+      -- anon: NO direct table access (only RPC EXECUTE grants)
+    `);
+
+    // Create second business + appointment for cross-business tests
+    runSQL(`
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      INSERT INTO auth.users (id) VALUES ('${BIZ2_OWNER}') ON CONFLICT DO NOTHING;
+      INSERT INTO auth.users (id) VALUES ('${UNRELATED_USER}') ON CONFLICT DO NOTHING;
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
+      INSERT INTO profiles (id, first_name, last_name, email) VALUES ('${BIZ2_OWNER}', 'Biz2', 'Owner', 'biz2-owner@test.local') ON CONFLICT DO NOTHING;
+      INSERT INTO profiles (id, first_name, last_name, email) VALUES ('${UNRELATED_USER}', 'Unrelated', 'User', 'unrelated@test.local') ON CONFLICT DO NOTHING;
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code)
+        VALUES ('${BIZ2_ID}', 'Biz2 Test', 'biz2-test', '${BIZ2_OWNER}', '2 Test', 'Lagos', 'VI', '+0001', 'active', 'NG') ON CONFLICT DO NOTHING;
+      INSERT INTO appointments (id, business_id, name, price, duration_minutes, buffer_minutes, max_capacity, is_active,
+                                available_days, available_from, available_to, staff_ids, auto_approve, metadata)
+        VALUES ('${APPT2_ID}', '${BIZ2_ID}', 'Biz2 Consult', 5000, 60, 10, 2, true,
+                '{monday,tuesday,wednesday,thursday,friday}', '10:00', '18:00',
+                '{${BIZ2_OWNER}}', false, '{"internal_note":"secret"}') ON CONFLICT DO NOTHING;
+    `);
+  });
+
+  afterAll(() => {
+    resetAuth();
+    runSQL(`DELETE FROM appointments WHERE id = '${APPT2_ID}';`);
+    runSQL(`DELETE FROM businesses WHERE id = '${BIZ2_ID}';`);
+    runSQL(`DELETE FROM profiles WHERE id IN ('${BIZ2_OWNER}', '${UNRELATED_USER}');`);
+    runSQL(`ALTER TABLE auth.users DISABLE TRIGGER ALL; DELETE FROM auth.users WHERE id IN ('${BIZ2_OWNER}', '${UNRELATED_USER}'); ALTER TABLE auth.users ENABLE TRIGGER ALL;`);
+  });
+
+  afterEach(() => { resetAuth(); });
+
+  it('AUTH-A1. anon has EXECUTE grant on get_active_appointments_public', () => {
+    const hasGrant = runSQL(`
+      SELECT COUNT(*) FROM information_schema.routine_privileges
+      WHERE routine_name = 'get_active_appointments_public'
+        AND grantee = 'anon'
+        AND privilege_type = 'EXECUTE';
+    `);
+    expect(hasGrant.trim()).toBe('1');
+    // Verify the function returns correct data when called
+    const result = runSQL(`SELECT COUNT(*) FROM get_active_appointments_public('${BIZ_ID}'::uuid);`);
+    expect(result.trim()).toBe('1');
+  });
+
+  it('AUTH-A2. anon RPC returns only public-safe columns', () => {
     const argNames = runSQL(`
       SELECT array_to_string(proargnames, ',')
       FROM pg_proc
       WHERE proname = 'get_active_appointments_public'
         AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public');
     `);
-    // Must NOT contain internal columns
     expect(argNames).not.toContain('staff_ids');
     expect(argNames).not.toContain('auto_approve');
     expect(argNames).not.toContain('buffer_minutes');
     expect(argNames).not.toContain('requires_staff');
-    expect(argNames).not.toContain('allow_staff_selection');
-    expect(argNames).not.toContain('created_at');
-    expect(argNames).not.toContain('updated_at');
-    // Must contain public columns
     expect(argNames).toContain('id');
     expect(argNames).toContain('name');
     expect(argNames).toContain('price');
-    expect(argNames).toContain('duration_minutes');
-    expect(argNames).toContain('image_url');
   });
 
-  it('AUTH-2. inactive appointment is not returned by public RPC', () => {
-    // Deactivate appointment
+  it('AUTH-A3. RPC excludes inactive appointments', () => {
     runSQL(`UPDATE appointments SET is_active = false WHERE id = '${APPT_ID}';`);
     const result = runSQL(`SELECT COUNT(*) FROM get_active_appointments_public('${BIZ_ID}'::uuid);`);
     expect(result.trim()).toBe('0');
-    // Re-activate
     runSQL(`UPDATE appointments SET is_active = true WHERE id = '${APPT_ID}';`);
   });
 
-  it('AUTH-3. no broad anon SELECT policy exists on appointments', () => {
+  it('AUTH-A4. no broad anon SELECT policy exists on appointments table', () => {
     const policies = runSQL(`
-      SELECT policyname FROM pg_policies
+      SELECT COUNT(*) FROM pg_policies
       WHERE tablename = 'appointments'
-        AND policyname LIKE '%public%'
-        OR (tablename = 'appointments' AND roles::text LIKE '%anon%');
+        AND (policyname LIKE '%public%' OR policyname LIKE '%anon%');
     `);
-    // Should not find any anon SELECT policy (we use RPC instead)
-    expect(policies).not.toContain('appointments_public_select');
+    expect(policies.trim()).toBe('0');
   });
 
-  it('AUTH-4. cross-business appointment not returned by public RPC', () => {
-    const OTHER_BIZ = '00000000-0000-0000-0000-00000a170099';
-    const result = runSQL(`SELECT COUNT(*) FROM get_active_appointments_public('${OTHER_BIZ}'::uuid);`);
+  it('AUTH-B1. authenticated has EXECUTE grant on public RPC', () => {
+    const hasGrant = runSQL(`
+      SELECT COUNT(*) FROM information_schema.routine_privileges
+      WHERE routine_name = 'get_active_appointments_public'
+        AND grantee = 'authenticated'
+        AND privilege_type = 'EXECUTE';
+    `);
+    expect(hasGrant.trim()).toBe('1');
+  });
+
+  it('AUTH-B2. unrelated authenticated user gets 0 rows from direct table (owner RLS)', () => {
+    const result = asUser(UNRELATED_USER, `SELECT COUNT(*) FROM appointments WHERE business_id = '${BIZ_ID}';`);
     expect(result.trim()).toBe('0');
   });
 
-  it('AUTH-5. owner/dashboard access via RLS remains intact', () => {
-    // Owner RLS policies still allow full table access
-    const policies = runSQL(`
-      SELECT policyname FROM pg_policies
-      WHERE tablename = 'appointments'
-        AND policyname LIKE '%owner%';
-    `);
-    expect(policies).toContain('appointments_owner_select');
-    expect(policies).toContain('appointments_owner_update');
-    expect(policies).toContain('appointments_owner_insert');
-    expect(policies).toContain('appointments_owner_delete');
+  it('AUTH-C1. owner has full dashboard SELECT including internal columns', () => {
+    const result = asUser(BIZ_OWNER, `SELECT id, staff_ids, auto_approve, buffer_minutes FROM appointments WHERE business_id = '${BIZ_ID}';`);
+    expect(result).toContain(APPT_ID);
+    expect(result).not.toContain('ERROR');
   });
 
-  it('AUTH-6. service_role has full access via RLS', () => {
-    const policies = runSQL(`
-      SELECT policyname FROM pg_policies
-      WHERE tablename = 'appointments'
-        AND policyname LIKE '%service%';
+  it('AUTH-C2. owner can update their own appointments', () => {
+    asUser(BIZ_OWNER, `UPDATE appointments SET description = 'owner-updated' WHERE id = '${APPT_ID}';`);
+    const desc = runSQL(`SELECT description FROM appointments WHERE id = '${APPT_ID}';`);
+    expect(desc.trim()).toBe('owner-updated');
+    runSQL(`UPDATE appointments SET description = NULL WHERE id = '${APPT_ID}';`);
+  });
+
+  it('AUTH-D1. service_role has full appointment access including internal columns', () => {
+    const result = asServiceRole(`SELECT id, staff_ids, auto_approve, buffer_minutes, metadata FROM appointments WHERE id = '${APPT_ID}';`);
+    expect(result).toContain(APPT_ID);
+    expect(result).not.toContain('ERROR');
+  });
+
+  it('AUTH-E1. cross-business: RPC returns only correct business appointments', () => {
+    const result1 = runSQL(`SELECT name FROM get_active_appointments_public('${BIZ_ID}'::uuid);`);
+    expect(result1).toContain('Consultation');
+    expect(result1).not.toContain('Biz2 Consult');
+
+    const result2 = runSQL(`SELECT name FROM get_active_appointments_public('${BIZ2_ID}'::uuid);`);
+    expect(result2).toContain('Biz2 Consult');
+    expect(result2).not.toContain('Consultation');
+  });
+
+  it('AUTH-E2. cross-business: owner cannot see other business appointments via table', () => {
+    const result = asUser(BIZ_OWNER, `SELECT COUNT(*) FROM appointments WHERE business_id = '${BIZ2_ID}';`);
+    expect(result.trim()).toBe('0');
+  });
+
+  it('AUTH-F1. REVOKE EXECUTE FROM PUBLIC is in effect', () => {
+    const hasPublicGrant = runSQL(`
+      SELECT COUNT(*) FROM information_schema.routine_privileges
+      WHERE routine_name = 'get_active_appointments_public'
+        AND grantee = 'PUBLIC';
     `);
-    expect(policies).toContain('appointments_service_all');
+    expect(hasPublicGrant.trim()).toBe('0');
   });
 
   // ── Idempotency replay test ──

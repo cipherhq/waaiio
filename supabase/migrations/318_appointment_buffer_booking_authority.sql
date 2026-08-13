@@ -51,7 +51,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   ORDER BY a.sort_order;
 $$;
 
--- Allow anon + authenticated to call the public read RPC
+-- Least-privilege: revoke default PUBLIC, grant only to intended roles
+REVOKE EXECUTE ON FUNCTION get_active_appointments_public(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION get_active_appointments_public(uuid) TO anon;
 GRANT EXECUTE ON FUNCTION get_active_appointments_public(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION get_active_appointments_public(uuid) TO service_role;
