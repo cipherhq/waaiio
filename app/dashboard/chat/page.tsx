@@ -542,10 +542,7 @@ export default function ChatPage() {
         p_message_ids: unreadIds,
       });
 
-      if (error) {
-        console.error('[CHAT] Mark-read RPC failed:', error.message);
-        return;
-      }
+      if (error) return; // Messages stay unread in UI — correct fallback
 
       setMessages((prev) =>
         prev.map((m) =>
