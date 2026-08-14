@@ -1307,7 +1307,7 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
 
   it('DB-46: class_sessions RLS enabled with no authenticated write policies', () => {
     // Verify RLS is enabled
-    const rlsEnabled = psql(`SELECT rowsecurity FROM pg_class WHERE relname = 'class_sessions';`);
+    const rlsEnabled = psql(`SELECT relrowsecurity FROM pg_class WHERE relname = 'class_sessions';`);
     expect(rlsEnabled).toBe('t');
     // Verify NO insert/update/delete policy for authenticated role
     const writePolicies = psql(`SELECT count(*)::int FROM pg_policies WHERE tablename = 'class_sessions' AND cmd IN ('INSERT', 'UPDATE', 'DELETE') AND roles::text LIKE '%authenticated%';`);
@@ -1315,7 +1315,7 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
   });
 
   it('DB-47: class_recurrence_rules RLS enabled with no authenticated write policies', () => {
-    const rlsEnabled = psql(`SELECT rowsecurity FROM pg_class WHERE relname = 'class_recurrence_rules';`);
+    const rlsEnabled = psql(`SELECT relrowsecurity FROM pg_class WHERE relname = 'class_recurrence_rules';`);
     expect(rlsEnabled).toBe('t');
     const writePolicies = psql(`SELECT count(*)::int FROM pg_policies WHERE tablename = 'class_recurrence_rules' AND cmd IN ('INSERT', 'UPDATE', 'DELETE') AND roles::text LIKE '%authenticated%';`);
     expect(writePolicies).toBe('0');
