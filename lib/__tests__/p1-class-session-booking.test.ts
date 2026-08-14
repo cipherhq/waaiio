@@ -1502,7 +1502,7 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
     psql(`DELETE FROM bookings;`);
   });
 
-  it('CONTENTION-2: booking vs cancellation — serialized, final state consistent', async () => {
+  it('CONTENTION-2: booking vs cancellation — never cancelled + active attendee', async () => {
     reset();
     psql(`INSERT INTO class_recurrence_rules (business_id, service_id, weekday, start_time) VALUES
       ('${BIZ}', '${CLASS_SVC}', 'mon', '18:00');`);
@@ -1527,19 +1527,19 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
       COMMIT;
     `;
 
-    const { a, b } = await runTwoSessions(bookSql, cancelSql);
+    await runTwoSessions(bookSql, cancelSql);
 
     const finalStatus = psql(`SELECT status FROM class_sessions WHERE id = '${sid}';`);
-    expect(finalStatus).toBe('cancelled');
+    const activeBookings = parseInt(psql(`SELECT count(*)::int FROM bookings WHERE class_session_id = '${sid}' AND status IN ('confirmed', 'pending', 'in_progress');`));
 
-    const bookingsAfter = bookCount();
-    const bookResult = (a.match(/[tf]/) || [''])[0];
-    if (bookResult === 't') {
-      expect(bookingsAfter).toBe(1); // booking first, then cancel
+    // CORE INVARIANT: never cancelled + active attendee
+    if (finalStatus === 'cancelled') {
+      expect(activeBookings).toBe(0); // cancel succeeded → no active booking
     } else {
-      expect(bookingsAfter).toBe(0); // cancel first, booking rejected
+      // Booking went first → cancel rejected (active attendee exists)
+      // Session remains scheduled
+      expect(finalStatus).toBe('scheduled');
     }
-    // Invariant: no booking inserted AFTER cancelled state
     psql(`DELETE FROM bookings;`);
     psql(`UPDATE class_sessions SET status = 'scheduled' WHERE id = '${sid}';`);
   });

@@ -40,6 +40,8 @@ vi.mock('@/lib/supabase/service', () => ({
         : table === 'businesses' ? mockBusinessLookup
         : table === 'business_staff' ? mockStaffLookup
         : vi.fn().mockResolvedValue({ data: null, error: null }),
+      // maybeSingle used by is_class check — default non-class
+      maybeSingle: vi.fn().mockResolvedValue({ data: { is_class: false }, error: null }),
     })),
     rpc: mockRpc,
   })),
