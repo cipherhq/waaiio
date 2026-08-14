@@ -641,7 +641,7 @@ BEGIN
     END IF;
 
     -- Validate target session
-    SELECT id, business_id, service_id, date, start_time, end_time, capacity, status, staff_id
+    SELECT id, business_id, service_id, date, start_time, end_time, capacity, status, staff_id, location_id
     INTO v_target_cs FROM class_sessions WHERE id = p_target_class_session_id;
 
     IF NOT FOUND THEN
