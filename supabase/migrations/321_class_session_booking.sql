@@ -233,7 +233,15 @@ GRANT EXECUTE ON FUNCTION get_upcoming_class_sessions(UUID, INTEGER) TO authenti
 GRANT EXECUTE ON FUNCTION get_upcoming_class_sessions(UUID, INTEGER) TO service_role;
 
 
--- 6. Extend book_slot_atomic with p_class_session_id
+-- 6. Drop old 27-arg book_slot_atomic to avoid overload ambiguity with new 28-arg version
+DROP FUNCTION IF EXISTS public.book_slot_atomic(
+  uuid, uuid, uuid, uuid, date, text, int, int,
+  text, int, text, text, text, text, text,
+  text, text, date, jsonb, uuid, int, text,
+  uuid, uuid, integer, integer, uuid
+);
+
+-- Extend book_slot_atomic with p_class_session_id
 --    When supplied: validates session, uses session capacity (SUM party_size),
 --    locks by session ID, writes bookings.class_session_id.
 --    When NULL: ALL existing behavior preserved unchanged.
@@ -481,7 +489,7 @@ GRANT EXECUTE ON FUNCTION public.book_slot_atomic(
 ) TO service_role;
 
 
--- 7. Extend book_manual_slot_atomic with p_class_session_id
+-- 7. Drop old 17-arg book_manual_slot_atomic and create 18-arg version
 DROP FUNCTION IF EXISTS book_manual_slot_atomic(uuid,uuid,uuid,uuid,date,text,int,int,text,text,text,text,int,text,integer,integer,uuid);
 
 CREATE OR REPLACE FUNCTION book_manual_slot_atomic(
@@ -572,7 +580,10 @@ REVOKE EXECUTE ON FUNCTION book_manual_slot_atomic(uuid,uuid,uuid,uuid,date,text
 GRANT EXECUTE ON FUNCTION book_manual_slot_atomic(uuid,uuid,uuid,uuid,date,text,int,int,text,text,text,text,int,text,integer,integer,uuid,uuid) TO service_role;
 
 
--- 8. Extend reschedule for class bookings
+-- 8. Drop old 5-arg reschedule_booking_atomic to avoid overload ambiguity
+DROP FUNCTION IF EXISTS reschedule_booking_atomic(uuid, uuid, date, text, integer);
+
+-- Extend reschedule for class bookings
 --    Class bookings require a target class_session_id for reschedule.
 CREATE OR REPLACE FUNCTION reschedule_booking_atomic(
   p_booking_id uuid,
