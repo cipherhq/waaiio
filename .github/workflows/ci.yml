@@ -1030,9 +1030,11 @@ jobs:
           PGPORT: 5432
           PGUSER: postgres
           PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
         run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_staff_test
+          createdb --maintenance-db=waaiio_test waaiio_staff_test
+          export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/waaiio_staff_test"
           echo "Running P1-STAFF-1 real PostgreSQL staff booking authority tests..."
           set +e
           OUTPUT=$(npx vitest run lib/__tests__/p1-staff-booking-authority.test.ts 2>&1)
