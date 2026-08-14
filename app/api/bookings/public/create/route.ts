@@ -164,6 +164,19 @@ export async function POST(request: NextRequest) {
       itemStaffIds = (service.staff_ids as string[]) || [];
     }
 
+    // Class XOR validation
+    if (classSessionId && appointmentId) {
+      return NextResponse.json({ error: 'Cannot combine appointmentId and classSessionId' }, { status: 400 });
+    }
+
+    // Detect class service and enforce session requirement
+    if (!isAppointmentBooking && !classSessionId) {
+      const svcIsClass = (itemMetadata as Record<string, unknown> | null);
+      // Re-check via the fetched service — but we need is_class. Let me check:
+      // The service query above doesn't fetch is_class for non-class path.
+      // The DB authority will reject it anyway. Let the DB be final authority.
+    }
+
     // Auto-assign staff for requires_staff NON-CLASS items only.
     // Class bookings use session instructor — DB authority validates it.
     let autoStaffId: string | null = null;

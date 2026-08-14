@@ -44,6 +44,12 @@ export async function POST(request: NextRequest) {
     if (serviceId && appointmentId) {
       return NextResponse.json({ error: 'Provide serviceId or appointmentId, not both' }, { status: 400 });
     }
+    if (classSessionId && appointmentId) {
+      return NextResponse.json({ error: 'Cannot combine appointmentId and classSessionId' }, { status: 400 });
+    }
+    if (classSessionId && !serviceId) {
+      return NextResponse.json({ error: 'classSessionId requires serviceId' }, { status: 400 });
+    }
 
     // Reject past dates
     const today = new Date().toISOString().split('T')[0];
@@ -51,17 +57,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Date cannot be in the past' }, { status: 400 });
     }
 
-    // ── Capability enforcement ──
+    // ── Resolve authoritative service type for capability enforcement ──
     const serviceClient = createServiceClient();
-    // Class bookings require class_booking capability
-    const requiredCaps: import('@/lib/capabilities/types').CapabilityId[] = classSessionId
-      ? ['class_booking' as import('@/lib/capabilities/types').CapabilityId]
-      : ['appointment', 'scheduling'];
-    const guard = await requireAnyCapability(supabase, serviceClient, {
-      businessId, userId: user.id, capabilities: requiredCaps, action: 'create_new',
-    });
-    if (!guard.allowed) {
-      return NextResponse.json(guard.denial, { status: guard.status });
+
+    // Detect class service from the authoritative record
+    let isClassService = false;
+    if (serviceId) {
+      const { data: svcCheck } = await serviceClient
+        .from('services')
+        .select('is_class')
+        .eq('id', serviceId)
+        .eq('business_id', businessId)
+        .maybeSingle();
+      isClassService = svcCheck?.is_class ?? false;
+    }
+
+    // Class service requires class_booking + classSessionId
+    if (isClassService) {
+      if (!classSessionId) {
+        return NextResponse.json({ error: 'Class services require a classSessionId' }, { status: 400 });
+      }
+      const guard = await requireAnyCapability(supabase, serviceClient, {
+        businessId, userId: user.id, capabilities: ['class_booking' as import('@/lib/capabilities/types').CapabilityId], action: 'create_new',
+      });
+      if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
+    } else {
+      const guard = await requireAnyCapability(supabase, serviceClient, {
+        businessId, userId: user.id, capabilities: ['appointment', 'scheduling'], action: 'create_new',
+      });
+      if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
     }
 
     // Get business name/country for notifications

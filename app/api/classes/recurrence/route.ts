@@ -83,66 +83,30 @@ export async function POST(request: NextRequest) {
     });
     if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-    // Verify the service belongs to this business and is a class
-    const { data: svc } = await service
-      .from('services')
-      .select('id, is_class')
-      .eq('id', serviceId)
-      .eq('business_id', businessId)
-      .single();
+    // Atomic recurrence creation via DB authority
+    const { data: result, error: rpcError } = await service
+      .rpc('create_class_recurrence_atomic', {
+        p_business_id: businessId,
+        p_service_id: serviceId,
+        p_weekday: weekday,
+        p_start_time: startTime,
+        p_staff_id: staffId || null,
+        p_location_id: locationId || null,
+        p_capacity_override: capacityOverride || null,
+        p_effective_from: effectiveFrom || null,
+        p_effective_until: effectiveUntil || null,
+      });
 
-    if (!svc) return NextResponse.json({ error: 'Service not found or does not belong to this business' }, { status: 404 });
-    if (!svc.is_class) return NextResponse.json({ error: 'Service is not configured as a class' }, { status: 400 });
-
-    // Validate staff belongs to business and is active
-    if (staffId) {
-      const { data: staffCheck } = await service
-        .from('business_staff')
-        .select('id')
-        .eq('id', staffId)
-        .eq('business_id', businessId)
-        .eq('is_active', true)
-        .maybeSingle();
-      if (!staffCheck) return NextResponse.json({ error: 'Staff member not found, inactive, or does not belong to this business' }, { status: 400 });
-    }
-
-    // Validate location belongs to business
-    if (locationId) {
-      const { data: locCheck } = await service
-        .from('business_locations')
-        .select('id')
-        .eq('id', locationId)
-        .eq('business_id', businessId)
-        .eq('is_active', true)
-        .maybeSingle();
-      if (!locCheck) return NextResponse.json({ error: 'Location not found or does not belong to this business' }, { status: 400 });
-    }
-
-    const { data: rule, error: insertError } = await service
-      .from('class_recurrence_rules')
-      .insert({
-        business_id: businessId,
-        service_id: serviceId,
-        weekday,
-        start_time: startTime,
-        staff_id: staffId || null,
-        location_id: locationId || null,
-        capacity_override: capacityOverride || null,
-        effective_from: effectiveFrom || new Date().toISOString().split('T')[0],
-        effective_until: effectiveUntil || null,
-      })
-      .select()
-      .single();
-
-    if (insertError) {
-      logger.withContext({ op: 'class-recurrence.create', businessId, serviceId }).error(`Failed to create recurrence rule: ${insertError.message}`);
+    if (rpcError) {
+      logger.withContext({ op: 'class-recurrence.create', businessId, serviceId }).error(`Atomic recurrence creation failed: ${rpcError.message}`);
       return NextResponse.json({ error: 'Failed to create recurrence rule' }, { status: 500 });
     }
 
-    // Generate sessions
-    await service.rpc('generate_class_sessions', { p_service_id: serviceId, p_days_ahead: 28 });
+    if (!result?.success) {
+      return NextResponse.json({ error: result?.reason || 'Failed to create recurrence rule' }, { status: 400 });
+    }
 
-    return NextResponse.json({ data: rule }, { status: 201 });
+    return NextResponse.json({ data: result }, { status: 201 });
   } catch (err) {
     logger.withContext({ op: 'class-recurrence.create' }).error(`Unexpected error: ${err}`);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

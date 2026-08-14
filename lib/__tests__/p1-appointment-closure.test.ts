@@ -175,6 +175,8 @@ vi.mock('@/lib/supabase/service', () => ({
         : table === 'businesses' ? mockBusinessLookup2
         : table === 'business_staff' ? mockStaffLookup2
         : vi.fn().mockResolvedValue({ data: null, error: null }),
+      // maybeSingle used by is_class check — default to non-class service
+      maybeSingle: vi.fn().mockResolvedValue({ data: { is_class: false }, error: null }),
     })),
     rpc: mockRpc2,
   })),
