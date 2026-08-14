@@ -1963,3 +1963,8 @@ GRANT INSERT, UPDATE, DELETE ON class_recurrence_rules TO authenticated;
 -- The DROP POLICY statements above removed INSERT/UPDATE/DELETE policies for authenticated.
 -- Result: authenticated has table-level DML privilege but zero matching RLS write policies
 -- → any write attempt returns zero rows (for UPDATE/DELETE) or RLS violation (for INSERT).
+
+
+-- 12c. Force RLS even for table owners (prevents superuser bypass in testing)
+ALTER TABLE class_sessions FORCE ROW LEVEL SECURITY;
+ALTER TABLE class_recurrence_rules FORCE ROW LEVEL SECURITY;
