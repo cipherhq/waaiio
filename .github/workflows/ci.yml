@@ -1003,15 +1003,9 @@ jobs:
           PGPORT: 5432
           PGUSER: postgres
           PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
         run: |
-          set -e
-          dropdb --maintenance-db=waaiio_test --if-exists waaiio_appt_test
-          createdb --maintenance-db=waaiio_test waaiio_appt_test
-          export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/waaiio_appt_test"
-          # Apply all migrations to the dedicated APPT database (same as main waaiio_test)
-          for f in supabase/migrations/*.sql; do
-            psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f" 2>/dev/null || true
-          done
           echo "Running P1-APPT real PostgreSQL appointment booking authority tests..."
           set +e
           OUTPUT=$(npx vitest run lib/__tests__/p1-appointment-closure.test.ts 2>&1)
