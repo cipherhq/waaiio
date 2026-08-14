@@ -158,6 +158,23 @@ BEGIN
 
     -- Generate sessions week by week
     WHILE v_date <= v_end_date AND (v_rule.effective_until IS NULL OR v_date <= v_rule.effective_until) LOOP
+      -- Skip if instructor is assigned but unavailable on this date/time
+      IF v_rule.staff_id IS NOT NULL THEN
+        DECLARE v_staff_ok boolean;
+        BEGIN
+          SELECT csa.allowed INTO v_staff_ok
+          FROM check_staff_availability(
+            v_rule.staff_id, v_svc.business_id,
+            v_date, v_rule.start_time::text,
+            COALESCE(v_svc.duration_minutes, 60)
+          ) csa;
+          IF v_staff_ok IS NOT TRUE THEN
+            v_date := v_date + 7;
+            CONTINUE;
+          END IF;
+        END;
+      END IF;
+
       INSERT INTO class_sessions (
         business_id, service_id, recurrence_rule_id,
         date, start_time, end_time,
@@ -358,11 +375,40 @@ BEGIN
       RETURN;
     END IF;
 
-    -- 5b. Advisory lock on CLASS SESSION (not business+date+time)
+    -- 5b. Session instructor authority
+    --     Session.staff_id is the canonical instructor. Caller p_staff_id
+    --     cannot override it. If session has an instructor, validate availability.
+    IF v_cs.staff_id IS NOT NULL THEN
+      -- Reject caller attempt to override session instructor
+      IF p_staff_id IS NOT NULL AND p_staff_id != v_cs.staff_id THEN
+        RETURN QUERY SELECT NULL::uuid, NULL::text, false;
+        RETURN;
+      END IF;
+
+      -- Validate session instructor availability using P1-STAFF-1 authority
+      DECLARE v_cs_duration integer;
+      BEGIN
+        SELECT COALESCE(duration_minutes, 60) INTO v_cs_duration
+        FROM services WHERE id = v_cs.service_id;
+
+        SELECT csa.allowed INTO v_sched_allowed
+        FROM check_staff_availability(
+          v_cs.staff_id, p_business_id,
+          v_cs.date, v_cs.start_time::text, v_cs_duration
+        ) csa;
+
+        IF v_sched_allowed IS NOT TRUE THEN
+          RETURN QUERY SELECT NULL::uuid, NULL::text, false;
+          RETURN;
+        END IF;
+      END;
+    END IF;
+
+    -- 5c. Advisory lock on CLASS SESSION (not business+date+time)
     v_lock_key := abs(hashtext('class_session:' || p_class_session_id::text));
     PERFORM pg_advisory_xact_lock(v_lock_key);
 
-    -- 5c. Capacity check using SUM(party_size) — seats, not rows
+    -- 5d. Capacity check using SUM(party_size) — seats, not rows
     SELECT COALESCE(SUM(b.party_size), 0) INTO v_occupied
     FROM bookings b
     WHERE b.class_session_id = p_class_session_id
@@ -373,7 +419,7 @@ BEGIN
       RETURN;
     END IF;
 
-    -- 5d. Insert class booking
+    -- 5e. Insert class booking — use session instructor, not caller staff
     INSERT INTO bookings (
       business_id, user_id, service_id, appointment_id, staff_id, staff_name,
       date, time, party_size, flow_type, channel,
@@ -384,7 +430,7 @@ BEGIN
       location_id, bot_session_id, class_session_id
     ) VALUES (
       p_business_id, p_user_id, v_cs.service_id, NULL,
-      COALESCE(p_staff_id, v_cs.staff_id), p_staff_name,
+      v_cs.staff_id, p_staff_name,
       v_cs.date, v_cs.start_time, p_party_size,
       p_flow_type::flow_type,
       'whatsapp'::booking_channel,

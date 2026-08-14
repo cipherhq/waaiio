@@ -5,7 +5,9 @@ import { requireCapability } from '@/lib/capabilities/api-guard';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
-// ── GET: List recurrence rules for a service ──
+const VALID_WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+// ── GET: List recurrence rules for a business/service ──
 
 export async function GET(request: NextRequest) {
   try {
@@ -23,7 +25,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'businessId is required' }, { status: 400 });
     }
 
-    // Capability guard: class_booking / read_history (reading rules is always allowed)
     const service = createServiceClient();
     const guard = await requireCapability(supabase, service, {
       businessId, userId: user.id, capability: 'class_booking' as never, action: 'read_history',
@@ -32,9 +33,10 @@ export async function GET(request: NextRequest) {
 
     let query = service
       .from('class_recurrence_rules')
-      .select('*, services!inner(id, name, business_id)')
-      .eq('services.business_id', businessId)
-      .order('created_at', { ascending: false });
+      .select('*, business_staff(id, name)')
+      .eq('business_id', businessId)
+      .order('weekday')
+      .order('start_time');
 
     if (serviceId) {
       query = query.eq('service_id', serviceId);
@@ -65,13 +67,16 @@ export async function POST(request: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { businessId, serviceId, dayOfWeek, startTime, endTime, instructorName, capacity } = body;
+    const { businessId, serviceId, weekday, startTime, staffId, locationId, capacityOverride, effectiveFrom, effectiveUntil } = body;
 
-    if (!businessId || !serviceId || dayOfWeek === undefined || !startTime) {
-      return NextResponse.json({ error: 'businessId, serviceId, dayOfWeek, and startTime are required' }, { status: 400 });
+    if (!businessId || !serviceId || !weekday || !startTime) {
+      return NextResponse.json({ error: 'businessId, serviceId, weekday, and startTime are required' }, { status: 400 });
     }
 
-    // Capability guard: class_booking / create_new
+    if (!VALID_WEEKDAYS.includes(weekday)) {
+      return NextResponse.json({ error: `weekday must be one of: ${VALID_WEEKDAYS.join(', ')}` }, { status: 400 });
+    }
+
     const service = createServiceClient();
     const guard = await requireCapability(supabase, service, {
       businessId, userId: user.id, capability: 'class_booking' as never, action: 'create_new',
@@ -86,23 +91,45 @@ export async function POST(request: NextRequest) {
       .eq('business_id', businessId)
       .single();
 
-    if (!svc) {
-      return NextResponse.json({ error: 'Service not found or does not belong to this business' }, { status: 404 });
-    }
-    if (!svc.is_class) {
-      return NextResponse.json({ error: 'Service is not configured as a class' }, { status: 400 });
+    if (!svc) return NextResponse.json({ error: 'Service not found or does not belong to this business' }, { status: 404 });
+    if (!svc.is_class) return NextResponse.json({ error: 'Service is not configured as a class' }, { status: 400 });
+
+    // Validate staff belongs to business and is active
+    if (staffId) {
+      const { data: staffCheck } = await service
+        .from('business_staff')
+        .select('id')
+        .eq('id', staffId)
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (!staffCheck) return NextResponse.json({ error: 'Staff member not found, inactive, or does not belong to this business' }, { status: 400 });
     }
 
-    // Insert the recurrence rule
+    // Validate location belongs to business
+    if (locationId) {
+      const { data: locCheck } = await service
+        .from('business_locations')
+        .select('id')
+        .eq('id', locationId)
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (!locCheck) return NextResponse.json({ error: 'Location not found or does not belong to this business' }, { status: 400 });
+    }
+
     const { data: rule, error: insertError } = await service
       .from('class_recurrence_rules')
       .insert({
+        business_id: businessId,
         service_id: serviceId,
-        day_of_week: dayOfWeek,
+        weekday,
         start_time: startTime,
-        end_time: endTime || null,
-        instructor_name: instructorName || null,
-        capacity: capacity || null,
+        staff_id: staffId || null,
+        location_id: locationId || null,
+        capacity_override: capacityOverride || null,
+        effective_from: effectiveFrom || new Date().toISOString().split('T')[0],
+        effective_until: effectiveUntil || null,
       })
       .select()
       .single();
@@ -112,16 +139,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create recurrence rule' }, { status: 500 });
     }
 
-    // Regenerate sessions for the next 30 days
-    const { error: rpcError } = await service.rpc('generate_class_sessions', {
-      p_service_id: serviceId,
-      p_days_ahead: 30,
-    });
-
-    if (rpcError) {
-      logger.withContext({ op: 'class-recurrence.generate', businessId, serviceId }).error(`Session generation failed after rule creation: ${rpcError.message}`);
-      // Rule was created successfully, but session generation failed — not a fatal error
-    }
+    // Generate sessions
+    await service.rpc('generate_class_sessions', { p_service_id: serviceId, p_days_ahead: 28 });
 
     return NextResponse.json({ data: rule }, { status: 201 });
   } catch (err) {
@@ -142,43 +161,91 @@ export async function PUT(request: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { businessId, ruleId, dayOfWeek, startTime, endTime, instructorName, capacity } = body;
+    const { businessId, ruleId, weekday, startTime, staffId, locationId, capacityOverride, effectiveFrom, effectiveUntil, isActive } = body;
 
     if (!businessId || !ruleId) {
       return NextResponse.json({ error: 'businessId and ruleId are required' }, { status: 400 });
     }
 
-    // Capability guard: class_booking / manage_existing
+    if (weekday !== undefined && !VALID_WEEKDAYS.includes(weekday)) {
+      return NextResponse.json({ error: `weekday must be one of: ${VALID_WEEKDAYS.join(', ')}` }, { status: 400 });
+    }
+
     const service = createServiceClient();
     const guard = await requireCapability(supabase, service, {
       businessId, userId: user.id, capability: 'class_booking' as never, action: 'manage_existing',
     });
     if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-    // Verify the rule belongs to a service owned by this business
+    // Verify rule belongs to this business
     const { data: existingRule } = await service
       .from('class_recurrence_rules')
-      .select('id, service_id, services!inner(business_id)')
+      .select('id, service_id, business_id')
       .eq('id', ruleId)
+      .eq('business_id', businessId)
       .single();
 
-    if (!existingRule) {
-      return NextResponse.json({ error: 'Recurrence rule not found' }, { status: 404 });
+    if (!existingRule) return NextResponse.json({ error: 'Recurrence rule not found' }, { status: 404 });
+
+    // Check if schedule is changing (weekday or startTime)
+    const isScheduleChange = weekday !== undefined || startTime !== undefined;
+
+    if (isScheduleChange) {
+      // Check for future sessions with active bookings
+      const { data: bookedSessions } = await service
+        .from('class_sessions')
+        .select('id, date, start_time')
+        .eq('recurrence_rule_id', ruleId)
+        .eq('status', 'scheduled')
+        .gte('date', new Date().toISOString().split('T')[0]);
+
+      if (bookedSessions && bookedSessions.length > 0) {
+        const sessionIds = bookedSessions.map(s => s.id);
+        const { count } = await service
+          .from('bookings')
+          .select('id', { count: 'exact', head: true })
+          .in('class_session_id', sessionIds)
+          .in('status', ['confirmed', 'pending', 'in_progress']);
+
+        if ((count || 0) > 0) {
+          return NextResponse.json({
+            error: 'Cannot change schedule — future sessions have active bookings. Cancel or reschedule those bookings first.',
+            booked_session_count: count,
+          }, { status: 409 });
+        }
+
+        // Safe to remove unbooked future sessions for this rule
+        await service
+          .from('class_sessions')
+          .delete()
+          .eq('recurrence_rule_id', ruleId)
+          .eq('status', 'scheduled')
+          .gte('date', new Date().toISOString().split('T')[0]);
+      }
     }
 
-    const ruleServices = (existingRule as unknown as { services: { business_id: string }[] }).services;
-    const ruleBizId = ruleServices[0]?.business_id;
-    if (ruleBizId !== businessId) {
-      return NextResponse.json({ error: 'Rule does not belong to this business' }, { status: 403 });
+    // Validate staff if changing
+    if (staffId !== undefined && staffId !== null) {
+      const { data: staffCheck } = await service
+        .from('business_staff')
+        .select('id')
+        .eq('id', staffId)
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (!staffCheck) return NextResponse.json({ error: 'Staff member not found or inactive' }, { status: 400 });
     }
 
-    // Build update payload — only include provided fields
+    // Build update payload
     const updates: Record<string, unknown> = {};
-    if (dayOfWeek !== undefined) updates.day_of_week = dayOfWeek;
+    if (weekday !== undefined) updates.weekday = weekday;
     if (startTime !== undefined) updates.start_time = startTime;
-    if (endTime !== undefined) updates.end_time = endTime;
-    if (instructorName !== undefined) updates.instructor_name = instructorName;
-    if (capacity !== undefined) updates.capacity = capacity;
+    if (staffId !== undefined) updates.staff_id = staffId || null;
+    if (locationId !== undefined) updates.location_id = locationId || null;
+    if (capacityOverride !== undefined) updates.capacity_override = capacityOverride || null;
+    if (effectiveFrom !== undefined) updates.effective_from = effectiveFrom;
+    if (effectiveUntil !== undefined) updates.effective_until = effectiveUntil || null;
+    if (isActive !== undefined) updates.is_active = isActive;
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
@@ -196,15 +263,8 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to update recurrence rule' }, { status: 500 });
     }
 
-    // Regenerate sessions to reflect the updated schedule
-    const { error: rpcError } = await service.rpc('generate_class_sessions', {
-      p_service_id: existingRule.service_id,
-      p_days_ahead: 30,
-    });
-
-    if (rpcError) {
-      logger.withContext({ op: 'class-recurrence.generate', businessId }).error(`Session generation failed after rule update: ${rpcError.message}`);
-    }
+    // Regenerate sessions
+    await service.rpc('generate_class_sessions', { p_service_id: existingRule.service_id, p_days_ahead: 28 });
 
     return NextResponse.json({ data: updatedRule });
   } catch (err) {
@@ -231,28 +291,52 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'businessId and ruleId are required' }, { status: 400 });
     }
 
-    // Capability guard: class_booking / manage_existing
     const service = createServiceClient();
     const guard = await requireCapability(supabase, service, {
       businessId, userId: user.id, capability: 'class_booking' as never, action: 'manage_existing',
     });
     if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-    // Verify ownership
+    // Verify rule belongs to this business
     const { data: existingRule } = await service
       .from('class_recurrence_rules')
-      .select('id, service_id, services!inner(business_id)')
+      .select('id, service_id, business_id')
       .eq('id', ruleId)
+      .eq('business_id', businessId)
       .single();
 
-    if (!existingRule) {
-      return NextResponse.json({ error: 'Recurrence rule not found' }, { status: 404 });
-    }
+    if (!existingRule) return NextResponse.json({ error: 'Recurrence rule not found' }, { status: 404 });
 
-    const delRuleServices = (existingRule as unknown as { services: { business_id: string }[] }).services;
-    const ruleBizId = delRuleServices[0]?.business_id;
-    if (ruleBizId !== businessId) {
-      return NextResponse.json({ error: 'Rule does not belong to this business' }, { status: 403 });
+    // Check for future sessions with active bookings
+    const { data: futureSessions } = await service
+      .from('class_sessions')
+      .select('id')
+      .eq('recurrence_rule_id', ruleId)
+      .eq('status', 'scheduled')
+      .gte('date', new Date().toISOString().split('T')[0]);
+
+    if (futureSessions && futureSessions.length > 0) {
+      const sessionIds = futureSessions.map(s => s.id);
+      const { count } = await service
+        .from('bookings')
+        .select('id', { count: 'exact', head: true })
+        .in('class_session_id', sessionIds)
+        .in('status', ['confirmed', 'pending', 'in_progress']);
+
+      if ((count || 0) > 0) {
+        return NextResponse.json({
+          error: 'Cannot delete rule — future sessions have active bookings. Cancel those sessions first.',
+          booked_session_count: count,
+        }, { status: 409 });
+      }
+
+      // Delete unbooked future sessions belonging to this rule
+      await service
+        .from('class_sessions')
+        .delete()
+        .eq('recurrence_rule_id', ruleId)
+        .eq('status', 'scheduled')
+        .gte('date', new Date().toISOString().split('T')[0]);
     }
 
     const { error: deleteError } = await service
@@ -263,16 +347,6 @@ export async function DELETE(request: NextRequest) {
     if (deleteError) {
       logger.withContext({ op: 'class-recurrence.delete', businessId, ruleId }).error(`Failed to delete recurrence rule: ${deleteError.message}`);
       return NextResponse.json({ error: 'Failed to delete recurrence rule' }, { status: 500 });
-    }
-
-    // Regenerate sessions (removes orphaned future sessions)
-    const { error: rpcError } = await service.rpc('generate_class_sessions', {
-      p_service_id: existingRule.service_id,
-      p_days_ahead: 30,
-    });
-
-    if (rpcError) {
-      logger.withContext({ op: 'class-recurrence.generate', businessId }).error(`Session generation failed after rule deletion: ${rpcError.message}`);
     }
 
     return NextResponse.json({ success: true });

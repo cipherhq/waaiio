@@ -3,11 +3,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
-import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import EmptyState from '@/components/dashboard/EmptyState';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
 
-// ── Types ──
+// ── Types ────────────────────────────────────────────
 
 interface ClassService {
   id: string;
@@ -17,856 +17,1113 @@ interface ClassService {
   duration_minutes: number | null;
   max_capacity: number | null;
   is_active: boolean;
-  class_schedule: Array<{ day: string; time: string }>;
-  image_url: string | null;
+  is_class: boolean;
 }
 
-interface ClassBooking {
+interface SessionService {
+  id: string;
+  name: string;
+  business_id: string;
+  duration: number | null;
+  price: number;
+}
+
+interface ClassSession {
   id: string;
   service_id: string;
+  recurrence_rule_id: string | null;
   date: string;
-  time: string;
-  guest_name: string | null;
-  guest_phone: string | null;
-  status: string;
+  start_time: string;
+  end_time: string;
+  staff_id: string | null;
+  location_id: string | null;
+  capacity: number;
+  status: 'scheduled' | 'cancelled' | 'completed';
+  cancellation_reason: string | null;
+  created_at: string;
+  attendee_count: number;
+  services: SessionService;
+}
+
+interface Attendee {
+  id: string;
+  reference_code: string;
+  guest_name: string;
+  guest_phone: string;
+  guest_email: string | null;
   party_size: number;
+  status: string;
   created_at: string;
 }
 
-/** A "session" is a distinct (service, date, time) combination derived from bookings */
-interface ClassSession {
-  serviceId: string;
-  serviceName: string;
-  date: string;
-  time: string;
-  capacity: number;
-  booked: number;
-  bookings: ClassBooking[];
+interface SessionDetail extends ClassSession {
+  attendees: Attendee[];
 }
 
-type Tab = 'classes' | 'sessions';
+interface StaffMember {
+  id: string;
+  name: string;
+}
+
+type TabId = 'classes' | 'sessions';
 
 const WEEKDAYS = [
-  { key: 'monday', short: 'Mon' },
-  { key: 'tuesday', short: 'Tue' },
-  { key: 'wednesday', short: 'Wed' },
-  { key: 'thursday', short: 'Thu' },
-  { key: 'friday', short: 'Fri' },
-  { key: 'saturday', short: 'Sat' },
-  { key: 'sunday', short: 'Sun' },
+  { value: 0, label: 'Sunday', short: 'Sun', key: 'sun' },
+  { value: 1, label: 'Monday', short: 'Mon', key: 'mon' },
+  { value: 2, label: 'Tuesday', short: 'Tue', key: 'tue' },
+  { value: 3, label: 'Wednesday', short: 'Wed', key: 'wed' },
+  { value: 4, label: 'Thursday', short: 'Thu', key: 'thu' },
+  { value: 5, label: 'Friday', short: 'Fri', key: 'fri' },
+  { value: 6, label: 'Saturday', short: 'Sat', key: 'sat' },
 ];
 
-// ── Helpers ──
+// ── Helpers ──────────────────────────────────────────
 
-function formatScheduleSummary(schedule: Array<{ day: string; time: string }>): string {
-  if (!schedule || schedule.length === 0) return 'No schedule set';
-  return schedule
-    .map(s => {
-      const dayLabel = WEEKDAYS.find(d => d.key === s.day)?.short || s.day;
-      return `${dayLabel} ${s.time}`;
-    })
-    .join(', ');
-}
-
-function formatTime12h(time: string): string {
-  if (!time) return '';
-  const [h, m] = time.split(':').map(Number);
-  const period = h >= 12 ? 'PM' : 'AM';
+function formatTime(timeStr: string): string {
+  // Handle HH:MM:SS or HH:MM
+  const [h, m] = timeStr.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
   const hour = h % 12 || 12;
-  return `${hour}:${String(m).padStart(2, '0')} ${period}`;
+  return `${hour}:${m.toString().padStart(2, '0')} ${ampm}`;
 }
 
-function formatDateReadable(dateStr: string): string {
+function formatDate(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  return d.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
 }
 
-function getCapacityColor(booked: number, capacity: number): string {
-  if (capacity <= 0) return 'text-gray-500';
-  const ratio = booked / capacity;
+function capacityColor(attendees: number, capacity: number): string {
+  if (capacity === 0) return 'text-gray-500';
+  const ratio = attendees / capacity;
   if (ratio >= 1) return 'text-red-600 dark:text-red-400';
   if (ratio >= 0.75) return 'text-amber-600 dark:text-amber-400';
   return 'text-green-600 dark:text-green-400';
 }
 
-function getCapacityBadge(booked: number, capacity: number): { label: string; className: string } {
-  if (capacity <= 0) return { label: 'No limit', className: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300' };
-  const ratio = booked / capacity;
-  if (ratio >= 1) return { label: 'Full', className: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' };
-  if (ratio >= 0.75) return { label: 'Almost full', className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' };
-  return { label: 'Available', className: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' };
+function statusBadge(status: string): { label: string; className: string } {
+  switch (status) {
+    case 'scheduled':
+      return { label: 'Scheduled', className: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' };
+    case 'cancelled':
+      return { label: 'Cancelled', className: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' };
+    case 'completed':
+      return { label: 'Completed', className: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300' };
+    default:
+      return { label: status, className: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' };
+  }
 }
 
-// ── Main Page ──
+// ── Component ────────────────────────────────────────
 
 export default function ClassesPage() {
   const business = useBusiness();
-  const country = (business.country_code || 'NG') as CountryCode;
+  const countryCode = (business.country_code || 'NG') as CountryCode;
 
-  const [tab, setTab] = useState<Tab>('classes');
+  // Tab state
+  const [activeTab, setActiveTab] = useState<TabId>('classes');
+
+  // Classes tab state
   const [classes, setClasses] = useState<ClassService[]>([]);
+  const [classesLoading, setClassesLoading] = useState(true);
+  const [classesError, setClassesError] = useState<string | null>(null);
+
+  // Sessions tab state
   const [sessions, setSessions] = useState<ClassSession[]>([]);
-  const [loading, setLoading] = useState(true);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [filterServiceId, setFilterServiceId] = useState<string | null>(null);
+
+  // Staff (for create dialog)
+  const [staffList, setStaffList] = useState<StaffMember[]>([]);
 
   // Create class dialog
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [createForm, setCreateForm] = useState({
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [newClass, setNewClass] = useState({
     name: '',
     description: '',
-    price: 0,
-    duration_minutes: 60,
-    max_capacity: 10,
-    class_schedule: [{ day: 'monday', time: '09:00' }] as Array<{ day: string; time: string }>,
+    price: '',
+    duration: '60',
+    capacity: '10',
+    // Recurrence rule fields
+    dayOfWeek: 1,
+    startTime: '09:00',
+    staffId: '',
   });
 
   // Session detail dialog
-  const [selectedSession, setSelectedSession] = useState<ClassSession | null>(null);
-  const [showSessionDetail, setShowSessionDetail] = useState(false);
+  const [selectedSession, setSelectedSession] = useState<SessionDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
-  // Cancel confirmation
+  // Cancel session
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
 
-  // Filter sessions by class
-  const [filterClassId, setFilterClassId] = useState<string | null>(null);
+  // ── Data fetching ────────────────────────────────
 
-  // ── Data fetching ──
+  const fetchClasses = useCallback(async () => {
+    setClassesLoading(true);
+    setClassesError(null);
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from('services')
+        .select('id, name, description, price, duration_minutes, max_capacity, is_active, is_class')
+        .eq('business_id', business.id)
+        .eq('is_class', true)
+        .order('name');
 
-  const loadClasses = useCallback(async () => {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from('services')
-      .select('id, name, description, price, duration_minutes, max_capacity, is_active, class_schedule, image_url')
-      .eq('business_id', business.id)
-      .eq('is_class', true)
-      .is('deleted_at', null)
-      .order('name');
-    setClasses((data as ClassService[]) || []);
-    setLoading(false);
+      if (error) throw error;
+      setClasses((data as ClassService[]) || []);
+    } catch {
+      setClassesError('Failed to load classes');
+    }
+    setClassesLoading(false);
   }, [business.id]);
 
-  const loadSessions = useCallback(async (classIdFilter?: string | null) => {
+  const fetchSessions = useCallback(async (serviceId?: string | null) => {
     setSessionsLoading(true);
-    const supabase = createClient();
-    const today = new Date().toISOString().split('T')[0];
+    setSessionsError(null);
+    try {
+      const params = new URLSearchParams({ businessId: business.id });
+      if (serviceId) params.set('serviceId', serviceId);
 
-    // Fetch upcoming bookings for class services
-    let query = supabase
-      .from('bookings')
-      .select('id, service_id, date, time, guest_name, guest_phone, status, party_size, created_at')
-      .eq('business_id', business.id)
-      .gte('date', today)
-      .in('status', ['confirmed', 'pending', 'in_progress'])
-      .order('date', { ascending: true })
-      .order('time', { ascending: true });
-
-    // Filter by class service IDs
-    const classServiceIds = classIdFilter
-      ? [classIdFilter]
-      : classes.map(c => c.id);
-
-    if (classServiceIds.length === 0) {
-      setSessions([]);
-      setSessionsLoading(false);
-      return;
-    }
-
-    query = query.in('service_id', classServiceIds);
-    const { data } = await query;
-    const bookings = (data as ClassBooking[]) || [];
-
-    // Group bookings by (service_id, date, time) to form sessions
-    const sessionMap = new Map<string, ClassSession>();
-    for (const b of bookings) {
-      const key = `${b.service_id}|${b.date}|${b.time}`;
-      if (!sessionMap.has(key)) {
-        const cls = classes.find(c => c.id === b.service_id);
-        sessionMap.set(key, {
-          serviceId: b.service_id,
-          serviceName: cls?.name || 'Unknown',
-          date: b.date,
-          time: b.time,
-          capacity: cls?.max_capacity || 0,
-          booked: 0,
-          bookings: [],
-        });
+      const res = await fetch(`/api/classes/sessions?${params}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to load sessions');
       }
-      const session = sessionMap.get(key)!;
-      session.booked += b.party_size || 1;
-      session.bookings.push(b);
+      const { data } = await res.json();
+      setSessions(data || []);
+    } catch (err) {
+      setSessionsError(err instanceof Error ? err.message : 'Failed to load sessions');
     }
-
-    // Also add scheduled sessions that have no bookings yet
-    // Generate upcoming sessions for the next 4 weeks from class schedules
-    const classesToShow = classIdFilter
-      ? classes.filter(c => c.id === classIdFilter)
-      : classes;
-
-    for (const cls of classesToShow) {
-      if (!cls.is_active || !cls.class_schedule || cls.class_schedule.length === 0) continue;
-
-      const dayMap: Record<string, number> = {
-        sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
-        thursday: 4, friday: 5, saturday: 6,
-      };
-
-      const now = new Date();
-      for (let weekOffset = 0; weekOffset < 4; weekOffset++) {
-        for (const sched of cls.class_schedule) {
-          const targetDay = dayMap[sched.day];
-          if (targetDay === undefined) continue;
-
-          const d = new Date(now);
-          d.setDate(d.getDate() + weekOffset * 7);
-          // Move to the target day within this week
-          const currentDay = d.getDay();
-          let diff = targetDay - currentDay;
-          if (weekOffset === 0 && diff < 0) continue; // skip past days in current week
-          d.setDate(d.getDate() + diff);
-
-          const dateStr = d.toISOString().split('T')[0];
-          if (dateStr < today) continue;
-
-          const key = `${cls.id}|${dateStr}|${sched.time}:00`;
-          if (!sessionMap.has(key)) {
-            // Also try without seconds
-            const keyNoSec = `${cls.id}|${dateStr}|${sched.time}`;
-            if (!sessionMap.has(keyNoSec)) {
-              sessionMap.set(key, {
-                serviceId: cls.id,
-                serviceName: cls.name,
-                date: dateStr,
-                time: sched.time,
-                capacity: cls.max_capacity || 0,
-                booked: 0,
-                bookings: [],
-              });
-            }
-          }
-        }
-      }
-    }
-
-    // Sort by date then time
-    const sorted = Array.from(sessionMap.values()).sort((a, b) => {
-      const dateCompare = a.date.localeCompare(b.date);
-      if (dateCompare !== 0) return dateCompare;
-      return a.time.localeCompare(b.time);
-    });
-
-    setSessions(sorted);
     setSessionsLoading(false);
-  }, [business.id, classes]);
+  }, [business.id]);
 
-  useEffect(() => {
-    loadClasses();
-  }, [loadClasses]);
+  const fetchStaff = useCallback(async () => {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('business_staff')
+      .select('id, name')
+      .eq('business_id', business.id)
+      .eq('is_active', true)
+      .order('name');
+    setStaffList((data as StaffMember[]) || []);
+  }, [business.id]);
 
-  useEffect(() => {
-    if (tab === 'sessions' && classes.length > 0) {
-      loadSessions(filterClassId);
+  const fetchSessionDetail = async (sessionId: string) => {
+    setDetailLoading(true);
+    setDetailError(null);
+    try {
+      const res = await fetch(`/api/classes/sessions/${sessionId}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to load session details');
+      }
+      const { data } = await res.json();
+      setSelectedSession(data);
+    } catch (err) {
+      setDetailError(err instanceof Error ? err.message : 'Failed to load session details');
     }
-  }, [tab, classes, filterClassId, loadSessions]);
+    setDetailLoading(false);
+  };
 
-  // ── Create class ──
+  // ── Initial load ──────────────────────────────────
 
-  async function handleCreateClass() {
-    if (!createForm.name.trim()) return;
-    setSaving(true);
+  useEffect(() => {
+    fetchClasses();
+    fetchStaff();
+  }, [fetchClasses, fetchStaff]);
+
+  useEffect(() => {
+    if (activeTab === 'sessions') {
+      fetchSessions(filterServiceId);
+    }
+  }, [activeTab, filterServiceId, fetchSessions]);
+
+  // ── Create class ──────────────────────────────────
+
+  const handleCreateClass = async () => {
+    setCreating(true);
+    setCreateError(null);
+
     try {
       const supabase = createClient();
-      const { error } = await supabase.from('services').insert({
-        business_id: business.id,
-        name: createForm.name.trim(),
-        description: createForm.description.trim() || null,
-        price: createForm.price,
-        duration_minutes: createForm.duration_minutes,
-        max_capacity: createForm.max_capacity,
-        is_class: true,
-        class_schedule: createForm.class_schedule,
-        is_active: true,
-        status: 'active',
+      const priceNum = Math.round(parseFloat(newClass.price) * 100) || 0;
+      const durationNum = parseInt(newClass.duration) || 60;
+      const capacityNum = parseInt(newClass.capacity) || 10;
+
+      // Step 1: Create the service with is_class: true
+      const { data: svc, error: svcError } = await supabase
+        .from('services')
+        .insert({
+          business_id: business.id,
+          name: newClass.name.trim(),
+          description: newClass.description.trim() || null,
+          price: priceNum,
+          duration_minutes: durationNum,
+          max_capacity: capacityNum,
+          is_class: true,
+          is_active: true,
+          status: 'active',
+        })
+        .select('id')
+        .single();
+
+      if (svcError || !svc) {
+        throw new Error(svcError?.message || 'Failed to create class service');
+      }
+
+      // Step 2: Create recurrence rule via API
+      const recRes = await fetch('/api/classes/recurrence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          serviceId: svc.id,
+          dayOfWeek: newClass.dayOfWeek,
+          startTime: newClass.startTime,
+          capacity: capacityNum,
+          ...(newClass.staffId ? { staffId: newClass.staffId } : {}),
+        }),
       });
-      if (error) throw error;
+
+      if (!recRes.ok) {
+        const body = await recRes.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to create schedule rule');
+      }
+
+      // Step 3: Generate sessions
+      const genRes = await fetch('/api/classes/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          serviceId: svc.id,
+        }),
+      });
+
+      if (!genRes.ok) {
+        // Non-fatal: rule was created, sessions can be generated later
+        console.warn('Session generation failed — sessions can be generated manually.');
+      }
+
+      // Reset form and refresh
+      setNewClass({
+        name: '', description: '', price: '', duration: '60', capacity: '10',
+        dayOfWeek: 1, startTime: '09:00', staffId: '',
+      });
       setShowCreateDialog(false);
-      setCreateForm({
-        name: '',
-        description: '',
-        price: 0,
-        duration_minutes: 60,
-        max_capacity: 10,
-        class_schedule: [{ day: 'monday', time: '09:00' }],
-      });
-      await loadClasses();
-    } catch {
-      // Could add toast here
+      fetchClasses();
+      if (activeTab === 'sessions') fetchSessions(filterServiceId);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Failed to create class');
     }
-    setSaving(false);
-  }
+    setCreating(false);
+  };
 
-  // ── Cancel session (cancel all bookings for a session) ──
+  // ── Cancel session ────────────────────────────────
 
-  async function handleCancelSession() {
+  const handleCancelSession = async () => {
     if (!selectedSession) return;
     setCancelling(true);
+
     try {
-      const supabase = createClient();
-      const bookingIds = selectedSession.bookings.map(b => b.id);
-      if (bookingIds.length > 0) {
-        const { error } = await supabase
-          .from('bookings')
-          .update({ status: 'cancelled' })
-          .in('id', bookingIds);
-        if (error) throw error;
+      const res = await fetch(`/api/classes/sessions/${selectedSession.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'cancelled',
+          cancellationReason: cancelReason.trim() || undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to cancel session');
       }
+
       setShowCancelConfirm(false);
-      setShowSessionDetail(false);
+      setCancelReason('');
       setSelectedSession(null);
-      await loadSessions(filterClassId);
-    } catch {
-      // Could add toast here
+      fetchSessions(filterServiceId);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to cancel session');
     }
     setCancelling(false);
-  }
+  };
 
-  // ── Render ──
+  // ── Filter sessions to a class ────────────────────
 
-  if (loading) {
-    return (
-      <div className="p-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Classes</h1>
-        <div className="mt-8 flex justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
-        </div>
-      </div>
-    );
-  }
+  const handleClassClick = (classId: string) => {
+    setFilterServiceId(classId);
+    setActiveTab('sessions');
+  };
+
+  // ── Render ────────────────────────────────────────
 
   return (
-    <div className="p-6">
-      {/* Header */}
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Classes</h1>
-        <button
-          onClick={() => setShowCreateDialog(true)}
-          className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-600 hover:shadow-md active:scale-[0.98]"
-        >
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          Create Class
-        </button>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Classes</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Manage your class offerings and sessions
+          </p>
+        </div>
+
+        {activeTab === 'classes' && (
+          <button
+            onClick={() => setShowCreateDialog(true)}
+            className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-600 hover:shadow-md active:scale-[0.98]"
+          >
+            Create Class
+          </button>
+        )}
       </div>
 
       <PageHelp
         pageKey="classes"
-        title="Group Classes"
-        description="Create and manage group classes with capacity limits. Students sign up for available time slots via WhatsApp. Track attendance and manage your schedule here."
+        title="Class Booking"
+        description="Create classes with recurring schedules. Sessions are generated automatically and customers can book spots through WhatsApp."
       />
 
-      {classes.length === 0 ? (
-        <EmptyState
-          icon="👥"
-          title="No classes yet"
-          description="Create your first group class to start accepting bookings. Classes support recurring schedules, capacity limits, and automatic waitlisting."
-          actionLabel="Create Class"
-          onAction={() => setShowCreateDialog(true)}
-          tip="Classes are group sessions with capacity limits. Customers can book via WhatsApp and you manage attendance here."
+      {/* Tabs */}
+      <div className="mt-6 border-b border-gray-200 dark:border-gray-700">
+        <nav className="-mb-px flex gap-6">
+          {([
+            { id: 'classes' as TabId, label: 'Classes' },
+            { id: 'sessions' as TabId, label: 'Upcoming Sessions' },
+          ]).map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => {
+                setActiveTab(tab.id);
+                if (tab.id === 'sessions' && !filterServiceId) {
+                  setFilterServiceId(null);
+                }
+              }}
+              className={`whitespace-nowrap border-b-2 px-1 pb-3 text-sm font-medium transition ${
+                activeTab === tab.id
+                  ? 'border-brand text-brand'
+                  : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* Tab content */}
+      <div className="mt-6">
+        {activeTab === 'classes' && (
+          <ClassesTab
+            classes={classes}
+            loading={classesLoading}
+            error={classesError}
+            countryCode={countryCode}
+            onClassClick={handleClassClick}
+            onCreateClick={() => setShowCreateDialog(true)}
+          />
+        )}
+
+        {activeTab === 'sessions' && (
+          <SessionsTab
+            sessions={sessions}
+            classes={classes}
+            loading={sessionsLoading}
+            error={sessionsError}
+            filterServiceId={filterServiceId}
+            countryCode={countryCode}
+            onFilterChange={setFilterServiceId}
+            onSessionClick={(id) => fetchSessionDetail(id)}
+          />
+        )}
+      </div>
+
+      {/* Create Class Dialog */}
+      {showCreateDialog && (
+        <CreateClassDialog
+          newClass={newClass}
+          setNewClass={setNewClass}
+          staffList={staffList}
+          creating={creating}
+          error={createError}
+          onSubmit={handleCreateClass}
+          onClose={() => { setShowCreateDialog(false); setCreateError(null); }}
         />
-      ) : (
-        <>
-          {/* Tabs */}
-          <div className="mt-6 flex gap-1 rounded-lg bg-gray-100 dark:bg-gray-800 p-1 w-fit">
-            {(['classes', 'sessions'] as Tab[]).map(t => (
-              <button
-                key={t}
-                onClick={() => { setTab(t); if (t === 'classes') setFilterClassId(null); }}
-                className={`rounded-md px-4 py-2 text-sm font-medium transition ${
-                  tab === t
-                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
-                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                }`}
-              >
-                {t === 'classes' ? 'Classes' : 'Upcoming Sessions'}
-                <span className="ml-1.5 text-gray-400">
-                  {t === 'classes' ? classes.length : sessions.length}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {/* Tab Content */}
-          {tab === 'classes' ? (
-            <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {classes.map(cls => (
-                <div
-                  key={cls.id}
-                  onClick={() => {
-                    setFilterClassId(cls.id);
-                    setTab('sessions');
-                  }}
-                  className="cursor-pointer rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5 transition hover:shadow-md hover:border-brand/30"
-                >
-                  {/* Class header */}
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <h3 className="font-semibold text-gray-900 dark:text-gray-100 truncate">{cls.name}</h3>
-                      {cls.description && (
-                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 line-clamp-2">{cls.description}</p>
-                      )}
-                    </div>
-                    <span className={`shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                      cls.is_active
-                        ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                        : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
-                    }`}>
-                      {cls.is_active ? 'Active' : 'Inactive'}
-                    </span>
-                  </div>
-
-                  {/* Details */}
-                  <div className="mt-4 space-y-2">
-                    <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-                      <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <span>{cls.price > 0 ? formatCurrency(cls.price, country) : 'Free'}</span>
-                    </div>
-
-                    {cls.duration_minutes && (
-                      <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-                        <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        <span>{cls.duration_minutes} min</span>
-                      </div>
-                    )}
-
-                    <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-                      <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
-                      <span>{cls.max_capacity ? `${cls.max_capacity} spots` : 'Unlimited'}</span>
-                    </div>
-
-                    <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-                      <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                      <span className="truncate">{formatScheduleSummary(cls.class_schedule)}</span>
-                    </div>
-                  </div>
-
-                  {/* View sessions link */}
-                  <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700">
-                    <span className="text-sm font-medium text-brand hover:text-brand-600">
-                      View sessions →
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            /* Sessions tab */
-            <div className="mt-6">
-              {/* Class filter for sessions */}
-              {classes.length > 1 && (
-                <div className="mb-4 flex items-center gap-2">
-                  <label className="text-sm text-gray-500 dark:text-gray-400">Filter:</label>
-                  <select
-                    value={filterClassId || ''}
-                    onChange={(e) => setFilterClassId(e.target.value || null)}
-                    className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm outline-none focus:border-brand dark:text-gray-100"
-                  >
-                    <option value="">All classes</option>
-                    {classes.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {sessionsLoading ? (
-                <div className="mt-8 flex justify-center">
-                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
-                </div>
-              ) : sessions.length === 0 ? (
-                <div className="mt-8 text-center text-gray-500 dark:text-gray-400">
-                  <p className="text-lg font-medium">No upcoming sessions</p>
-                  <p className="mt-1 text-sm">Sessions will appear here based on your class schedules and bookings.</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-200 dark:border-gray-700 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                        <th className="px-4 py-3">Date</th>
-                        <th className="px-4 py-3">Time</th>
-                        <th className="px-4 py-3">Class</th>
-                        <th className="px-4 py-3">Capacity</th>
-                        <th className="px-4 py-3">Status</th>
-                        <th className="px-4 py-3"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                      {sessions.map((session, idx) => {
-                        const badge = getCapacityBadge(session.booked, session.capacity);
-                        return (
-                          <tr
-                            key={`${session.serviceId}-${session.date}-${session.time}-${idx}`}
-                            onClick={() => { setSelectedSession(session); setShowSessionDetail(true); }}
-                            className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition"
-                          >
-                            <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap">
-                              {formatDateReadable(session.date)}
-                            </td>
-                            <td className="px-4 py-3 text-gray-600 dark:text-gray-300 whitespace-nowrap">
-                              {formatTime12h(session.time)}
-                            </td>
-                            <td className="px-4 py-3 text-gray-900 dark:text-gray-100">
-                              {session.serviceName}
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`font-semibold ${getCapacityColor(session.booked, session.capacity)}`}>
-                                {session.booked}/{session.capacity || '∞'}
-                              </span>
-                              <span className="ml-1 text-gray-400 text-xs">
-                                {session.capacity > 0 ? `(${Math.max(0, session.capacity - session.booked)} left)` : ''}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}>
-                                {badge.label}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-right">
-                              <svg className="h-4 w-4 text-gray-400 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                              </svg>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-        </>
       )}
 
-      {/* ── Create Class Dialog ── */}
-      {showCreateDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setShowCreateDialog(false)} />
-          <div className="relative w-full max-w-lg rounded-2xl bg-white dark:bg-gray-900 shadow-xl">
-            <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4">
-              <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Create Class</h2>
-              <button
-                onClick={() => setShowCreateDialog(false)}
-                className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-600 transition"
-              >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
+      {/* Session Detail Dialog */}
+      {(selectedSession || detailLoading) && (
+        <SessionDetailDialog
+          session={selectedSession}
+          loading={detailLoading}
+          error={detailError}
+          countryCode={countryCode}
+          onClose={() => { setSelectedSession(null); setDetailError(null); }}
+          onCancelClick={() => setShowCancelConfirm(true)}
+        />
+      )}
 
-            <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
-              {/* Name */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Class Name *</label>
-                <input
-                  type="text"
-                  value={createForm.name}
-                  onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
-                  placeholder="e.g. Morning Yoga, CrossFit Basics"
-                  className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm outline-none focus:border-brand dark:text-gray-100"
-                />
-              </div>
+      {/* Cancel Confirmation Dialog */}
+      {showCancelConfirm && selectedSession && (
+        <CancelConfirmDialog
+          sessionName={selectedSession.services?.name || 'Session'}
+          sessionDate={formatDate(selectedSession.date)}
+          reason={cancelReason}
+          setReason={setCancelReason}
+          cancelling={cancelling}
+          onConfirm={handleCancelSession}
+          onClose={() => { setShowCancelConfirm(false); setCancelReason(''); }}
+        />
+      )}
+    </div>
+  );
+}
 
-              {/* Description */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
-                <textarea
-                  value={createForm.description}
-                  onChange={(e) => setCreateForm({ ...createForm, description: e.target.value })}
-                  placeholder="Brief description of the class..."
-                  rows={2}
-                  className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm outline-none focus:border-brand dark:text-gray-100 resize-none"
-                />
-              </div>
+// ── Classes Tab ──────────────────────────────────────
 
-              {/* Price & Duration */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Price</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={createForm.price}
-                    onChange={(e) => setCreateForm({ ...createForm, price: Number(e.target.value) || 0 })}
-                    className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm outline-none focus:border-brand dark:text-gray-100"
-                  />
-                  <p className="mt-0.5 text-xs text-gray-400">0 = Free</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Duration (min)</label>
-                  <input
-                    type="number"
-                    min={5}
-                    value={createForm.duration_minutes}
-                    onChange={(e) => setCreateForm({ ...createForm, duration_minutes: Number(e.target.value) || 60 })}
-                    className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm outline-none focus:border-brand dark:text-gray-100"
-                  />
-                </div>
-              </div>
+function ClassesTab({
+  classes,
+  loading,
+  error,
+  countryCode,
+  onClassClick,
+  onCreateClick,
+}: {
+  classes: ClassService[];
+  loading: boolean;
+  error: string | null;
+  countryCode: CountryCode;
+  onClassClick: (id: string) => void;
+  onCreateClick: () => void;
+}) {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
+      </div>
+    );
+  }
 
-              {/* Capacity */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max Capacity</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={createForm.max_capacity}
-                  onChange={(e) => setCreateForm({ ...createForm, max_capacity: Number(e.target.value) || 10 })}
-                  className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm outline-none focus:border-brand dark:text-gray-100"
-                />
-                <p className="mt-0.5 text-xs text-gray-400">Maximum students per session</p>
-              </div>
+  if (error) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+        {error}
+      </div>
+    );
+  }
 
-              {/* Schedule */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Schedule</label>
-                <p className="text-xs text-gray-400 mb-2">Set recurring days and times for this class</p>
-                {createForm.class_schedule.map((entry, i) => (
-                  <div key={i} className="flex items-center gap-2 mb-2">
-                    <select
-                      value={entry.day}
-                      onChange={(e) => {
-                        const updated = [...createForm.class_schedule];
-                        updated[i] = { ...updated[i], day: e.target.value };
-                        setCreateForm({ ...createForm, class_schedule: updated });
-                      }}
-                      className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm outline-none focus:border-brand dark:text-gray-100"
-                    >
-                      {WEEKDAYS.map(d => <option key={d.key} value={d.key}>{d.short}</option>)}
-                    </select>
-                    <input
-                      type="time"
-                      value={entry.time}
-                      onChange={(e) => {
-                        const updated = [...createForm.class_schedule];
-                        updated[i] = { ...updated[i], time: e.target.value };
-                        setCreateForm({ ...createForm, class_schedule: updated });
-                      }}
-                      className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm outline-none focus:border-brand dark:text-gray-100"
-                    />
-                    {createForm.class_schedule.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCreateForm({
-                            ...createForm,
-                            class_schedule: createForm.class_schedule.filter((_, j) => j !== i),
-                          });
-                        }}
-                        className="text-red-400 hover:text-red-600 text-lg leading-none"
-                      >
-                        &times;
-                      </button>
-                    )}
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCreateForm({
-                      ...createForm,
-                      class_schedule: [...createForm.class_schedule, { day: 'monday', time: '09:00' }],
-                    });
-                  }}
-                  className="rounded-lg border border-dashed border-gray-300 dark:border-gray-600 px-3 py-1.5 text-xs text-gray-500 hover:border-brand hover:text-brand transition"
-                >
-                  + Add Day/Time
-                </button>
-              </div>
-            </div>
+  if (classes.length === 0) {
+    return (
+      <EmptyState
+        icon="🎓"
+        title="No classes yet"
+        description="Create your first class to start offering group sessions. Classes have recurring schedules and let multiple customers book the same time slot."
+        actionLabel="Create Class"
+        onAction={onCreateClick}
+        tip="Classes generate upcoming sessions automatically based on their schedule. Customers can book spots through WhatsApp."
+      />
+    );
+  }
 
-            <div className="flex justify-end gap-3 border-t border-gray-200 dark:border-gray-700 px-6 py-4">
-              <button
-                onClick={() => setShowCreateDialog(false)}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateClass}
-                disabled={saving || !createForm.name.trim()}
-                className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-600 disabled:opacity-50"
-              >
-                {saving ? 'Creating...' : 'Create Class'}
-              </button>
-            </div>
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {classes.map((cls) => (
+        <button
+          key={cls.id}
+          onClick={() => onClassClick(cls.id)}
+          className="group rounded-xl border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:border-brand/30 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-brand/40"
+        >
+          <div className="flex items-start justify-between">
+            <h3 className="font-semibold text-gray-900 group-hover:text-brand dark:text-gray-100">
+              {cls.name}
+            </h3>
+            <span
+              className={`ml-2 shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                cls.is_active
+                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                  : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
+              }`}
+            >
+              {cls.is_active ? 'Active' : 'Inactive'}
+            </span>
           </div>
+
+          {cls.description && (
+            <p className="mt-1.5 line-clamp-2 text-sm text-gray-500 dark:text-gray-400">
+              {cls.description}
+            </p>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-gray-600 dark:text-gray-300">
+            <span className="font-medium">
+              {formatCurrency(cls.price / 100, countryCode)}
+            </span>
+            {cls.duration_minutes && (
+              <span className="text-gray-400 dark:text-gray-500">
+                {cls.duration_minutes} min
+              </span>
+            )}
+            {cls.max_capacity && (
+              <span className="text-gray-400 dark:text-gray-500">
+                {cls.max_capacity} spots
+              </span>
+            )}
+          </div>
+
+          <p className="mt-3 text-xs text-brand group-hover:underline">
+            View sessions →
+          </p>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Sessions Tab ─────────────────────────────────────
+
+function SessionsTab({
+  sessions,
+  classes,
+  loading,
+  error,
+  filterServiceId,
+  countryCode,
+  onFilterChange,
+  onSessionClick,
+}: {
+  sessions: ClassSession[];
+  classes: ClassService[];
+  loading: boolean;
+  error: string | null;
+  filterServiceId: string | null;
+  countryCode: CountryCode;
+  onFilterChange: (id: string | null) => void;
+  onSessionClick: (id: string) => void;
+}) {
+  return (
+    <div>
+      {/* Filter bar */}
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <select
+          value={filterServiceId || ''}
+          onChange={(e) => onFilterChange(e.target.value || null)}
+          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+        >
+          <option value="">All Classes</option>
+          {classes.map((cls) => (
+            <option key={cls.id} value={cls.id}>{cls.name}</option>
+          ))}
+        </select>
+
+        {filterServiceId && (
+          <button
+            onClick={() => onFilterChange(null)}
+            className="text-sm text-brand hover:underline"
+          >
+            Clear filter
+          </button>
+        )}
+      </div>
+
+      {loading && (
+        <div className="flex items-center justify-center py-16">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
         </div>
       )}
 
-      {/* ── Session Detail Dialog ── */}
-      {showSessionDetail && selectedSession && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50" onClick={() => { setShowSessionDetail(false); setSelectedSession(null); }} />
-          <div className="relative w-full max-w-lg rounded-2xl bg-white dark:bg-gray-900 shadow-xl">
-            <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4">
-              <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Session Details</h2>
-              <button
-                onClick={() => { setShowSessionDetail(false); setSelectedSession(null); }}
-                className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-600 transition"
-              >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+      {!loading && error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+          {error}
+        </div>
+      )}
+
+      {!loading && !error && sessions.length === 0 && (
+        <EmptyState
+          icon="📅"
+          title="No upcoming sessions"
+          description={
+            filterServiceId
+              ? 'This class has no upcoming sessions. Sessions are generated automatically from the class schedule.'
+              : 'No upcoming sessions found. Create a class with a schedule to generate sessions.'
+          }
+        />
+      )}
+
+      {!loading && !error && sessions.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-gray-200 dark:border-gray-700">
+                <th className="pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400">Date</th>
+                <th className="pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400">Time</th>
+                <th className="hidden pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400 sm:table-cell">Class</th>
+                <th className="hidden pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400 md:table-cell">Capacity</th>
+                <th className="pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
+              {sessions.map((session) => {
+                const badge = statusBadge(session.status);
+                return (
+                  <tr
+                    key={session.id}
+                    onClick={() => onSessionClick(session.id)}
+                    className="cursor-pointer transition hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                  >
+                    <td className="py-3 pr-4 font-medium text-gray-900 dark:text-gray-100">
+                      {formatDate(session.date)}
+                      <span className="block text-xs text-gray-400 sm:hidden">
+                        {session.services?.name || '—'}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4 text-gray-600 dark:text-gray-300">
+                      {formatTime(session.start_time)}
+                      {session.end_time && (
+                        <span className="text-gray-400"> – {formatTime(session.end_time)}</span>
+                      )}
+                    </td>
+                    <td className="hidden py-3 pr-4 text-gray-600 dark:text-gray-300 sm:table-cell">
+                      {session.services?.name || '—'}
+                    </td>
+                    <td className="hidden py-3 pr-4 md:table-cell">
+                      <span className={capacityColor(session.attendee_count, session.capacity)}>
+                        {session.attendee_count} / {session.capacity}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}>
+                        {badge.label}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Create Class Dialog ──────────────────────────────
+
+function CreateClassDialog({
+  newClass,
+  setNewClass,
+  staffList,
+  creating,
+  error,
+  onSubmit,
+  onClose,
+}: {
+  newClass: {
+    name: string;
+    description: string;
+    price: string;
+    duration: string;
+    capacity: string;
+    dayOfWeek: number;
+    startTime: string;
+    staffId: string;
+  };
+  setNewClass: React.Dispatch<React.SetStateAction<typeof newClass>>;
+  staffList: StaffMember[];
+  creating: boolean;
+  error: string | null;
+  onSubmit: () => void;
+  onClose: () => void;
+}) {
+  const isValid = newClass.name.trim().length > 0 && parseFloat(newClass.price) >= 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-800">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Create Class</h2>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700"
+            aria-label="Close"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {error && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+            {error}
+          </div>
+        )}
+
+        <div className="mt-5 space-y-4">
+          {/* Name */}
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Class Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={newClass.name}
+              onChange={(e) => setNewClass((p) => ({ ...p, name: e.target.value }))}
+              placeholder="e.g. Morning Yoga"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+            />
+          </div>
+
+          {/* Description */}
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Description
+            </label>
+            <textarea
+              value={newClass.description}
+              onChange={(e) => setNewClass((p) => ({ ...p, description: e.target.value }))}
+              rows={2}
+              placeholder="Brief description of the class"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+            />
+          </div>
+
+          {/* Price + Duration + Capacity row */}
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Price
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={newClass.price}
+                onChange={(e) => setNewClass((p) => ({ ...p, price: e.target.value }))}
+                placeholder="0.00"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Duration (min)
+              </label>
+              <input
+                type="number"
+                min="15"
+                step="15"
+                value={newClass.duration}
+                onChange={(e) => setNewClass((p) => ({ ...p, duration: e.target.value }))}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Capacity
+              </label>
+              <input
+                type="number"
+                min="1"
+                value={newClass.capacity}
+                onChange={(e) => setNewClass((p) => ({ ...p, capacity: e.target.value }))}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              />
+            </div>
+          </div>
+
+          {/* Schedule */}
+          <fieldset className="rounded-lg border border-gray-200 p-4 dark:border-gray-600">
+            <legend className="px-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+              Weekly Schedule
+            </legend>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">Day</label>
+                <select
+                  value={newClass.dayOfWeek}
+                  onChange={(e) => setNewClass((p) => ({ ...p, dayOfWeek: parseInt(e.target.value) }))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                >
+                  {WEEKDAYS.map((wd) => (
+                    <option key={wd.value} value={wd.value}>{wd.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">Start Time</label>
+                <input
+                  type="time"
+                  value={newClass.startTime}
+                  onChange={(e) => setNewClass((p) => ({ ...p, startTime: e.target.value }))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                />
+              </div>
             </div>
 
-            <div className="px-6 py-5 max-h-[70vh] overflow-y-auto">
-              {/* Session info */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <svg className="h-5 w-5 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
+            {staffList.length > 0 && (
+              <div className="mt-3">
+                <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">Instructor (optional)</label>
+                <select
+                  value={newClass.staffId}
+                  onChange={(e) => setNewClass((p) => ({ ...p, staffId: e.target.value }))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                >
+                  <option value="">No instructor</option>
+                  {staffList.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </fieldset>
+        </div>
+
+        {/* Actions */}
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            disabled={creating}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSubmit}
+            disabled={creating || !isValid}
+            className="rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {creating ? 'Creating...' : 'Create Class'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Session Detail Dialog ────────────────────────────
+
+function SessionDetailDialog({
+  session,
+  loading,
+  error,
+  countryCode,
+  onClose,
+  onCancelClick,
+}: {
+  session: SessionDetail | null;
+  loading: boolean;
+  error: string | null;
+  countryCode: CountryCode;
+  onClose: () => void;
+  onCancelClick: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-800">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Session Details</h2>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700"
+            aria-label="Close"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {loading && (
+          <div className="flex items-center justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
+          </div>
+        )}
+
+        {error && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+            {error}
+          </div>
+        )}
+
+        {!loading && session && (
+          <>
+            {/* Session info */}
+            <div className="mt-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                  {session.services?.name || 'Class'}
+                </span>
+                {(() => {
+                  const badge = statusBadge(session.status);
+                  return (
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}>
+                      {badge.label}
+                    </span>
+                  );
+                })()}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-gray-500 dark:text-gray-400">Date</p>
+                  <p className="font-medium text-gray-900 dark:text-gray-100">{formatDate(session.date)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500 dark:text-gray-400">Time</p>
+                  <p className="font-medium text-gray-900 dark:text-gray-100">
+                    {formatTime(session.start_time)}
+                    {session.end_time && ` – ${formatTime(session.end_time)}`}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-gray-500 dark:text-gray-400">Capacity</p>
+                  <p className={`font-medium ${capacityColor(session.attendee_count, session.capacity)}`}>
+                    {session.attendee_count} / {session.capacity} spots
+                  </p>
+                </div>
+                {session.services?.price !== undefined && (
                   <div>
-                    <p className="font-semibold text-gray-900 dark:text-gray-100">{selectedSession.serviceName}</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      {formatDateReadable(selectedSession.date)} at {formatTime12h(selectedSession.time)}
+                    <p className="text-gray-500 dark:text-gray-400">Price</p>
+                    <p className="font-medium text-gray-900 dark:text-gray-100">
+                      {formatCurrency(session.services.price / 100, countryCode)}
                     </p>
                   </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  <div>
-                    <span className={`font-semibold ${getCapacityColor(selectedSession.booked, selectedSession.capacity)}`}>
-                      {selectedSession.booked} / {selectedSession.capacity || '∞'}
-                    </span>
-                    <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">
-                      {selectedSession.capacity > 0
-                        ? `${Math.max(0, selectedSession.capacity - selectedSession.booked)} spots remaining`
-                        : 'Unlimited capacity'}
-                    </span>
-                  </div>
-                </div>
+                )}
               </div>
 
-              {/* Attendee list */}
-              <div className="mt-6">
-                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-3">
-                  Attendees ({selectedSession.bookings.length})
-                </h3>
-                {selectedSession.bookings.length === 0 ? (
-                  <p className="text-sm text-gray-400 italic">No bookings yet for this session.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {selectedSession.bookings.map((booking) => (
-                      <div
-                        key={booking.id}
-                        className="flex items-center justify-between rounded-lg bg-gray-50 dark:bg-gray-800 px-4 py-3"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="font-medium text-gray-900 dark:text-gray-100 truncate">
-                            {booking.guest_name || 'Unknown'}
-                          </p>
-                          {booking.guest_phone && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400">{booking.guest_phone}</p>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3 shrink-0">
-                          {booking.party_size > 1 && (
-                            <span className="text-xs text-gray-500 dark:text-gray-400">
-                              x{booking.party_size}
-                            </span>
-                          )}
-                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                            booking.status === 'confirmed'
-                              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                              : booking.status === 'pending'
-                              ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                              : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
-                          }`}>
-                            {booking.status}
-                          </span>
-                        </div>
+              {session.cancellation_reason && (
+                <div className="rounded-lg bg-gray-50 p-3 dark:bg-gray-700/50">
+                  <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Cancellation Reason</p>
+                  <p className="mt-0.5 text-sm text-gray-700 dark:text-gray-300">{session.cancellation_reason}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Attendees */}
+            <div className="mt-6">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                Attendees ({session.attendee_count})
+              </h3>
+
+              {session.attendees.length === 0 ? (
+                <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">No attendees yet.</p>
+              ) : (
+                <div className="mt-3 divide-y divide-gray-100 dark:divide-gray-700/50">
+                  {session.attendees.map((att) => (
+                    <div key={att.id} className="flex items-center justify-between py-2.5">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                          {att.guest_name || 'Guest'}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {att.guest_phone}
+                          {att.party_size > 1 && ` · ${att.party_size} spots`}
+                        </p>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        att.status === 'confirmed'
+                          ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                          : att.status === 'pending'
+                            ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'
+                            : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+                      }`}>
+                        {att.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* Footer with cancel button */}
-            <div className="flex justify-between border-t border-gray-200 dark:border-gray-700 px-6 py-4">
-              <div>
-                {selectedSession.bookings.length > 0 && (
-                  <button
-                    onClick={() => setShowCancelConfirm(true)}
-                    className="rounded-lg px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition"
-                  >
-                    Cancel Session
-                  </button>
-                )}
+            {/* Cancel button — only for scheduled sessions */}
+            {session.status === 'scheduled' && (
+              <div className="mt-6 border-t border-gray-200 pt-4 dark:border-gray-700">
+                <button
+                  onClick={onCancelClick}
+                  className="w-full rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
+                >
+                  Cancel Session
+                </button>
               </div>
-              <button
-                onClick={() => { setShowSessionDetail(false); setSelectedSession(null); }}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
-      {/* ── Cancel Confirmation Dialog ── */}
-      {showCancelConfirm && selectedSession && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setShowCancelConfirm(false)} />
-          <div className="relative w-full max-w-sm rounded-2xl bg-white dark:bg-gray-900 shadow-xl p-6">
-            <div className="text-center">
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
-                <svg className="h-6 w-6 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                </svg>
-              </div>
-              <h3 className="mt-4 text-lg font-bold text-gray-900 dark:text-gray-100">Cancel this session?</h3>
-              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                This will cancel {selectedSession.bookings.length} booking{selectedSession.bookings.length !== 1 ? 's' : ''} for {selectedSession.serviceName} on {formatDateReadable(selectedSession.date)}.
-                This action cannot be undone.
-              </p>
-            </div>
-            <div className="mt-6 flex gap-3">
-              <button
-                onClick={() => setShowCancelConfirm(false)}
-                className="flex-1 rounded-lg px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 border border-gray-200 dark:border-gray-700 transition"
-              >
-                Keep Session
-              </button>
-              <button
-                onClick={handleCancelSession}
-                disabled={cancelling}
-                className="flex-1 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
-              >
-                {cancelling ? 'Cancelling...' : 'Cancel Session'}
-              </button>
-            </div>
-          </div>
+// ── Cancel Confirmation Dialog ───────────────────────
+
+function CancelConfirmDialog({
+  sessionName,
+  sessionDate,
+  reason,
+  setReason,
+  cancelling,
+  onConfirm,
+  onClose,
+}: {
+  sessionName: string;
+  sessionDate: string;
+  reason: string;
+  setReason: (r: string) => void;
+  cancelling: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-800">
+        <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">Cancel Session</h3>
+
+        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+          Are you sure you want to cancel <span className="font-medium">{sessionName}</span> on{' '}
+          <span className="font-medium">{sessionDate}</span>? All attendees will need to be notified.
+        </p>
+
+        <div className="mt-4">
+          <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Reason (optional)
+          </label>
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={2}
+            placeholder="e.g. Instructor unavailable"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+          />
         </div>
-      )}
+
+        <div className="mt-5 flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            disabled={cancelling}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Keep Session
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={cancelling}
+            className="rounded-lg bg-red-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {cancelling ? 'Cancelling...' : 'Yes, Cancel Session'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

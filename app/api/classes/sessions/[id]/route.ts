@@ -23,10 +23,10 @@ export async function GET(
 
     const service = createServiceClient();
 
-    // Fetch the session with its service to verify ownership
+    // Fetch session with service and staff details
     const { data: session, error: sessionError } = await service
       .from('class_sessions')
-      .select('*, services!inner(id, name, business_id, duration, price)')
+      .select('*, services(id, name, business_id, duration_minutes, price), business_staff(id, name)')
       .eq('id', sessionId)
       .single();
 
@@ -34,26 +34,20 @@ export async function GET(
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
 
-    const businessId = ((session as unknown as { services: { business_id: string }[] }).services[0]?.business_id);
+    const businessId = (session.services as unknown as { business_id: string })?.business_id || session.business_id;
 
-    // Capability guard: class_booking / read_history
     const guard = await requireCapability(supabase, service, {
       businessId, userId: user.id, capability: 'class_booking' as never, action: 'read_history',
     });
     if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-    // Fetch attendees (bookings linked to this session)
-    const { data: attendees, error: attendeesError } = await service
+    // Fetch attendees
+    const { data: attendees } = await service
       .from('bookings')
       .select('id, reference_code, guest_name, guest_phone, guest_email, party_size, status, created_at')
       .eq('class_session_id', sessionId)
       .in('status', ['confirmed', 'pending', 'in_progress'])
       .order('created_at', { ascending: true });
-
-    if (attendeesError) {
-      logger.withContext({ op: 'class-session-detail.get', sessionId }).error(`Failed to fetch attendees: ${attendeesError.message}`);
-      return NextResponse.json({ error: 'Failed to fetch attendees' }, { status: 500 });
-    }
 
     const totalAttendees = (attendees || []).reduce((sum, b) => sum + (b.party_size || 1), 0);
 
@@ -70,7 +64,7 @@ export async function GET(
   }
 }
 
-// ── PATCH: Update a session (cancel, change instructor, change capacity) ──
+// ── PATCH: Update session (cancel, change instructor via staffId, change capacity) ──
 
 export async function PATCH(
   request: NextRequest,
@@ -87,14 +81,14 @@ export async function PATCH(
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { status, cancellationReason, instructorName, capacity } = body;
+    const { status, cancellationReason, staffId, capacity } = body;
 
     const service = createServiceClient();
 
-    // Fetch the session to verify ownership and current state
+    // Fetch session
     const { data: session, error: sessionError } = await service
       .from('class_sessions')
-      .select('*, services!inner(id, name, business_id)')
+      .select('id, business_id, status, capacity')
       .eq('id', sessionId)
       .single();
 
@@ -102,15 +96,11 @@ export async function PATCH(
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
 
-    const businessId = ((session as unknown as { services: { business_id: string }[] }).services[0]?.business_id);
-
-    // Capability guard: class_booking / manage_existing
     const guard = await requireCapability(supabase, service, {
-      businessId, userId: user.id, capability: 'class_booking' as never, action: 'manage_existing',
+      businessId: session.business_id, userId: user.id, capability: 'class_booking' as never, action: 'manage_existing',
     });
     if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-    // Build update payload
     const updates: Record<string, unknown> = {};
 
     // Handle cancellation
@@ -119,37 +109,38 @@ export async function PATCH(
         return NextResponse.json({ error: 'Cannot cancel a completed session' }, { status: 400 });
       }
       updates.status = 'cancelled';
-      if (cancellationReason) {
-        updates.cancellation_reason = cancellationReason;
-      }
+      if (cancellationReason) updates.cancellation_reason = cancellationReason;
     }
 
-    // Handle instructor change
-    if (instructorName !== undefined) {
-      updates.instructor_name = instructorName;
+    // Handle instructor change via staffId
+    if (staffId !== undefined) {
+      if (staffId) {
+        const { data: staffCheck } = await service
+          .from('business_staff')
+          .select('id')
+          .eq('id', staffId)
+          .eq('business_id', session.business_id)
+          .eq('is_active', true)
+          .maybeSingle();
+        if (!staffCheck) return NextResponse.json({ error: 'Staff member not found or inactive' }, { status: 400 });
+      }
+      updates.staff_id = staffId || null;
     }
 
     // Handle capacity change
     if (capacity !== undefined) {
-      // Verify capacity is not below current bookings
-      const { data: bookings, error: bookingsError } = await service
+      const { data: bookings } = await service
         .from('bookings')
         .select('party_size')
         .eq('class_session_id', sessionId)
         .in('status', ['confirmed', 'pending', 'in_progress']);
 
-      if (bookingsError) {
-        logger.withContext({ op: 'class-session.patch', sessionId }).error(`Failed to check current bookings: ${bookingsError.message}`);
-        return NextResponse.json({ error: 'Failed to verify current bookings' }, { status: 500 });
-      }
-
       const currentAttendees = (bookings || []).reduce((sum, b) => sum + (b.party_size || 1), 0);
       if (capacity < currentAttendees) {
         return NextResponse.json({
-          error: `Cannot reduce capacity to ${capacity}. There are already ${currentAttendees} attendees booked.`,
+          error: `Cannot reduce capacity to ${capacity}. There are ${currentAttendees} attendees booked.`,
         }, { status: 400 });
       }
-
       updates.capacity = capacity;
     }
 

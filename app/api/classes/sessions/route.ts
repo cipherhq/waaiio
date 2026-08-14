@@ -25,30 +25,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'businessId is required' }, { status: 400 });
     }
 
-    // Capability guard: class_booking / read_history
     const service = createServiceClient();
     const guard = await requireCapability(supabase, service, {
       businessId, userId: user.id, capability: 'class_booking' as never, action: 'read_history',
     });
     if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-    // Build the sessions query
     let query = service
       .from('class_sessions')
-      .select('*, services!inner(id, name, business_id, duration, price)')
-      .eq('services.business_id', businessId)
+      .select('*, services!inner(id, name, business_id, duration_minutes, price), business_staff(id, name)')
+      .eq('business_id', businessId)
       .order('date', { ascending: true })
       .order('start_time', { ascending: true });
 
-    if (serviceId) {
-      query = query.eq('service_id', serviceId);
-    }
-    if (from) {
-      query = query.gte('date', from);
-    }
-    if (to) {
-      query = query.lte('date', to);
-    }
+    if (serviceId) query = query.eq('service_id', serviceId);
+    if (from) query = query.gte('date', from);
+    if (to) query = query.lte('date', to);
 
     const { data: sessions, error: sessionsError } = await query;
 
@@ -61,21 +53,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ data: [] });
     }
 
-    // Fetch attendee counts for all sessions in one query
+    // Fetch attendee counts for all sessions
     const sessionIds = sessions.map(s => s.id);
-    const { data: attendeeCounts, error: countError } = await service
+    const { data: attendeeCounts } = await service
       .from('bookings')
       .select('class_session_id, party_size')
       .in('class_session_id', sessionIds)
       .in('status', ['confirmed', 'pending', 'in_progress']);
 
-    if (countError) {
-      logger.withContext({ op: 'class-sessions.get', businessId }).error(`Failed to fetch attendee counts: ${countError.message}`);
-      // Return sessions without counts rather than failing entirely
-      return NextResponse.json({ data: sessions.map(s => ({ ...s, attendee_count: 0 })) });
-    }
-
-    // Aggregate counts by session
     const countMap = new Map<string, number>();
     for (const booking of attendeeCounts || []) {
       const current = countMap.get(booking.class_session_id) || 0;

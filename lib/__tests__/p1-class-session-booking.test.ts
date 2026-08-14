@@ -141,6 +141,85 @@ describe('P1-CLASS-1: source verification', () => {
     expect(migration321).toContain('ALTER TABLE class_recurrence_rules ENABLE ROW LEVEL SECURITY');
     expect(migration321).toContain('ALTER TABLE class_sessions ENABLE ROW LEVEL SECURITY');
   });
+
+  // ── Session instructor authority ──
+  it('23. session instructor validated via check_staff_availability', () => {
+    const classPath = migration321.slice(migration321.indexOf('Session instructor authority'));
+    expect(classPath).toContain('check_staff_availability');
+    expect(classPath).toContain('v_cs.staff_id');
+  });
+
+  it('24. caller cannot override session instructor', () => {
+    const classPath = migration321.slice(migration321.indexOf('Session instructor authority'));
+    expect(classPath).toContain('p_staff_id != v_cs.staff_id');
+  });
+
+  it('25. booking uses session instructor, not caller staff', () => {
+    expect(migration321).toContain('v_cs.staff_id, p_staff_name,');
+  });
+
+  it('26. generation skips occurrence when instructor unavailable', () => {
+    const genFn = migration321.slice(migration321.indexOf('generate_class_sessions'));
+    expect(genFn).toContain('check_staff_availability');
+    expect(genFn).toContain('CONTINUE');
+  });
+
+  // ── API contract tests ──
+  it('27. recurrence API uses migration-321 field names', () => {
+    const recurrenceRoute = readFileSync('app/api/classes/recurrence/route.ts', 'utf-8');
+    // Must use weekday, NOT day_of_week
+    expect(recurrenceRoute).toContain('weekday');
+    expect(recurrenceRoute).not.toContain('day_of_week');
+    // Must use staff_id, NOT instructor_name
+    expect(recurrenceRoute).toContain('staff_id');
+    expect(recurrenceRoute).not.toContain('instructor_name');
+    // Must use capacity_override, NOT capacity alone for the column
+    expect(recurrenceRoute).toContain('capacity_override');
+    // Must include business_id in insert
+    expect(recurrenceRoute).toContain('business_id: businessId');
+  });
+
+  it('28. sessions API uses duration_minutes not duration', () => {
+    const sessionsRoute = readFileSync('app/api/classes/sessions/route.ts', 'utf-8');
+    expect(sessionsRoute).toContain('duration_minutes');
+    expect(sessionsRoute).not.toContain("'duration'");
+  });
+
+  it('29. session PATCH uses staffId not instructorName', () => {
+    const sessionDetail = readFileSync('app/api/classes/sessions/[id]/route.ts', 'utf-8');
+    expect(sessionDetail).toContain('staffId');
+    expect(sessionDetail).not.toContain('instructorName');
+    expect(sessionDetail).toContain('staff_id');
+  });
+
+  it('30. recurrence PUT rejects schedule change with booked sessions', () => {
+    const recurrenceRoute = readFileSync('app/api/classes/recurrence/route.ts', 'utf-8');
+    expect(recurrenceRoute).toContain('Cannot change schedule');
+    expect(recurrenceRoute).toContain('booked_session_count');
+  });
+
+  it('31. recurrence DELETE rejects when future sessions have bookings', () => {
+    const recurrenceRoute = readFileSync('app/api/classes/recurrence/route.ts', 'utf-8');
+    expect(recurrenceRoute).toContain('Cannot delete rule');
+    expect(recurrenceRoute).toContain('Cancel those sessions first');
+  });
+
+  it('32. recurrence DELETE cleans up unbooked future sessions', () => {
+    const recurrenceRoute = readFileSync('app/api/classes/recurrence/route.ts', 'utf-8');
+    // Should delete scheduled future sessions for the rule before deleting the rule
+    const deleteSection = recurrenceRoute.slice(recurrenceRoute.indexOf('DELETE'));
+    expect(deleteSection).toContain(".delete()");
+    expect(deleteSection).toContain("eq('recurrence_rule_id', ruleId)");
+    expect(deleteSection).toContain("eq('status', 'scheduled')");
+  });
+
+  it('33. dashboard uses API routes not direct Supabase writes for class operations', () => {
+    const dashboard = readFileSync('app/dashboard/classes/page.tsx', 'utf-8');
+    // Must fetch sessions from API, not project from class_schedule
+    expect(dashboard).toContain('/api/classes/sessions');
+    // Must NOT use class_schedule for projection
+    expect(dashboard).not.toContain('class_schedule');
+  });
 });
 
 
@@ -659,5 +738,82 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
     expect(parseInt(r)).toBeGreaterThanOrEqual(1);
     const r2 = psql(`SELECT count(*) FROM pg_proc WHERE proname = 'get_upcoming_class_sessions';`);
     expect(parseInt(r2)).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Session instructor authority DB tests ──
+
+  it('DB-25: session with available instructor -> booking succeeds', () => {
+    reset();
+    // Create rule with instructor, generate sessions
+    psql(`INSERT INTO class_recurrence_rules (business_id, service_id, weekday, start_time, staff_id) VALUES
+      ('${BIZ}', '${CLASS_SVC}', 'mon', '18:00', '${STAFF}');`);
+    psql(`SELECT generate_class_sessions('${CLASS_SVC}', 28);`);
+    // Staff works Mon 09:00-20:00, class at 18:00 for 60min = 19:00 < 20:00 — available
+    const sid = psql(`SELECT id FROM class_sessions WHERE service_id = '${CLASS_SVC}' AND staff_id = '${STAFF}' ORDER BY date LIMIT 1;`);
+    if (!sid) { expect(sid).toBeTruthy(); return; }
+    const r = psql(`SELECT slot_available FROM book_slot_atomic(
+      '${BIZ}'::uuid, '${USR}'::uuid, '${CLASS_SVC}'::uuid, NULL,
+      '2026-08-17'::date, '18:00', 1, 10,
+      'scheduling', 0, 'none', 'confirmed',
+      'Guest', '+1234', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL,
+      NULL, NULL, 0, 60, NULL, '${sid}'::uuid
+    );`);
+    expect(r).toBe('t');
+    psql(`DELETE FROM bookings;`);
+  });
+
+  it('DB-26: caller NULL staff cannot bypass session instructor validation', () => {
+    // Session has instructor — caller sends NULL staff. Instructor should still be validated.
+    const sid = psql(`SELECT id FROM class_sessions WHERE service_id = '${CLASS_SVC}' AND staff_id = '${STAFF}' ORDER BY date LIMIT 1;`);
+    if (!sid) { expect(sid).toBeTruthy(); return; }
+    // Booking should succeed because instructor IS available (Mon 09-20, class 18-19)
+    const r = psql(`SELECT slot_available FROM book_slot_atomic(
+      '${BIZ}'::uuid, '${USR}'::uuid, '${CLASS_SVC}'::uuid, NULL,
+      '2026-08-17'::date, '18:00', 1, 10,
+      'scheduling', 0, 'none', 'confirmed',
+      'Guest', '+1234', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL,
+      NULL, NULL, 0, 60, NULL, '${sid}'::uuid
+    );`);
+    expect(r).toBe('t');
+    // Verify booking.staff_id = session instructor (not NULL)
+    const staffId = psql(`SELECT staff_id FROM bookings ORDER BY created_at DESC LIMIT 1;`);
+    expect(staffId).toBe(STAFF);
+    psql(`DELETE FROM bookings;`);
+  });
+
+  it('DB-27: caller different staff cannot override session instructor', () => {
+    // Create a second staff member
+    psql(`INSERT INTO business_staff (id, business_id, name, is_active, schedule) VALUES
+      ('82eeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '${BIZ}', 'Other', true, '{}') ON CONFLICT DO NOTHING;`);
+    const sid = psql(`SELECT id FROM class_sessions WHERE service_id = '${CLASS_SVC}' AND staff_id = '${STAFF}' ORDER BY date LIMIT 1;`);
+    if (!sid) { expect(sid).toBeTruthy(); return; }
+    // Try to book with a different staff_id — should be rejected
+    const r = psql(`SELECT slot_available FROM book_slot_atomic(
+      '${BIZ}'::uuid, '${USR}'::uuid, '${CLASS_SVC}'::uuid, '82eeeeee-eeee-eeee-eeee-eeeeeeeeeeee'::uuid,
+      '2026-08-17'::date, '18:00', 1, 10,
+      'scheduling', 0, 'none', 'confirmed',
+      'Guest', '+1234', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL,
+      NULL, NULL, 0, 60, NULL, '${sid}'::uuid
+    );`);
+    expect(r).toBe('f');
+    expect(bookCount()).toBe(0);
+  });
+
+  it('DB-28: generation skips occurrence outside instructor schedule', () => {
+    reset();
+    // Staff works only Mon/Wed 09-20. Create a Friday rule — should generate nothing.
+    psql(`INSERT INTO class_recurrence_rules (business_id, service_id, weekday, start_time, staff_id) VALUES
+      ('${BIZ}', '${CLASS_SVC}', 'fri', '10:00', '${STAFF}');`);
+    psql(`SELECT generate_class_sessions('${CLASS_SVC}', 28);`);
+    const count = psql(`SELECT count(*)::int FROM class_sessions WHERE service_id = '${CLASS_SVC}';`);
+    // Only Mon sessions should exist (from DB-25's rule), NOT Friday
+    const friCount = psql(`SELECT count(*)::int FROM class_sessions WHERE service_id = '${CLASS_SVC}' AND EXTRACT(DOW FROM date) = 5;`);
+    expect(parseInt(friCount)).toBe(0);
+  });
+
+  it('DB-29: generation creates occurrence inside instructor schedule', () => {
+    // Monday rule with instructor should have generated sessions (from DB-25)
+    const monCount = psql(`SELECT count(*)::int FROM class_sessions WHERE service_id = '${CLASS_SVC}' AND EXTRACT(DOW FROM date) = 1;`);
+    expect(parseInt(monCount)).toBeGreaterThan(0);
   });
 });
