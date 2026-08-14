@@ -303,7 +303,8 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
         addons_snapshot JSONB, promo_code_id UUID, location_id UUID,
         bot_session_id UUID, cancelled_at TIMESTAMPTZ, cancelled_by TEXT,
         original_date DATE, original_time TEXT, rescheduled_at TIMESTAMPTZ,
-        class_session_id UUID
+        class_session_id UUID,
+        created_at TIMESTAMPTZ DEFAULT NOW()
       );
       CREATE OR REPLACE FUNCTION gen_ref() RETURNS TRIGGER AS $$
       BEGIN NEW.reference_code := 'WA-' || LPAD(FLOOR(RANDOM()*9999)::TEXT, 4, '0'); RETURN NEW; END;
@@ -812,7 +813,12 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
   });
 
   it('DB-29: generation creates occurrence inside instructor schedule', () => {
-    // Monday rule with instructor should have generated sessions (from DB-25)
+    // Staff works Mon 09-20, Mon rule should have generated sessions
+    // Reset and re-create to ensure clean state
+    psql(`DELETE FROM class_sessions; DELETE FROM class_recurrence_rules;`);
+    psql(`INSERT INTO class_recurrence_rules (business_id, service_id, weekday, start_time, staff_id) VALUES
+      ('${BIZ}', '${CLASS_SVC}', 'mon', '18:00', '${STAFF}');`);
+    psql(`SELECT generate_class_sessions('${CLASS_SVC}', 28);`);
     const monCount = psql(`SELECT count(*)::int FROM class_sessions WHERE service_id = '${CLASS_SVC}' AND EXTRACT(DOW FROM date) = 1;`);
     expect(parseInt(monCount)).toBeGreaterThan(0);
   });
