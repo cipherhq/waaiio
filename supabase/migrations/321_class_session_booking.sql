@@ -327,7 +327,7 @@ BEGIN
   -- ═══════════════════════════════════════════════════════
   IF p_class_session_id IS NOT NULL THEN
     -- 5a. Validate session exists and is bookable
-    SELECT id, business_id, service_id, date, start_time, capacity, status, staff_id
+    SELECT id, business_id, service_id, date, start_time, capacity, status, staff_id, location_id
     INTO v_cs FROM class_sessions WHERE id = p_class_session_id;
 
     IF NOT FOUND THEN
