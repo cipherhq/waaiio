@@ -380,7 +380,7 @@ describe.skipIf(!dbUrl)('P1-STAFF-1: real PostgreSQL authority', () => {
       CREATE TRIGGER set_ref BEFORE INSERT ON bookings
         FOR EACH ROW WHEN (NEW.reference_code IS NULL) EXECUTE FUNCTION gen_ref();
 
-      INSERT INTO businesses (id) VALUES ('${BIZ}'), ('${BIZ2}') ON CONFLICT DO NOTHING;
+      INSERT INTO businesses (id, owner_id) VALUES ('${BIZ}', '${USR}'), ('${BIZ2}', '${USR}') ON CONFLICT DO NOTHING;
       -- Staff: works Mon 09:00-17:00 and Wed 10:00-18:00 (short keys)
       INSERT INTO business_staff (id, business_id, name, is_active, schedule) VALUES
         ('${STAFF}', '${BIZ}', 'Sarah', true,
@@ -395,15 +395,15 @@ describe.skipIf(!dbUrl)('P1-STAFF-1: real PostgreSQL authority', () => {
         ('${STAFF_INACTIVE}', '${BIZ}', 'Inactive', false, '{}')
         ON CONFLICT DO NOTHING;
       -- Services
-      INSERT INTO services (id, business_id, max_capacity, requires_staff) VALUES
-        ('${SVC}', '${BIZ}', 1, false) ON CONFLICT DO NOTHING;
-      INSERT INTO services (id, business_id, max_capacity, requires_staff) VALUES
-        ('${SVC_REQ}', '${BIZ}', 1, true) ON CONFLICT DO NOTHING;
+      INSERT INTO services (id, business_id, name, price, max_capacity, requires_staff) VALUES
+        ('${SVC}', '${BIZ}', 'Test Service', 0, 1, false) ON CONFLICT DO NOTHING;
+      INSERT INTO services (id, business_id, name, price, max_capacity, requires_staff) VALUES
+        ('${SVC_REQ}', '${BIZ}', 'Staff Required Service', 0, 1, true) ON CONFLICT DO NOTHING;
       -- Appointments
-      INSERT INTO appointments (id, business_id, max_capacity, duration_minutes, requires_staff) VALUES
-        ('${APPT}', '${BIZ}', 1, 30, false) ON CONFLICT DO NOTHING;
-      INSERT INTO appointments (id, business_id, max_capacity, duration_minutes, requires_staff, available_days, available_from, available_to) VALUES
-        ('${APPT_SCHED}', '${BIZ}', 1, 30, false, '{monday}', '09:00', '17:00') ON CONFLICT DO NOTHING;
+      INSERT INTO appointments (id, business_id, name, max_capacity, duration_minutes, requires_staff) VALUES
+        ('${APPT}', '${BIZ}', 'Test Appointment', 1, 30, false) ON CONFLICT DO NOTHING;
+      INSERT INTO appointments (id, business_id, name, max_capacity, duration_minutes, requires_staff, available_days, available_from, available_to) VALUES
+        ('${APPT_SCHED}', '${BIZ}', 'Scheduled Appointment', 1, 30, false, '{monday}', '09:00', '17:00') ON CONFLICT DO NOTHING;
     `);
     // Apply migrations in order
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "supabase/migrations/318_appointment_buffer_booking_authority.sql"`, { encoding: 'utf-8', timeout: 15000 });
