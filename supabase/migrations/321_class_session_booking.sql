@@ -1857,3 +1857,19 @@ BEGIN
   RETURN v_generated;
 END;
 $$;
+
+
+-- ═══════════════════════════════════════════════════════
+-- 11. RLS HARDENING — Remove authenticated write bypass
+-- ═══════════════════════════════════════════════════════
+-- Mutations must go through guarded RPCs (create_class_atomic,
+-- update_class_session_atomic, reconcile_class_recurrence, book_slot_atomic).
+-- Authenticated owners retain SELECT only.
+
+DROP POLICY IF EXISTS crr_owner_insert ON class_recurrence_rules;
+DROP POLICY IF EXISTS crr_owner_update ON class_recurrence_rules;
+DROP POLICY IF EXISTS crr_owner_delete ON class_recurrence_rules;
+
+DROP POLICY IF EXISTS cs_owner_insert ON class_sessions;
+DROP POLICY IF EXISTS cs_owner_update ON class_sessions;
+DROP POLICY IF EXISTS cs_owner_delete ON class_sessions;
