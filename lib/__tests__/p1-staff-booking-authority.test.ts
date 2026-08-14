@@ -350,10 +350,15 @@ describe.skipIf(!dbUrl)('P1-STAFF-1: real PostgreSQL authority', () => {
         is_active BOOLEAN DEFAULT true
       );
       CREATE TABLE IF NOT EXISTS appointments (
-        id UUID PRIMARY KEY, business_id UUID, name TEXT, max_capacity INT DEFAULT 1,
-        duration_minutes INT DEFAULT 30, buffer_minutes INT DEFAULT 0,
-        requires_staff BOOLEAN DEFAULT false, is_active BOOLEAN DEFAULT true,
-        available_days TEXT[], available_from TIME, available_to TIME
+        id UUID PRIMARY KEY, business_id UUID, name TEXT, description TEXT,
+        price NUMERIC DEFAULT 0, price_is_variable BOOLEAN DEFAULT false,
+        duration_minutes INT DEFAULT 30, deposit_amount NUMERIC DEFAULT 0,
+        max_capacity INT DEFAULT 1, buffer_minutes INT DEFAULT 0,
+        requires_staff BOOLEAN DEFAULT false, staff_ids UUID[] DEFAULT '{}',
+        allow_staff_selection BOOLEAN DEFAULT false,
+        is_active BOOLEAN DEFAULT true,
+        available_days TEXT[], available_from TIME, available_to TIME,
+        sort_order INT DEFAULT 0, image_url TEXT
       );
       CREATE TABLE IF NOT EXISTS business_staff (
         id UUID PRIMARY KEY, business_id UUID NOT NULL, name TEXT NOT NULL,
