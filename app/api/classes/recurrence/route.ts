@@ -149,7 +149,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// ── PUT: Update a recurrence rule ──
+// ── PUT: Update a recurrence rule (atomic reconciliation) ──
 
 export async function PUT(request: NextRequest) {
   try {
@@ -161,7 +161,7 @@ export async function PUT(request: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { businessId, ruleId, weekday, startTime, staffId, locationId, capacityOverride, effectiveFrom, effectiveUntil, isActive } = body;
+    const { businessId, ruleId, weekday, startTime, staffId, locationId, capacityOverride, effectiveFrom, effectiveUntil, isActive, clearStaff } = body;
 
     if (!businessId || !ruleId) {
       return NextResponse.json({ error: 'businessId and ruleId are required' }, { status: 400 });
@@ -177,96 +177,40 @@ export async function PUT(request: NextRequest) {
     });
     if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-    // Verify rule belongs to this business
-    const { data: existingRule } = await service
-      .from('class_recurrence_rules')
-      .select('id, service_id, business_id')
-      .eq('id', ruleId)
-      .eq('business_id', businessId)
-      .single();
+    // Atomic reconciliation via DB authority
+    const { data: result, error: rpcError } = await service
+      .rpc('reconcile_class_recurrence', {
+        p_rule_id: ruleId,
+        p_business_id: businessId,
+        p_action: 'update',
+        p_weekday: weekday || null,
+        p_start_time: startTime || null,
+        p_staff_id: staffId || null,
+        p_location_id: locationId || null,
+        p_capacity_override: capacityOverride ?? null,
+        p_effective_from: effectiveFrom || null,
+        p_effective_until: effectiveUntil ?? null,
+        p_is_active: isActive ?? null,
+        p_clear_staff: clearStaff || false,
+      });
 
-    if (!existingRule) return NextResponse.json({ error: 'Recurrence rule not found' }, { status: 404 });
-
-    // Check if schedule is changing (weekday or startTime)
-    const isScheduleChange = weekday !== undefined || startTime !== undefined;
-
-    if (isScheduleChange) {
-      // Check for future sessions with active bookings
-      const { data: bookedSessions } = await service
-        .from('class_sessions')
-        .select('id, date, start_time')
-        .eq('recurrence_rule_id', ruleId)
-        .eq('status', 'scheduled')
-        .gte('date', new Date().toISOString().split('T')[0]);
-
-      if (bookedSessions && bookedSessions.length > 0) {
-        const sessionIds = bookedSessions.map(s => s.id);
-        const { count } = await service
-          .from('bookings')
-          .select('id', { count: 'exact', head: true })
-          .in('class_session_id', sessionIds)
-          .in('status', ['confirmed', 'pending', 'in_progress']);
-
-        if ((count || 0) > 0) {
-          return NextResponse.json({
-            error: 'Cannot change schedule — future sessions have active bookings. Cancel or reschedule those bookings first.',
-            booked_session_count: count,
-          }, { status: 409 });
-        }
-
-        // Safe to remove unbooked future sessions for this rule
-        await service
-          .from('class_sessions')
-          .delete()
-          .eq('recurrence_rule_id', ruleId)
-          .eq('status', 'scheduled')
-          .gte('date', new Date().toISOString().split('T')[0]);
-      }
-    }
-
-    // Validate staff if changing
-    if (staffId !== undefined && staffId !== null) {
-      const { data: staffCheck } = await service
-        .from('business_staff')
-        .select('id')
-        .eq('id', staffId)
-        .eq('business_id', businessId)
-        .eq('is_active', true)
-        .maybeSingle();
-      if (!staffCheck) return NextResponse.json({ error: 'Staff member not found or inactive' }, { status: 400 });
-    }
-
-    // Build update payload
-    const updates: Record<string, unknown> = {};
-    if (weekday !== undefined) updates.weekday = weekday;
-    if (startTime !== undefined) updates.start_time = startTime;
-    if (staffId !== undefined) updates.staff_id = staffId || null;
-    if (locationId !== undefined) updates.location_id = locationId || null;
-    if (capacityOverride !== undefined) updates.capacity_override = capacityOverride || null;
-    if (effectiveFrom !== undefined) updates.effective_from = effectiveFrom;
-    if (effectiveUntil !== undefined) updates.effective_until = effectiveUntil || null;
-    if (isActive !== undefined) updates.is_active = isActive;
-
-    if (Object.keys(updates).length === 0) {
-      return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
-    }
-
-    const { data: updatedRule, error: updateError } = await service
-      .from('class_recurrence_rules')
-      .update(updates)
-      .eq('id', ruleId)
-      .select()
-      .single();
-
-    if (updateError) {
-      logger.withContext({ op: 'class-recurrence.update', businessId, ruleId }).error(`Failed to update recurrence rule: ${updateError.message}`);
+    if (rpcError) {
+      logger.withContext({ op: 'class-recurrence.update', businessId, ruleId }).error(`Reconciliation failed: ${rpcError.message}`);
       return NextResponse.json({ error: 'Failed to update recurrence rule' }, { status: 500 });
     }
 
-    // Regenerate sessions
-    await service.rpc('generate_class_sessions', { p_service_id: existingRule.service_id, p_days_ahead: 28 });
+    if (!result?.success) {
+      const reason = result?.reason;
+      if (reason === 'booked_sessions_exist') {
+        return NextResponse.json({
+          error: 'Cannot update — future sessions have active bookings. Cancel or reschedule those bookings first.',
+          booked_session_count: result?.booked_session_count,
+        }, { status: 409 });
+      }
+      return NextResponse.json({ error: reason || 'Failed to update recurrence rule' }, { status: 400 });
+    }
 
-    return NextResponse.json({ data: updatedRule });
+    return NextResponse.json({ data: result });
   } catch (err) {
     logger.withContext({ op: 'class-recurrence.update' }).error(`Unexpected error: ${err}`);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -297,56 +241,28 @@ export async function DELETE(request: NextRequest) {
     });
     if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-    // Verify rule belongs to this business
-    const { data: existingRule } = await service
-      .from('class_recurrence_rules')
-      .select('id, service_id, business_id')
-      .eq('id', ruleId)
-      .eq('business_id', businessId)
-      .single();
+    // Atomic deletion via DB authority
+    const { data: result, error: rpcError } = await service
+      .rpc('reconcile_class_recurrence', {
+        p_rule_id: ruleId,
+        p_business_id: businessId,
+        p_action: 'delete',
+      });
 
-    if (!existingRule) return NextResponse.json({ error: 'Recurrence rule not found' }, { status: 404 });
-
-    // Check for future sessions with active bookings
-    const { data: futureSessions } = await service
-      .from('class_sessions')
-      .select('id')
-      .eq('recurrence_rule_id', ruleId)
-      .eq('status', 'scheduled')
-      .gte('date', new Date().toISOString().split('T')[0]);
-
-    if (futureSessions && futureSessions.length > 0) {
-      const sessionIds = futureSessions.map(s => s.id);
-      const { count } = await service
-        .from('bookings')
-        .select('id', { count: 'exact', head: true })
-        .in('class_session_id', sessionIds)
-        .in('status', ['confirmed', 'pending', 'in_progress']);
-
-      if ((count || 0) > 0) {
-        return NextResponse.json({
-          error: 'Cannot delete rule — future sessions have active bookings. Cancel those sessions first.',
-          booked_session_count: count,
-        }, { status: 409 });
-      }
-
-      // Delete unbooked future sessions belonging to this rule
-      await service
-        .from('class_sessions')
-        .delete()
-        .eq('recurrence_rule_id', ruleId)
-        .eq('status', 'scheduled')
-        .gte('date', new Date().toISOString().split('T')[0]);
+    if (rpcError) {
+      logger.withContext({ op: 'class-recurrence.delete', businessId, ruleId }).error(`Reconciliation failed: ${rpcError.message}`);
+      return NextResponse.json({ error: 'Failed to delete recurrence rule' }, { status: 500 });
     }
 
-    const { error: deleteError } = await service
-      .from('class_recurrence_rules')
-      .delete()
-      .eq('id', ruleId);
-
-    if (deleteError) {
-      logger.withContext({ op: 'class-recurrence.delete', businessId, ruleId }).error(`Failed to delete recurrence rule: ${deleteError.message}`);
-      return NextResponse.json({ error: 'Failed to delete recurrence rule' }, { status: 500 });
+    if (!result?.success) {
+      const reason = result?.reason;
+      if (reason === 'booked_sessions_exist') {
+        return NextResponse.json({
+          error: 'Cannot delete rule — future sessions have active bookings. Cancel those sessions first.',
+          booked_session_count: result?.booked_session_count,
+        }, { status: 409 });
+      }
+      return NextResponse.json({ error: reason || 'Failed to delete recurrence rule' }, { status: 400 });
     }
 
     return NextResponse.json({ success: true });

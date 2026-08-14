@@ -256,64 +256,32 @@ export default function ClassesPage() {
     setCreateError(null);
 
     try {
-      const supabase = createClient();
+      const WEEKDAY_MAP = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
       const priceNum = Math.round(parseFloat(newClass.price) * 100) || 0;
       const durationNum = parseInt(newClass.duration) || 60;
       const capacityNum = parseInt(newClass.capacity) || 10;
 
-      // Step 1: Create the service with is_class: true
-      const { data: svc, error: svcError } = await supabase
-        .from('services')
-        .insert({
-          business_id: business.id,
+      // Atomic class creation via server authority (service + recurrence + generation)
+      const res = await fetch('/api/classes/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
           name: newClass.name.trim(),
           description: newClass.description.trim() || null,
           price: priceNum,
-          duration_minutes: durationNum,
-          max_capacity: capacityNum,
-          is_class: true,
-          is_active: true,
-          status: 'active',
-        })
-        .select('id')
-        .single();
-
-      if (svcError || !svc) {
-        throw new Error(svcError?.message || 'Failed to create class service');
-      }
-
-      // Step 2: Create recurrence rule via API
-      const recRes = await fetch('/api/classes/recurrence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          businessId: business.id,
-          serviceId: svc.id,
-          dayOfWeek: newClass.dayOfWeek,
+          durationMinutes: durationNum,
+          maxCapacity: capacityNum,
+          weekday: WEEKDAY_MAP[newClass.dayOfWeek] || 'mon',
           startTime: newClass.startTime,
-          capacity: capacityNum,
-          ...(newClass.staffId ? { staffId: newClass.staffId } : {}),
+          staffId: newClass.staffId || null,
+          capacityOverride: capacityNum,
         }),
       });
 
-      if (!recRes.ok) {
-        const body = await recRes.json().catch(() => ({}));
-        throw new Error(body.error || 'Failed to create schedule rule');
-      }
-
-      // Step 3: Generate sessions
-      const genRes = await fetch('/api/classes/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          businessId: business.id,
-          serviceId: svc.id,
-        }),
-      });
-
-      if (!genRes.ok) {
-        // Non-fatal: rule was created, sessions can be generated later
-        console.warn('Session generation failed — sessions can be generated manually.');
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to create class');
       }
 
       // Reset form and refresh

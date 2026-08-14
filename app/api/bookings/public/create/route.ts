@@ -164,10 +164,11 @@ export async function POST(request: NextRequest) {
       itemStaffIds = (service.staff_ids as string[]) || [];
     }
 
-    // Auto-assign staff for requires_staff items (public bookings have no staff selection UI)
+    // Auto-assign staff for requires_staff NON-CLASS items only.
+    // Class bookings use session instructor — DB authority validates it.
     let autoStaffId: string | null = null;
     let autoStaffName: string | null = null;
-    if (itemRequiresStaff) {
+    if (itemRequiresStaff && !classSessionId) {
       // Find eligible active staff — prefer service-level staff_ids, fall back to all
       let staffQuery = supabase
         .from('business_staff')

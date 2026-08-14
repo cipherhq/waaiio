@@ -81,86 +81,46 @@ export async function PATCH(
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { status, cancellationReason, staffId, capacity } = body;
+    const { status, cancellationReason, staffId, capacity, clearStaff } = body;
 
     const service = createServiceClient();
 
-    // Fetch session
-    const { data: session, error: sessionError } = await service
+    // Resolve business_id for capability check
+    const { data: session } = await service
       .from('class_sessions')
-      .select('id, business_id, status, capacity')
+      .select('business_id')
       .eq('id', sessionId)
       .single();
 
-    if (sessionError || !session) {
-      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
-    }
+    if (!session) return NextResponse.json({ error: 'Session not found' }, { status: 404 });
 
     const guard = await requireCapability(supabase, service, {
       businessId: session.business_id, userId: user.id, capability: 'class_booking' as never, action: 'manage_existing',
     });
     if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-    const updates: Record<string, unknown> = {};
+    // Atomic session mutation via DB authority (uses same advisory lock as booking)
+    const { data: result, error: rpcError } = await service
+      .rpc('update_class_session_atomic', {
+        p_session_id: sessionId,
+        p_business_id: session.business_id,
+        p_new_status: status || null,
+        p_cancellation_reason: cancellationReason || null,
+        p_new_capacity: capacity ?? null,
+        p_new_staff_id: staffId || null,
+        p_clear_staff: clearStaff || false,
+      });
 
-    // Handle cancellation
-    if (status === 'cancelled') {
-      if (session.status === 'completed') {
-        return NextResponse.json({ error: 'Cannot cancel a completed session' }, { status: 400 });
-      }
-      updates.status = 'cancelled';
-      if (cancellationReason) updates.cancellation_reason = cancellationReason;
-    }
-
-    // Handle instructor change via staffId
-    if (staffId !== undefined) {
-      if (staffId) {
-        const { data: staffCheck } = await service
-          .from('business_staff')
-          .select('id')
-          .eq('id', staffId)
-          .eq('business_id', session.business_id)
-          .eq('is_active', true)
-          .maybeSingle();
-        if (!staffCheck) return NextResponse.json({ error: 'Staff member not found or inactive' }, { status: 400 });
-      }
-      updates.staff_id = staffId || null;
-    }
-
-    // Handle capacity change
-    if (capacity !== undefined) {
-      const { data: bookings } = await service
-        .from('bookings')
-        .select('party_size')
-        .eq('class_session_id', sessionId)
-        .in('status', ['confirmed', 'pending', 'in_progress']);
-
-      const currentAttendees = (bookings || []).reduce((sum, b) => sum + (b.party_size || 1), 0);
-      if (capacity < currentAttendees) {
-        return NextResponse.json({
-          error: `Cannot reduce capacity to ${capacity}. There are ${currentAttendees} attendees booked.`,
-        }, { status: 400 });
-      }
-      updates.capacity = capacity;
-    }
-
-    if (Object.keys(updates).length === 0) {
-      return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
-    }
-
-    const { data: updatedSession, error: updateError } = await service
-      .from('class_sessions')
-      .update(updates)
-      .eq('id', sessionId)
-      .select()
-      .single();
-
-    if (updateError) {
-      logger.withContext({ op: 'class-session.patch', sessionId }).error(`Failed to update session: ${updateError.message}`);
+    if (rpcError) {
+      logger.withContext({ op: 'class-session.patch', sessionId }).error(`Atomic update failed: ${rpcError.message}`);
       return NextResponse.json({ error: 'Failed to update session' }, { status: 500 });
     }
 
-    return NextResponse.json({ data: updatedSession });
+    if (!result?.success) {
+      return NextResponse.json({ error: result?.reason || 'Failed to update session' }, { status: 400 });
+    }
+
+    return NextResponse.json({ data: result });
   } catch (err) {
     logger.withContext({ op: 'class-session.patch' }).error(`Unexpected error: ${err}`);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
