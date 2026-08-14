@@ -31,6 +31,7 @@ export async function POST(request: NextRequest) {
       staffId,
       notes,
       sendConfirmation,
+      classSessionId,
     } = body;
 
     // Validate required fields — exactly one of serviceId or appointmentId
@@ -170,6 +171,7 @@ export async function POST(request: NextRequest) {
         p_buffer_minutes: itemBufferMinutes,
         p_duration: itemDuration,
         p_appointment_id: appointmentId || null,
+        p_class_session_id: classSessionId || null,
       })
       .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 

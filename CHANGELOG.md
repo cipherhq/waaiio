@@ -21,6 +21,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-14
 
+### fix(P1-CLASS-1): canonical class sessions and booking authority
+
+- **Feature:** Complete class booking capability. Classes = services with `is_class=true`. Class sessions = concrete occurrences from recurrence rules. Bookings identify exact session via `class_session_id`.
+- **Migration 321:** `class_recurrence_rules`, `class_sessions` (idempotent UNIQUE), `bookings.class_session_id` FK, `generate_class_sessions` RPC, `get_upcoming_class_sessions` RPC, extended `book_slot_atomic`/`reschedule_booking_atomic`/`book_manual_slot_atomic` with `p_class_session_id`.
+- **Dashboard:** Classes page + sidebar entry. **WhatsApp:** `select_class_session` step. **Public:** Sessions instead of time slots for class services. **Manual/Admin:** Class session awareness.
+- **Architecture:** ONE canonical booking authority. Per-session capacity via SUM(party_size). Independent session capacity. Instructor reuses P1-STAFF-1.
+- **Tests:** 22 source + 24 real PG tests. CI: `P1-CLASS-1 class session booking authority DB tests`.
+
 ### fix(P1-STAFF-1): staff schedule enforcement at booking authority
 
 - **Bug:** Staff/provider schedules not enforced during booking. Dashboard stores schedule keys as `mon`/`tue`/..., but bot reads `monday`/`tuesday`/... — complete mismatch. Time slot generation ignores staff working hours. `book_slot_atomic` has no staff schedule check. `reschedule_booking_atomic` has no staff schedule check. `requires_staff` services could silently create bookings with `staff_id = NULL`. Public booking always sends `p_staff_id: null` even for requires_staff items. Manual booking doesn't validate staff belongs to business or is active.

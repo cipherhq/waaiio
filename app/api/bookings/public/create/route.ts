@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
       guestPhone,
       quantity,
       otpToken,
+      classSessionId,
     } = body as {
       businessSlug: string;
       serviceId?: string;
@@ -40,6 +41,7 @@ export async function POST(request: NextRequest) {
       guestPhone?: string;
       quantity?: number;
       otpToken?: string;
+      classSessionId?: string;
     };
 
     // Basic validation — exactly one of serviceId or appointmentId required
@@ -308,6 +310,7 @@ export async function POST(request: NextRequest) {
         p_appointment_id: isAppointmentBooking ? itemId : null,
         p_buffer_minutes: itemBuffer,
         p_duration: itemDuration,
+        p_class_session_id: classSessionId || null,
       })
       .single() as {
         data: { booking_id: string; reference_code: string; slot_available: boolean } | null;

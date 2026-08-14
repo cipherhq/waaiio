@@ -69,6 +69,7 @@ import FeeInvoices from './pages/FeeInvoices';
 import AdminPermissions from './pages/AdminPermissions';
 import AIMarketplace from './pages/AIMarketplace';
 import Promotions from './pages/Promotions';
+import ClassSessions from './pages/ClassSessions';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -95,6 +96,7 @@ export const router = createBrowserRouter([
       // Operations
       { path: 'promotions', element: <RoleGuard roles={ADMIN_PERMISSIONS['promotions']}><Promotions /></RoleGuard> },
       { path: 'bookings', element: <RoleGuard roles={ADMIN_PERMISSIONS['bookings']}><Bookings /></RoleGuard> },
+      { path: 'class-sessions', element: <RoleGuard roles={ADMIN_PERMISSIONS['bookings']}><ClassSessions /></RoleGuard> },
       { path: 'orders', element: <RoleGuard roles={ADMIN_PERMISSIONS['orders']}><Orders /></RoleGuard> },
       { path: 'payments', element: <RoleGuard roles={ADMIN_PERMISSIONS['payments']}><Payments /></RoleGuard> },
       { path: 'subscriptions', element: <RoleGuard roles={ADMIN_PERMISSIONS['subscriptions']}><Subscriptions /></RoleGuard> },

@@ -363,7 +363,11 @@ export const schedulingFlow: FlowDefinition = {
           },
         };
       },
-      async next() { return 'select_date'; },
+      async next(ctx: FlowContext) {
+        // Class services route to session selection instead of date/time
+        if (ctx.session.session_data._service_is_class) return 'select_class_session';
+        return 'select_date';
+      },
       async skipIf(ctx: FlowContext) {
         if (ctx.session.session_data.skip_service) return true;
         if (!ctx.business) return true;
@@ -428,6 +432,112 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         return false;
+      },
+    },
+
+    // ── Select Class Session ──
+    {
+      id: 'select_class_session',
+      async skipIf(ctx: FlowContext) {
+        // Only active for class services
+        return !ctx.session.session_data._service_is_class;
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const serviceId = ctx.session.session_data.service_id as string;
+        const serviceName = ctx.session.session_data.service_name as string || 'Class';
+
+        // Fetch upcoming sessions via RPC
+        const { data: sessions } = await ctx.supabase
+          .rpc('get_upcoming_class_sessions', { p_service_id: serviceId, p_limit: 10 });
+
+        if (!sessions || sessions.length === 0) {
+          return [{
+            type: 'text' as const,
+            text: `Sorry, there are no upcoming ${serviceName} sessions available right now. Send *Hi* to explore other options.`,
+          }];
+        }
+
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        const bizMeta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const use12hr = bizMeta.time_format !== '24hr';
+
+        const items = sessions
+          .filter((s: { spots_taken: number; capacity: number }) => s.spots_taken < s.capacity)
+          .slice(0, 10)
+          .map((s: { session_id: string; session_date: string; start_time: string; capacity: number; spots_taken: number; staff_name: string | null }) => {
+            const dateLabel = new Date(s.session_date + 'T00:00').toLocaleDateString(
+              getLocale(cc), { weekday: 'short', day: 'numeric', month: 'short' },
+            );
+            const timeLabel = formatTime(s.start_time.slice(0, 5), use12hr);
+            const remaining = s.capacity - s.spots_taken;
+            let desc = `${remaining} spot${remaining !== 1 ? 's' : ''} left`;
+            if (s.staff_name) desc = `${s.staff_name} • ${desc}`;
+            return {
+              title: `${dateLabel}, ${timeLabel}`,
+              description: desc,
+              postbackText: `class_session_${s.session_id}`,
+            };
+          });
+
+        if (items.length === 0) {
+          return [{
+            type: 'text' as const,
+            text: `All upcoming ${serviceName} sessions are fully booked. Send *Hi* to explore other options.`,
+          }];
+        }
+
+        return [{
+          type: 'list' as const,
+          title: 'Choose Session',
+          body: `Pick a ${serviceName} session:`,
+          buttonLabel: 'Choose',
+          items,
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const match = input.match(/^class_session_(.+)$/);
+        if (!match) {
+          return { valid: false, errorMessage: 'Please tap one of the session options above.' };
+        }
+        const sessionId = match[1];
+
+        // Verify session exists, is scheduled, and has capacity
+        const { data: session } = await ctx.supabase
+          .from('class_sessions')
+          .select('id, date, start_time, end_time, capacity, status, staff_id, location_id')
+          .eq('id', sessionId)
+          .eq('status', 'scheduled')
+          .maybeSingle();
+
+        if (!session) {
+          return { valid: false, errorMessage: 'This session is no longer available. Please choose another.' };
+        }
+
+        // Check capacity
+        const { count } = await ctx.supabase
+          .from('bookings')
+          .select('id', { count: 'exact', head: true })
+          .eq('class_session_id', sessionId)
+          .in('status', ['confirmed', 'pending', 'in_progress']);
+
+        if ((count || 0) >= session.capacity) {
+          return { valid: false, errorMessage: 'This session just filled up. Please choose another.' };
+        }
+
+        return {
+          valid: true,
+          data: {
+            _class_session_id: session.id,
+            date: session.date,
+            time: session.start_time.slice(0, 5),
+            staff_id: session.staff_id || null,
+            location_id: session.location_id || null,
+          },
+        };
+      },
+      async next() {
+        // Skip date, staff, time selection — session determines all of these
+        return 'select_addons';
       },
     },
 
@@ -2373,6 +2483,7 @@ export const schedulingFlow: FlowDefinition = {
                 p_buffer_minutes: (d._service_buffer_minutes as number) || 0,
                 p_duration: (d.service_duration as number) || 30,
                 p_bot_session_id: ctx.session.id,
+                p_class_session_id: (d._class_session_id as string) || null,
                 p_enrollment_id: packageEnrollmentId,
               });
 
@@ -2419,6 +2530,7 @@ export const schedulingFlow: FlowDefinition = {
                 p_buffer_minutes: (d._service_buffer_minutes as number) || 0,
                 p_duration: (d.service_duration as number) || 30,
                 p_bot_session_id: ctx.session.id,
+                p_class_session_id: (d._class_session_id as string) || null,
               })
               .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 
