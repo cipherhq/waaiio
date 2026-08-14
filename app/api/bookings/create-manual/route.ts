@@ -74,10 +74,12 @@ export async function POST(request: NextRequest) {
     let itemMaxCapacity: number;
     let itemBufferMinutes: number;
 
+    let itemRequiresStaff = false;
+
     if (appointmentId) {
       const { data: appt } = await serviceClient
         .from('appointments')
-        .select('name, price, duration_minutes, max_capacity, buffer_minutes')
+        .select('name, price, duration_minutes, max_capacity, buffer_minutes, requires_staff')
         .eq('id', appointmentId)
         .eq('business_id', businessId)
         .single();
@@ -87,10 +89,11 @@ export async function POST(request: NextRequest) {
       itemDuration = appt.duration_minutes ?? 30;
       itemMaxCapacity = appt.max_capacity ?? 1;
       itemBufferMinutes = appt.buffer_minutes ?? 0;
+      itemRequiresStaff = appt.requires_staff ?? false;
     } else {
       const { data: service } = await serviceClient
         .from('services')
-        .select('name, price, duration_minutes, max_capacity, buffer_minutes')
+        .select('name, price, duration_minutes, max_capacity, buffer_minutes, requires_staff')
         .eq('id', serviceId)
         .eq('business_id', businessId)
         .single();
@@ -100,17 +103,30 @@ export async function POST(request: NextRequest) {
       itemDuration = service.duration_minutes ?? 30;
       itemMaxCapacity = service.max_capacity ?? 1;
       itemBufferMinutes = service.buffer_minutes ?? 0;
+      itemRequiresStaff = service.requires_staff ?? false;
     }
 
-    // Look up staff name if staffId provided
+    // Reject requires_staff items without a staff assignment
+    if (itemRequiresStaff && !staffId) {
+      return NextResponse.json({ error: 'This service requires a staff member to be assigned' }, { status: 400 });
+    }
+
+    // Look up and validate staff if staffId provided
     let staffName: string | null = null;
     if (staffId) {
       const { data: staffMember } = await serviceClient
         .from('business_staff')
-        .select('name')
+        .select('name, is_active')
         .eq('id', staffId)
+        .eq('business_id', businessId)
         .single();
-      staffName = staffMember?.name || null;
+      if (!staffMember) {
+        return NextResponse.json({ error: 'Staff member not found for this business' }, { status: 400 });
+      }
+      if (!staffMember.is_active) {
+        return NextResponse.json({ error: 'Staff member is no longer active' }, { status: 400 });
+      }
+      staffName = staffMember.name || null;
     }
 
     // ── Resolve customer identity (bookings.user_id = customer, not operator) ──

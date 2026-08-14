@@ -1,5 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
-import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, getStaffDaySchedule, isStaffAvailable, type CountryCode } from '@/lib/constants';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
@@ -475,21 +475,36 @@ export const schedulingFlow: FlowDefinition = {
           staff = all;
         }
 
-        if (staff.length === 0) return true;
+        if (staff.length === 0) {
+          // No active staff at all — if requires_staff, block the booking
+          if (d._service_requires_staff) {
+            ctx.session.session_data._staff_unavailable = true;
+            return false; // proceed to prompt which will show "no staff available"
+          }
+          return true;
+        }
 
         // Filter by staff schedule — only show staff who work on the selected date
         const selectedDate = d.date as string | undefined;
+        const serviceDurationForStaff = (d.service_duration as number) || 30;
         if (selectedDate) {
-          const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-          const dayOfWeek = dayNames[new Date(selectedDate + 'T00:00').getDay()];
+          const dayIdx = new Date(selectedDate + 'T00:00').getDay();
           staff = staff.filter(s => {
-            if (!s.schedule || Object.keys(s.schedule).length === 0) return true; // No schedule = always available
-            const daySchedule = s.schedule[dayOfWeek] as { start?: string; end?: string } | undefined;
-            return daySchedule && daySchedule.start; // Has a start time for this day
+            const sched = s.schedule as Record<string, { start?: string; end?: string }> | null;
+            if (!sched || Object.keys(sched).length === 0) return true; // No schedule = always available
+            const daySchedule = getStaffDaySchedule(sched, dayIdx);
+            return !!daySchedule && !!daySchedule.start; // Has a start time for this day
           });
         }
 
-        if (staff.length === 0) return true;
+        if (staff.length === 0) {
+          // All staff filtered out by schedule — if requires_staff, block
+          if (d._service_requires_staff) {
+            ctx.session.session_data._staff_unavailable = true;
+            return false; // proceed to prompt which will show "no staff available"
+          }
+          return true;
+        }
 
         // Auto-assign if only 1 staff or customer selection disabled
         const allowSelection = d._service_allow_staff_selection as boolean | undefined;
@@ -520,6 +535,18 @@ export const schedulingFlow: FlowDefinition = {
         return false;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        // If requires_staff but no staff available, tell the customer
+        if (ctx.session.session_data._staff_unavailable) {
+          return [{
+            type: 'buttons' as const,
+            body: 'Sorry, no staff members are available for your selected date. Would you like to pick another date or cancel?',
+            buttons: [
+              { id: 'pick_another_date_staff', title: 'Pick Another Date' },
+              { id: 'cancel_staff', title: 'Cancel' },
+            ],
+          }];
+        }
+
         const staff = ctx.session.session_data._available_staff as Array<{ id: string; name: string }>;
         const promptBody = getStaffPrompt(ctx.business?.category || 'other');
 
@@ -553,6 +580,15 @@ export const schedulingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // Handle staff-unavailable recovery actions
+        if (input === 'pick_another_date_staff') {
+          return { valid: true, data: { _staff_action: 'change_date' } };
+        }
+        if (input === 'cancel_staff') {
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No problem! Send *Hi* to explore other options.') });
+          return { valid: true, data: { _staff_action: 'cancel' } };
+        }
+
         if (input === 'staff_any') {
           return { valid: true };
         }
@@ -583,7 +619,22 @@ export const schedulingFlow: FlowDefinition = {
         }
         return { valid: false, errorMessage: 'Try typing a name like *Mike*, or tap an option above.' };
       },
-      async next() { return 'select_time'; },
+      async next(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        if (d._staff_action === 'change_date') {
+          delete d.date;
+          delete d._staff_action;
+          delete d._staff_unavailable;
+          return 'select_date';
+        }
+        if (d._staff_action === 'cancel') {
+          delete d._staff_action;
+          delete d._staff_unavailable;
+          return null; // end session cleanly
+        }
+        delete d._staff_unavailable;
+        return 'select_time';
+      },
     },
 
     // ── Select Date ──
@@ -923,8 +974,32 @@ export const schedulingFlow: FlowDefinition = {
         const serviceFrom = ctx.session.session_data._service_available_from as string | null;
         const serviceTo = ctx.session.session_data._service_available_to as string | null;
 
-        const openTime = serviceFrom || (dayHours && !dayHours.closed && dayHours.open ? dayHours.open : '08:00');
-        const closeTime = serviceTo || (dayHours && !dayHours.closed && dayHours.close ? dayHours.close : '22:00');
+        let openTime = serviceFrom || (dayHours && !dayHours.closed && dayHours.open ? dayHours.open : '08:00');
+        let closeTime = serviceTo || (dayHours && !dayHours.closed && dayHours.close ? dayHours.close : '22:00');
+
+        // Narrow time window by staff schedule when a staff member is assigned
+        const assignedStaffId = ctx.session.session_data.staff_id as string | null;
+        if (assignedStaffId) {
+          const { data: staffRow } = await ctx.supabase
+            .from('business_staff')
+            .select('schedule')
+            .eq('id', assignedStaffId)
+            .maybeSingle();
+          if (staffRow?.schedule) {
+            const dayIdx = new Date(dateStr + 'T00:00').getDay();
+            const staffDay = getStaffDaySchedule(
+              staffRow.schedule as Record<string, { start?: string; end?: string }>,
+              dayIdx,
+            );
+            if (staffDay?.start) {
+              // Use the more restrictive of business/service vs staff hours
+              const staffOpen = staffDay.start;
+              const staffClose = staffDay.end || '23:59';
+              if (timeToMinutes(staffOpen) > timeToMinutes(openTime)) openTime = staffOpen;
+              if (timeToMinutes(staffClose) < timeToMinutes(closeTime)) closeTime = staffClose;
+            }
+          }
+        }
 
         // Use service duration or business metadata for slot interval (default 60)
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
