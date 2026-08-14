@@ -334,7 +334,7 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
       DO $$ BEGIN CREATE TYPE reservation_status AS ENUM ('pending','confirmed','cancelled','completed','in_progress','no_show'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE TYPE deposit_status AS ENUM ('none','pending','paid','refunded'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       CREATE TABLE IF NOT EXISTS services (
-        id UUID PRIMARY KEY, business_id UUID, name TEXT, description TEXT,
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID, name TEXT, description TEXT,
         price INT DEFAULT 0, max_capacity INT DEFAULT 1, buffer_minutes INT DEFAULT 0,
         duration_minutes INT DEFAULT 30, requires_staff BOOLEAN DEFAULT false,
         is_active BOOLEAN DEFAULT true, is_class BOOLEAN DEFAULT false,
