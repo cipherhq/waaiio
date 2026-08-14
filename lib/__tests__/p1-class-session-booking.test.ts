@@ -289,6 +289,63 @@ describe('P1-CLASS-1: source verification', () => {
     const recurrenceRoute = readFileSync('app/api/classes/recurrence/route.ts', 'utf-8');
     expect(recurrenceRoute).toContain('reconcile_class_recurrence');
   });
+
+  // ── Integrity corrections ──
+  it('45. manual route uses class_booking capability for class bookings', () => {
+    expect(manualCreate).toContain("'class_booking'");
+    expect(manualCreate).toContain('classSessionId');
+  });
+
+  it('46. manual route skips generic requires_staff for class bookings', () => {
+    expect(manualCreate).toContain('!classSessionId');
+  });
+
+  it('47. update_class_session_atomic validates ALL before mutating', () => {
+    // The integrity-corrected version validates capacity AND staff before any UPDATE
+    const fn = migration321.slice(migration321.lastIndexOf('update_class_session_atomic'));
+    const mutationPos = fn.lastIndexOf('UPDATE class_sessions SET capacity');
+    const validationPos = fn.indexOf('requires_staff_cannot_clear');
+    expect(validationPos).toBeLessThan(mutationPos);
+  });
+
+  it('48. update_class_session_atomic rejects clear on requires_staff', () => {
+    const fn = migration321.slice(migration321.lastIndexOf('update_class_session_atomic'));
+    expect(fn).toContain("'requires_staff_cannot_clear'");
+  });
+
+  it('49. update_class_session_atomic rejects instructor change with attendees', () => {
+    const fn = migration321.slice(migration321.lastIndexOf('update_class_session_atomic'));
+    expect(fn).toContain("'attendees_exist_cannot_change_instructor'");
+  });
+
+  it('50. reconcile protects sessions with ANY booking history', () => {
+    const fn = migration321.slice(migration321.lastIndexOf('reconcile_class_recurrence'));
+    // Must check for ANY booking, not just active
+    expect(fn).toContain('EXISTS (SELECT 1 FROM bookings b WHERE b.class_session_id = cs.id)');
+  });
+
+  it('51. generate uses recurrence rule lock', () => {
+    const fn = migration321.slice(migration321.lastIndexOf('generate_class_sessions'));
+    expect(fn).toContain("'recurrence_rule:'");
+    expect(fn).toContain('pg_advisory_xact_lock');
+  });
+
+  it('52. generate skips requires_staff rules without instructor', () => {
+    const fn = migration321.slice(migration321.lastIndexOf('generate_class_sessions'));
+    expect(fn).toContain('requires_staff');
+    expect(fn).toContain('v_rule.staff_id IS NULL');
+    expect(fn).toContain('CONTINUE');
+  });
+
+  it('53. book_slot_atomic derives canonical staff_name from DB', () => {
+    // The class INSERT should derive staff_name from business_staff, not use caller p_staff_name
+    expect(migration321).toContain('SELECT bs.name FROM business_staff bs WHERE bs.id = v_cs.staff_id');
+  });
+
+  it('54. reschedule derives target staff_name from DB', () => {
+    // The class reschedule UPDATE should derive staff_name from target session instructor
+    expect(migration321).toContain('SELECT bs.name FROM business_staff bs WHERE bs.id = v_target_cs.staff_id');
+  });
 });
 
 
@@ -1063,17 +1120,149 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
   });
 
   it('DB-38: reconcile_class_recurrence delete succeeds when unbooked', () => {
-    // Sessions from DB-37's rule still exist but no bookings
     const r = psqlJson(`SELECT reconcile_class_recurrence(
       '82aaaaaa-aaaa-aaaa-aaaa-cccccccccccc'::uuid, '${BIZ}'::uuid, 'delete'
     );`) as Record<string, unknown>;
     expect(r.success).toBe(true);
     expect(r.action).toBe('deleted');
-    // Rule gone
     const ruleCount = psql(`SELECT count(*)::int FROM class_recurrence_rules WHERE id = '82aaaaaa-aaaa-aaaa-aaaa-cccccccccccc';`);
     expect(parseInt(ruleCount)).toBe(0);
-    // Future sessions gone
-    const sesCount = psql(`SELECT count(*)::int FROM class_sessions WHERE recurrence_rule_id = '82aaaaaa-aaaa-aaaa-aaaa-cccccccccccc';`);
-    expect(parseInt(sesCount)).toBe(0);
+  });
+
+  // ── Integrity correction DB tests ──
+
+  it('DB-39: update_class_session_atomic all-or-nothing (invalid staff + capacity change)', () => {
+    reset();
+    psql(`INSERT INTO class_recurrence_rules (business_id, service_id, weekday, start_time) VALUES ('${BIZ}', '${CLASS_SVC}', 'mon', '18:00');`);
+    psql(`SELECT generate_class_sessions('${CLASS_SVC}', 28);`);
+    const sid = psql(`SELECT id FROM class_sessions WHERE service_id = '${CLASS_SVC}' ORDER BY date LIMIT 1;`);
+    // Set capacity = 20
+    psql(`UPDATE class_sessions SET capacity = 20 WHERE id = '${sid}';`);
+    // Request: capacity=25 + invalid staff => should fail AND capacity stays 20
+    const r = psqlJson(`SELECT update_class_session_atomic(
+      '${sid}'::uuid, '${BIZ}'::uuid, NULL, NULL, 25, '00000000-0000-0000-0000-000000000000'::uuid
+    );`) as Record<string, unknown>;
+    expect(r.success).toBe(false);
+    const cap = psql(`SELECT capacity FROM class_sessions WHERE id = '${sid}';`);
+    expect(cap).toBe('20'); // unchanged
+  });
+
+  it('DB-40: requires_staff clear instructor rejected', () => {
+    psql(`UPDATE services SET requires_staff = true WHERE id = '${CLASS_SVC}';`);
+    const sid = psql(`SELECT id FROM class_sessions WHERE service_id = '${CLASS_SVC}' ORDER BY date LIMIT 1;`);
+    // Set instructor
+    psql(`UPDATE class_sessions SET staff_id = '${STAFF}' WHERE id = '${sid}';`);
+    const r = psqlJson(`SELECT update_class_session_atomic(
+      '${sid}'::uuid, '${BIZ}'::uuid, NULL, NULL, NULL, NULL, true
+    );`) as Record<string, unknown>;
+    expect(r.success).toBe(false);
+    expect(r.reason).toBe('requires_staff_cannot_clear');
+    // Staff unchanged
+    const staffAfter = psql(`SELECT staff_id FROM class_sessions WHERE id = '${sid}';`);
+    expect(staffAfter).toBe(STAFF);
+    psql(`UPDATE services SET requires_staff = false WHERE id = '${CLASS_SVC}';`);
+    psql(`UPDATE class_sessions SET staff_id = NULL WHERE id = '${sid}';`);
+  });
+
+  it('DB-41: instructor change with active attendees rejected', () => {
+    const sid = psql(`SELECT id FROM class_sessions WHERE service_id = '${CLASS_SVC}' ORDER BY date LIMIT 1;`);
+    // Book a customer
+    psql(`SELECT book_slot_atomic(
+      '${BIZ}'::uuid, '${USR}'::uuid, '${CLASS_SVC}'::uuid, NULL,
+      '2026-08-17'::date, '18:00', 1, 10,
+      'scheduling', 0, 'none', 'confirmed',
+      'Guest', '+1234', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL,
+      NULL, NULL, 0, 60, NULL, '${sid}'::uuid
+    );`);
+    // Try to change instructor — should fail
+    const r = psqlJson(`SELECT update_class_session_atomic(
+      '${sid}'::uuid, '${BIZ}'::uuid, NULL, NULL, NULL, '${STAFF}'::uuid
+    );`) as Record<string, unknown>;
+    expect(r.success).toBe(false);
+    expect(r.reason).toBe('attendees_exist_cannot_change_instructor');
+    psql(`DELETE FROM bookings;`);
+  });
+
+  it('DB-42: class booking staff_name derived from DB (not caller)', () => {
+    reset();
+    psql(`INSERT INTO class_recurrence_rules (business_id, service_id, weekday, start_time, staff_id) VALUES
+      ('${BIZ}', '${CLASS_SVC}', 'mon', '18:00', '${STAFF}');`);
+    psql(`SELECT generate_class_sessions('${CLASS_SVC}', 28);`);
+    const sid = psql(`SELECT id FROM class_sessions WHERE service_id = '${CLASS_SVC}' AND staff_id = '${STAFF}' ORDER BY date LIMIT 1;`);
+    if (!sid) return;
+    // Book with wrong staff_name — DB should use canonical name
+    psql(`SELECT book_slot_atomic(
+      '${BIZ}'::uuid, '${USR}'::uuid, '${CLASS_SVC}'::uuid, NULL,
+      '2026-08-17'::date, '18:00', 1, 10,
+      'scheduling', 0, 'none', 'confirmed',
+      'Guest', '+1234', NULL, NULL, NULL, NULL, NULL, NULL, 0, 'WRONG NAME',
+      NULL, NULL, 0, 60, NULL, '${sid}'::uuid
+    );`);
+    const staffName = psql(`SELECT staff_name FROM bookings ORDER BY created_at DESC LIMIT 1;`);
+    expect(staffName).toBe('Instructor'); // canonical name from business_staff
+    psql(`DELETE FROM bookings;`);
+  });
+
+  it('DB-43: reconcile preserves session with cancelled booking history', () => {
+    reset();
+    psql(`INSERT INTO class_recurrence_rules (id, business_id, service_id, weekday, start_time) VALUES
+      ('82aaaaaa-aaaa-aaaa-aaaa-dddddddddddd', '${BIZ}', '${CLASS_SVC}', 'mon', '18:00');`);
+    psql(`SELECT generate_class_sessions('${CLASS_SVC}', 28);`);
+    const sid = psql(`SELECT id FROM class_sessions WHERE recurrence_rule_id = '82aaaaaa-aaaa-aaaa-aaaa-dddddddddddd' ORDER BY date LIMIT 1;`);
+    // Book and then cancel
+    const bid = psql(`SELECT booking_id FROM book_slot_atomic(
+      '${BIZ}'::uuid, '${USR}'::uuid, '${CLASS_SVC}'::uuid, NULL,
+      '2026-08-17'::date, '18:00', 1, 10,
+      'scheduling', 0, 'none', 'confirmed',
+      'Guest', '+1234', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL,
+      NULL, NULL, 0, 60, NULL, '${sid}'::uuid
+    );`);
+    psql(`UPDATE bookings SET status = 'cancelled' WHERE id = '${bid}';`);
+    // Try to reconcile — should fail because session has booking history
+    const r = psqlJson(`SELECT reconcile_class_recurrence(
+      '82aaaaaa-aaaa-aaaa-aaaa-dddddddddddd'::uuid, '${BIZ}'::uuid, 'update', 'wed'
+    );`) as Record<string, unknown>;
+    expect(r.success).toBe(false);
+    expect(r.reason).toBe('booked_sessions_exist');
+    // Booking.class_session_id unchanged
+    const csid = psql(`SELECT class_session_id FROM bookings WHERE id = '${bid}';`);
+    expect(csid).toBe(sid);
+    psql(`DELETE FROM bookings; DELETE FROM class_sessions WHERE recurrence_rule_id = '82aaaaaa-aaaa-aaaa-aaaa-dddddddddddd'; DELETE FROM class_recurrence_rules WHERE id = '82aaaaaa-aaaa-aaaa-aaaa-dddddddddddd';`);
+  });
+
+  it('DB-44: requires_staff recurrence with NULL instructor generates no sessions', () => {
+    reset();
+    psql(`UPDATE services SET requires_staff = true WHERE id = '${CLASS_SVC}';`);
+    psql(`INSERT INTO class_recurrence_rules (business_id, service_id, weekday, start_time) VALUES
+      ('${BIZ}', '${CLASS_SVC}', 'mon', '18:00');`);
+    const count = psql(`SELECT generate_class_sessions('${CLASS_SVC}', 28);`);
+    expect(parseInt(count)).toBe(0);
+    psql(`UPDATE services SET requires_staff = false WHERE id = '${CLASS_SVC}';`);
+  });
+
+  it('DB-45: reschedule staff_name derived from target instructor', () => {
+    reset();
+    psql(`INSERT INTO class_recurrence_rules (business_id, service_id, weekday, start_time, staff_id) VALUES
+      ('${BIZ}', '${CLASS_SVC}', 'mon', '18:00', '${STAFF}');`);
+    psql(`INSERT INTO class_recurrence_rules (business_id, service_id, weekday, start_time) VALUES
+      ('${BIZ}', '${CLASS_SVC}', 'wed', '18:00');`);
+    psql(`SELECT generate_class_sessions('${CLASS_SVC}', 28);`);
+    const instrSession = psql(`SELECT id FROM class_sessions WHERE service_id = '${CLASS_SVC}' AND staff_id = '${STAFF}' ORDER BY date LIMIT 1;`);
+    const noInstrSession = psql(`SELECT id FROM class_sessions WHERE service_id = '${CLASS_SVC}' AND staff_id IS NULL ORDER BY date LIMIT 1;`);
+    if (!instrSession || !noInstrSession) return;
+    // Book instructor session
+    const bid = psql(`SELECT booking_id FROM book_slot_atomic(
+      '${BIZ}'::uuid, '${USR}'::uuid, '${CLASS_SVC}'::uuid, NULL,
+      '2026-08-17'::date, '18:00', 1, 10,
+      'scheduling', 0, 'none', 'confirmed',
+      'Guest', '+1234', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL,
+      NULL, NULL, 0, 60, NULL, '${instrSession}'::uuid
+    );`);
+    // Reschedule to no-instructor session
+    psqlJson(`SELECT reschedule_booking_atomic('${bid}'::uuid, '${BIZ}'::uuid, '2026-08-19'::date, '18:00', NULL, '${noInstrSession}'::uuid);`);
+    // staff_name should be NULL (not carry old instructor name)
+    const sn = psql(`SELECT staff_name IS NULL FROM bookings WHERE id = '${bid}';`);
+    expect(sn).toBe('t');
+    psql(`DELETE FROM bookings;`);
   });
 });

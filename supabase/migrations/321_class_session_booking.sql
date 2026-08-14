@@ -1260,6 +1260,11 @@ BEGIN
         RETURN QUERY SELECT NULL::uuid, NULL::text, false;
         RETURN;
       END IF;
+      -- Derive canonical staff name from DB
+      DECLARE v_canonical_staff_name text;
+      BEGIN
+        SELECT bs.name INTO v_canonical_staff_name FROM business_staff bs WHERE bs.id = v_cs.staff_id;
+      END;
     ELSE
       -- Session has no instructor
       IF COALESCE(v_cs.requires_staff, false) THEN
@@ -1267,8 +1272,6 @@ BEGIN
         RETURN QUERY SELECT NULL::uuid, NULL::text, false;
         RETURN;
       END IF;
-      -- Caller p_staff_id cannot fill missing session instructor
-      -- (session determines instructor, not caller)
     END IF;
 
     -- Capacity check using SUM(party_size)
@@ -1282,7 +1285,7 @@ BEGIN
       RETURN;
     END IF;
 
-    -- Insert class booking — session is the authority for staff/location
+    -- Insert class booking — derive staff identity from session, not caller
     INSERT INTO bookings (
       business_id, user_id, service_id, appointment_id, staff_id, staff_name,
       date, time, party_size, flow_type, channel,
@@ -1293,7 +1296,7 @@ BEGIN
       location_id, bot_session_id, class_session_id
     ) VALUES (
       p_business_id, p_user_id, v_cs.service_id, NULL,
-      v_cs.staff_id, p_staff_name,
+      v_cs.staff_id, (SELECT bs.name FROM business_staff bs WHERE bs.id = v_cs.staff_id),
       v_cs.date, v_cs.start_time, p_party_size,
       p_flow_type::flow_type,
       'whatsapp'::booking_channel,
@@ -1552,6 +1555,7 @@ BEGIN
         time = v_target_cs.start_time,
         party_size = v_party,
         staff_id = v_target_cs.staff_id,
+        staff_name = (SELECT bs.name FROM business_staff bs WHERE bs.id = v_target_cs.staff_id),
         location_id = v_target_cs.location_id,
         original_date = CASE WHEN original_date IS NULL THEN v_booking.date ELSE original_date END,
         original_time = CASE WHEN original_time IS NULL THEN v_booking.time::text ELSE original_time END,
@@ -1656,3 +1660,200 @@ REVOKE EXECUTE ON FUNCTION reschedule_booking_atomic(uuid,uuid,date,text,integer
 REVOKE EXECUTE ON FUNCTION reschedule_booking_atomic(uuid,uuid,date,text,integer,uuid) FROM anon;
 REVOKE EXECUTE ON FUNCTION reschedule_booking_atomic(uuid,uuid,date,text,integer,uuid) FROM authenticated;
 GRANT EXECUTE ON FUNCTION reschedule_booking_atomic(uuid,uuid,date,text,integer,uuid) TO service_role;
+
+
+-- ═══════════════════════════════════════════════════════
+-- 10. INTEGRITY CORRECTIONS
+-- ═══════════════════════════════════════════════════════
+-- See inline comments for each fix.
+-- Functions are CREATE OR REPLACE, overriding earlier definitions.
+
+-- 10a. Fix update_class_session_atomic: validate ALL then mutate once
+CREATE OR REPLACE FUNCTION update_class_session_atomic(
+  p_session_id uuid, p_business_id uuid,
+  p_new_status text DEFAULT NULL, p_cancellation_reason text DEFAULT NULL,
+  p_new_capacity integer DEFAULT NULL, p_new_staff_id uuid DEFAULT NULL,
+  p_clear_staff boolean DEFAULT false
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_session record; v_lock_key bigint; v_occupied bigint;
+  v_duration integer; v_sched_allowed boolean;
+  v_active_attendee_count integer; v_final_capacity integer; v_final_staff_id uuid;
+BEGIN
+  v_lock_key := abs(hashtext('class_session:' || p_session_id::text));
+  PERFORM pg_advisory_xact_lock(v_lock_key);
+  SELECT cs.*, s.duration_minutes, s.requires_staff INTO v_session
+  FROM class_sessions cs JOIN services s ON s.id = cs.service_id WHERE cs.id = p_session_id;
+  IF NOT FOUND THEN RETURN jsonb_build_object('success', false, 'reason', 'session_not_found'); END IF;
+  IF v_session.business_id != p_business_id THEN RETURN jsonb_build_object('success', false, 'reason', 'business_mismatch'); END IF;
+
+  SELECT count(*), COALESCE(SUM(b.party_size), 0) INTO v_active_attendee_count, v_occupied
+  FROM bookings b WHERE b.class_session_id = p_session_id AND b.status IN ('confirmed', 'pending', 'in_progress');
+
+  -- Validate cancel
+  IF p_new_status = 'cancelled' AND v_session.status = 'completed' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'cannot_cancel_completed');
+  END IF;
+  -- Validate capacity
+  v_final_capacity := v_session.capacity;
+  IF p_new_capacity IS NOT NULL THEN
+    IF p_new_capacity < v_occupied THEN
+      RETURN jsonb_build_object('success', false, 'reason', 'capacity_below_occupancy', 'occupancy', v_occupied);
+    END IF;
+    v_final_capacity := p_new_capacity;
+  END IF;
+  -- Validate instructor
+  v_final_staff_id := v_session.staff_id;
+  IF p_new_staff_id IS NOT NULL OR p_clear_staff THEN
+    IF p_clear_staff AND COALESCE(v_session.requires_staff, false) THEN
+      RETURN jsonb_build_object('success', false, 'reason', 'requires_staff_cannot_clear');
+    END IF;
+    IF v_active_attendee_count > 0 THEN
+      RETURN jsonb_build_object('success', false, 'reason', 'attendees_exist_cannot_change_instructor', 'active_attendee_count', v_active_attendee_count);
+    END IF;
+    IF p_new_staff_id IS NOT NULL THEN
+      IF NOT EXISTS (SELECT 1 FROM business_staff WHERE id = p_new_staff_id AND business_id = p_business_id AND is_active = true) THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'invalid_staff');
+      END IF;
+      v_duration := COALESCE(v_session.duration_minutes, 60);
+      SELECT csa.allowed INTO v_sched_allowed
+      FROM check_staff_availability(p_new_staff_id, p_business_id, v_session.date, v_session.start_time::text, v_duration) csa;
+      IF v_sched_allowed IS NOT TRUE THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'staff_unavailable');
+      END IF;
+      v_final_staff_id := p_new_staff_id;
+    ELSE v_final_staff_id := NULL;
+    END IF;
+  END IF;
+
+  -- ALL valid — single mutation
+  IF p_new_status = 'cancelled' THEN
+    UPDATE class_sessions SET status = 'cancelled', cancellation_reason = p_cancellation_reason WHERE id = p_session_id;
+    RETURN jsonb_build_object('success', true, 'action', 'cancelled');
+  END IF;
+  UPDATE class_sessions SET capacity = v_final_capacity, staff_id = v_final_staff_id WHERE id = p_session_id;
+  RETURN jsonb_build_object('success', true);
+END;
+$$;
+
+
+-- 10b. Fix reconcile: protect sessions with ANY booking history + recurrence lock
+CREATE OR REPLACE FUNCTION reconcile_class_recurrence(
+  p_rule_id uuid, p_business_id uuid, p_action text,
+  p_weekday text DEFAULT NULL, p_start_time time DEFAULT NULL,
+  p_staff_id uuid DEFAULT NULL, p_location_id uuid DEFAULT NULL,
+  p_capacity_override integer DEFAULT NULL, p_effective_from date DEFAULT NULL,
+  p_effective_until date DEFAULT NULL, p_is_active boolean DEFAULT NULL,
+  p_clear_staff boolean DEFAULT false
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_rule record; v_session record; v_lock_key bigint;
+  v_today date := CURRENT_DATE; v_referenced_count integer;
+BEGIN
+  -- Lock recurrence rule to serialize with generation
+  v_lock_key := abs(hashtext('recurrence_rule:' || p_rule_id::text));
+  PERFORM pg_advisory_xact_lock(v_lock_key);
+
+  SELECT * INTO v_rule FROM class_recurrence_rules WHERE id = p_rule_id;
+  IF NOT FOUND THEN RETURN jsonb_build_object('success', false, 'reason', 'rule_not_found'); END IF;
+  IF v_rule.business_id != p_business_id THEN RETURN jsonb_build_object('success', false, 'reason', 'business_mismatch'); END IF;
+
+  IF p_weekday IS NOT NULL AND p_weekday NOT IN ('mon','tue','wed','thu','fri','sat','sun') THEN RETURN jsonb_build_object('success', false, 'reason', 'invalid_weekday'); END IF;
+  IF p_staff_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM business_staff WHERE id = p_staff_id AND business_id = p_business_id AND is_active = true) THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'invalid_staff');
+  END IF;
+  IF p_location_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM business_locations WHERE id = p_location_id AND business_id = p_business_id AND is_active = true) THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'invalid_location');
+  END IF;
+  IF p_capacity_override IS NOT NULL AND p_capacity_override < 1 THEN RETURN jsonb_build_object('success', false, 'reason', 'invalid_capacity'); END IF;
+
+  -- Lock all affected future sessions
+  FOR v_session IN SELECT cs.id FROM class_sessions cs WHERE cs.recurrence_rule_id = p_rule_id AND cs.status = 'scheduled' AND cs.date >= v_today ORDER BY cs.date
+  LOOP
+    PERFORM pg_advisory_xact_lock(abs(hashtext('class_session:' || v_session.id::text)));
+  END LOOP;
+
+  -- Protect sessions with ANY booking history (not just active)
+  SELECT count(DISTINCT cs.id) INTO v_referenced_count
+  FROM class_sessions cs WHERE cs.recurrence_rule_id = p_rule_id AND cs.date >= v_today
+    AND EXISTS (SELECT 1 FROM bookings b WHERE b.class_session_id = cs.id);
+  IF v_referenced_count > 0 THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'booked_sessions_exist', 'booked_session_count', v_referenced_count);
+  END IF;
+
+  -- Remove only unreferenced future scheduled sessions
+  DELETE FROM class_sessions WHERE recurrence_rule_id = p_rule_id AND status = 'scheduled' AND date >= v_today
+    AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.class_session_id = class_sessions.id);
+
+  IF p_action = 'delete' THEN
+    DELETE FROM class_recurrence_rules WHERE id = p_rule_id;
+    RETURN jsonb_build_object('success', true, 'action', 'deleted');
+  END IF;
+
+  UPDATE class_recurrence_rules SET
+    weekday = COALESCE(p_weekday, weekday), start_time = COALESCE(p_start_time, start_time),
+    staff_id = CASE WHEN p_clear_staff THEN NULL WHEN p_staff_id IS NOT NULL THEN p_staff_id ELSE staff_id END,
+    location_id = COALESCE(p_location_id, location_id), capacity_override = COALESCE(p_capacity_override, capacity_override),
+    effective_from = COALESCE(p_effective_from, effective_from),
+    effective_until = CASE WHEN p_effective_until IS NOT NULL THEN p_effective_until ELSE effective_until END,
+    is_active = COALESCE(p_is_active, is_active), updated_at = NOW()
+  WHERE id = p_rule_id;
+
+  PERFORM generate_class_sessions(v_rule.service_id, 28);
+  RETURN jsonb_build_object('success', true, 'action', 'updated');
+END;
+$$;
+
+
+-- 10c. Fix generate: recurrence lock + requires_staff check
+CREATE OR REPLACE FUNCTION generate_class_sessions(p_service_id UUID, p_days_ahead INTEGER DEFAULT 28)
+RETURNS INTEGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_rule RECORD; v_date DATE; v_end_date DATE; v_dow INTEGER; v_target_dow INTEGER;
+  v_svc RECORD; v_capacity INTEGER; v_end_time TIME; v_generated INTEGER := 0; v_lock_key bigint;
+BEGIN
+  SELECT id, business_id, duration_minutes, max_capacity, is_class, requires_staff
+  INTO v_svc FROM services WHERE id = p_service_id;
+  IF NOT FOUND OR NOT COALESCE(v_svc.is_class, false) THEN RETURN 0; END IF;
+  v_end_date := CURRENT_DATE + p_days_ahead;
+
+  FOR v_rule IN SELECT * FROM class_recurrence_rules WHERE service_id = p_service_id AND is_active = true
+    AND effective_from <= v_end_date AND (effective_until IS NULL OR effective_until >= CURRENT_DATE) ORDER BY weekday, start_time
+  LOOP
+    -- Lock per-rule
+    v_lock_key := abs(hashtext('recurrence_rule:' || v_rule.id::text));
+    PERFORM pg_advisory_xact_lock(v_lock_key);
+
+    -- requires_staff + no instructor => skip entire rule
+    IF COALESCE(v_svc.requires_staff, false) AND v_rule.staff_id IS NULL THEN CONTINUE; END IF;
+
+    v_target_dow := CASE v_rule.weekday WHEN 'sun' THEN 0 WHEN 'mon' THEN 1 WHEN 'tue' THEN 2
+      WHEN 'wed' THEN 3 WHEN 'thu' THEN 4 WHEN 'fri' THEN 5 WHEN 'sat' THEN 6 END;
+    v_capacity := COALESCE(v_rule.capacity_override, v_svc.max_capacity, 10);
+    v_end_time := v_rule.start_time + make_interval(mins => COALESCE(v_svc.duration_minutes, 60));
+    v_date := GREATEST(v_rule.effective_from, CURRENT_DATE);
+    v_dow := EXTRACT(DOW FROM v_date)::INTEGER;
+    IF v_dow != v_target_dow THEN v_date := v_date + ((v_target_dow - v_dow + 7) % 7); END IF;
+
+    WHILE v_date <= v_end_date AND (v_rule.effective_until IS NULL OR v_date <= v_rule.effective_until) LOOP
+      IF v_rule.staff_id IS NOT NULL THEN
+        DECLARE v_staff_ok boolean;
+        BEGIN
+          SELECT csa.allowed INTO v_staff_ok FROM check_staff_availability(
+            v_rule.staff_id, v_svc.business_id, v_date, v_rule.start_time::text, COALESCE(v_svc.duration_minutes, 60)) csa;
+          IF v_staff_ok IS NOT TRUE THEN v_date := v_date + 7; CONTINUE; END IF;
+        END;
+      END IF;
+      INSERT INTO class_sessions (business_id, service_id, recurrence_rule_id, date, start_time, end_time, staff_id, location_id, capacity, status)
+      VALUES (v_svc.business_id, p_service_id, v_rule.id, v_date, v_rule.start_time, v_end_time, v_rule.staff_id, v_rule.location_id, v_capacity, 'scheduled')
+      ON CONFLICT (recurrence_rule_id, date, start_time) DO NOTHING;
+      IF FOUND THEN v_generated := v_generated + 1; END IF;
+      v_date := v_date + 7;
+    END LOOP;
+  END LOOP;
+  RETURN v_generated;
+END;
+$$;

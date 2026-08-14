@@ -51,10 +51,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Date cannot be in the past' }, { status: 400 });
     }
 
-    // ── Capability enforcement: appointment OR scheduling / create_new ──
+    // ── Capability enforcement ──
     const serviceClient = createServiceClient();
+    // Class bookings require class_booking capability
+    const requiredCaps: import('@/lib/capabilities/types').CapabilityId[] = classSessionId
+      ? ['class_booking' as import('@/lib/capabilities/types').CapabilityId]
+      : ['appointment', 'scheduling'];
     const guard = await requireAnyCapability(supabase, serviceClient, {
-      businessId, userId: user.id, capabilities: ['appointment', 'scheduling'], action: 'create_new',
+      businessId, userId: user.id, capabilities: requiredCaps, action: 'create_new',
     });
     if (!guard.allowed) {
       return NextResponse.json(guard.denial, { status: guard.status });
@@ -107,8 +111,9 @@ export async function POST(request: NextRequest) {
       itemRequiresStaff = service.requires_staff ?? false;
     }
 
-    // Reject requires_staff items without a staff assignment
-    if (itemRequiresStaff && !staffId) {
+    // Reject requires_staff items without a staff assignment (non-class only)
+    // Class bookings use session instructor — DB authority validates
+    if (itemRequiresStaff && !staffId && !classSessionId) {
       return NextResponse.json({ error: 'This service requires a staff member to be assigned' }, { status: 400 });
     }
 
