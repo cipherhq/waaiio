@@ -217,9 +217,9 @@ function setupManualDefaults() {
   mockAuthGetUser2.mockResolvedValue({ data: { user: { id: 'owner-1' } }, error: null });
   mockCapabilityGuard2.mockResolvedValue({ allowed: true });
   mockBusinessLookup2.mockResolvedValue({ data: { name: 'Test Biz', country_code: 'NG' }, error: null });
-  mockServiceLookup2.mockResolvedValue({ data: { name: 'Haircut', price: 5000, duration_minutes: 30, max_capacity: 1, buffer_minutes: 0 }, error: null });
-  mockAppointmentLookup2.mockResolvedValue({ data: { name: 'Consultation', price: 3000, duration_minutes: 45, max_capacity: 1, buffer_minutes: 10 }, error: null });
-  mockStaffLookup2.mockResolvedValue({ data: { name: 'Staff' }, error: null });
+  mockServiceLookup2.mockResolvedValue({ data: { name: 'Haircut', price: 5000, duration_minutes: 30, max_capacity: 1, buffer_minutes: 0, requires_staff: false }, error: null });
+  mockAppointmentLookup2.mockResolvedValue({ data: { name: 'Consultation', price: 3000, duration_minutes: 45, max_capacity: 1, buffer_minutes: 10, requires_staff: false }, error: null });
+  mockStaffLookup2.mockResolvedValue({ data: { name: 'Staff', is_active: true }, error: null });
   mockCreateWhatsAppUser2.mockResolvedValue('customer-123');
   mockRpc2.mockReturnValue({
     single: vi.fn().mockResolvedValue({

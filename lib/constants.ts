@@ -1033,6 +1033,55 @@ export function generateTimeSlots(
   return slots;
 }
 
+// ── Staff Schedule Day Keys ──
+// Canonical short keys matching dashboard storage: sun, mon, tue, wed, thu, fri, sat
+// Also supports legacy long-form keys: sunday, monday, etc.
+const SHORT_DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+const LONG_DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
+
+/** Convert a JS Date.getDay() index (0=Sun) to the canonical short day key used by the dashboard. */
+export function getDayKeyShort(dayIndex: number): string {
+  return SHORT_DAY_KEYS[dayIndex] || 'sun';
+}
+
+/** Look up a staff schedule entry, supporting both short (mon) and long (monday) stored keys. */
+export function getStaffDaySchedule(
+  schedule: Record<string, { start?: string; end?: string }> | null | undefined,
+  dayIndex: number,
+): { start?: string; end?: string } | undefined {
+  if (!schedule || Object.keys(schedule).length === 0) return undefined;
+  return schedule[SHORT_DAY_KEYS[dayIndex]] || schedule[LONG_DAY_KEYS[dayIndex]] || undefined;
+}
+
+/** Check if a staff member is available for a given day index and time range. */
+export function isStaffAvailable(
+  schedule: Record<string, { start?: string; end?: string }> | null | undefined,
+  dayIndex: number,
+  bookingTime: string,
+  durationMinutes: number,
+): boolean {
+  // NULL or empty schedule = unrestricted
+  if (!schedule || Object.keys(schedule).length === 0) return true;
+
+  const daySchedule = getStaffDaySchedule(schedule, dayIndex);
+  // Configured schedule but no entry for this day = unavailable
+  if (!daySchedule || !daySchedule.start) return false;
+
+  const [bH, bM] = bookingTime.split(':').map(Number);
+  const bookingStart = bH * 60 + bM;
+  const bookingEnd = bookingStart + durationMinutes;
+
+  const [sH, sM] = daySchedule.start.split(':').map(Number);
+  const staffStart = sH * 60 + sM;
+
+  const endTime = daySchedule.end || '23:59';
+  const [eH, eM] = endTime.split(':').map(Number);
+  const staffEnd = eH * 60 + eM;
+
+  // Booking start must be >= staff start, booking end must be <= staff end
+  return bookingStart >= staffStart && bookingEnd <= staffEnd;
+}
+
 // ── Slug Generator ──
 export function generateSlug(name: string): string {
   return name

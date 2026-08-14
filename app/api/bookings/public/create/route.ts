@@ -112,12 +112,14 @@ export async function POST(request: NextRequest) {
     let itemBuffer: number;
     let itemMaxCapacity: number | null;
     let itemMetadata: Record<string, unknown> | null;
+    let itemRequiresStaff = false;
+    let itemStaffIds: string[] = [];
     const isAppointmentBooking = !!appointmentId;
 
     if (appointmentId) {
       const { data: appt, error: apptError } = await supabase
         .from('appointments')
-        .select('id, name, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, metadata')
+        .select('id, name, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, metadata, requires_staff, staff_ids')
         .eq('id', appointmentId)
         .eq('business_id', business.id)
         .eq('is_active', true)
@@ -134,10 +136,12 @@ export async function POST(request: NextRequest) {
       itemBuffer = appt.buffer_minutes || 0;
       itemMaxCapacity = appt.max_capacity;
       itemMetadata = appt.metadata as Record<string, unknown> | null;
+      itemRequiresStaff = appt.requires_staff ?? false;
+      itemStaffIds = (appt.staff_ids as string[]) || [];
     } else {
       const { data: service, error: svcError } = await supabase
         .from('services')
-        .select('id, name, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, metadata')
+        .select('id, name, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, metadata, requires_staff, staff_ids')
         .eq('id', serviceId!)
         .eq('business_id', business.id)
         .eq('is_active', true)
@@ -154,6 +158,55 @@ export async function POST(request: NextRequest) {
       itemBuffer = service.buffer_minutes || 0;
       itemMaxCapacity = service.max_capacity;
       itemMetadata = service.metadata as Record<string, unknown> | null;
+      itemRequiresStaff = service.requires_staff ?? false;
+      itemStaffIds = (service.staff_ids as string[]) || [];
+    }
+
+    // Auto-assign staff for requires_staff items (public bookings have no staff selection UI)
+    let autoStaffId: string | null = null;
+    let autoStaffName: string | null = null;
+    if (itemRequiresStaff) {
+      // Find eligible active staff — prefer service-level staff_ids, fall back to all
+      let staffQuery = supabase
+        .from('business_staff')
+        .select('id, name, schedule')
+        .eq('business_id', business.id)
+        .eq('is_active', true);
+      if (itemStaffIds.length > 0) {
+        staffQuery = staffQuery.in('id', itemStaffIds);
+      }
+      const { data: candidates } = await staffQuery;
+      if (candidates && candidates.length > 0) {
+        // Pick the first available staff member (by schedule)
+        const dayIdx = new Date(date + 'T00:00').getDay();
+        const { isStaffAvailable: checkAvail } = await import('@/lib/constants');
+        const available = candidates.filter(s =>
+          checkAvail(s.schedule as Record<string, { start?: string; end?: string }> | null, dayIdx, time, itemDuration)
+        );
+        if (available.length > 0) {
+          // Pick least-busy among available
+          const counts = await Promise.all(available.map(async s => {
+            const { count } = await supabase
+              .from('bookings')
+              .select('id', { count: 'exact', head: true })
+              .eq('business_id', business.id)
+              .eq('staff_id', s.id)
+              .eq('date', date)
+              .in('status', ['confirmed', 'pending', 'in_progress']);
+            return { staff: s, bookings: count || 0 };
+          }));
+          counts.sort((a, b) => a.bookings - b.bookings);
+          autoStaffId = counts[0].staff.id;
+          autoStaffName = counts[0].staff.name;
+        }
+      }
+
+      if (!autoStaffId) {
+        return NextResponse.json(
+          { error: 'No staff members are available for this time slot. Please choose another time.' },
+          { status: 409 },
+        );
+      }
     }
 
     // Validate time is within operating hours
@@ -233,7 +286,7 @@ export async function POST(request: NextRequest) {
         p_business_id: business.id,
         p_user_id: userId,
         p_service_id: isAppointmentBooking ? null : itemId,
-        p_staff_id: null,
+        p_staff_id: autoStaffId,
         p_date: date,
         p_time: isDropoff ? '00:00' : time,
         p_party_size: partySize,
@@ -251,7 +304,7 @@ export async function POST(request: NextRequest) {
         p_addons_snapshot: null,
         p_promo_code_id: null,
         p_total_amount: totalDeposit,
-        p_staff_name: null,
+        p_staff_name: autoStaffName,
         p_appointment_id: isAppointmentBooking ? itemId : null,
         p_buffer_minutes: itemBuffer,
         p_duration: itemDuration,

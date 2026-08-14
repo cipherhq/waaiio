@@ -5,6 +5,21 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-14
+
+### fix(P1-STAFF-1): staff schedule enforcement at booking authority
+
+- **Bug:** Staff/provider schedules not enforced during booking. Dashboard stores schedule keys as `mon`/`tue`/..., but bot reads `monday`/`tuesday`/... — complete mismatch. Time slot generation ignores staff working hours. `book_slot_atomic` has no staff schedule check. `reschedule_booking_atomic` has no staff schedule check. `requires_staff` services could silently create bookings with `staff_id = NULL`. Public booking always sends `p_staff_id: null` even for requires_staff items. Manual booking doesn't validate staff belongs to business or is active.
+- **Fix:** Migration 319: `check_staff_availability` helper validates staff existence, business ownership, active status, weekday (supports both short and long day keys), and `[start, end)` working window including duration-extends-past-end check. `book_slot_atomic` calls it when `p_staff_id IS NOT NULL`. Resolves `requires_staff` from authoritative service/appointment record — rejects NULL staff for requires_staff items. `reschedule_booking_atomic` validates staff availability at target date/time. Bot: uses `getStaffDaySchedule` utility (supports both key formats), blocks booking path for requires_staff when no eligible staff (shows "pick another date" / "cancel"), narrows time slots by staff schedule. Manual route: validates staff belongs to business and is active, rejects requires_staff without staff. Public route: auto-assigns eligible staff for requires_staff items, rejects when no staff available.
+- **Architecture:** ONE canonical `check_staff_availability` helper following `check_appointment_schedule` pattern. DB is final authority. Bot/UI mirrors for UX.
+- **Backward compat:** NULL/empty schedule = unrestricted. Both short (`mon`) and long (`monday`) day keys supported at read boundary.
+- **Files:** `supabase/migrations/319_staff_booking_authority.sql`, `lib/bot/flows/scheduling.flow.ts`, `lib/constants.ts`, `app/api/bookings/create-manual/route.ts`, `app/api/bookings/public/create/route.ts`
+- **Tests:** `lib/__tests__/p1-staff-booking-authority.test.ts` — 41 source verification + 26 real PostgreSQL authority tests. CI step: `P1-STAFF-1 staff booking authority DB tests` with zero-skip enforcement.
+- **Affects:** All booking entrances: WhatsApp, public web, dashboard manual, reschedule, public slot discovery
+- **Could break:** Bookings with staff assigned outside staff working hours will now be rejected. requires_staff items can no longer bypass staff requirement. Public slots for requires_staff items now filtered by staff availability. Legacy null-staff bookings for requires_staff items cannot be rescheduled.
+
+---
+
 ## 2026-08-13
 
 ### fix(P1-APPT-1): appointments.buffer_minutes schema + canonical schedule enforcement
