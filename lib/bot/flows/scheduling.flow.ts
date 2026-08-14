@@ -979,6 +979,7 @@ export const schedulingFlow: FlowDefinition = {
 
         // Narrow time window by staff schedule when a staff member is assigned
         const assignedStaffId = ctx.session.session_data.staff_id as string | null;
+        let staffScheduleForSlots: Record<string, { start?: string; end?: string }> | null = null;
         if (assignedStaffId) {
           const { data: staffRow } = await ctx.supabase
             .from('business_staff')
@@ -986,11 +987,9 @@ export const schedulingFlow: FlowDefinition = {
             .eq('id', assignedStaffId)
             .maybeSingle();
           if (staffRow?.schedule) {
+            staffScheduleForSlots = staffRow.schedule as Record<string, { start?: string; end?: string }>;
             const dayIdx = new Date(dateStr + 'T00:00').getDay();
-            const staffDay = getStaffDaySchedule(
-              staffRow.schedule as Record<string, { start?: string; end?: string }>,
-              dayIdx,
-            );
+            const staffDay = getStaffDaySchedule(staffScheduleForSlots, dayIdx);
             if (staffDay?.start) {
               // Use the more restrictive of business/service vs staff hours
               const staffOpen = staffDay.start;
@@ -1016,6 +1015,19 @@ export const schedulingFlow: FlowDefinition = {
           allSlots = generateTimeSlots('12:00', '17:00', slotInterval);
         } else if (pref === 'evening') {
           allSlots = generateTimeSlots('17:00', closeTime, slotInterval);
+        }
+
+        // Filter slots where booking duration would extend past staff end
+        if (assignedStaffId && staffScheduleForSlots && serviceDuration) {
+          const dayIdx = new Date(dateStr + 'T00:00').getDay();
+          const staffDayForDuration = getStaffDaySchedule(staffScheduleForSlots, dayIdx);
+          if (staffDayForDuration?.end) {
+            const staffEndMin = timeToMinutes(staffDayForDuration.end);
+            allSlots = allSlots.filter(slot => {
+              const slotStart = timeToMinutes(slot);
+              return slotStart + serviceDuration <= staffEndMin;
+            });
+          }
         }
 
         // ── Availability check: remove fully booked slots ──

@@ -375,6 +375,21 @@ BEGIN
     IF v_sched_allowed IS NOT TRUE THEN
       RETURN jsonb_build_object('rescheduled', false, 'reason', COALESCE(v_sched_reason, 'staff_unavailable'));
     END IF;
+  ELSE
+    -- 2c. Legacy null-staff booking for requires_staff item must not reschedule
+    DECLARE v_req_staff boolean := false;
+    BEGIN
+      IF v_booking.service_id IS NOT NULL THEN
+        SELECT COALESCE(s.requires_staff, false) INTO v_req_staff
+        FROM services s WHERE s.id = v_booking.service_id;
+      ELSIF v_booking.appointment_id IS NOT NULL THEN
+        SELECT COALESCE(a.requires_staff, false) INTO v_req_staff
+        FROM appointments a WHERE a.id = v_booking.appointment_id;
+      END IF;
+      IF v_req_staff THEN
+        RETURN jsonb_build_object('rescheduled', false, 'reason', 'staff_required');
+      END IF;
+    END;
   END IF;
 
   -- 3. Advisory lock on TARGET slot

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { generateTimeSlots } from '@/lib/constants';
+import { generateTimeSlots, isStaffAvailable } from '@/lib/constants';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 /**
@@ -74,6 +74,8 @@ export async function GET(request: NextRequest) {
     let itemBuffer: number;
     let itemMaxCapacity: number | null;
     let itemMetadata: Record<string, unknown> | null;
+    let itemRequiresStaff = false;
+    let itemStaffIds: string[] = [];
     // Appointment-specific availability overrides
     let itemAvailableDays: string[] | null = null;
     let itemAvailableFrom: string | null = null;
@@ -82,7 +84,7 @@ export async function GET(request: NextRequest) {
     if (appointmentId) {
       const { data: appt, error: apptError } = await supabase
         .from('appointments')
-        .select('duration_minutes, buffer_minutes, max_capacity, metadata, available_days, available_from, available_to')
+        .select('duration_minutes, buffer_minutes, max_capacity, metadata, available_days, available_from, available_to, requires_staff, staff_ids')
         .eq('id', appointmentId)
         .eq('business_id', businessId)
         .eq('is_active', true)
@@ -98,10 +100,12 @@ export async function GET(request: NextRequest) {
       itemAvailableDays = appt.available_days;
       itemAvailableFrom = appt.available_from;
       itemAvailableTo = appt.available_to;
+      itemRequiresStaff = appt.requires_staff ?? false;
+      itemStaffIds = (appt.staff_ids as string[]) || [];
     } else {
       const { data: service, error: svcError } = await supabase
         .from('services')
-        .select('duration_minutes, buffer_minutes, max_capacity, metadata')
+        .select('duration_minutes, buffer_minutes, max_capacity, metadata, requires_staff, staff_ids')
         .eq('id', serviceId!)
         .eq('business_id', businessId)
         .eq('is_active', true)
@@ -114,6 +118,8 @@ export async function GET(request: NextRequest) {
       itemBuffer = service.buffer_minutes || 0;
       itemMaxCapacity = service.max_capacity;
       itemMetadata = service.metadata as Record<string, unknown> | null;
+      itemRequiresStaff = service.requires_staff ?? false;
+      itemStaffIds = (service.staff_ids as string[]) || [];
     }
 
     // Determine operating hours for the selected day
@@ -165,6 +171,30 @@ export async function GET(request: NextRequest) {
       .eq('business_id', businessId)
       .eq('date', date)
       .in('status', ['confirmed', 'pending', 'in_progress']);
+
+    // Staff-aware filtering for requires_staff items:
+    // Pre-fetch eligible staff schedules and filter slots where no staff can work
+    let staffSchedules: Array<Record<string, { start?: string; end?: string }> | null> = [];
+    if (itemRequiresStaff) {
+      let staffQuery = supabase
+        .from('business_staff')
+        .select('id, schedule')
+        .eq('business_id', businessId)
+        .eq('is_active', true);
+      if (itemStaffIds.length > 0) {
+        staffQuery = staffQuery.in('id', itemStaffIds);
+      }
+      const { data: staffRows } = await staffQuery;
+      staffSchedules = (staffRows || []).map(s => s.schedule as Record<string, { start?: string; end?: string }> | null);
+
+      if (staffSchedules.length === 0) {
+        // No eligible staff at all — no slots available
+        // (requires_staff item with zero active staff for this business/item)
+        return NextResponse.json({ slots: [], reason: 'No eligible staff' });
+      }
+    }
+
+    const dayIdx = new Date(date + 'T00:00').getDay();
 
     // For each candidate slot, check availability using the same rules as book_slot_atomic:
     //
@@ -228,6 +258,16 @@ export async function GET(request: NextRequest) {
             }
           }
           if (bufferBlocked) {
+            return { time: slotTime, available: 0 };
+          }
+        }
+
+        // 3. Staff availability check for requires_staff items
+        if (itemRequiresStaff && staffSchedules.length > 0) {
+          const hasEligibleStaff = staffSchedules.some(sched =>
+            isStaffAvailable(sched, dayIdx, slotTime, candidateDuration)
+          );
+          if (!hasEligibleStaff) {
             return { time: slotTime, available: 0 };
           }
         }

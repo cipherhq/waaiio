@@ -14,9 +14,9 @@ If something breaks, check this log to find what changed and when.
 - **Architecture:** ONE canonical `check_staff_availability` helper following `check_appointment_schedule` pattern. DB is final authority. Bot/UI mirrors for UX.
 - **Backward compat:** NULL/empty schedule = unrestricted. Both short (`mon`) and long (`monday`) day keys supported at read boundary.
 - **Files:** `supabase/migrations/319_staff_booking_authority.sql`, `lib/bot/flows/scheduling.flow.ts`, `lib/constants.ts`, `app/api/bookings/create-manual/route.ts`, `app/api/bookings/public/create/route.ts`
-- **Tests:** `lib/__tests__/p1-staff-booking-authority.test.ts` — 34 source verification + 24 real PostgreSQL authority tests
-- **Affects:** All booking entrances: WhatsApp, public web, dashboard manual, reschedule
-- **Could break:** Bookings with staff assigned outside staff working hours will now be rejected. requires_staff items can no longer bypass staff requirement.
+- **Tests:** `lib/__tests__/p1-staff-booking-authority.test.ts` — 41 source verification + 26 real PostgreSQL authority tests. CI step: `P1-STAFF-1 staff booking authority DB tests` with zero-skip enforcement.
+- **Affects:** All booking entrances: WhatsApp, public web, dashboard manual, reschedule, public slot discovery
+- **Could break:** Bookings with staff assigned outside staff working hours will now be rejected. requires_staff items can no longer bypass staff requirement. Public slots for requires_staff items now filtered by staff availability. Legacy null-staff bookings for requires_staff items cannot be rescheduled.
 
 ---
 

@@ -254,6 +254,52 @@ describe('P1-STAFF-1: source verification', () => {
   it('34. appointment schedule authority preserved in book_slot_atomic', () => {
     expect(migration319).toContain('check_appointment_schedule(p_appointment_id');
   });
+
+  // ── Reschedule requires_staff null-staff bypass ──
+  it('35. reschedule rejects legacy null-staff booking for requires_staff item', () => {
+    const reschedBlock = migration319.slice(migration319.indexOf('reschedule_booking_atomic'));
+    expect(reschedBlock).toContain("'staff_required'");
+    expect(reschedBlock).toContain('v_req_staff');
+  });
+
+  // ── Public slot staff-aware discovery ──
+  it('36. public slots route imports isStaffAvailable', () => {
+    const slotsRoute = readFileSync('app/api/bookings/public/slots/route.ts', 'utf-8');
+    expect(slotsRoute).toContain('isStaffAvailable');
+  });
+
+  it('37. public slots route fetches requires_staff and staff_ids', () => {
+    const slotsRoute = readFileSync('app/api/bookings/public/slots/route.ts', 'utf-8');
+    expect(slotsRoute).toContain('itemRequiresStaff');
+    expect(slotsRoute).toContain('itemStaffIds');
+    expect(slotsRoute).toContain('requires_staff');
+  });
+
+  it('38. public slots route filters by staff availability for requires_staff', () => {
+    const slotsRoute = readFileSync('app/api/bookings/public/slots/route.ts', 'utf-8');
+    expect(slotsRoute).toContain('hasEligibleStaff');
+    expect(slotsRoute).toContain('isStaffAvailable(sched, dayIdx, slotTime, candidateDuration)');
+  });
+
+  it('39. public slots returns empty when requires_staff and no eligible staff', () => {
+    const slotsRoute = readFileSync('app/api/bookings/public/slots/route.ts', 'utf-8');
+    // When staffSchedules.length === 0 and requires_staff, return empty
+    expect(slotsRoute).toContain('No eligible staff');
+  });
+
+  // ── Bot slot duration vs staff end ──
+  it('40. bot filters slots where duration extends past staff end', () => {
+    expect(schedulingFlow).toContain('staffDayForDuration');
+    expect(schedulingFlow).toContain('slotStart + serviceDuration <= staffEndMin');
+  });
+
+  // ── CI step ──
+  it('41. CI has P1-STAFF-1 DB test step', () => {
+    const ci = readFileSync('.github/workflows/ci.yml', 'utf-8');
+    expect(ci).toContain('P1-STAFF-1 staff booking authority DB tests');
+    expect(ci).toContain('p1-staff-booking-authority.test.ts');
+    expect(ci).toContain('P1-STAFF-1 DB tests had');
+  });
 });
 
 
@@ -626,5 +672,30 @@ describe.skipIf(!dbUrl)('P1-STAFF-1: real PostgreSQL authority', () => {
     // If we got here, migrations applied in beforeAll. Just verify the function exists.
     const r = psql(`SELECT count(*) FROM pg_proc WHERE proname = 'check_staff_availability';`);
     expect(parseInt(r)).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Reschedule requires_staff null-staff bypass ──
+
+  it('DB-25: legacy null-staff requires_staff booking cannot reschedule', () => {
+    reset();
+    // Create a legacy booking with staff_id=NULL for a requires_staff service
+    psql(`INSERT INTO bookings (id, business_id, user_id, service_id, staff_id, date, time, status, party_size)
+      VALUES ('b7100000-0000-0000-0000-000000000025', '${BIZ}', '${USR}', '${SVC_REQ}', NULL, '2026-08-17', '10:00', 'confirmed', 1);`);
+    const r = psqlJson(`SELECT reschedule_booking_atomic('b7100000-0000-0000-0000-000000000025'::uuid, '${BIZ}'::uuid, '2026-08-19'::date, '11:00');`) as Record<string, unknown>;
+    expect(r.rescheduled).toBe(false);
+    expect(r.reason).toBe('staff_required');
+    // Original booking unchanged
+    const booking = psql(`SELECT date, time FROM bookings WHERE id = 'b7100000-0000-0000-0000-000000000025';`);
+    expect(booking).toContain('2026-08-17');
+    expect(booking).toContain('10:00');
+  });
+
+  it('DB-26: null-staff optional service can still reschedule', () => {
+    reset();
+    // Non-requires_staff service with null staff — should still work
+    psql(`INSERT INTO bookings (id, business_id, user_id, service_id, staff_id, date, time, status, party_size)
+      VALUES ('b7100000-0000-0000-0000-000000000026', '${BIZ}', '${USR}', '${SVC}', NULL, '2026-08-17', '10:00', 'confirmed', 1);`);
+    const r = psqlJson(`SELECT reschedule_booking_atomic('b7100000-0000-0000-0000-000000000026'::uuid, '${BIZ}'::uuid, '2026-08-19'::date, '11:00');`) as Record<string, unknown>;
+    expect(r.rescheduled).toBe(true);
   });
 });
