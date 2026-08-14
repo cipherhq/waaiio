@@ -36,7 +36,7 @@ interface Attendee {
   created_at: string;
 }
 
-async function adminClassFetch(path: string): Promise<{ data: unknown; error?: string }> {
+async function adminClassFetch(path: string): Promise<Record<string, unknown>> {
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData?.session?.access_token;
   if (!token) return { data: null, error: 'Not authenticated' };
@@ -48,8 +48,7 @@ async function adminClassFetch(path: string): Promise<{ data: unknown; error?: s
     const err = await res.json().catch(() => ({ error: 'Request failed' }));
     return { data: null, error: err.error };
   }
-  const result = await res.json();
-  return { data: result.data };
+  return await res.json();
 }
 
 export default function ClassSessions() {
@@ -59,6 +58,8 @@ export default function ClassSessions() {
   const [page, setPage] = useState(1);
   const perPage = 20;
 
+  const [totalPages, setTotalPages] = useState(0);
+  const [total, setTotal] = useState(0);
   const [selectedSession, setSelectedSession] = useState<(ClassSession & { attendees?: Attendee[] }) | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
@@ -69,10 +70,16 @@ export default function ClassSessions() {
     fetchRef.current = true;
     setLoading(true);
     try {
-      const query = statusFilter ? `?status=${statusFilter}` : '';
-      const result = await adminClassFetch(query);
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('limit', String(perPage));
+      if (statusFilter) params.set('status', statusFilter);
+      const result = await adminClassFetch(`?${params.toString()}`);
       if (result.data) {
-        setSessions(result.data as ClassSession[]);
+        const resp = result as { data: unknown; totalPages?: number; total?: number };
+        setSessions((result.data as ClassSession[]) || []);
+        setTotalPages(resp.totalPages || 0);
+        setTotal(resp.total || 0);
       }
     } finally {
       setLoading(false);
@@ -93,10 +100,8 @@ export default function ClassSessions() {
     }
   }
 
-  useEffect(() => { fetchSessions(); }, [statusFilter]);
-  useEffect(() => { const t = setInterval(fetchSessions, 60000); return () => clearInterval(t); }, [statusFilter]);
-
-  const paginated = sessions.slice((page - 1) * perPage, page * perPage);
+  useEffect(() => { fetchSessions(); }, [statusFilter, page]);
+  useEffect(() => { const t = setInterval(fetchSessions, 60000); return () => clearInterval(t); }, [statusFilter, page]);
 
   return (
     <div>
@@ -134,7 +139,7 @@ export default function ClassSessions() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 bg-white">
-                {paginated.map(s => (
+                {sessions.map(s => (
                   <tr key={s.id} onClick={() => openDetail(s)} className="cursor-pointer hover:bg-gray-50">
                     <td className="px-4 py-3 text-sm">{s.business_name}</td>
                     <td className="px-4 py-3 text-sm font-medium">{s.service_name}</td>
@@ -148,7 +153,7 @@ export default function ClassSessions() {
               </tbody>
             </table>
           </div>
-          <Pagination current={page} total={Math.ceil(sessions.length / perPage)} onChange={setPage} />
+          <Pagination current={page} total={totalPages} onChange={setPage} />
         </>
       )}
 

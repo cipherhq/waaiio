@@ -77,15 +77,25 @@ export async function GET(request: NextRequest) {
     }, { headers: corsHeaders(origin) });
   }
 
-  // List all sessions
+  // List sessions with server-side pagination
   const status = request.nextUrl.searchParams.get('status');
+  const page = Math.max(1, parseInt(request.nextUrl.searchParams.get('page') || '1'));
+  const limit = Math.min(100, Math.max(1, parseInt(request.nextUrl.searchParams.get('limit') || '20')));
+  const offset = (page - 1) * limit;
+
+  // Count total for pagination
+  let countQuery = supabase
+    .from('class_sessions')
+    .select('id', { count: 'exact', head: true });
+  if (status) countQuery = countQuery.eq('status', status);
+  const { count: total } = await countQuery;
 
   let query = supabase
     .from('class_sessions')
     .select('id, business_id, service_id, date, start_time, end_time, capacity, status, staff_id, cancellation_reason, created_at')
     .order('date', { ascending: false })
     .order('start_time', { ascending: false })
-    .limit(200);
+    .range(offset, offset + limit - 1);
 
   if (status) {
     query = query.eq('status', status);
@@ -98,7 +108,7 @@ export async function GET(request: NextRequest) {
   }
 
   if (!sessions || sessions.length === 0) {
-    return NextResponse.json({ data: [] }, { headers: corsHeaders(origin) });
+    return NextResponse.json({ data: [], page, limit, total: total || 0, totalPages: 0 }, { headers: corsHeaders(origin) });
   }
 
   // Enrich with business/service/staff names
@@ -131,5 +141,12 @@ export async function GET(request: NextRequest) {
     attendee_count: countMap.get(s.id) || 0,
   }));
 
-  return NextResponse.json({ data: enriched }, { headers: corsHeaders(origin) });
+  const totalCount = total || 0;
+  return NextResponse.json({
+    data: enriched,
+    page,
+    limit,
+    total: totalCount,
+    totalPages: Math.ceil(totalCount / limit),
+  }, { headers: corsHeaders(origin) });
 }

@@ -1873,3 +1873,93 @@ DROP POLICY IF EXISTS crr_owner_delete ON class_recurrence_rules;
 DROP POLICY IF EXISTS cs_owner_insert ON class_sessions;
 DROP POLICY IF EXISTS cs_owner_update ON class_sessions;
 DROP POLICY IF EXISTS cs_owner_delete ON class_sessions;
+
+
+-- ═══════════════════════════════════════════════════════
+-- 12. GENERATOR FRESH-READ UNDER LOCK
+-- ═══════════════════════════════════════════════════════
+-- Enumerate candidate rule IDs first, then for each:
+-- acquire lock → re-read → verify → generate.
+-- Prevents stale rule state after concurrent reconciliation.
+
+CREATE OR REPLACE FUNCTION generate_class_sessions(p_service_id UUID, p_days_ahead INTEGER DEFAULT 28)
+RETURNS INTEGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_rule_id UUID;
+  v_rule RECORD;
+  v_date DATE; v_end_date DATE; v_dow INTEGER; v_target_dow INTEGER;
+  v_svc RECORD; v_capacity INTEGER; v_end_time TIME;
+  v_generated INTEGER := 0; v_lock_key bigint;
+BEGIN
+  SELECT id, business_id, duration_minutes, max_capacity, is_class, requires_staff
+  INTO v_svc FROM services WHERE id = p_service_id;
+  IF NOT FOUND OR NOT COALESCE(v_svc.is_class, false) THEN RETURN 0; END IF;
+  v_end_date := CURRENT_DATE + p_days_ahead;
+
+  -- Step 1: enumerate candidate rule IDs only (no row data used outside lock)
+  FOR v_rule_id IN
+    SELECT id FROM class_recurrence_rules
+    WHERE service_id = p_service_id AND is_active = true
+      AND effective_from <= v_end_date
+      AND (effective_until IS NULL OR effective_until >= CURRENT_DATE)
+    ORDER BY id
+  LOOP
+    -- Step 2: acquire recurrence lock
+    v_lock_key := abs(hashtext('recurrence_rule:' || v_rule_id::text));
+    PERFORM pg_advisory_xact_lock(v_lock_key);
+
+    -- Step 3: re-read the rule AFTER acquiring the lock (fresh state)
+    SELECT * INTO v_rule FROM class_recurrence_rules
+    WHERE id = v_rule_id AND service_id = p_service_id AND is_active = true
+      AND effective_from <= v_end_date
+      AND (effective_until IS NULL OR effective_until >= CURRENT_DATE);
+
+    -- Rule may have been deleted/deactivated/changed by concurrent reconcile
+    IF NOT FOUND THEN CONTINUE; END IF;
+
+    -- requires_staff + no instructor => skip
+    IF COALESCE(v_svc.requires_staff, false) AND v_rule.staff_id IS NULL THEN CONTINUE; END IF;
+
+    v_target_dow := CASE v_rule.weekday WHEN 'sun' THEN 0 WHEN 'mon' THEN 1 WHEN 'tue' THEN 2
+      WHEN 'wed' THEN 3 WHEN 'thu' THEN 4 WHEN 'fri' THEN 5 WHEN 'sat' THEN 6 END;
+    v_capacity := COALESCE(v_rule.capacity_override, v_svc.max_capacity, 10);
+    v_end_time := v_rule.start_time + make_interval(mins => COALESCE(v_svc.duration_minutes, 60));
+    v_date := GREATEST(v_rule.effective_from, CURRENT_DATE);
+    v_dow := EXTRACT(DOW FROM v_date)::INTEGER;
+    IF v_dow != v_target_dow THEN v_date := v_date + ((v_target_dow - v_dow + 7) % 7); END IF;
+
+    WHILE v_date <= v_end_date AND (v_rule.effective_until IS NULL OR v_date <= v_rule.effective_until) LOOP
+      IF v_rule.staff_id IS NOT NULL THEN
+        DECLARE v_staff_ok boolean;
+        BEGIN
+          SELECT csa.allowed INTO v_staff_ok FROM check_staff_availability(
+            v_rule.staff_id, v_svc.business_id, v_date, v_rule.start_time::text,
+            COALESCE(v_svc.duration_minutes, 60)) csa;
+          IF v_staff_ok IS NOT TRUE THEN v_date := v_date + 7; CONTINUE; END IF;
+        END;
+      END IF;
+      INSERT INTO class_sessions (business_id, service_id, recurrence_rule_id, date, start_time, end_time, staff_id, location_id, capacity, status)
+      VALUES (v_svc.business_id, p_service_id, v_rule.id, v_date, v_rule.start_time, v_end_time, v_rule.staff_id, v_rule.location_id, v_capacity, 'scheduled')
+      ON CONFLICT (recurrence_rule_id, date, start_time) DO NOTHING;
+      IF FOUND THEN v_generated := v_generated + 1; END IF;
+      v_date := v_date + 7;
+    END LOOP;
+  END LOOP;
+  RETURN v_generated;
+END;
+$$;
+
+
+-- 12b. Grant authenticated SELECT on class tables (for RLS read path)
+-- No INSERT/UPDATE/DELETE grants — service_role handles mutations via RPCs.
+GRANT SELECT ON class_sessions TO authenticated;
+GRANT SELECT ON class_recurrence_rules TO authenticated;
+-- Ensure authenticated has DML privilege on the tables so RLS is tested
+-- (without DML privilege, PostgreSQL returns "permission denied" not "RLS violation")
+GRANT INSERT, UPDATE, DELETE ON class_sessions TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON class_recurrence_rules TO authenticated;
+-- RLS policies (owner SELECT only + service_role ALL) enforce the actual authority.
+-- The DROP POLICY statements above removed INSERT/UPDATE/DELETE policies for authenticated.
+-- Result: authenticated has table-level DML privilege but zero matching RLS write policies
+-- → any write attempt returns zero rows (for UPDATE/DELETE) or RLS violation (for INSERT).
