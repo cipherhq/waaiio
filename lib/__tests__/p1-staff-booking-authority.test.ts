@@ -380,7 +380,10 @@ describe.skipIf(!dbUrl)('P1-STAFF-1: real PostgreSQL authority', () => {
       CREATE TRIGGER set_ref BEFORE INSERT ON bookings
         FOR EACH ROW WHEN (NEW.reference_code IS NULL) EXECUTE FUNCTION gen_ref();
 
-      INSERT INTO businesses (id, owner_id) VALUES ('${BIZ}', '${USR}'), ('${BIZ2}', '${USR}') ON CONFLICT DO NOTHING;
+      INSERT INTO businesses (id, owner_id, name, slug) VALUES
+        ('${BIZ}', '${USR}', 'Test Biz', 'test-biz-staff-71a'),
+        ('${BIZ2}', '${USR}', 'Other Biz', 'other-biz-staff-71b')
+        ON CONFLICT DO NOTHING;
       -- Staff: works Mon 09:00-17:00 and Wed 10:00-18:00 (short keys)
       INSERT INTO business_staff (id, business_id, name, is_active, schedule) VALUES
         ('${STAFF}', '${BIZ}', 'Sarah', true,
