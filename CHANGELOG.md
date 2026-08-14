@@ -19,6 +19,22 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-13
+
+### feat(P1-CLASS-1): Classes dashboard page
+
+- **What:** New `/dashboard/classes` page with two tabs: Classes (list of class services) and Upcoming Sessions (derived from bookings + class schedules).
+- **Files:** `app/dashboard/classes/page.tsx` (NEW), `components/dashboard/Sidebar.tsx` (added Classes nav item)
+- **Details:**
+  - Classes tab: shows all services with `is_class=true`, displays name, price, duration, capacity, schedule summary, active status. "Create Class" dialog inserts into `services` with `is_class: true`.
+  - Sessions tab: derives sessions from `bookings` table (grouped by service_id/date/time) plus projected sessions from `class_schedule` JSONB for next 4 weeks. Color-coded capacity badges (green/amber/red). Click session for detail dialog with attendee list.
+  - Session detail dialog: shows attendees (guest_name, phone, status, party_size). "Cancel Session" cancels all bookings for that session with confirmation dialog.
+  - Sidebar: "Classes" item in manage section, gated on `class_booking` capability, uses UserGroup icon.
+- **Affects:** Dashboard navigation, class_booking capability visibility
+- **Could break:** Nothing — new page only, no existing code modified except Sidebar nav item addition
+
+---
+
 ## 2026-08-14
 
 ### fix(P1-CLASS-1): canonical class sessions and booking authority
