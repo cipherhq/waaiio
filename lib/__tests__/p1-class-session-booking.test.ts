@@ -467,6 +467,8 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
 
   function reset() {
     psql(`DELETE FROM bookings; DELETE FROM class_sessions; DELETE FROM class_recurrence_rules;`);
+    // Ensure default state for requires_staff (prevents cross-test pollution)
+    psql(`UPDATE services SET requires_staff = false WHERE id = '${CLASS_SVC}';`);
   }
 
   function bookCount(): number {
@@ -951,24 +953,26 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
 
   it('DB-30: requires_staff class + NULL session instructor rejected', () => {
     reset();
-    // Make class service require staff
     psql(`UPDATE services SET requires_staff = true WHERE id = '${CLASS_SVC}';`);
-    // Create rule WITHOUT instructor, generate sessions
+    // Create rule WITHOUT instructor — corrected generator skips it
     psql(`INSERT INTO class_recurrence_rules (business_id, service_id, weekday, start_time) VALUES
       ('${BIZ}', '${CLASS_SVC}', 'mon', '18:00');`);
-    psql(`SELECT generate_class_sessions('${CLASS_SVC}', 28);`);
-    const sid = psql(`SELECT id FROM class_sessions WHERE service_id = '${CLASS_SVC}' ORDER BY date LIMIT 1;`);
-    if (!sid) { expect(sid).toBeTruthy(); return; }
-    // Book — should fail because requires_staff but session has no instructor
+    const count = psql(`SELECT generate_class_sessions('${CLASS_SVC}', 28);`);
+    expect(parseInt(count)).toBe(0); // no sessions generated
+
+    // Manually insert a session without instructor to test booking authority
+    psql(`INSERT INTO class_sessions (id, business_id, service_id, date, start_time, end_time, capacity, status)
+      VALUES ('82aaaaaa-aaaa-aaaa-aaaa-eeeeeeeeeeee', '${BIZ}', '${CLASS_SVC}', '2026-08-17', '18:00', '19:00', 10, 'scheduled');`);
     const r = psql(`SELECT slot_available FROM book_slot_atomic(
       '${BIZ}'::uuid, '${USR}'::uuid, '${CLASS_SVC}'::uuid, NULL,
       '2026-08-17'::date, '18:00', 1, 10,
       'scheduling', 0, 'none', 'confirmed',
       'Guest', '+1234', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL,
-      NULL, NULL, 0, 60, NULL, '${sid}'::uuid
+      NULL, NULL, 0, 60, NULL, '82aaaaaa-aaaa-aaaa-aaaa-eeeeeeeeeeee'::uuid
     );`);
     expect(r).toBe('f');
     expect(bookCount()).toBe(0);
+    psql(`DELETE FROM class_sessions WHERE id = '82aaaaaa-aaaa-aaaa-aaaa-eeeeeeeeeeee';`);
     psql(`UPDATE services SET requires_staff = false WHERE id = '${CLASS_SVC}';`);
   });
 
