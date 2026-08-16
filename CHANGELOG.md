@@ -40,7 +40,7 @@ If something breaks, check this log to find what changed and when.
 ### fix(P1-CLASS-1): canonical class sessions and booking authority
 
 - **Feature:** Complete class booking capability. Classes = services with `is_class=true`. Class sessions = concrete occurrences from recurrence rules. Bookings identify exact session via `class_session_id`.
-- **Migration 321:** `class_recurrence_rules`, `class_sessions` (idempotent UNIQUE), `bookings.class_session_id` FK, `generate_class_sessions` RPC, `get_upcoming_class_sessions` RPC, extended `book_slot_atomic`/`reschedule_booking_atomic`/`book_manual_slot_atomic` with `p_class_session_id`.
+- **Migration 322:** `class_recurrence_rules`, `class_sessions` (idempotent UNIQUE), `bookings.class_session_id` FK, `generate_class_sessions` RPC, `get_upcoming_class_sessions` RPC, extended `book_slot_atomic`/`reschedule_booking_atomic`/`book_manual_slot_atomic` with `p_class_session_id`.
 - **Dashboard:** Classes page + sidebar entry. **WhatsApp:** `select_class_session` step. **Public:** Sessions instead of time slots for class services. **Manual/Admin:** Class session awareness.
 - **Architecture:** ONE canonical booking authority. Per-session capacity via SUM(party_size). Independent session capacity. Instructor reuses P1-STAFF-1.
 - **Tests:** 22 source + 24 real PG tests. CI: `P1-CLASS-1 class session booking authority DB tests`.

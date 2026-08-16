@@ -16,72 +16,72 @@ import { execSync } from 'child_process';
 // ══════════════════════════════════════════════════════════
 
 describe('P1-CLASS-1: source verification', () => {
-  const migration321 = readFileSync('supabase/migrations/321_class_session_booking.sql', 'utf-8');
+  const migration322 = readFileSync('supabase/migrations/322_class_session_booking.sql', 'utf-8');
   const schedulingFlow = readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
   const publicSlots = readFileSync('app/api/bookings/public/slots/route.ts', 'utf-8');
   const publicCreate = readFileSync('app/api/bookings/public/create/route.ts', 'utf-8');
   const manualCreate = readFileSync('app/api/bookings/create-manual/route.ts', 'utf-8');
 
   it('1. class_recurrence_rules table created', () => {
-    expect(migration321).toContain('CREATE TABLE IF NOT EXISTS class_recurrence_rules');
-    expect(migration321).toContain('service_id UUID NOT NULL REFERENCES services');
-    expect(migration321).toContain("weekday TEXT NOT NULL CHECK");
+    expect(migration322).toContain('CREATE TABLE IF NOT EXISTS class_recurrence_rules');
+    expect(migration322).toContain('service_id UUID NOT NULL REFERENCES services');
+    expect(migration322).toContain("weekday TEXT NOT NULL CHECK");
   });
 
   it('2. class_sessions table created with idempotency constraint', () => {
-    expect(migration321).toContain('CREATE TABLE IF NOT EXISTS class_sessions');
-    expect(migration321).toContain('UNIQUE(recurrence_rule_id, date, start_time)');
+    expect(migration322).toContain('CREATE TABLE IF NOT EXISTS class_sessions');
+    expect(migration322).toContain('UNIQUE(recurrence_rule_id, date, start_time)');
   });
 
   it('3. bookings.class_session_id FK added', () => {
-    expect(migration321).toContain('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS class_session_id UUID REFERENCES class_sessions');
+    expect(migration322).toContain('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS class_session_id UUID REFERENCES class_sessions');
   });
 
   it('4. generate_class_sessions function created with idempotent insert', () => {
-    expect(migration321).toContain('CREATE OR REPLACE FUNCTION generate_class_sessions');
-    expect(migration321).toContain('ON CONFLICT (recurrence_rule_id, date, start_time) DO NOTHING');
+    expect(migration322).toContain('CREATE OR REPLACE FUNCTION generate_class_sessions');
+    expect(migration322).toContain('ON CONFLICT (recurrence_rule_id, date, start_time) DO NOTHING');
   });
 
   it('5. session generation respects effective_from/effective_until', () => {
-    const genFn = migration321.slice(migration321.indexOf('generate_class_sessions'));
+    const genFn = migration322.slice(migration322.indexOf('generate_class_sessions'));
     expect(genFn).toContain('effective_from');
     expect(genFn).toContain('effective_until');
   });
 
   it('6. session generation skips inactive rules', () => {
-    const genFn = migration321.slice(migration321.indexOf('generate_class_sessions'));
+    const genFn = migration322.slice(migration322.indexOf('generate_class_sessions'));
     expect(genFn).toContain('is_active = true');
   });
 
   it('7. session generation validates service is_class', () => {
-    const genFn = migration321.slice(migration321.indexOf('generate_class_sessions'));
+    const genFn = migration322.slice(migration322.indexOf('generate_class_sessions'));
     expect(genFn).toContain('is_class');
   });
 
   it('8. book_slot_atomic has p_class_session_id parameter', () => {
-    const bsaFn = migration321.slice(migration321.indexOf('CREATE OR REPLACE FUNCTION public.book_slot_atomic'));
+    const bsaFn = migration322.slice(migration322.indexOf('CREATE OR REPLACE FUNCTION public.book_slot_atomic'));
     expect(bsaFn).toContain('p_class_session_id uuid DEFAULT NULL');
   });
 
   it('9. class booking path validates session exists and is bookable', () => {
-    const bsaFn = migration321.slice(migration321.indexOf('CLASS SESSION BOOKING PATH'));
+    const bsaFn = migration322.slice(migration322.indexOf('CLASS SESSION BOOKING PATH'));
     expect(bsaFn).toContain("v_cs.status != 'scheduled'");
     expect(bsaFn).toContain('v_cs.business_id != p_business_id');
   });
 
   it('10. class capacity uses SUM(party_size) not COUNT(*)', () => {
-    const bsaFn = migration321.slice(migration321.indexOf('CLASS SESSION BOOKING PATH'));
+    const bsaFn = migration322.slice(migration322.indexOf('CLASS SESSION BOOKING PATH'));
     expect(bsaFn).toContain('SUM(b.party_size)');
     expect(bsaFn).toContain('v_occupied + p_party_size > v_cs.capacity');
   });
 
   it('11. class booking locks by session ID not business+date+time', () => {
-    const bsaFn = migration321.slice(migration321.indexOf('CLASS SESSION BOOKING PATH'));
+    const bsaFn = migration322.slice(migration322.indexOf('CLASS SESSION BOOKING PATH'));
     expect(bsaFn).toContain("'class_session:' || p_class_session_id::text");
   });
 
   it('12. reschedule supports class session target', () => {
-    const reschedFn = migration321.slice(migration321.indexOf('reschedule_booking_atomic'));
+    const reschedFn = migration322.slice(migration322.indexOf('reschedule_booking_atomic'));
     expect(reschedFn).toContain('p_target_class_session_id');
     expect(reschedFn).toContain('target_session_required');
     expect(reschedFn).toContain('target_session_full');
@@ -119,7 +119,7 @@ describe('P1-CLASS-1: source verification', () => {
 
   it('19. normal booking path preserved — does not write class_session_id', () => {
     // The normal INSERT (after NORMAL BOOKING PATH comment) lists columns without class_session_id
-    const normalPath = migration321.slice(migration321.indexOf('NORMAL BOOKING PATH'));
+    const normalPath = migration322.slice(migration322.indexOf('NORMAL BOOKING PATH'));
     const normalInsert = normalPath.slice(
       normalPath.indexOf('INSERT INTO bookings'),
       normalPath.indexOf('RETURNING id'),
@@ -130,42 +130,42 @@ describe('P1-CLASS-1: source verification', () => {
   });
 
   it('20. appointment booking preserved', () => {
-    expect(migration321).toContain('check_appointment_schedule');
+    expect(migration322).toContain('check_appointment_schedule');
   });
 
   it('21. staff authority preserved', () => {
-    expect(migration321).toContain('check_staff_availability');
+    expect(migration322).toContain('check_staff_availability');
   });
 
   it('22. RLS enabled on class tables', () => {
-    expect(migration321).toContain('ALTER TABLE class_recurrence_rules ENABLE ROW LEVEL SECURITY');
-    expect(migration321).toContain('ALTER TABLE class_sessions ENABLE ROW LEVEL SECURITY');
+    expect(migration322).toContain('ALTER TABLE class_recurrence_rules ENABLE ROW LEVEL SECURITY');
+    expect(migration322).toContain('ALTER TABLE class_sessions ENABLE ROW LEVEL SECURITY');
   });
 
   // ── Session instructor authority ──
   it('23. session instructor validated via check_staff_availability', () => {
-    const classPath = migration321.slice(migration321.indexOf('Session instructor authority'));
+    const classPath = migration322.slice(migration322.indexOf('Session instructor authority'));
     expect(classPath).toContain('check_staff_availability');
     expect(classPath).toContain('v_cs.staff_id');
   });
 
   it('24. caller cannot override session instructor', () => {
-    const classPath = migration321.slice(migration321.indexOf('Session instructor authority'));
+    const classPath = migration322.slice(migration322.indexOf('Session instructor authority'));
     expect(classPath).toContain('p_staff_id != v_cs.staff_id');
   });
 
   it('25. booking uses session instructor, not caller staff', () => {
-    expect(migration321).toContain('v_cs.staff_id, p_staff_name,');
+    expect(migration322).toContain('v_cs.staff_id, p_staff_name,');
   });
 
   it('26. generation skips occurrence when instructor unavailable', () => {
-    const genFn = migration321.slice(migration321.indexOf('generate_class_sessions'));
+    const genFn = migration322.slice(migration322.indexOf('generate_class_sessions'));
     expect(genFn).toContain('check_staff_availability');
     expect(genFn).toContain('CONTINUE');
   });
 
   // ── API contract tests ──
-  it('27. recurrence API uses migration-321 field names', () => {
+  it('27. recurrence API uses migration-322 field names', () => {
     const recurrenceRoute = readFileSync('app/api/classes/recurrence/route.ts', 'utf-8');
     // Must use weekday, NOT day_of_week
     expect(recurrenceRoute).toContain('weekday');
@@ -207,8 +207,8 @@ describe('P1-CLASS-1: source verification', () => {
 
   it('32. reconcile_class_recurrence handles cleanup atomically', () => {
     // The DB function handles session cleanup, not the API route
-    expect(migration321).toContain('reconcile_class_recurrence');
-    const fn = migration321.slice(migration321.indexOf('reconcile_class_recurrence'));
+    expect(migration322).toContain('reconcile_class_recurrence');
+    const fn = migration322.slice(migration322.indexOf('reconcile_class_recurrence'));
     expect(fn).toContain('DELETE FROM class_sessions');
     expect(fn).toContain("status = 'scheduled'");
   });
@@ -226,21 +226,21 @@ describe('P1-CLASS-1: source verification', () => {
   });
 
   it('35. create_class_atomic function exists in migration', () => {
-    expect(migration321).toContain('CREATE OR REPLACE FUNCTION create_class_atomic');
-    expect(migration321).toContain("'invalid_weekday'");
-    expect(migration321).toContain("'invalid_staff'");
+    expect(migration322).toContain('CREATE OR REPLACE FUNCTION create_class_atomic');
+    expect(migration322).toContain("'invalid_weekday'");
+    expect(migration322).toContain("'invalid_staff'");
   });
 
   it('36. update_class_session_atomic uses advisory lock', () => {
-    expect(migration321).toContain('CREATE OR REPLACE FUNCTION update_class_session_atomic');
-    const fn = migration321.slice(migration321.indexOf('update_class_session_atomic'));
+    expect(migration322).toContain('CREATE OR REPLACE FUNCTION update_class_session_atomic');
+    const fn = migration322.slice(migration322.indexOf('update_class_session_atomic'));
     expect(fn).toContain("'class_session:'");
     expect(fn).toContain('pg_advisory_xact_lock');
   });
 
   it('37. reconcile_class_recurrence is atomic with session locking', () => {
-    expect(migration321).toContain('CREATE OR REPLACE FUNCTION reconcile_class_recurrence');
-    const fn = migration321.slice(migration321.indexOf('reconcile_class_recurrence'));
+    expect(migration322).toContain('CREATE OR REPLACE FUNCTION reconcile_class_recurrence');
+    const fn = migration322.slice(migration322.indexOf('reconcile_class_recurrence'));
     expect(fn).toContain("'class_session:'");
     expect(fn).toContain('pg_advisory_xact_lock');
     expect(fn).toContain("'booked_sessions_exist'");
@@ -248,7 +248,7 @@ describe('P1-CLASS-1: source verification', () => {
 
   it('38. book_slot_atomic class path locks BEFORE validation', () => {
     // Find the corrected class path (section 9d)
-    const fn = migration321.slice(migration321.lastIndexOf('CLASS SESSION BOOKING PATH'));
+    const fn = migration322.slice(migration322.lastIndexOf('CLASS SESSION BOOKING PATH'));
     const lockPos = fn.indexOf('pg_advisory_xact_lock');
     const statusPos = fn.indexOf("v_cs.status != 'scheduled'");
     // Lock must come before status check
@@ -256,13 +256,13 @@ describe('P1-CLASS-1: source verification', () => {
   });
 
   it('39. class reschedule enforces same-service', () => {
-    const fn = migration321.slice(migration321.lastIndexOf('CLASS BOOKING RESCHEDULE'));
+    const fn = migration322.slice(migration322.lastIndexOf('CLASS BOOKING RESCHEDULE'));
     expect(fn).toContain("'cross_class_not_allowed'");
     expect(fn).toContain('v_target_cs.service_id != v_booking.service_id');
   });
 
   it('40. class reschedule uses target staff/location directly (not COALESCE)', () => {
-    const fn = migration321.slice(migration321.lastIndexOf('CLASS BOOKING RESCHEDULE'));
+    const fn = migration322.slice(migration322.lastIndexOf('CLASS BOOKING RESCHEDULE'));
     const updateSection = fn.slice(fn.indexOf('UPDATE bookings'));
     expect(updateSection).toContain('staff_id = v_target_cs.staff_id');
     expect(updateSection).toContain('location_id = v_target_cs.location_id');
@@ -271,7 +271,7 @@ describe('P1-CLASS-1: source verification', () => {
 
   it('41. requires_staff class + NULL session instructor rejected', () => {
     // The final book_slot_atomic (section 13e) checks requires_staff when session has no instructor
-    const fn = migration321.slice(migration321.lastIndexOf('CLASS SESSION BOOKING PATH'));
+    const fn = migration322.slice(migration322.lastIndexOf('CLASS SESSION BOOKING PATH'));
     expect(fn).toContain('requires_staff');
     expect(fn).toContain("v_cs.requires_staff");
   });
@@ -302,68 +302,68 @@ describe('P1-CLASS-1: source verification', () => {
 
   it('47. update_class_session_atomic validates ALL before mutating', () => {
     // The integrity correction (section 10a) has requires_staff_cannot_clear
-    expect(migration321).toContain("'requires_staff_cannot_clear'");
+    expect(migration322).toContain("'requires_staff_cannot_clear'");
     // Validation appears before the final UPDATE
-    const pos1 = migration321.lastIndexOf("'requires_staff_cannot_clear'");
-    const pos2 = migration321.lastIndexOf('UPDATE class_sessions SET capacity = v_final_capacity');
+    const pos1 = migration322.lastIndexOf("'requires_staff_cannot_clear'");
+    const pos2 = migration322.lastIndexOf('UPDATE class_sessions SET capacity = v_final_capacity');
     expect(pos1).toBeLessThan(pos2);
   });
 
   it('48. update_class_session_atomic rejects clear on requires_staff', () => {
-    expect(migration321).toContain("'requires_staff_cannot_clear'");
+    expect(migration322).toContain("'requires_staff_cannot_clear'");
   });
 
   it('49. update_class_session_atomic rejects instructor change with attendees', () => {
-    expect(migration321).toContain("'attendees_exist_cannot_change_instructor'");
+    expect(migration322).toContain("'attendees_exist_cannot_change_instructor'");
   });
 
   it('50. reconcile protects sessions with ANY booking history', () => {
     // Section 10b reconcile checks EXISTS for ANY booking status
-    expect(migration321).toContain('EXISTS (SELECT 1 FROM bookings b WHERE b.class_session_id = cs.id)');
+    expect(migration322).toContain('EXISTS (SELECT 1 FROM bookings b WHERE b.class_session_id = cs.id)');
   });
 
   it('51. generate uses recurrence rule lock', () => {
     // Section 12 generator uses recurrence_rule lock
-    expect(migration321).toContain("'recurrence_rule:' || v_rule_id::text");
+    expect(migration322).toContain("'recurrence_rule:' || v_rule_id::text");
   });
 
   it('52. generate skips requires_staff rules without instructor', () => {
     // Section 12 generator checks requires_staff
-    const gen = migration321.slice(migration321.lastIndexOf('FUNCTION generate_class_sessions'));
+    const gen = migration322.slice(migration322.lastIndexOf('FUNCTION generate_class_sessions'));
     expect(gen).toContain('requires_staff');
     expect(gen).toContain('CONTINUE');
   });
 
   it('53. book_slot_atomic derives canonical staff_name from DB', () => {
     // The class INSERT should derive staff_name from business_staff, not use caller p_staff_name
-    expect(migration321).toContain('SELECT bs.name FROM business_staff bs WHERE bs.id = v_cs.staff_id');
+    expect(migration322).toContain('SELECT bs.name FROM business_staff bs WHERE bs.id = v_cs.staff_id');
   });
 
   it('54. reschedule derives target staff_name from DB', () => {
-    expect(migration321).toContain('SELECT bs.name FROM business_staff bs WHERE bs.id = v_target_cs.staff_id');
+    expect(migration322).toContain('SELECT bs.name FROM business_staff bs WHERE bs.id = v_target_cs.staff_id');
   });
 
   // ── RLS hardening ──
   it('55. authenticated write policies dropped for class_sessions', () => {
-    expect(migration321).toContain('DROP POLICY IF EXISTS cs_owner_insert');
-    expect(migration321).toContain('DROP POLICY IF EXISTS cs_owner_update');
-    expect(migration321).toContain('DROP POLICY IF EXISTS cs_owner_delete');
+    expect(migration322).toContain('DROP POLICY IF EXISTS cs_owner_insert');
+    expect(migration322).toContain('DROP POLICY IF EXISTS cs_owner_update');
+    expect(migration322).toContain('DROP POLICY IF EXISTS cs_owner_delete');
   });
 
   it('56. authenticated write policies dropped for class_recurrence_rules', () => {
-    expect(migration321).toContain('DROP POLICY IF EXISTS crr_owner_insert');
-    expect(migration321).toContain('DROP POLICY IF EXISTS crr_owner_update');
-    expect(migration321).toContain('DROP POLICY IF EXISTS crr_owner_delete');
+    expect(migration322).toContain('DROP POLICY IF EXISTS crr_owner_insert');
+    expect(migration322).toContain('DROP POLICY IF EXISTS crr_owner_update');
+    expect(migration322).toContain('DROP POLICY IF EXISTS crr_owner_delete');
   });
 
   it('60. generator re-reads rule after acquiring lock', () => {
     // Section 12: enumerate IDs first, then lock, then re-read
-    expect(migration321).toContain('SELECT id FROM class_recurrence_rules');
+    expect(migration322).toContain('SELECT id FROM class_recurrence_rules');
     // The fresh-read pattern: lock then re-read
-    expect(migration321).toContain('SELECT * INTO v_rule FROM class_recurrence_rules');
+    expect(migration322).toContain('SELECT * INTO v_rule FROM class_recurrence_rules');
     // Verify order: lock appears before re-read in the final generator
-    const lastGen = migration321.lastIndexOf('FUNCTION generate_class_sessions');
-    const genBody = migration321.slice(lastGen);
+    const lastGen = migration322.lastIndexOf('FUNCTION generate_class_sessions');
+    const genBody = migration322.slice(lastGen);
     const lockPos = genBody.indexOf("'recurrence_rule:' || v_rule_id");
     const rereadPos = genBody.indexOf('SELECT * INTO v_rule FROM class_recurrence_rules');
     expect(lockPos).toBeGreaterThan(0);
@@ -371,7 +371,7 @@ describe('P1-CLASS-1: source verification', () => {
   });
 
   it('61. generator skips deleted/changed rules cleanly', () => {
-    const lastGen = migration321.slice(migration321.lastIndexOf('FUNCTION generate_class_sessions'));
+    const lastGen = migration322.slice(migration322.lastIndexOf('FUNCTION generate_class_sessions'));
     expect(lastGen).toContain('IF NOT FOUND THEN CONTINUE');
   });
 
@@ -415,26 +415,26 @@ describe('P1-CLASS-1: source verification', () => {
 
   // ── Class XOR authority ──
   it('64. book_slot_atomic rejects class service without class_session_id', () => {
-    expect(migration321).toContain("is_class = true");
+    expect(migration322).toContain("is_class = true");
     // Normal path blocks is_class services
-    const normalPath = migration321.slice(migration321.lastIndexOf('NON-CLASS BOOKING PATH'));
+    const normalPath = migration322.slice(migration322.lastIndexOf('NON-CLASS BOOKING PATH'));
     expect(normalPath).toContain('is_class = true');
   });
 
   it('65. book_slot_atomic rejects appointment_id + class_session_id', () => {
-    const classPath = migration321.slice(migration321.lastIndexOf('CLASS SESSION BOOKING PATH'));
+    const classPath = migration322.slice(migration322.lastIndexOf('CLASS SESSION BOOKING PATH'));
     expect(classPath).toContain('p_appointment_id IS NOT NULL');
   });
 
   it('66. book_slot_atomic rejects NULL service_id + class_session_id', () => {
-    const classPath = migration321.slice(migration321.lastIndexOf('CLASS SESSION BOOKING PATH'));
+    const classPath = migration322.slice(migration322.lastIndexOf('CLASS SESSION BOOKING PATH'));
     expect(classPath).toContain('p_service_id IS NULL');
   });
 
   it('67. create_class_recurrence_atomic exists and validates', () => {
-    expect(migration321).toContain('CREATE OR REPLACE FUNCTION create_class_recurrence_atomic');
-    expect(migration321).toContain("'requires_staff_no_instructor'");
-    expect(migration321).toContain("'not_a_class'");
+    expect(migration322).toContain('CREATE OR REPLACE FUNCTION create_class_recurrence_atomic');
+    expect(migration322).toContain("'requires_staff_no_instructor'");
+    expect(migration322).toContain("'not_a_class'");
   });
 
   it('68. recurrence POST uses atomic RPC', () => {
@@ -443,7 +443,7 @@ describe('P1-CLASS-1: source verification', () => {
   });
 
   it('69. session cancellation rejects active attendees', () => {
-    const fn = migration321.slice(migration321.lastIndexOf('update_class_session_atomic'));
+    const fn = migration322.slice(migration322.lastIndexOf('update_class_session_atomic'));
     expect(fn).toContain("'active_attendees_exist'");
     // Cancel section checks attendees
     const cancelSection = fn.slice(fn.indexOf("= 'cancelled'"));
@@ -456,9 +456,9 @@ describe('P1-CLASS-1: source verification', () => {
   });
 
   it('71. value constraints in migration', () => {
-    expect(migration321).toContain('class_sessions_capacity_positive');
-    expect(migration321).toContain('crr_capacity_positive');
-    expect(migration321).toContain('crr_dates_valid');
+    expect(migration322).toContain('class_sessions_capacity_positive');
+    expect(migration322).toContain('crr_capacity_positive');
+    expect(migration322).toContain('crr_dates_valid');
   });
 });
 
@@ -571,7 +571,7 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
     // Apply migrations
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "supabase/migrations/318_appointment_buffer_booking_authority.sql"`, { encoding: 'utf-8', timeout: 15000 });
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "supabase/migrations/319_staff_booking_authority.sql"`, { encoding: 'utf-8', timeout: 15000 });
-    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "supabase/migrations/321_class_session_booking.sql"`, { encoding: 'utf-8', timeout: 15000 });
+    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "supabase/migrations/322_class_session_booking.sql"`, { encoding: 'utf-8', timeout: 15000 });
   });
 
   afterAll(() => {
@@ -976,7 +976,7 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
     psql(`DELETE FROM bookings;`);
   });
 
-  it('DB-24: migration 321 applies cleanly', () => {
+  it('DB-24: migration 322 applies cleanly', () => {
     const r = psql(`SELECT count(*) FROM pg_proc WHERE proname = 'generate_class_sessions';`);
     expect(parseInt(r)).toBeGreaterThanOrEqual(1);
     const r2 = psql(`SELECT count(*) FROM pg_proc WHERE proname = 'get_upcoming_class_sessions';`);

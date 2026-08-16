@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════
--- 321: Class session booking authority
+-- 322: Class session booking authority
 --
 -- P1-CLASS-1: Dedicated class session lifecycle + canonical booking authority.
 --
