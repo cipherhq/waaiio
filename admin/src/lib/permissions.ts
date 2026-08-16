@@ -22,6 +22,7 @@ export const ADMIN_PERMISSIONS: Record<string, AdminRole[]> = {
   'reseller-payouts': ['admin', 'finance'],
 
   // Operations
+  'promotions': ['admin', 'support', 'operations'],
   'bookings': ['admin', 'support', 'operations'],
   'orders': ['admin', 'support', 'operations'],
   'payments': ['admin', 'finance'],

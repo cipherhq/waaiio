@@ -17,7 +17,7 @@ export type CapabilityId =
   | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey'
   | 'poll' | 'giving' | 'broadcast' | 'recurring' | 'auto_reply'
   | 'membership' | 'estimates' | 'packages' | 'class_booking'
-  | 'multi_location' | 'waiver';
+  | 'multi_location' | 'waiver' | 'promo_verification';
 
 export type SubscriptionTier = 'free' | 'growth' | 'business';
 
@@ -79,6 +79,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'class_booking', label: 'Class Booking', description: 'Group classes with capacity limits. Customers sign up for available slots.', icon: '👥' },
   { id: 'multi_location', label: 'Multi-Location', description: 'Manage multiple branches. Customers choose their preferred location.', icon: '📍' },
   { id: 'waiver', label: 'Waivers', description: 'Collect liability waivers and release forms before services. Customers sign digitally from their phone.', icon: '📋' },
+  { id: 'promo_verification', label: 'Promotions', description: 'Run WhatsApp-based consumer promotions with unique codes on products, packaging, or scratch cards. Instant verification and prize claiming.', icon: '🎰' },
 ];
 
 // ── Tier requirements ──
@@ -122,6 +123,7 @@ export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier
   class_booking: 'growth',
   multi_location: 'growth',
   waiver: 'growth',
+  promo_verification: 'growth',
 };
 
 // ── Lookup helpers ──
