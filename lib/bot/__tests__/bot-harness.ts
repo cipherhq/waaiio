@@ -1,13 +1,6 @@
 import { vi } from 'vitest';
 import type { MessageSender } from '@/lib/channels/message-sender';
 
-/** Returns an ISO date string N days in the future (default 30). Never expires. */
-export function futureDate(daysAhead = 30): string {
-  const d = new Date();
-  d.setDate(d.getDate() + daysAhead);
-  return d.toISOString().split('T')[0];
-}
-
 /**
  * Captured message from the bot — includes type and all fields.
  */
@@ -201,7 +194,7 @@ export const FIXTURES = {
     {
       id: 'evt-001',
       name: 'Summer Concert',
-      date: futureDate(30),
+      date: '2026-08-15',
       time: '18:00',
       venue: 'Main Hall',
       price: 5000,
