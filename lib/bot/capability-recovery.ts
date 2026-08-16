@@ -49,6 +49,7 @@ export function clearRejectedTransactionalState(
 /** Semantic family → customer-friendly label */
 const FAMILY_LABELS: Record<string, string> = {
   service_time_booking: 'appointments',
+  class_booking: 'class bookings',
   property_reservation: 'room reservations',
   table_reservation: 'table reservations',
   ordering: 'ordering',

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -65,6 +65,20 @@ interface StaffMember {
   name: string;
 }
 
+interface RecurrenceRule {
+  id: string;
+  service_id: string;
+  business_id: string;
+  weekday: string;
+  start_time: string;
+  staff_id: string | null;
+  capacity_override: number | null;
+  is_active: boolean;
+  effective_from: string;
+  effective_until: string | null;
+  business_staff: { id: string; name: string } | null;
+}
+
 type TabId = 'classes' | 'sessions';
 
 const WEEKDAYS = [
@@ -77,10 +91,16 @@ const WEEKDAYS = [
   { value: 6, label: 'Saturday', short: 'Sat', key: 'sat' },
 ];
 
+const WEEKDAY_LABELS: Record<string, string> = {
+  mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday',
+  fri: 'Friday', sat: 'Saturday', sun: 'Sunday',
+};
+
+const WEEKDAY_MAP = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
 // ── Helpers ──────────────────────────────────────────
 
 function formatTime(timeStr: string): string {
-  // Handle HH:MM:SS or HH:MM
   const [h, m] = timeStr.split(':').map(Number);
   const ampm = h >= 12 ? 'PM' : 'AM';
   const hour = h % 12 || 12;
@@ -137,7 +157,7 @@ export default function ClassesPage() {
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [filterServiceId, setFilterServiceId] = useState<string | null>(null);
 
-  // Staff (for create dialog)
+  // Staff (for create/edit dialogs)
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
 
   // Create class dialog
@@ -150,11 +170,37 @@ export default function ClassesPage() {
     price: '',
     duration: '60',
     capacity: '10',
-    // Recurrence rule fields
     dayOfWeek: 1,
     startTime: '09:00',
     staffId: '',
   });
+
+  // Edit class dialog
+  const [editingClass, setEditingClass] = useState<ClassService | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: '', description: '', price: '', duration: '', capacity: '',
+  });
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  // Manage schedule dialog
+  const [scheduleClass, setScheduleClass] = useState<ClassService | null>(null);
+  const [scheduleRules, setScheduleRules] = useState<RecurrenceRule[]>([]);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [showAddRule, setShowAddRule] = useState(false);
+  const [addRuleForm, setAddRuleForm] = useState({ weekday: 'mon', startTime: '09:00', staffId: '', capacityOverride: '' });
+  const [addRuleSaving, setAddRuleSaving] = useState(false);
+  const [editingRule, setEditingRule] = useState<RecurrenceRule | null>(null);
+  const [editRuleForm, setEditRuleForm] = useState({ weekday: '', startTime: '', staffId: '', capacityOverride: '' });
+  const [editRuleSaving, setEditRuleSaving] = useState(false);
+
+  // Archive/Delete confirmation
+  const [archiveTarget, setArchiveTarget] = useState<ClassService | null>(null);
+  const [archiving, setArchiving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ClassService | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Session detail dialog
   const [selectedSession, setSelectedSession] = useState<SessionDetail | null>(null);
@@ -178,6 +224,7 @@ export default function ClassesPage() {
         .select('id, name, description, price, duration_minutes, max_capacity, is_active, is_class')
         .eq('business_id', business.id)
         .eq('is_class', true)
+        .is('deleted_at', null)
         .order('name');
 
       if (error) throw error;
@@ -236,6 +283,24 @@ export default function ClassesPage() {
     setDetailLoading(false);
   };
 
+  const fetchRecurrenceRules = async (serviceId: string) => {
+    setScheduleLoading(true);
+    setScheduleError(null);
+    try {
+      const params = new URLSearchParams({ businessId: business.id, serviceId });
+      const res = await fetch(`/api/classes/recurrence?${params}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to load schedule');
+      }
+      const { data } = await res.json();
+      setScheduleRules(data || []);
+    } catch (err) {
+      setScheduleError(err instanceof Error ? err.message : 'Failed to load schedule');
+    }
+    setScheduleLoading(false);
+  };
+
   // ── Initial load ──────────────────────────────────
 
   useEffect(() => {
@@ -256,12 +321,10 @@ export default function ClassesPage() {
     setCreateError(null);
 
     try {
-      const WEEKDAY_MAP = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
       const priceNum = Math.round(parseFloat(newClass.price) * 100) || 0;
       const durationNum = parseInt(newClass.duration) || 60;
       const capacityNum = parseInt(newClass.capacity) || 10;
 
-      // Atomic class creation via server authority (service + recurrence + generation)
       const res = await fetch('/api/classes/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -284,7 +347,6 @@ export default function ClassesPage() {
         throw new Error(body.error || 'Failed to create class');
       }
 
-      // Reset form and refresh
       setNewClass({
         name: '', description: '', price: '', duration: '60', capacity: '10',
         dayOfWeek: 1, startTime: '09:00', staffId: '',
@@ -296,6 +358,229 @@ export default function ClassesPage() {
       setCreateError(err instanceof Error ? err.message : 'Failed to create class');
     }
     setCreating(false);
+  };
+
+  // ── Edit class ────────────────────────────────────
+
+  const openEditDialog = (cls: ClassService) => {
+    setEditingClass(cls);
+    setEditForm({
+      name: cls.name,
+      description: cls.description || '',
+      price: (cls.price / 100).toString(),
+      duration: (cls.duration_minutes || 60).toString(),
+      capacity: (cls.max_capacity || 10).toString(),
+    });
+    setEditError(null);
+  };
+
+  const handleEditClass = async () => {
+    if (!editingClass) return;
+    setEditSaving(true);
+    setEditError(null);
+
+    try {
+      const res = await fetch(`/api/classes/${editingClass.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editForm.name.trim(),
+          description: editForm.description.trim() || null,
+          price: Math.round(parseFloat(editForm.price) * 100) || 0,
+          durationMinutes: parseInt(editForm.duration) || 60,
+          maxCapacity: parseInt(editForm.capacity) || 10,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to update class');
+      }
+
+      setEditingClass(null);
+      fetchClasses();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Failed to update class');
+    }
+    setEditSaving(false);
+  };
+
+  // ── Archive class ─────────────────────────────────
+
+  const handleArchiveClass = async () => {
+    if (!archiveTarget) return;
+    setArchiving(true);
+    try {
+      const newActive = !archiveTarget.is_active;
+      const res = await fetch(`/api/classes/${archiveTarget.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: newActive }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to update class');
+      }
+
+      setArchiveTarget(null);
+      fetchClasses();
+      if (activeTab === 'sessions') fetchSessions(filterServiceId);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to update class');
+    }
+    setArchiving(false);
+  };
+
+  // ── Delete class ──────────────────────────────────
+
+  const handleDeleteClass = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/classes/${deleteTarget.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to delete class');
+      }
+
+      setDeleteTarget(null);
+      fetchClasses();
+      if (activeTab === 'sessions') fetchSessions(filterServiceId);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete class');
+    }
+    setDeleting(false);
+  };
+
+  // ── Schedule management ───────────────────────────
+
+  const openScheduleDialog = (cls: ClassService) => {
+    setScheduleClass(cls);
+    setShowAddRule(false);
+    setEditingRule(null);
+    fetchRecurrenceRules(cls.id);
+  };
+
+  const handleAddRule = async () => {
+    if (!scheduleClass) return;
+    setAddRuleSaving(true);
+    try {
+      const res = await fetch('/api/classes/recurrence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          serviceId: scheduleClass.id,
+          weekday: addRuleForm.weekday,
+          startTime: addRuleForm.startTime,
+          staffId: addRuleForm.staffId || null,
+          capacityOverride: addRuleForm.capacityOverride ? parseInt(addRuleForm.capacityOverride) : null,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to add schedule');
+      }
+
+      setShowAddRule(false);
+      setAddRuleForm({ weekday: 'mon', startTime: '09:00', staffId: '', capacityOverride: '' });
+      fetchRecurrenceRules(scheduleClass.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to add schedule');
+    }
+    setAddRuleSaving(false);
+  };
+
+  const openEditRule = (rule: RecurrenceRule) => {
+    setEditingRule(rule);
+    setEditRuleForm({
+      weekday: rule.weekday,
+      startTime: rule.start_time,
+      staffId: rule.staff_id || '',
+      capacityOverride: rule.capacity_override?.toString() || '',
+    });
+  };
+
+  const handleEditRule = async () => {
+    if (!editingRule || !scheduleClass) return;
+    setEditRuleSaving(true);
+    try {
+      const res = await fetch('/api/classes/recurrence', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          ruleId: editingRule.id,
+          weekday: editRuleForm.weekday,
+          startTime: editRuleForm.startTime,
+          staffId: editRuleForm.staffId || null,
+          clearStaff: !editRuleForm.staffId && !!editingRule.staff_id,
+          capacityOverride: editRuleForm.capacityOverride ? parseInt(editRuleForm.capacityOverride) : null,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to update schedule');
+      }
+
+      setEditingRule(null);
+      fetchRecurrenceRules(scheduleClass.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to update schedule');
+    }
+    setEditRuleSaving(false);
+  };
+
+  const handleToggleRule = async (rule: RecurrenceRule) => {
+    if (!scheduleClass) return;
+    try {
+      const res = await fetch('/api/classes/recurrence', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          ruleId: rule.id,
+          isActive: !rule.is_active,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to update rule');
+      }
+
+      fetchRecurrenceRules(scheduleClass.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to update rule');
+    }
+  };
+
+  const handleDeleteRule = async (rule: RecurrenceRule) => {
+    if (!scheduleClass) return;
+    if (!confirm('Remove this schedule? Future unbooked sessions for this slot will be removed.')) return;
+    try {
+      const res = await fetch('/api/classes/recurrence', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ businessId: business.id, ruleId: rule.id }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to remove schedule');
+      }
+
+      fetchRecurrenceRules(scheduleClass.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to remove schedule');
+    }
   };
 
   // ── Cancel session ────────────────────────────────
@@ -401,6 +686,10 @@ export default function ClassesPage() {
             countryCode={countryCode}
             onClassClick={handleClassClick}
             onCreateClick={() => setShowCreateDialog(true)}
+            onEditClick={openEditDialog}
+            onScheduleClick={openScheduleDialog}
+            onArchiveClick={setArchiveTarget}
+            onDeleteClick={(cls) => { setDeleteTarget(cls); setDeleteError(null); }}
           />
         )}
 
@@ -428,6 +717,78 @@ export default function ClassesPage() {
           error={createError}
           onSubmit={handleCreateClass}
           onClose={() => { setShowCreateDialog(false); setCreateError(null); }}
+        />
+      )}
+
+      {/* Edit Class Dialog */}
+      {editingClass && (
+        <EditClassDialog
+          form={editForm}
+          setForm={setEditForm}
+          saving={editSaving}
+          error={editError}
+          onSubmit={handleEditClass}
+          onClose={() => { setEditingClass(null); setEditError(null); }}
+        />
+      )}
+
+      {/* Manage Schedule Dialog */}
+      {scheduleClass && (
+        <ManageScheduleDialog
+          cls={scheduleClass}
+          rules={scheduleRules}
+          loading={scheduleLoading}
+          error={scheduleError}
+          staffList={staffList}
+          showAddRule={showAddRule}
+          setShowAddRule={setShowAddRule}
+          addRuleForm={addRuleForm}
+          setAddRuleForm={setAddRuleForm}
+          addRuleSaving={addRuleSaving}
+          onAddRule={handleAddRule}
+          editingRule={editingRule}
+          editRuleForm={editRuleForm}
+          setEditRuleForm={setEditRuleForm}
+          editRuleSaving={editRuleSaving}
+          onEditRule={handleEditRule}
+          onOpenEditRule={openEditRule}
+          onCancelEditRule={() => setEditingRule(null)}
+          onToggleRule={handleToggleRule}
+          onDeleteRule={handleDeleteRule}
+          onClose={() => { setScheduleClass(null); setScheduleError(null); }}
+        />
+      )}
+
+      {/* Archive Confirmation */}
+      {archiveTarget && (
+        <ConfirmDialog
+          title={archiveTarget.is_active ? 'Archive Class' : 'Reactivate Class'}
+          message={
+            archiveTarget.is_active
+              ? `Archive "${archiveTarget.name}"? This will stop generating new sessions and prevent new bookings. Existing bookings and history are preserved.`
+              : `Reactivate "${archiveTarget.name}"? The class will become visible again. You may need to reactivate its schedules separately.`
+          }
+          confirmLabel={archiveTarget.is_active ? 'Archive' : 'Reactivate'}
+          confirmClassName={archiveTarget.is_active
+            ? 'bg-amber-600 hover:bg-amber-700 text-white'
+            : 'bg-green-600 hover:bg-green-700 text-white'}
+          loading={archiving}
+          onConfirm={handleArchiveClass}
+          onClose={() => setArchiveTarget(null)}
+        />
+      )}
+
+      {/* Delete Confirmation */}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete Class"
+          message={`Permanently delete "${deleteTarget.name}"? This can only be done if the class has no booking history.`}
+          confirmLabel="Delete"
+          confirmClassName="bg-red-600 hover:bg-red-700 text-white"
+          loading={deleting}
+          error={deleteError}
+          onConfirm={handleDeleteClass}
+          onClose={() => { setDeleteTarget(null); setDeleteError(null); }}
         />
       )}
 
@@ -459,6 +820,96 @@ export default function ClassesPage() {
   );
 }
 
+// ── Three-Dot Menu ──────────────────────────────────
+
+function ThreeDotMenu({
+  cls,
+  onEdit,
+  onSchedule,
+  onArchive,
+  onDelete,
+}: {
+  cls: ClassService;
+  onEdit: () => void;
+  onSchedule: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  return (
+    <div ref={menuRef} className="relative">
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+        aria-label="Class actions"
+      >
+        <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M10 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4z" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
+          <button
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onEdit(); }}
+            className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            Edit Class
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onSchedule(); }}
+            className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Manage Schedule
+          </button>
+          <div className="my-1 border-t border-gray-100 dark:border-gray-700" />
+          <button
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onArchive(); }}
+            className={`flex w-full items-center gap-2 px-4 py-2 text-left text-sm ${
+              cls.is_active
+                ? 'text-amber-600 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20'
+                : 'text-green-600 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20'
+            }`}
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+            </svg>
+            {cls.is_active ? 'Archive Class' : 'Reactivate Class'}
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onDelete(); }}
+            className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            Delete Class
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Classes Tab ──────────────────────────────────────
 
 function ClassesTab({
@@ -468,6 +919,10 @@ function ClassesTab({
   countryCode,
   onClassClick,
   onCreateClick,
+  onEditClick,
+  onScheduleClick,
+  onArchiveClick,
+  onDeleteClick,
 }: {
   classes: ClassService[];
   loading: boolean;
@@ -475,6 +930,10 @@ function ClassesTab({
   countryCode: CountryCode;
   onClassClick: (id: string) => void;
   onCreateClick: () => void;
+  onEditClick: (cls: ClassService) => void;
+  onScheduleClick: (cls: ClassService) => void;
+  onArchiveClick: (cls: ClassService) => void;
+  onDeleteClick: (cls: ClassService) => void;
 }) {
   if (loading) {
     return (
@@ -508,24 +967,32 @@ function ClassesTab({
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {classes.map((cls) => (
-        <button
+        <div
           key={cls.id}
-          onClick={() => onClassClick(cls.id)}
-          className="group rounded-xl border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:border-brand/30 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-brand/40"
+          className="group relative rounded-xl border border-gray-200 bg-white p-5 shadow-sm transition hover:border-brand/30 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-brand/40"
         >
           <div className="flex items-start justify-between">
             <h3 className="font-semibold text-gray-900 group-hover:text-brand dark:text-gray-100">
               {cls.name}
             </h3>
-            <span
-              className={`ml-2 shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
-                cls.is_active
-                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
-                  : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
-              }`}
-            >
-              {cls.is_active ? 'Active' : 'Inactive'}
-            </span>
+            <div className="flex items-center gap-1">
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                  cls.is_active
+                    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                    : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
+                }`}
+              >
+                {cls.is_active ? 'Active' : 'Inactive'}
+              </span>
+              <ThreeDotMenu
+                cls={cls}
+                onEdit={() => onEditClick(cls)}
+                onSchedule={() => onScheduleClick(cls)}
+                onArchive={() => onArchiveClick(cls)}
+                onDelete={() => onDeleteClick(cls)}
+              />
+            </div>
           </div>
 
           {cls.description && (
@@ -550,10 +1017,13 @@ function ClassesTab({
             )}
           </div>
 
-          <p className="mt-3 text-xs text-brand group-hover:underline">
+          <button
+            onClick={() => onClassClick(cls.id)}
+            className="mt-3 text-xs text-brand hover:underline"
+          >
             View sessions →
-          </p>
-        </button>
+          </button>
+        </div>
       ))}
     </div>
   );
@@ -873,6 +1343,432 @@ function CreateClassDialog({
             className="rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {creating ? 'Creating...' : 'Create Class'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Edit Class Dialog ────────────────────────────────
+
+function EditClassDialog({
+  form,
+  setForm,
+  saving,
+  error,
+  onSubmit,
+  onClose,
+}: {
+  form: { name: string; description: string; price: string; duration: string; capacity: string };
+  setForm: React.Dispatch<React.SetStateAction<typeof form>>;
+  saving: boolean;
+  error: string | null;
+  onSubmit: () => void;
+  onClose: () => void;
+}) {
+  const isValid = form.name.trim().length > 0 && parseFloat(form.price) >= 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-800">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Edit Class</h2>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700"
+            aria-label="Close"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {error && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+            {error}
+          </div>
+        )}
+
+        <div className="mt-5 space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Class Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={form.name}
+              onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Description
+            </label>
+            <textarea
+              value={form.description}
+              onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
+              rows={2}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+            />
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Price</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.price}
+                onChange={(e) => setForm((p) => ({ ...p, price: e.target.value }))}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Duration (min)</label>
+              <input
+                type="number"
+                min="15"
+                step="15"
+                value={form.duration}
+                onChange={(e) => setForm((p) => ({ ...p, duration: e.target.value }))}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Capacity</label>
+              <input
+                type="number"
+                min="1"
+                value={form.capacity}
+                onChange={(e) => setForm((p) => ({ ...p, capacity: e.target.value }))}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              />
+            </div>
+          </div>
+
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Changes to duration and capacity only affect future sessions. Booked sessions are not modified.
+          </p>
+        </div>
+
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSubmit}
+            disabled={saving || !isValid}
+            className="rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? 'Saving...' : 'Save Changes'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Manage Schedule Dialog ───────────────────────────
+
+function ManageScheduleDialog({
+  cls,
+  rules,
+  loading,
+  error,
+  staffList,
+  showAddRule,
+  setShowAddRule,
+  addRuleForm,
+  setAddRuleForm,
+  addRuleSaving,
+  onAddRule,
+  editingRule,
+  editRuleForm,
+  setEditRuleForm,
+  editRuleSaving,
+  onEditRule,
+  onOpenEditRule,
+  onCancelEditRule,
+  onToggleRule,
+  onDeleteRule,
+  onClose,
+}: {
+  cls: ClassService;
+  rules: RecurrenceRule[];
+  loading: boolean;
+  error: string | null;
+  staffList: StaffMember[];
+  showAddRule: boolean;
+  setShowAddRule: (v: boolean) => void;
+  addRuleForm: { weekday: string; startTime: string; staffId: string; capacityOverride: string };
+  setAddRuleForm: React.Dispatch<React.SetStateAction<typeof addRuleForm>>;
+  addRuleSaving: boolean;
+  onAddRule: () => void;
+  editingRule: RecurrenceRule | null;
+  editRuleForm: { weekday: string; startTime: string; staffId: string; capacityOverride: string };
+  setEditRuleForm: React.Dispatch<React.SetStateAction<typeof editRuleForm>>;
+  editRuleSaving: boolean;
+  onEditRule: () => void;
+  onOpenEditRule: (rule: RecurrenceRule) => void;
+  onCancelEditRule: () => void;
+  onToggleRule: (rule: RecurrenceRule) => void;
+  onDeleteRule: (rule: RecurrenceRule) => void;
+  onClose: () => void;
+}) {
+  const inputCls = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100";
+
+  const renderRuleForm = (
+    form: typeof addRuleForm,
+    setForm: React.Dispatch<React.SetStateAction<typeof addRuleForm>>,
+    saving: boolean,
+    onSave: () => void,
+    onCancel: () => void,
+    saveLabel: string,
+  ) => (
+    <div className="space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-600 dark:bg-gray-700/50">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">Day</label>
+          <select value={form.weekday} onChange={(e) => setForm(p => ({ ...p, weekday: e.target.value }))} className={inputCls}>
+            {WEEKDAYS.map(wd => <option key={wd.key} value={wd.key}>{wd.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">Start Time</label>
+          <input type="time" value={form.startTime} onChange={(e) => setForm(p => ({ ...p, startTime: e.target.value }))} className={inputCls} />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        {staffList.length > 0 && (
+          <div>
+            <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">Instructor</label>
+            <select value={form.staffId} onChange={(e) => setForm(p => ({ ...p, staffId: e.target.value }))} className={inputCls}>
+              <option value="">None</option>
+              {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+        )}
+        <div>
+          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">Capacity Override</label>
+          <input
+            type="number" min="1" value={form.capacityOverride}
+            onChange={(e) => setForm(p => ({ ...p, capacityOverride: e.target.value }))}
+            placeholder={`Default: ${cls.max_capacity || 10}`}
+            className={inputCls}
+          />
+        </div>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel} disabled={saving} className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-600">
+          Cancel
+        </button>
+        <button onClick={onSave} disabled={saving} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
+          {saving ? 'Saving...' : saveLabel}
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-800">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Manage Schedule</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400">{cls.name}</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700" aria-label="Close">
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {error && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+            {error}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
+          </div>
+        ) : (
+          <div className="mt-5 space-y-4">
+            {rules.length === 0 && !showAddRule && (
+              <p className="py-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                No recurring schedules. Add one to start generating sessions.
+              </p>
+            )}
+
+            {/* Existing rules */}
+            {rules.map((rule) => (
+              <div key={rule.id}>
+                {editingRule?.id === rule.id ? (
+                  renderRuleForm(editRuleForm, setEditRuleForm, editRuleSaving, onEditRule, onCancelEditRule, 'Update')
+                ) : (
+                  <div className={`flex items-center justify-between rounded-lg border p-3 ${
+                    rule.is_active
+                      ? 'border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-700/50'
+                      : 'border-gray-100 bg-gray-50 opacity-60 dark:border-gray-700 dark:bg-gray-800'
+                  }`}>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-900 dark:text-gray-100">
+                          {WEEKDAY_LABELS[rule.weekday] || rule.weekday}
+                        </span>
+                        <span className="text-sm text-gray-500 dark:text-gray-400">
+                          {formatTime(rule.start_time)}
+                        </span>
+                        {!rule.is_active && (
+                          <span className="rounded-full bg-gray-200 px-1.5 py-0.5 text-xs text-gray-600 dark:bg-gray-600 dark:text-gray-300">
+                            Paused
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 flex gap-3 text-xs text-gray-500 dark:text-gray-400">
+                        {rule.business_staff?.name && (
+                          <span>Instructor: {rule.business_staff.name}</span>
+                        )}
+                        {rule.capacity_override && (
+                          <span>Capacity: {rule.capacity_override}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => onOpenEditRule(rule)}
+                        title="Edit"
+                        className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-600 dark:hover:text-gray-300"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => onToggleRule(rule)}
+                        title={rule.is_active ? 'Pause' : 'Resume'}
+                        className={`rounded p-1.5 ${
+                          rule.is_active
+                            ? 'text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20'
+                            : 'text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20'
+                        }`}
+                      >
+                        {rule.is_active ? (
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        ) : (
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => onDeleteRule(rule)}
+                        title="Remove"
+                        className="rounded p-1.5 text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {/* Add rule form */}
+            {showAddRule && renderRuleForm(
+              addRuleForm, setAddRuleForm, addRuleSaving, onAddRule,
+              () => setShowAddRule(false), 'Add Schedule',
+            )}
+
+            {/* Add rule button */}
+            {!showAddRule && (
+              <button
+                onClick={() => setShowAddRule(true)}
+                disabled={!cls.is_active}
+                className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-300 py-3 text-sm font-medium text-gray-500 transition hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-400 dark:hover:border-brand dark:hover:text-brand"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Schedule
+              </button>
+            )}
+
+            {!cls.is_active && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                This class is archived. Reactivate it to add new schedules.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Confirm Dialog (reusable) ────────────────────────
+
+function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  confirmClassName,
+  loading,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  confirmClassName: string;
+  loading: boolean;
+  error?: string | null;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-800">
+        <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">{title}</h3>
+        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{message}</p>
+
+        {error && (
+          <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+            {error}
+          </div>
+        )}
+
+        <div className="mt-5 flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className={`rounded-lg px-5 py-2 text-sm font-semibold shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${confirmClassName}`}
+          >
+            {loading ? 'Processing...' : confirmLabel}
           </button>
         </div>
       </div>

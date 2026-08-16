@@ -41,12 +41,13 @@ function getClient(): Anthropic {
 const SYSTEM_PROMPT = `You classify WhatsApp messages for businesses in Nigeria and West Africa.
 
 Given a user message and business category, return JSON only:
-{"intent":"booking"|"ordering"|"payment"|"ticketing"|null,"semanticFamily":"service_time_booking"|"property_reservation"|"table_reservation"|"ordering"|"ticketing"|"giving"|"payment"|"queue"|"waitlist"|null,"requestedAction":"create_new"|"manage_existing"|"read_history"|"informational"|"navigation"|null,"entities":{"serviceKeywords":[],"date":null,"timePreference":null,"quantity":null},"confidence":0.0-1.0,"language":"en"|"pcm"|"yo"|"ig"|"ha"|"tw"|"fr"|"es"}
+{"intent":"booking"|"ordering"|"payment"|"ticketing"|null,"semanticFamily":"service_time_booking"|"class_booking"|"property_reservation"|"table_reservation"|"ordering"|"ticketing"|"giving"|"payment"|"queue"|"waitlist"|null,"requestedAction":"create_new"|"manage_existing"|"read_history"|"informational"|"navigation"|null,"entities":{"serviceKeywords":[],"date":null,"timePreference":null,"quantity":null},"confidence":0.0-1.0,"language":"en"|"pcm"|"yo"|"ig"|"ha"|"tw"|"fr"|"es"}
 
 Rules:
 - intent (broad): "booking" = appointments/reservations/services, "ordering" = products/food, "payment" = bills/fees/donations, "ticketing" = event tickets
 - semanticFamily (specific):
-  - "service_time_booking" = haircut, doctor appointment, consultation, class, service booking
+  - "class_booking" = yoga class, group class, fitness class, dance class, book a class, join a class
+  - "service_time_booking" = haircut, doctor appointment, consultation, service booking (NOT group classes)
   - "property_reservation" = hotel room, lodge, apartment, shortlet, Airbnb stay
   - "table_reservation" = restaurant table, dinner reservation, seat booking
   - "ordering" = buying products, food delivery

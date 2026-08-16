@@ -72,6 +72,9 @@ export class BotService {
   ): Promise<void> {
     try {
     const text = messageText.trim();
+    const _bt0 = Date.now();
+    const _btimings: Record<string, number> = {};
+    const _bmark = (l: string) => { _btimings[l] = Date.now() - _bt0; };
     logger.debug('[BOT] handleMessage from: ...', from.slice(-4), 'type:', messageType, 'textLen:', text.length);
 
     // Pre-check: Input length cap (prevents regex timeout, LLM token burn, DoS)
@@ -80,26 +83,21 @@ export class BotService {
       return; // Silently drop — excessively long messages are never legitimate
     }
 
-    // Pre-check 0: Per-phone rate limit (prevents bot spam burning AI/WhatsApp credits)
-    const botSettings = await loadPlatformSettings({ useServiceClient: true });
+    // Pre-checks: rate limit + maintenance mode (independent — run in parallel)
+    const [botSettings, maintResult] = await Promise.all([
+      loadPlatformSettings({ useServiceClient: true }),
+      this.supabase.from('platform_settings').select('value').eq('key', 'maintenance_mode').single(),
+    ]);
     const phoneRateLimit = await checkRateLimitAsync(`bot:${from}`, botSettings.bot_rate_limit_per_minute, 60_000);
     if (!phoneRateLimit.allowed) {
       logger.warn(`[BOT] Rate limited phone ${from} — ${phoneRateLimit.remaining} remaining`);
       return; // Silently drop — don't even send a response (saves WhatsApp outbound cost)
     }
 
-    // Pre-check 0b: Maintenance mode
-    try {
-      const { data: maint } = await this.supabase
-        .from('platform_settings')
-        .select('value')
-        .eq('key', 'maintenance_mode')
-        .single();
-      if (maint?.value === true) {
-        await this.sendText(from, "We're currently undergoing maintenance and will be back shortly. Please try again in a few minutes. 🙏");
-        return;
-      }
-    } catch (err) { logger.warn('[BOT] Maintenance mode check failed (fail open):', err); }
+    if (maintResult.data?.value === true) {
+      await this.sendText(from, "We're currently undergoing maintenance and will be back shortly. Please try again in a few minutes. 🙏");
+      return;
+    }
 
     // STOP/UNSUBSCRIBE compliance — check before any other processing
     const STOP_WORDS = ['stop', 'unsubscribe', 'opt out', 'opt-out'];
@@ -534,13 +532,16 @@ export class BotService {
     // and verify business status using the canonical policy resolver.
     // This ensures stale sessions cannot bypass entitlement changes (trial expiry,
     // capability disabled, business suspended, etc.).
+    // Request-scoped business cache — avoid refetching the same business row
+    let _cachedBusiness: BusinessRecord | null = null;
     if (session?.business_id) {
       try {
         const { data: currentBiz } = await this.supabase
           .from('businesses')
-          .select('id, status, subscription_tier, trial_ends_at, category')
+          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, status, is_whitelabel')
           .eq('id', session.business_id)
           .single();
+        _cachedBusiness = currentBiz as BusinessRecord | null;
 
         if (!currentBiz || currentBiz.status !== 'active') {
           // Business no longer active — deactivate session with recoverable message
@@ -868,6 +869,7 @@ export class BotService {
         await this.deactivateSession(session.id);
       }
 
+      _bmark('session_resolved');
       // Determine standalone business
       let businessId: string | null = preResolvedBusinessId || restartBusinessId || null;
       logger.debug('[BOT] preResolvedBusinessId:', preResolvedBusinessId);
@@ -2113,8 +2115,13 @@ export class BotService {
     // non-CREATE_NEW actions. "Where is my order?" while booking → order history.
     // Exclude free-text input steps where text should go to the flow validator.
     const isCasExcluded = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin'].includes(step);
+    // Skip AI classification for deterministic postback IDs — these are button/list taps
+    // that will be handled by the flow executor's step-specific validate() function
+    const isDeterministicPostback = /^(cap_|class_session_|wb_\d|pc_|restart_|rsvp_|accept_quote_|reject_quote_|TK-|go_back_biz|switch_biz|browse_menu|\d{1,2})$/.test(text)
+      || (messageType === 'button' || messageType === 'list');
     let resumedCanonical: import('./canonical-understanding').CanonicalUnderstanding | null = null;
-    if (session.business_id && text && !isCasExcluded) {
+    _bmark(isDeterministicPostback ? 'cas004_skipped_deterministic' : 'cas004_start');
+    if (session.business_id && text && !isCasExcluded && !isDeterministicPostback) {
       try {
         const { understandCanonicalMessage } = await import('./canonical-understanding');
         // Load business tier for language entitlement
@@ -2163,7 +2170,7 @@ export class BotService {
     // Runs AFTER specialized handlers / keywords / escape hatches, BEFORE the
     // fallback flow executor path.  Only fires when the business has AI enabled
     // in its conversation config.
-    if (session.business_id && text) {
+    if (session.business_id && text && !isDeterministicPostback) {
       try {
         const convConfig = await loadConversationConfig(this.supabase, session.business_id);
         if (convConfig.aiEnabled) {
@@ -2315,8 +2322,9 @@ export class BotService {
     }
 
     // Delegate to flow executor for all flow steps
-    let business: BusinessRecord | null = null;
-    if (session.business_id) {
+    // Reuse request-scoped business if already loaded (CAP-001 revalidation)
+    let business: BusinessRecord | null = _cachedBusiness;
+    if (!business && session.business_id) {
       const { data: biz } = await this.supabase
         .from('businesses')
         .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
@@ -2363,7 +2371,10 @@ export class BotService {
     // Set translation context for AI usage tracking
     setTranslationContext(session.business_id || null, this.supabase);
 
+    _bmark('flow_exec_start');
     await this.flowExecutor.execute(from, text, session as unknown as BotSession, business, mediaUrl, messageType, resumedCanonical || undefined);
+    _bmark('flow_exec_done');
+    logger.info('[BOT-PERF] timings_ms', _btimings);
     } catch (err) {
       const errMsg = err instanceof Error ? `${err.message}\n${err.stack?.slice(0, 300)}` : String(err);
       logger.error('[BOT] handleMessage CRASH:', errMsg);

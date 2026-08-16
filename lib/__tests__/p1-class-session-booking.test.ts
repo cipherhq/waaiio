@@ -1744,3 +1744,563 @@ describe.skipIf(!dbUrl)('P1-CLASS-1: real PostgreSQL authority', () => {
     psql(`DELETE FROM bookings; UPDATE class_sessions SET status = 'scheduled' WHERE id = '${sid}';`);
   });
 });
+
+// ══════════════════════════════════════════════════════════
+// Class Management (Edit / Archive / Delete) — Source Verification
+// ══════════════════════════════════════════════════════════
+
+describe('P1-CLASS-MGMT: class management source verification', () => {
+  const classesPage = readFileSync('app/dashboard/classes/page.tsx', 'utf-8');
+  const classIdRoute = readFileSync('app/api/classes/[id]/route.ts', 'utf-8');
+  const recurrenceRoute = readFileSync('app/api/classes/recurrence/route.ts', 'utf-8');
+
+  // ── API Route Authority ──
+
+  it('MGMT-1: PATCH /api/classes/[id] requires auth', () => {
+    expect(classIdRoute).toContain("await supabase.auth.getUser()");
+    expect(classIdRoute).toContain("status: 401");
+  });
+
+  it('MGMT-2: PATCH verifies is_class=true', () => {
+    expect(classIdRoute).toContain(".eq('is_class', true)");
+  });
+
+  it('MGMT-3: PATCH requires manage_existing capability', () => {
+    expect(classIdRoute).toContain("action: 'manage_existing'");
+  });
+
+  it('MGMT-4: PATCH validates name is not empty', () => {
+    expect(classIdRoute).toContain('Name cannot be empty');
+  });
+
+  it('MGMT-5: PATCH validates price is non-negative', () => {
+    expect(classIdRoute).toContain('Price must be a non-negative number');
+  });
+
+  it('MGMT-6: PATCH validates duration is at least 1 minute', () => {
+    expect(classIdRoute).toContain('Duration must be at least 1 minute');
+  });
+
+  it('MGMT-7: PATCH validates capacity is at least 1', () => {
+    expect(classIdRoute).toContain('Capacity must be at least 1');
+  });
+
+  it('MGMT-8: PATCH uses service client for DB writes', () => {
+    expect(classIdRoute).toContain("createServiceClient()");
+  });
+
+  it('MGMT-9: Archive deactivates recurrence rules', () => {
+    expect(classIdRoute).toContain("isActive === false && cls.is_active === true");
+    expect(classIdRoute).toContain(".update({ is_active: false })");
+    expect(classIdRoute).toContain("recurrence rules deactivated");
+  });
+
+  it('MGMT-10: DELETE verifies is_class=true', () => {
+    const deleteFn = classIdRoute.slice(classIdRoute.indexOf('export async function DELETE'));
+    expect(deleteFn).toContain(".eq('is_class', true)");
+  });
+
+  it('MGMT-11: DELETE requires manage_existing capability', () => {
+    const deleteFn = classIdRoute.slice(classIdRoute.indexOf('export async function DELETE'));
+    expect(deleteFn).toContain("action: 'manage_existing'");
+  });
+
+  it('MGMT-12: DELETE rejects class with booking history', () => {
+    expect(classIdRoute).toContain('Cannot delete this class');
+    expect(classIdRoute).toContain('Archive it instead');
+    expect(classIdRoute).toContain('status: 409');
+  });
+
+  it('MGMT-13: DELETE uses soft-delete (deleted_at + is_active=false)', () => {
+    const deleteFn = classIdRoute.slice(classIdRoute.indexOf('export async function DELETE'));
+    expect(deleteFn).toContain('deleted_at');
+    expect(deleteFn).toContain('is_active: false');
+  });
+
+  it('MGMT-14: DELETE checks bookings via class_session_id', () => {
+    expect(classIdRoute).toContain("'class_session_id'");
+  });
+
+  it('MGMT-15: DELETE cancels future scheduled sessions', () => {
+    const deleteFn = classIdRoute.slice(classIdRoute.indexOf('export async function DELETE'));
+    expect(deleteFn).toContain("status: 'cancelled'");
+    expect(deleteFn).toContain("cancellation_reason: 'Class deleted'");
+  });
+
+  it('MGMT-16: PATCH excludes soft-deleted classes', () => {
+    expect(classIdRoute).toContain(".is('deleted_at', null)");
+  });
+
+  it('MGMT-17: PATCH has rate limiting', () => {
+    expect(classIdRoute).toContain('rateLimitResponseAsync');
+  });
+
+  // ── UI Components ──
+
+  it('MGMT-18: class cards have three-dot menu', () => {
+    expect(classesPage).toContain('ThreeDotMenu');
+    expect(classesPage).toContain('Class actions');
+  });
+
+  it('MGMT-19: three-dot menu has Edit Class action', () => {
+    expect(classesPage).toContain('Edit Class');
+    expect(classesPage).toContain('onEditClick');
+  });
+
+  it('MGMT-20: three-dot menu has Manage Schedule action', () => {
+    expect(classesPage).toContain('Manage Schedule');
+    expect(classesPage).toContain('onScheduleClick');
+  });
+
+  it('MGMT-21: three-dot menu has Archive Class action', () => {
+    expect(classesPage).toContain('Archive Class');
+    expect(classesPage).toContain('onArchiveClick');
+  });
+
+  it('MGMT-22: three-dot menu has Delete Class action', () => {
+    expect(classesPage).toContain('Delete Class');
+    expect(classesPage).toContain('onDeleteClick');
+  });
+
+  it('MGMT-23: Edit Class dialog exists', () => {
+    expect(classesPage).toContain('EditClassDialog');
+    expect(classesPage).toContain('Save Changes');
+  });
+
+  it('MGMT-24: Edit sends PATCH to /api/classes/[id]', () => {
+    expect(classesPage).toContain('/api/classes/${editingClass.id}');
+    expect(classesPage).toContain("method: 'PATCH'");
+  });
+
+  it('MGMT-25: Manage Schedule dialog loads recurrence rules', () => {
+    expect(classesPage).toContain('ManageScheduleDialog');
+    expect(classesPage).toContain('/api/classes/recurrence');
+  });
+
+  it('MGMT-26: Schedule dialog supports add, edit, toggle, delete', () => {
+    expect(classesPage).toContain('onAddRule');
+    expect(classesPage).toContain('onEditRule');
+    expect(classesPage).toContain('onToggleRule');
+    expect(classesPage).toContain('onDeleteRule');
+  });
+
+  it('MGMT-27: Archive confirmation dialog shows correct message', () => {
+    expect(classesPage).toContain('stop generating new sessions');
+    expect(classesPage).toContain('preserve');
+  });
+
+  it('MGMT-28: Delete confirmation warns about booking history', () => {
+    expect(classesPage).toContain('Permanently delete');
+    expect(classesPage).toContain('no booking history');
+  });
+
+  it('MGMT-29: Reactivate option shown for inactive classes', () => {
+    expect(classesPage).toContain('Reactivate Class');
+    expect(classesPage).toContain('reactivate its schedules separately');
+  });
+
+  it('MGMT-30: fetchClasses excludes soft-deleted services', () => {
+    expect(classesPage).toContain(".is('deleted_at', null)");
+  });
+
+  it('MGMT-31: Edit dialog shows note about future sessions only', () => {
+    expect(classesPage).toContain('Changes to duration and capacity only affect future sessions');
+  });
+
+  it('MGMT-32: Archived class cannot add new schedules', () => {
+    expect(classesPage).toContain('disabled={!cls.is_active}');
+    expect(classesPage).toContain('Reactivate it to add new schedules');
+  });
+
+  // ── Existing behavior preserved ──
+
+  it('MGMT-33: existing recurrence CRUD route unchanged', () => {
+    expect(recurrenceRoute).toContain("rpc('reconcile_class_recurrence'");
+    expect(recurrenceRoute).toContain("rpc('create_class_recurrence_atomic'");
+    expect(recurrenceRoute).toContain('booked_sessions_exist');
+  });
+
+  it('MGMT-34: session management still uses update_class_session_atomic', () => {
+    const sessionRoute = readFileSync('app/api/classes/sessions/[id]/route.ts', 'utf-8');
+    expect(sessionRoute).toContain("rpc('update_class_session_atomic'");
+  });
+
+  it('MGMT-35: existing services page unmodified', () => {
+    const servicesPage = readFileSync('app/dashboard/services/page.tsx', 'utf-8');
+    expect(servicesPage).toContain("from('services')");
+    // Services page should still work independently of class management
+    expect(servicesPage).not.toContain('ThreeDotMenu');
+  });
+
+  it('MGMT-36: GET /api/classes/[id] returns recurrence_rules', () => {
+    expect(classIdRoute).toContain("recurrence_rules");
+    expect(classIdRoute).toContain("action: 'read_history'");
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// Class UX Separation — Source Verification
+// ══════════════════════════════════════════════════════════
+
+describe('P1-CLASS-UX: class vs service separation', () => {
+  const capSelection = readFileSync('lib/bot/flows/capability-selection.flow.ts', 'utf-8');
+  const flowRouting = readFileSync('lib/bot/handlers/flow-routing.ts', 'utf-8');
+  const labels = readFileSync('lib/capabilities/labels.ts', 'utf-8');
+  const schedulingFlow = readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
+  const servicesPage = readFileSync('app/dashboard/services/page.tsx', 'utf-8');
+  const classesPage = readFileSync('app/dashboard/classes/page.tsx', 'utf-8');
+  const semanticTypes = readFileSync('lib/bot/semantic-types.ts', 'utf-8');
+  const smartIntent = readFileSync('lib/bot/smart-intent.ts', 'utf-8');
+  const llmIntent = readFileSync('lib/bot/llm-intent.ts', 'utf-8');
+  const actionDispatcher = readFileSync('lib/bot/action-dispatcher.ts', 'utf-8');
+
+  // ── WhatsApp: "Book a Class" menu option ──
+
+  it('UX-1: class_booking is NOT in nonUserFacing (capability-selection)', () => {
+    const nonUserFacingLine = capSelection.match(/const nonUserFacing = new Set\(\[([^\]]+)\]\)/);
+    expect(nonUserFacingLine).toBeTruthy();
+    expect(nonUserFacingLine![1]).not.toContain('class_booking');
+  });
+
+  it('UX-2: class_booking is NOT in nonUserFacing (flow-routing)', () => {
+    const nonUserFacingLine = flowRouting.match(/const nonUserFacing = new Set\(\[([^\]]+)\]\)/);
+    expect(nonUserFacingLine).toBeTruthy();
+    expect(nonUserFacingLine![1]).not.toContain('class_booking');
+  });
+
+  it('UX-3: class_booking label is "Book a Class"', () => {
+    expect(labels).toContain("case 'class_booking':");
+    expect(labels).toContain("'Book a Class'");
+  });
+
+  it('UX-4: class_booking has backing data check for is_class=true services', () => {
+    expect(capSelection).toContain("case 'class_booking':");
+    expect(capSelection).toContain(".eq('is_class', true)");
+  });
+
+  it('UX-5: scheduling backing data check excludes is_class=true', () => {
+    // The scheduling backing data check should filter out is_class services
+    expect(capSelection).toContain("is_class.is.null,is_class.eq.false");
+  });
+
+  it('UX-6: class_booking is hidden without active classes', () => {
+    // Backing data check returns false when no is_class=true services exist
+    expect(capSelection).toContain("case 'class_booking':");
+    expect(capSelection).toContain("(count || 0) > 0");
+  });
+
+  // ── WhatsApp: service filtering ──
+
+  it('UX-7: select_service prompt filters by active_capability', () => {
+    expect(schedulingFlow).toContain("activeCap === 'class_booking'");
+    expect(schedulingFlow).toContain(".eq('is_class', true)");
+  });
+
+  it('UX-8: select_service prompt excludes classes for non-class capability', () => {
+    expect(schedulingFlow).toContain("is_class.is.null,is_class.eq.false");
+  });
+
+  it('UX-9: select_service skipIf also filters by active_capability', () => {
+    expect(schedulingFlow).toContain("skipActiveCap === 'class_booking'");
+  });
+
+  it('UX-10: class path proceeds to select_class_session', () => {
+    expect(schedulingFlow).toContain("_service_is_class");
+    expect(schedulingFlow).toContain("'select_class_session'");
+  });
+
+  it('UX-11: canonical book_slot_atomic with p_class_session_id preserved', () => {
+    expect(schedulingFlow).toContain("p_class_session_id");
+  });
+
+  // ── WhatsApp: natural language ──
+
+  it('UX-12: class_booking semantic family defined', () => {
+    expect(semanticTypes).toContain("'class_booking'");
+    expect(semanticTypes).toContain("class_booking: ['class_booking']");
+  });
+
+  it('UX-13: smart intent detects "book a class" as class_booking', () => {
+    expect(smartIntent).toContain("class_booking");
+    expect(smartIntent).toContain("book|join|sign");
+  });
+
+  it('UX-14: smart intent detects "yoga" as class_booking', () => {
+    expect(smartIntent).toContain("yoga|pilates|aerobics|zumba");
+  });
+
+  it('UX-15: LLM intent includes class_booking semantic family', () => {
+    expect(llmIntent).toContain('"class_booking"');
+    expect(llmIntent).toContain('yoga class');
+  });
+
+  it('UX-16: action dispatcher handles class_booking for manage/history', () => {
+    expect(actionDispatcher).toContain("class_booking");
+  });
+
+  // ── Dashboard: services page (catalog view with tabs) ──
+
+  it('UX-17: /dashboard/services All tab shows services + classes', () => {
+    expect(servicesPage).toContain("filterTab === 'all'");
+    // All tab query has no is_class filter — shows everything
+    expect(servicesPage).toContain("filterTab === 'all' ? true");
+  });
+
+  it('UX-18: /dashboard/services has All | Services | Classes tabs', () => {
+    expect(servicesPage).toContain("'all', 'services', 'classes'");
+    expect(servicesPage).toContain("filterTab === 'classes'");
+  });
+
+  it('UX-19: Services tab excludes classes', () => {
+    // Services tab filters to !s.is_class
+    expect(servicesPage).toContain("!s.is_class");
+  });
+
+  it('UX-20: Classes tab shows only classes', () => {
+    // Classes tab filters to s.is_class
+    expect(servicesPage).toContain("s.is_class");
+  });
+
+  it('UX-21: Class badge visible on class services', () => {
+    expect(servicesPage).toContain('text-blue-600 font-medium">Class</span>');
+  });
+
+  it('UX-22a: Add Service defaults is_class to false', () => {
+    expect(servicesPage).toContain('is_class: false');
+  });
+
+  it('UX-22b: Classes link to dedicated /dashboard/classes for management', () => {
+    expect(servicesPage).toContain('/dashboard/classes');
+  });
+
+  // ── Dashboard: classes page ──
+
+  it('UX-23-dashboard: /dashboard/classes manages is_class=true exclusively', () => {
+    expect(classesPage).toContain(".eq('is_class', true)");
+    expect(classesPage).toContain("Create Class");
+    expect(classesPage).toContain("EditClassDialog");
+    expect(classesPage).toContain("ManageScheduleDialog");
+  });
+
+  // ── Architecture preserved ──
+
+  it('UX-23: no classes table created — services.is_class=true reused', () => {
+    expect(classesPage).toContain("from('services')");
+    expect(classesPage).not.toContain("from('classes')");
+  });
+
+  it('UX-24: existing scheduling flow not forked — class_booking reuses it', () => {
+    const capToStep = flowRouting.slice(flowRouting.indexOf('function capabilityToFirstStep'));
+    expect(capToStep).toContain("case 'class_booking': return 'select_service'");
+  });
+
+  it('UX-25: class_booking in VALID_SEMANTIC_FAMILIES', () => {
+    expect(semanticTypes).toContain("'class_booking'");
+    const validFamilies = semanticTypes.slice(semanticTypes.indexOf('VALID_SEMANTIC_FAMILIES'));
+    expect(validFamilies).toContain("'class_booking'");
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// Party Size Copy + Deterministic Routing — Source Verification
+// ══════════════════════════════════════════════════════════
+
+describe('P1-CLASS-COPY: party size copy + deterministic routing', () => {
+  const schedulingFlow = readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
+  const botService = readFileSync('lib/bot/bot.service.ts', 'utf-8');
+  const webhookRoute = readFileSync('app/api/webhook/meta-cloud/route.ts', 'utf-8');
+  const metaCloud = readFileSync('lib/channels/meta-cloud.ts', 'utf-8');
+
+  // ── Party Size Copy ──
+
+  it('COPY-1: class booking uses "spots" terminology', () => {
+    expect(schedulingFlow).toContain("How many spots would you like to book?");
+  });
+
+  it('COPY-2: class quantity buttons use "spot/spots"', () => {
+    expect(schedulingFlow).toContain("title: '1 spot'");
+    expect(schedulingFlow).toContain("title: '2 spots'");
+  });
+
+  it('COPY-2a: class quantity is single message (spots info in body)', () => {
+    // The class quantity prompt combines body + spots info — no separate text message
+    expect(schedulingFlow).toContain("available. Type a number (1-");
+    // Verify no second message type:'text' for class path
+    expect(schedulingFlow).not.toContain("{ type: 'text', text: `${remaining} spot");
+  });
+
+  it('COPY-3: generic multi-capacity service uses neutral "people" wording', () => {
+    expect(schedulingFlow).toContain('is this booking for?');
+  });
+
+  it('COPY-3a: generic quantity is single message (type hint in body)', () => {
+    // Type-a-number hint folded into the buttons body, no separate text message
+    expect(schedulingFlow).toContain("Or type a number (1-${maxQty}).");
+    expect(schedulingFlow).not.toContain("{ type: 'text', text: `Or type a number");
+  });
+
+  it('COPY-4: single-capacity service skips quantity (party_size = 1)', () => {
+    // When max_capacity <= 1, party_size is auto-set to 1
+    expect(schedulingFlow).toContain("!maxCap || maxCap <= 1");
+    expect(schedulingFlow).toContain("ctx.session.session_data.party_size = 1");
+  });
+
+  it('COPY-5: class path routes through select_quantity', () => {
+    // select_class_session next() should route to select_quantity, not select_addons
+    const classSessionNext = schedulingFlow.slice(
+      schedulingFlow.indexOf("// Route to quantity step for class bookings"),
+      schedulingFlow.indexOf("// ── Select Staff ──")
+    );
+    expect(classSessionNext).toContain("return 'select_quantity'");
+  });
+
+  it('COPY-6: class remaining capacity checked in skipIf', () => {
+    expect(schedulingFlow).toContain('_class_remaining_spots');
+    expect(schedulingFlow).toContain("eq('class_session_id', sessionId)");
+  });
+
+  it('COPY-7: class remaining capacity limits button choices', () => {
+    expect(schedulingFlow).toContain('Math.min(remaining, 10)');
+  });
+
+  it('COPY-8: class validation uses remaining capacity as max', () => {
+    const validateSection = schedulingFlow.slice(
+      schedulingFlow.indexOf("async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {\n        const isClass"),
+    );
+    expect(validateSection).toContain("isClass");
+    expect(validateSection).toContain("remaining || 10");
+  });
+
+  it('COPY-9: party_size still reaches canonical booking authority', () => {
+    expect(schedulingFlow).toContain("data: { party_size: size }");
+    // And the booking step uses party_size
+    expect(schedulingFlow).toContain("p_class_session_id");
+  });
+
+  it('COPY-10: remaining spots shown in prompt text', () => {
+    expect(schedulingFlow).toContain("spot${remaining === 1 ? '' : 's'} available");
+  });
+
+  // ── Deterministic Routing ──
+
+  it('ROUTE-1: deterministic postback detection defined', () => {
+    expect(botService).toContain('isDeterministicPostback');
+    expect(botService).toContain("cap_|class_session_");
+  });
+
+  it('ROUTE-2: button/list message types skip CAS-004', () => {
+    expect(botService).toContain("messageType === 'button' || messageType === 'list'");
+    expect(botService).toContain("!isDeterministicPostback");
+  });
+
+  it('ROUTE-3: CAS-004 canonical understanding skipped for deterministic postbacks', () => {
+    // The if-condition includes !isDeterministicPostback
+    expect(botService).toContain("&& !isDeterministicPostback) {");
+  });
+
+  it('ROUTE-4: conversational AI layer skipped for deterministic postbacks', () => {
+    expect(botService).toContain("&& !isDeterministicPostback) {\n      try {\n        const convConfig");
+  });
+
+  it('ROUTE-5: natural language text still goes through CAS-004', () => {
+    // isDeterministicPostback only matches known patterns — free text falls through
+    expect(botService).toContain("isDeterministicPostback = /^(cap_|class_session_");
+  });
+
+  it('ROUTE-6: escape hatches still checked before deterministic skip', () => {
+    // Escape hatches are checked at line ~1892, deterministic skip at ~2120
+    const escapePos = botService.indexOf('_handleEscapeHatch');
+    const deterPos = botService.indexOf('isDeterministicPostback');
+    expect(escapePos).toBeLessThan(deterPos);
+  });
+
+  it('ROUTE-7: cap_ prefix validated deterministically in select_capability', () => {
+    const capSelection = readFileSync('lib/bot/flows/capability-selection.flow.ts', 'utf-8');
+    expect(capSelection).toContain("input.startsWith('cap_')");
+  });
+
+  it('ROUTE-8: class_session_ prefix validated deterministically', () => {
+    expect(schedulingFlow).toContain("input.match(/^class_session_(.+)$/)");
+  });
+
+  // ── Performance Instrumentation ──
+
+  it('PERF-1: webhook has timing marks', () => {
+    expect(webhookRoute).toContain("mark('sig_verified')");
+    expect(webhookRoute).toContain("mark('channel_resolved')");
+    expect(webhookRoute).toContain("mark('idempotency_claimed')");
+    expect(webhookRoute).toContain("mark('bot_enter')");
+    expect(webhookRoute).toContain("mark('bot_complete')");
+    expect(webhookRoute).toContain("mark('msg_complete')");
+  });
+
+  it('PERF-2: webhook logs timing summary', () => {
+    expect(webhookRoute).toContain('[META-WEBHOOK-PERF]');
+  });
+
+  it('PERF-3: bot service has timing marks', () => {
+    expect(botService).toContain("_bmark('session_resolved')");
+    expect(botService).toContain("_bmark('flow_exec_start')");
+    expect(botService).toContain("_bmark('flow_exec_done')");
+  });
+
+  it('PERF-4: bot service logs timing summary', () => {
+    expect(botService).toContain('[BOT-PERF]');
+  });
+
+  it('PERF-5: Meta API send tracks slow calls', () => {
+    expect(metaCloud).toContain('[META-SEND-PERF]');
+    expect(metaCloud).toContain('metaMs > 500');
+  });
+
+  it('PERF-6: no PII logged in timing', () => {
+    // Timing logs should not contain phone, message body, or tokens
+    // The PERF log line must only contain the timings object, not user data
+    const perfLine = webhookRoute.match(/META-WEBHOOK-PERF.*timings/);
+    expect(perfLine).toBeTruthy();
+    // Verify no message content or phone concatenated with timing output
+    expect(webhookRoute).not.toContain("timings_ms', source");
+  });
+
+  // ── Performance Optimizations ──
+
+  it('OPT-1: no artificial delay between sequential sends', () => {
+    const executor = readFileSync('lib/bot/flows/executor.ts', 'utf-8');
+    expect(executor).not.toContain('setTimeout(resolve, 300)');
+    // Sequential sends are preserved — just no sleep between them
+    expect(executor).toContain('sendSingleMessage(to, msg)');
+  });
+
+  it('OPT-2: select_quantity class prompt is single message', () => {
+    // Class quantity returns one buttons message with spots info in body
+    expect(schedulingFlow).toContain("How many spots would you like to book?");
+    // Combined into body — no separate text message
+    expect(schedulingFlow).toContain("available. Type a number");
+  });
+
+  it('OPT-3: select_quantity normal prompt is single message', () => {
+    expect(schedulingFlow).toContain("is this booking for?\\n\\nOr type a number");
+  });
+
+  it('OPT-4: pre-checks parallelized', () => {
+    // Platform settings + maintenance check run in parallel
+    expect(botService).toContain('Promise.all');
+    expect(botService).toContain('loadPlatformSettings');
+    expect(botService).toContain("maintenance_mode");
+  });
+
+  it('OPT-5: request-scoped business cache avoids duplicate reads', () => {
+    expect(botService).toContain('_cachedBusiness');
+    // CAP-001 loads full business, flow executor reuses it
+    expect(botService).toContain('let business: BusinessRecord | null = _cachedBusiness');
+  });
+
+  it('OPT-6: sends remain sequential (message ordering preserved)', () => {
+    const executor = readFileSync('lib/bot/flows/executor.ts', 'utf-8');
+    // Messages sent in a for loop with await — order guaranteed
+    expect(executor).toContain('for (let i = 0; i < messages.length; i++)');
+    expect(executor).toContain('await this.sendSingleMessage(to, msg)');
+    // No artificial delay between sends
+    expect(executor).not.toContain('setTimeout(resolve, 300)');
+  });
+});

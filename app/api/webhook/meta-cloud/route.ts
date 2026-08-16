@@ -222,6 +222,9 @@ function getChannelResolver() {
 export async function POST(request: NextRequest) {
   const requestId = request.headers.get('x-request-id') || generateRequestId();
   const log = logger.withContext({ requestId });
+  const t0 = Date.now();
+  const timings: Record<string, number> = {};
+  const mark = (label: string) => { timings[label] = Date.now() - t0; };
 
   try {
     // Read raw body for signature verification
@@ -256,6 +259,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
       }
     }
+    mark('sig_verified');
 
     const body = JSON.parse(rawBody);
 
@@ -427,6 +431,7 @@ export async function POST(request: NextRequest) {
 
         // Resolve channel by phone_number_id
         const resolved = await resolver.resolveByPhoneNumberId(phoneNumberId);
+        mark('channel_resolved');
         log.debug('[META-WEBHOOK] Resolved channel:', resolved ? { channelId: resolved.channel.id, provider: resolved.channel.provider, phoneNumberId: resolved.channel.phone_number_id, hasToken: !!(resolved.channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN) } : 'NULL');
         if (!resolved) {
           log.debug('[META-WEBHOOK] No channel found for phone_number_id:', phoneNumberId);
@@ -502,6 +507,7 @@ export async function POST(request: NextRequest) {
               }
             }
 
+            mark('idempotency_claimed');
             // Process the message — wrap in try/catch for state updates
             try {
               // ── Handle WhatsApp Catalog order messages ──
@@ -649,8 +655,10 @@ export async function POST(request: NextRequest) {
               const standalone = new StandaloneService(supabase);
               const bot = new BotService(supabase, resolved.sender, standalone, intelligenceSvc);
 
+              mark('bot_enter');
               msgLog.debug('[META-WEBHOOK] Calling bot.handleMessage for ...', source.slice(-4), 'preResolvedBiz:', preResolvedBusinessId);
               await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl);
+              mark('bot_complete');
               msgLog.debug('[META-WEBHOOK] bot.handleMessage completed for ...', source.slice(-4));
 
               // Mark completed after successful processing
@@ -658,6 +666,8 @@ export async function POST(request: NextRequest) {
                 .from('processed_webhook_events')
                 .update({ status: 'completed', completed_at: new Date().toISOString() })
                 .eq('event_id', eventId);
+              mark('msg_complete');
+              log.info('[META-WEBHOOK-PERF] timings_ms', timings);
             } catch (processingErr) {
               // Mark failed — allows retry on next delivery
               msgLog.error('[META-WEBHOOK] Processing failed:', processingErr);
