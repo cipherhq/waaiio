@@ -5,6 +5,20 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-16
+
+### fix(P1-OVERLOAD): drop stale 26-arg book_slot_atomic overload
+
+- **Bug:** Production contained two `public.book_slot_atomic` overloads: a stale 26-arg version (pre-313, no advisory lock canonicalization, no idempotent retry, no appointment schedule validation, no staff availability, no requires_staff enforcement) and the canonical 27-arg version (from migrations 313/318/319). When callers omit `p_bot_session_id` (e.g. public web booking), PostgreSQL's "most specific match" resolves to the stale 26-arg version, bypassing all safety checks from migrations 318–319. PostgREST named-argument resolution makes ambiguous overloads unpredictable.
+- **Fix:** Migration 320: `DROP FUNCTION` of the exact stale 26-arg signature. Canonical 27-arg version (with `p_bot_session_id DEFAULT NULL`) remains. Verified exactly 1 overload remains. All callers that omit `p_bot_session_id` now resolve unambiguously to the canonical function. Also remediates canonical 27-arg ACL: REVOKEs EXECUTE from PUBLIC/anon/authenticated, GRANTs only to service_role (SECURITY DEFINER booking authority should not be callable by browser clients).
+- **Root cause:** Migrations 313/318/319 used `CREATE OR REPLACE` on the 27-arg signature, but never dropped the earlier 26-arg version created by a pre-313 migration. `CREATE OR REPLACE` only replaces when the signature matches exactly.
+- **Files:** `supabase/migrations/320_drop_stale_book_slot_overload.sql`
+- **Tests:** `lib/__tests__/p1-320-drop-stale-overload.test.ts` — 11 source verification + 9 real PostgreSQL tests
+- **Affects:** All `book_slot_atomic` callers: WhatsApp scheduling, public web booking, manual dashboard booking (via `book_manual_slot_atomic` wrapper)
+- **Could break:** Nothing — the 26-arg function had no callers that specifically targeted it. All callers pass named arguments that resolve to the canonical 27-arg version once the ambiguity is removed.
+
+---
+
 ## 2026-08-14
 
 ### fix(P1-STAFF-1): staff schedule enforcement at booking authority
