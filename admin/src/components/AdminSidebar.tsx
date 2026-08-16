@@ -45,6 +45,7 @@ import {
   FileSpreadsheet,
   ScanLine,
   Sparkles,
+  Gift,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminSession } from './AdminLayout';
@@ -93,6 +94,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
   {
     label: 'Operations',
     items: [
+      { icon: Gift, label: 'Instant Win', path: '/promotions', roles: ADMIN_PERMISSIONS['promotions'] },
       { icon: ClipboardList, label: 'Bookings', path: '/bookings', roles: ADMIN_PERMISSIONS['bookings'] },
       { icon: ShoppingCart, label: 'Orders', path: '/orders', roles: ADMIN_PERMISSIONS['orders'] },
       { icon: CreditCard, label: 'Payments', path: '/payments', roles: ADMIN_PERMISSIONS['payments'] },

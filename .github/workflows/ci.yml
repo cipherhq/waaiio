@@ -222,7 +222,7 @@ jobs:
           PGDATABASE: waaiio_test
         run: |
           echo "Verifying key tables..."
-          TABLES="businesses bookings payments orders products events event_tickets attendance_log whatsapp_channels processed_webhook_events"
+          TABLES="businesses bookings payments orders products events event_tickets attendance_log whatsapp_channels processed_webhook_events promo_campaigns promo_campaign_codes promo_redemptions"
           MISSING=0
           for t in $TABLES; do
             if psql -tAc "SELECT 1 FROM information_schema.tables WHERE table_name='$t'" | grep -q 1; then
@@ -1051,6 +1051,68 @@ jobs:
           if [ $EXIT_CODE -ne 0 ]; then echo "❌ P1-STAFF-1 DB tests failed."; exit 1; fi
           if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No P1-STAFF-1 DB tests passed."; exit 1; fi
           echo "✅ P1-STAFF-1 staff booking authority tests complete — zero skips, zero failures."
+
+      - name: PROMO-1 promotion code authority DB tests
+        if: hashFiles('lib/__tests__/promo-1-claim-authority-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_promo_test
+          createdb --maintenance-db=waaiio_test waaiio_promo_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_promo_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_promo_test
+          echo "Running PROMO-1 real PostgreSQL promotion code authority tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/promo-1-claim-authority-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ PROMO-1 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ PROMO-1 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No PROMO-1 DB tests passed."; exit 1; fi
+          echo "✅ PROMO-1 promotion code authority DB tests complete — zero skips, zero failures."
+
+      - name: PROMO-1 generation contention DB tests
+        if: hashFiles('lib/__tests__/promo-generation-contention-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_promo_cont_test
+          createdb --maintenance-db=waaiio_test waaiio_promo_cont_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_promo_cont_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_promo_cont_test
+          echo "Running PROMO-1 real two-connection generation contention tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/promo-generation-contention-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ PROMO-1 contention tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ PROMO-1 contention tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No PROMO-1 contention tests passed."; exit 1; fi
+          echo "✅ PROMO-1 generation contention tests complete — zero skips, zero failures."
 
   # ── Engineering Governance ──
   governance:

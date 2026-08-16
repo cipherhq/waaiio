@@ -1,0 +1,258 @@
+import { logger } from '@/lib/logger';
+import { NextResponse, type NextRequest } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import { requireCapability } from '@/lib/capabilities/api-guard';
+import type { PromoPrizeType } from '@/lib/promotions/types';
+import { validatePrefix } from '@/lib/promotions/normalize';
+
+interface PrizeInput {
+  name: string;
+  prize_type: PromoPrizeType;
+  quantity: number;
+  value?: number;
+  currency?: string;
+  fulfillment_instructions?: string | null;
+  sort_order?: number;
+}
+
+interface CodeConfig {
+  source: 'generated' | 'imported';
+  count?: number;
+}
+
+export async function POST(request: NextRequest) {
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const service = createServiceClient();
+
+  // The wizard nests everything under `campaign`
+  const campaignInput = body.campaign as Record<string, unknown> | undefined;
+  if (!campaignInput || typeof campaignInput !== 'object') {
+    return NextResponse.json({ error: 'campaign object is required' }, { status: 400 });
+  }
+
+  const businessId = campaignInput.business_id as string | undefined;
+  if (!businessId) {
+    return NextResponse.json({ error: 'campaign.business_id is required' }, { status: 400 });
+  }
+
+  const guard = await requireCapability(supabase, service, {
+    businessId,
+    userId: user.id,
+    capability: 'promo_verification',
+    action: 'create_new',
+  });
+  if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
+
+  // Pull snake_case fields directly from campaign object
+  const {
+    name,
+    description,
+    start_at,
+    end_at,
+    timezone,
+    keyword,
+    code_entry_mode,
+    accept_bare_codes,
+    code_length,
+    code_prefix,
+    max_attempts_per_phone,
+    rate_limit_window_minutes,
+    rate_limit_max_attempts,
+    eligibility_mode,
+    eligibility_prompt,
+    eligibility_min_age,
+    winner_message,
+    try_again_message,
+    invalid_message,
+    already_used_message,
+    expired_message,
+  } = campaignInput as {
+    name?: string;
+    description?: string;
+    start_at?: string;
+    end_at?: string;
+    timezone?: string;
+    keyword?: string;
+    code_entry_mode?: string;
+    accept_bare_codes?: boolean;
+    code_length?: number;
+    code_prefix?: string | null;
+    max_attempts_per_phone?: number;
+    rate_limit_window_minutes?: number;
+    rate_limit_max_attempts?: number;
+    eligibility_mode?: string;
+    eligibility_prompt?: string | null;
+    eligibility_min_age?: number | null;
+    winner_message?: string;
+    try_again_message?: string;
+    invalid_message?: string;
+    already_used_message?: string;
+    expired_message?: string;
+  };
+
+  // Validate required fields
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return NextResponse.json({ error: 'campaign.name is required' }, { status: 400 });
+  }
+  if (!winner_message || !try_again_message || !invalid_message || !already_used_message || !expired_message) {
+    return NextResponse.json(
+      {
+        error:
+          'All message fields (winner_message, try_again_message, invalid_message, already_used_message, expired_message) are required',
+      },
+      { status: 400 },
+    );
+  }
+
+  const validEntryModes = ['keyword', 'bare_code', 'both'];
+  if (code_entry_mode && !validEntryModes.includes(code_entry_mode)) {
+    return NextResponse.json({ error: `code_entry_mode must be one of: ${validEntryModes.join(', ')}` }, { status: 400 });
+  }
+
+  const validEligibilityModes = ['none', 'age_confirmation', 'custom'];
+  if (eligibility_mode && !validEligibilityModes.includes(eligibility_mode)) {
+    return NextResponse.json(
+      { error: `eligibility_mode must be one of: ${validEligibilityModes.join(', ')}` },
+      { status: 400 },
+    );
+  }
+
+  // Validate code_length: 6..24
+  const effectiveLength = typeof code_length === 'number' ? code_length : 12;
+  if (effectiveLength < 6 || effectiveLength > 24 || !Number.isInteger(effectiveLength)) {
+    return NextResponse.json({ error: 'code_length must be an integer between 6 and 24' }, { status: 400 });
+  }
+
+  // Validate code_prefix
+  const normalizedPrefix = (code_prefix as string | undefined)?.trim().toUpperCase() || '';
+  if (normalizedPrefix) {
+    const prefixValidation = validatePrefix(normalizedPrefix, effectiveLength);
+    if (!prefixValidation.valid) {
+      return NextResponse.json({ error: prefixValidation.error }, { status: 400 });
+    }
+  }
+
+  // Prizes come as a top-level array
+  const prizesRaw = body.prizes;
+  const prizeList: PrizeInput[] = Array.isArray(prizesRaw) ? (prizesRaw as PrizeInput[]) : [];
+  const validPrizeTypes = ['cash', 'airtime', 'product', 'voucher', 'discount', 'custom'];
+  for (let i = 0; i < prizeList.length; i++) {
+    const p = prizeList[i];
+    if (!p.name || typeof p.name !== 'string') {
+      return NextResponse.json({ error: `prizes[${i}].name is required` }, { status: 400 });
+    }
+    if (!p.prize_type || !validPrizeTypes.includes(p.prize_type)) {
+      return NextResponse.json(
+        { error: `prizes[${i}].prize_type must be one of: ${validPrizeTypes.join(', ')}` },
+        { status: 400 },
+      );
+    }
+    if (typeof p.quantity !== 'number' || p.quantity < 1 || !Number.isInteger(p.quantity)) {
+      return NextResponse.json({ error: `prizes[${i}].quantity must be a positive integer` }, { status: 400 });
+    }
+  }
+
+  // code_config determines whether to create a batch record
+  const codeConfig = body.code_config as CodeConfig | undefined;
+  const validSources = ['generated', 'imported'];
+  if (codeConfig && codeConfig.source && !validSources.includes(codeConfig.source)) {
+    return NextResponse.json(
+      { error: `code_config.source must be one of: ${validSources.join(', ')}` },
+      { status: 400 },
+    );
+  }
+
+  // Insert campaign
+  const { data: campaign, error: campaignError } = await service
+    .from('promo_campaigns')
+    .insert({
+      business_id: businessId,
+      name: name.trim(),
+      description: (description as string | undefined)?.trim() || null,
+      status: 'draft',
+      start_at: start_at || null,
+      end_at: end_at || null,
+      timezone: timezone || 'UTC',
+      code_entry_mode: code_entry_mode || 'both',
+      keyword: keyword?.trim() || null,
+      accept_bare_codes: accept_bare_codes ?? true,
+      code_length: effectiveLength,
+      code_prefix: normalizedPrefix || null,
+      max_attempts_per_phone: max_attempts_per_phone ?? 3,
+      rate_limit_window_minutes: rate_limit_window_minutes ?? 60,
+      rate_limit_max_attempts: rate_limit_max_attempts ?? 5,
+      eligibility_mode: eligibility_mode || 'none',
+      eligibility_prompt: eligibility_prompt?.trim() || null,
+      eligibility_min_age: eligibility_min_age || null,
+      winner_message: winner_message.trim(),
+      try_again_message: try_again_message.trim(),
+      invalid_message: invalid_message.trim(),
+      already_used_message: already_used_message.trim(),
+      expired_message: expired_message.trim(),
+      integrity_locked: false,
+      created_by: user.id,
+    })
+    .select()
+    .single();
+
+  if (campaignError || !campaign) {
+    logger.error('[PROMOTIONS] create campaign error:', campaignError);
+    return NextResponse.json({ error: 'Failed to create campaign' }, { status: 500 });
+  }
+
+  // Insert prizes
+  let insertedPrizes: unknown[] = [];
+  if (prizeList.length > 0) {
+    const { data: prizesData, error: prizesError } = await service
+      .from('promo_prizes')
+      .insert(
+        prizeList.map((p, i) => ({
+          campaign_id: campaign.id,
+          name: p.name.trim(),
+          prize_type: p.prize_type,
+          quantity: p.quantity,
+          allocated_count: 0,
+          value: p.value ?? null,
+          currency: p.currency?.toUpperCase() || null,
+          fulfillment_instructions: p.fulfillment_instructions?.trim() || null,
+          sort_order: p.sort_order ?? i,
+        })),
+      )
+      .select();
+
+    if (prizesError) {
+      logger.error('[PROMOTIONS] create prizes error:', prizesError);
+      // Campaign was created; clean up before returning error
+      await service.from('promo_campaigns').delete().eq('id', campaign.id);
+      return NextResponse.json({ error: 'Failed to create prizes' }, { status: 500 });
+    }
+
+    insertedPrizes = prizesData || [];
+  }
+
+  // Do NOT pre-create a pending batch — generation route creates its own batch
+  // when generation is actually started. Import route creates its own batch too.
+  // This prevents orphan pending batches that block activation validation.
+
+  return NextResponse.json(
+    {
+      id: campaign.id,
+      campaign,
+      prizes: insertedPrizes,
+    },
+    { status: 201 },
+  );
+}

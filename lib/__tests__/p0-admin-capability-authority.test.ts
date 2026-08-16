@@ -27,9 +27,9 @@ import { NextRequest } from 'next/server';
 // ── Drift prevention tests (no mocks needed) ──
 
 describe('P0-CAP: Canonical capability catalog drift prevention', () => {
-  it('1. shared/capabilities.ts CAPABILITY_IDS has exactly 31 entries', async () => {
+  it('1. shared/capabilities.ts CAPABILITY_IDS has exactly 32 entries', async () => {
     const { CAPABILITY_IDS } = await import('@/shared/capabilities');
-    expect(CAPABILITY_IDS).toHaveLength(31);
+    expect(CAPABILITY_IDS).toHaveLength(32);
   });
 
   it('2. no duplicate IDs in canonical catalog', async () => {

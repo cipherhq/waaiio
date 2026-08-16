@@ -40,6 +40,7 @@ import { handleCardPinStep as _handleCardPinStep } from './handlers/saved-cards'
 import { handleRefundRequest as _handleRefundRequest } from './handlers/refund-request';
 
 import { HOME_PATTERN, handleEscapeHatch as _handleEscapeHatch } from './handlers/escape-hatches';
+import { handlePromoVerification as _handlePromoVerification } from './handlers/promo-verification';
 import { handleGlobalQuery, isOrdersQuery } from './handlers/global-queries';
 import { ConversationOrchestrator } from './conversation-orchestrator';
 import { loadConversationConfig } from './confidence-policy';
@@ -1897,6 +1898,24 @@ export class BotService {
       this.handleMessage.bind(this),
     );
     if (escapeResult.handled) return;
+
+    // ── Promo code verification (before keyword matching) ──
+    // Check if this message is a promo code attempt (keyword mode or bare code mode).
+    // Pass effective capabilities from the session — the bot already resolved them,
+    // so we avoid a redundant businesses.capabilities DB read here.
+    if (!isChatMode && session.business_id) {
+      const sessionCapabilities = (session.session_data?.capabilities as string[] | undefined) || [];
+      const promoResult = await _handlePromoVerification(
+        this.supabase,
+        this.sendText.bind(this),
+        from,
+        text,
+        session.business_id,
+        session.session_data?.whatsapp_message_id as string | undefined,
+        sessionCapabilities,
+      );
+      if (promoResult.handled) return;
+    }
 
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
     // Only fire on non-free-text steps
