@@ -329,7 +329,7 @@ const navItems: NavItem[] = [
   },
   {
     href: '/dashboard/promotions',
-    label: 'Promotions',
+    label: 'Instant Win',
     icon: 'M9 12l2 2 4-4m5-2a9 9 0 11-18 0 9 9 0 0118 0z',
     capabilities: ['promo_verification'],
     section: 'engage',

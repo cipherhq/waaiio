@@ -115,11 +115,11 @@ const DEFAULT_WINNER_MESSAGE =
 const DEFAULT_TRY_AGAIN_MESSAGE =
   'Sorry, not a winner this time. Better luck next round! Keep participating for more chances to win.';
 const DEFAULT_INVALID_MESSAGE =
-  'That code is not valid for this promotion. Please check and try again with a valid code.';
+  'That code is not valid. Please check and try again with a valid code.';
 const DEFAULT_ALREADY_USED_MESSAGE =
   'This code has already been claimed. Each code can only be used once.';
 const DEFAULT_EXPIRED_MESSAGE =
-  'This promotion has ended. Thank you for participating!';
+  'This campaign has ended. Thank you for participating!';
 
 function makeKey() {
   return Math.random().toString(36).slice(2, 10);
@@ -262,14 +262,14 @@ function Step1Basics({ state, update }: { state: WizardState; update: (p: Partia
   return (
     <div className="space-y-5">
       <Card>
-        <SectionTitle>Promotion Details</SectionTitle>
+        <SectionTitle>Campaign Details</SectionTitle>
         <div className="space-y-4">
           <div>
-            <FieldLabel required>Promotion Name</FieldLabel>
+            <FieldLabel required>Campaign Name</FieldLabel>
             <Input
               value={state.name}
               onChange={(v) => update({ name: v })}
-              placeholder="e.g. Summer Win Big Promo"
+              placeholder="e.g. Summer Win Big Campaign"
               autoFocus
             />
           </div>
@@ -278,7 +278,7 @@ function Step1Basics({ state, update }: { state: WizardState; update: (p: Partia
             <Textarea
               value={state.description}
               onChange={(v) => update({ description: v })}
-              placeholder="Optional — describe this promotion to your team..."
+              placeholder="Optional — describe this campaign to your team..."
               rows={3}
             />
           </div>
@@ -750,10 +750,10 @@ function Step4WhatsApp({ state, update }: { state: WizardState; update: (p: Part
             <Input
               value={state.keyword}
               onChange={(v) => update({ keyword: v.toUpperCase() })}
-              placeholder="e.g. PROMO"
+              placeholder="e.g. WIN"
             />
             <p className="mt-1 text-xs text-gray-400">
-              Customers send this keyword to start the promotion flow. Leave blank if using bare code mode only.
+              Customers send this keyword to start the campaign flow. Leave blank if using bare code mode only.
             </p>
           </div>
 
@@ -993,7 +993,7 @@ function Step6Review({
   onSubmit: () => void;
 }) {
   const warnings: string[] = [];
-  if (!state.name.trim()) warnings.push('Promotion name is required.');
+  if (!state.name.trim()) warnings.push('Campaign name is required.');
   if (!state.start_at) warnings.push('Start date is not set.');
   if (!state.end_at) warnings.push('End date is not set.');
   if (state.code_source === 'generate' && state.code_count < 1) warnings.push('Code count must be at least 1.');
@@ -1126,10 +1126,10 @@ function Step6Review({
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
             </svg>
-            Creating promotion...
+            Creating campaign...
           </span>
         ) : (
-          'Create Promotion'
+          'Create Campaign'
         )}
       </button>
       <p className="text-center text-xs text-gray-400">
@@ -1243,7 +1243,7 @@ const INITIAL_STATE: WizardState = {
 function validateStep(step: number, state: WizardState): string[] {
   const errors: string[] = [];
   if (step === 1) {
-    if (!state.name.trim()) errors.push('Promotion name is required.');
+    if (!state.name.trim()) errors.push('Campaign name is required.');
     if (state.start_at && state.end_at && state.end_at <= state.start_at) {
       errors.push('End date must be after start date.');
     }
@@ -1429,8 +1429,8 @@ export default function CreatePromotionPage() {
           </svg>
         </button>
         <div>
-          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">New Promotion</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Configure your WhatsApp promo campaign</p>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">New Instant Win Campaign</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Configure your WhatsApp instant win campaign</p>
         </div>
       </div>
 

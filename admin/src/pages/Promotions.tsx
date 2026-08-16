@@ -190,7 +190,7 @@ export default function Promotions() {
 
   async function handlePause(campaignId: string) {
     if (!canMutate) return;
-    if (!confirm('Are you sure you want to pause this promotion?')) return;
+    if (!confirm('Are you sure you want to pause this campaign?')) return;
     setGovLoading(true);
     try {
       const { error } = await callAdminAction(campaignId, 'pause', 'Admin action');
@@ -204,7 +204,7 @@ export default function Promotions() {
 
   async function handleResume(campaignId: string) {
     if (!canMutate) return;
-    if (!confirm('Are you sure you want to resume this promotion?')) return;
+    if (!confirm('Are you sure you want to resume this campaign?')) return;
     setGovLoading(true);
     try {
       const { error } = await callAdminAction(campaignId, 'resume');
@@ -218,7 +218,7 @@ export default function Promotions() {
 
   async function handleEnd(campaignId: string) {
     if (!canMutate) return;
-    if (!confirm('Are you sure you want to end this promotion? This cannot be undone.')) return;
+    if (!confirm('Are you sure you want to end this campaign? This cannot be undone.')) return;
     setGovLoading(true);
     try {
       const { error } = await callAdminAction(campaignId, 'end', 'Admin action');
@@ -270,9 +270,9 @@ export default function Promotions() {
     <div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Promotions</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Instant Win Campaigns</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Platform-wide promotional campaigns — codes, verifications, and fulfillment
+            Platform-wide instant win campaigns — codes, verifications, and fulfillment
           </p>
         </div>
         {detailLoading && selected && (
@@ -313,7 +313,7 @@ export default function Promotions() {
       {/* ── Table ── */}
       <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
         {pageItems.length === 0 ? (
-          <div className="py-16 text-center text-sm text-gray-500">No promotions found</div>
+          <div className="py-16 text-center text-sm text-gray-500">No campaigns found</div>
         ) : (
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
@@ -376,7 +376,7 @@ export default function Promotions() {
       <DetailModal
         open={!!selected}
         onClose={() => setSelected(null)}
-        title={selected?.name || 'Promotion Details'}
+        title={selected?.name || 'Campaign Details'}
         wide
       >
         {selected && (
@@ -498,7 +498,7 @@ export default function Promotions() {
                     </div>
 
                     <div className="rounded-lg bg-gray-50 p-4">
-                      <p className="mb-2 text-xs font-semibold uppercase text-gray-500">Promo Capability</p>
+                      <p className="mb-2 text-xs font-semibold uppercase text-gray-500">Instant Win Capability</p>
                       <div className="space-y-2">
                         <DetailRow
                           label="promo_verification enabled"
@@ -546,7 +546,7 @@ export default function Promotions() {
                   </div>
                 </div>
                 <p className="text-xs text-gray-400 italic">
-                  Raw promo codes are never shown in the admin panel to protect campaign integrity.
+                  Raw campaign codes are never shown in the admin panel to protect campaign integrity.
                 </p>
               </div>
             )}

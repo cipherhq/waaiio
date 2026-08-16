@@ -7,9 +7,11 @@ import { decryptPromoCode } from '@/lib/promotions/crypto';
 import { formatPromoCode } from '@/lib/promotions/normalize';
 
 const PAGE_SIZE = 1000;
-// Full export uses 'code' (decrypted, formatted plaintext) — never expose ciphertext
-const CSV_HEADER = 'display_suffix,outcome,prize_id,status,claimed_at,claimed_by_phone\n';
-const CSV_HEADER_FULL = 'code,display_suffix,outcome,prize_id,status,claimed_at,claimed_by_phone\n';
+// Masked export: outcome/prize_id redacted for unused codes (winner confidentiality)
+const CSV_HEADER = 'display_suffix,outcome,status,claimed_at,claimed_by_phone\n';
+// Full/printable export: neutral columns only — outcome/prize_id NEVER included
+// (businesses need plaintext codes for printing, not winner allocation)
+const CSV_HEADER_FULL = 'code,display_suffix,status\n';
 
 function escapeCsvField(value: string | null | undefined): string {
   if (value === null || value === undefined) return '';
@@ -81,12 +83,15 @@ export async function GET(request: NextRequest) {
       .eq('business_id', businessId)
       .order('created_at', { ascending: false });
 
-    if (statusFilter && ['unused', 'claimed', 'void', 'winner', 'try_again'].includes(statusFilter)) {
-      if (['winner', 'try_again'].includes(statusFilter)) {
-        q = q.eq('outcome', statusFilter);
-      } else {
-        q = q.eq('status', statusFilter);
-      }
+    if (statusFilter && ['unused', 'claimed', 'void'].includes(statusFilter)) {
+      q = q.eq('status', statusFilter);
+    }
+    // Outcome filters (winner/try_again) restricted to claimed codes only —
+    // allowing outcome filtering on unused codes would reveal winner allocation.
+    if (statusFilter === 'winner') {
+      q = q.eq('outcome', 'winner').eq('status', 'claimed');
+    } else if (statusFilter === 'try_again') {
+      q = q.eq('outcome', 'try_again').eq('status', 'claimed');
     }
     if (batchFilter) {
       q = q.eq('batch_id', batchFilter);
@@ -106,17 +111,21 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch codes' }, { status: 500 });
     }
 
-    const maskedCodes = (codes || []).map((c) => ({
-      id: c.id,
-      // display_suffix is the last 4 chars of the normalized code — mask the rest
-      displayCode: `••••••••${c.display_suffix}`,
-      displaySuffix: c.display_suffix,
-      outcome: c.outcome,
-      status: c.status,
-      claimed_at: c.claimed_at,
-      batch_id: c.batch_id,
-      prize_id: c.prize_id,
-    }));
+    // Redact outcome/prize_id for unused codes to prevent revealing winner allocation.
+    // Only claimed codes may expose their outcome (the customer already knows).
+    const maskedCodes = (codes || []).map((c) => {
+      const isClaimed = c.status === 'claimed';
+      return {
+        id: c.id,
+        displayCode: `••••••••${c.display_suffix}`,
+        displaySuffix: c.display_suffix,
+        outcome: isClaimed ? c.outcome : null,
+        status: c.status,
+        claimed_at: c.claimed_at,
+        batch_id: c.batch_id,
+        prize_id: isClaimed ? c.prize_id : null,
+      };
+    });
 
     return NextResponse.json({
       codes: maskedCodes,
@@ -129,10 +138,10 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // CSV export — always select encrypted_code for full export (decrypted server-side)
+  // CSV export — full export needs encrypted_code for decryption; masked needs outcome for claimed-only reveal
   const selectColumns = isFull
-    ? 'encrypted_code,display_suffix,outcome,prize_id,status,claimed_at,claimed_by_phone'
-    : 'display_suffix,outcome,prize_id,status,claimed_at,claimed_by_phone';
+    ? 'encrypted_code,display_suffix,status'
+    : 'display_suffix,outcome,status,claimed_at,claimed_by_phone';
 
   // Paginate through codes and build CSV
   const csvChunks: string[] = [isFull ? CSV_HEADER_FULL : CSV_HEADER];
@@ -140,15 +149,13 @@ export async function GET(request: NextRequest) {
   let hasMore = true;
   let totalExported = 0;
 
-  // Dynamic select columns — type assertion needed
   type CodeRow = {
     encrypted_code?: string;
     display_suffix: string;
-    outcome: string;
-    prize_id: string | null;
+    outcome?: string;
     status: string;
-    claimed_at: string | null;
-    claimed_by_phone: string | null;
+    claimed_at?: string | null;
+    claimed_by_phone?: string | null;
   };
 
   while (hasMore) {
@@ -173,8 +180,8 @@ export async function GET(request: NextRequest) {
 
     for (const code of codes) {
       if (isFull) {
-        // Decrypt server-side and format for human readability.
-        // Never write ciphertext (encrypted_code) or normalized_code_hash to the output.
+        // Printable export: plaintext code + suffix + status ONLY.
+        // outcome/prize_id NEVER included — prevents pre-redemption winner identification.
         const decrypted = code.encrypted_code
           ? formatPromoCode(decryptPromoCode(code.encrypted_code))
           : '';
@@ -182,19 +189,16 @@ export async function GET(request: NextRequest) {
           [
             escapeCsvField(decrypted),
             escapeCsvField(code.display_suffix),
-            escapeCsvField(code.outcome),
-            escapeCsvField(code.prize_id),
             escapeCsvField(code.status),
-            escapeCsvField(code.claimed_at),
-            escapeCsvField(code.claimed_by_phone),
           ].join(',') + '\n',
         );
       } else {
+        // Masked export: redact outcome for unused codes (winner confidentiality)
+        const isClaimed = code.status === 'claimed';
         csvChunks.push(
           [
             escapeCsvField(code.display_suffix),
-            escapeCsvField(code.outcome),
-            escapeCsvField(code.prize_id),
+            escapeCsvField(isClaimed ? (code.outcome ?? '') : ''),
             escapeCsvField(code.status),
             escapeCsvField(code.claimed_at),
             escapeCsvField(code.claimed_by_phone),

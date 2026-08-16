@@ -519,7 +519,7 @@ export default function PromotionDetailPage() {
   const handleStatusChange = async (newStatus: string) => {
     if (!campaign) return;
     const label = STATUS_LABELS[newStatus as PromoCampaignStatus] || newStatus;
-    if (!confirm(`Are you sure you want to set this promotion to "${label}"?`)) return;
+    if (!confirm(`Are you sure you want to set this campaign to "${label}"?`)) return;
     setStatusChanging(true);
     try {
       const res = await fetch('/api/promotions/update', {
@@ -529,7 +529,12 @@ export default function PromotionDetailPage() {
       });
       if (!res.ok) {
         const data = await res.json();
-        alert(data.error || 'Failed to update status');
+        const errors: string[] = data.validation_errors || [];
+        if (errors.length > 0) {
+          alert(`Campaign cannot be activated:\n\n${errors.map((e: string) => `• ${e}`).join('\n')}`);
+        } else {
+          alert(data.error || 'Failed to update status');
+        }
       } else {
         await fetchCampaign();
       }
@@ -755,7 +760,7 @@ export default function PromotionDetailPage() {
           onClick={() => router.push('/dashboard/promotions')}
           className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:opacity-90"
         >
-          Back to Promotions
+          Back to Campaigns
         </button>
       </div>
     );
@@ -797,7 +802,7 @@ export default function PromotionDetailPage() {
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-          Promotions
+          Campaigns
         </button>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -1115,8 +1120,8 @@ export default function PromotionDetailPage() {
               <option value="unused">Unused</option>
               <option value="claimed">Claimed</option>
               <option value="void">Void</option>
-              <option value="winner">Winners</option>
-              <option value="try_again">Try Again</option>
+              <option value="winner">Winners (claimed)</option>
+              <option value="try_again">Try Again (claimed)</option>
             </select>
 
             {codesBatchFilter && (
@@ -1162,15 +1167,19 @@ export default function PromotionDetailPage() {
                           {code.displayCode}
                         </td>
                         <td className="px-4 py-3">
-                          <span
-                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                              code.outcome === 'winner'
-                                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                                : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
-                            }`}
-                          >
-                            {code.outcome === 'winner' ? 'Winner' : 'Try Again'}
-                          </span>
+                          {code.outcome ? (
+                            <span
+                              className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                                code.outcome === 'winner'
+                                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                                  : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+                              }`}
+                            >
+                              {code.outcome === 'winner' ? 'Winner' : 'Try Again'}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-400 dark:text-gray-500">—</span>
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           <span
@@ -1711,7 +1720,7 @@ export default function PromotionDetailPage() {
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Paste CSV data or upload a file. Each row should contain a promo code (and optionally outcome: winner/try_again).
+            Paste CSV data or upload a file. Each row should contain a campaign code (and optionally outcome: winner/try_again).
           </p>
 
           <div
@@ -1776,7 +1785,7 @@ export default function PromotionDetailPage() {
           </p>
           <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3">
             <p className="text-sm text-amber-800 dark:text-amber-300">
-              This export contains the actual promotion codes in plaintext.
+              This export contains the actual campaign codes in plaintext.
               These codes are sensitive and should be handled securely.
             </p>
           </div>

@@ -234,12 +234,12 @@ export default function PromotionsPage() {
     return (
       <div>
         <div className="flex items-start justify-between mb-6">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Promotions</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Instant Win Campaigns</h1>
           <Link
             href="/dashboard/promotions/create"
             className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition"
           >
-            + Create promotion
+            + Create Campaign
           </Link>
         </div>
         <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-4 text-sm text-red-700 dark:text-red-400 flex items-center gap-3">
@@ -247,7 +247,7 @@ export default function PromotionsPage() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
           <span>
-            Something went wrong loading your promotions.{' '}
+            Something went wrong loading your campaigns.{' '}
             <button
               onClick={() => { setLoading(true); loadData(); }}
               className="font-medium underline hover:no-underline"
@@ -267,23 +267,23 @@ export default function PromotionsPage() {
       <div>
         <div className="flex items-start justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Promotions</h1>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Instant Win Campaigns</h1>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Run WhatsApp-based code verification promotions
+              Create code-based campaigns where customers enter a unique code to instantly discover if they&apos;ve won.
             </p>
           </div>
           <Link
             href="/dashboard/promotions/create"
             className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition"
           >
-            + Create promotion
+            + Create Campaign
           </Link>
         </div>
 
         <PageHelp
           pageKey="promotions"
-          title="Promotions"
-          description="Print unique codes on products or packaging. Customers verify their codes via WhatsApp and instantly find out if they've won a prize."
+          title="Instant Win Campaigns"
+          description="Create code-based campaigns where customers enter a unique code to instantly discover if they've won. Print codes on products or packaging — customers verify via WhatsApp."
         />
 
         <div className="mt-12 flex flex-col items-center justify-center text-center px-4">
@@ -297,10 +297,10 @@ export default function PromotionsPage() {
           </div>
 
           <h3 className="mt-5 text-lg font-semibold text-gray-900 dark:text-white">
-            No promotions yet
+            No campaigns yet
           </h3>
           <p className="mt-2 max-w-sm text-sm text-gray-500 dark:text-gray-400">
-            Create your first promotion campaign. Print unique codes on your packaging — customers verify via WhatsApp to win prizes instantly.
+            Create your first instant win campaign. Print unique codes on your packaging — customers verify via WhatsApp to win prizes instantly.
           </p>
 
           <div className="mt-6 flex flex-col sm:flex-row gap-3">
@@ -311,7 +311,7 @@ export default function PromotionsPage() {
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
-              Create promotion
+              Create Campaign
             </Link>
           </div>
 
@@ -357,7 +357,7 @@ export default function PromotionsPage() {
       {/* Header */}
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Promotions</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Instant Win Campaigns</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             {campaigns.length} campaign{campaigns.length !== 1 ? 's' : ''}
           </p>
@@ -366,20 +366,20 @@ export default function PromotionsPage() {
           href="/dashboard/promotions/create"
           className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition shrink-0"
         >
-          + Create promotion
+          + Create Campaign
         </Link>
       </div>
 
       <PageHelp
         pageKey="promotions"
-        title="Promotions"
-        description="Run code verification promotions. Print unique codes on products — customers verify via WhatsApp and instantly find out if they've won."
+        title="Instant Win Campaigns"
+        description="Create code-based campaigns where customers enter a unique code to instantly discover if they've won. Print codes on products — customers verify via WhatsApp."
       />
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-          <p className="text-sm text-gray-500 dark:text-gray-400">Active Promotions</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Active Campaigns</p>
           <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">{stats.active}</p>
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">

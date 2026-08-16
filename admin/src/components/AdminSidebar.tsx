@@ -94,7 +94,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
   {
     label: 'Operations',
     items: [
-      { icon: Gift, label: 'Promotions', path: '/promotions', roles: ADMIN_PERMISSIONS['promotions'] },
+      { icon: Gift, label: 'Instant Win', path: '/promotions', roles: ADMIN_PERMISSIONS['promotions'] },
       { icon: ClipboardList, label: 'Bookings', path: '/bookings', roles: ADMIN_PERMISSIONS['bookings'] },
       { icon: ShoppingCart, label: 'Orders', path: '/orders', roles: ADMIN_PERMISSIONS['orders'] },
       { icon: CreditCard, label: 'Payments', path: '/payments', roles: ADMIN_PERMISSIONS['payments'] },
