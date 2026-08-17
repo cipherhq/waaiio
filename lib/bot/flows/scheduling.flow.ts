@@ -204,6 +204,14 @@ export const schedulingFlow: FlowDefinition = {
           .is('deleted_at', null)
           .order('sort_order');
 
+        // Separate class vs normal service paths
+        const activeCap = ctx.session.session_data.active_capability as string | undefined;
+        if (activeCap === 'class_booking') {
+          query = query.eq('is_class', true);
+        } else {
+          query = query.or('is_class.is.null,is_class.eq.false');
+        }
+
         // If smart intent matched multiple services, only show those
         const matchedIds = ctx.session.session_data._matched_service_ids as string[] | undefined;
         if (matchedIds && matchedIds.length > 0) {
@@ -363,12 +371,16 @@ export const schedulingFlow: FlowDefinition = {
           },
         };
       },
-      async next() { return 'select_date'; },
+      async next(ctx: FlowContext) {
+        // Class services route to session selection instead of date/time
+        if (ctx.session.session_data._service_is_class) return 'select_class_session';
+        return 'select_date';
+      },
       async skipIf(ctx: FlowContext) {
         if (ctx.session.session_data.skip_service) return true;
         if (!ctx.business) return true;
 
-        const { data: services } = await ctx.supabase
+        let skipQuery = ctx.supabase
           .from('services')
           .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, auto_approve, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
           .eq('business_id', ctx.business.id)
@@ -376,6 +388,16 @@ export const schedulingFlow: FlowDefinition = {
           .neq('service_type', 'giving')
           .is('deleted_at', null)
           .order('sort_order');
+
+        // Separate class vs normal service paths
+        const skipActiveCap = ctx.session.session_data.active_capability as string | undefined;
+        if (skipActiveCap === 'class_booking') {
+          skipQuery = skipQuery.eq('is_class', true);
+        } else {
+          skipQuery = skipQuery.or('is_class.is.null,is_class.eq.false');
+        }
+
+        const { data: services } = await skipQuery;
 
         if (!services || services.length === 0) {
           // Set default values so downstream steps don't crash on null service data
@@ -428,6 +450,113 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         return false;
+      },
+    },
+
+    // ── Select Class Session ──
+    {
+      id: 'select_class_session',
+      async skipIf(ctx: FlowContext) {
+        // Only active for class services
+        return !ctx.session.session_data._service_is_class;
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const serviceId = ctx.session.session_data.service_id as string;
+        const serviceName = ctx.session.session_data.service_name as string || 'Class';
+
+        // Fetch upcoming sessions via RPC
+        const { data: sessions } = await ctx.supabase
+          .rpc('get_upcoming_class_sessions', { p_service_id: serviceId, p_limit: 10 });
+
+        if (!sessions || sessions.length === 0) {
+          return [{
+            type: 'text' as const,
+            text: `Sorry, there are no upcoming ${serviceName} sessions available right now. Send *Hi* to explore other options.`,
+          }];
+        }
+
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        const bizMeta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const use12hr = bizMeta.time_format !== '24hr';
+
+        const items = sessions
+          .filter((s: { spots_taken: number; capacity: number }) => s.spots_taken < s.capacity)
+          .slice(0, 10)
+          .map((s: { session_id: string; session_date: string; start_time: string; capacity: number; spots_taken: number; staff_name: string | null }) => {
+            const dateLabel = new Date(s.session_date + 'T00:00').toLocaleDateString(
+              getLocale(cc), { weekday: 'short', day: 'numeric', month: 'short' },
+            );
+            const timeLabel = formatTime(s.start_time.slice(0, 5), use12hr);
+            const remaining = s.capacity - s.spots_taken;
+            let desc = `${remaining} spot${remaining !== 1 ? 's' : ''} left`;
+            if (s.staff_name) desc = `${s.staff_name} • ${desc}`;
+            return {
+              title: `${dateLabel}, ${timeLabel}`,
+              description: desc,
+              postbackText: `class_session_${s.session_id}`,
+            };
+          });
+
+        if (items.length === 0) {
+          return [{
+            type: 'text' as const,
+            text: `All upcoming ${serviceName} sessions are fully booked. Send *Hi* to explore other options.`,
+          }];
+        }
+
+        return [{
+          type: 'list' as const,
+          title: 'Choose Session',
+          body: `Pick a ${serviceName} session:`,
+          buttonLabel: 'Choose',
+          items,
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const match = input.match(/^class_session_(.+)$/);
+        if (!match) {
+          return { valid: false, errorMessage: 'Please tap one of the session options above.' };
+        }
+        const sessionId = match[1];
+
+        // Verify session exists, is scheduled, and has capacity
+        const { data: session } = await ctx.supabase
+          .from('class_sessions')
+          .select('id, date, start_time, end_time, capacity, status, staff_id, location_id')
+          .eq('id', sessionId)
+          .eq('status', 'scheduled')
+          .maybeSingle();
+
+        if (!session) {
+          return { valid: false, errorMessage: 'This session is no longer available. Please choose another.' };
+        }
+
+        // Check capacity
+        const { count } = await ctx.supabase
+          .from('bookings')
+          .select('id', { count: 'exact', head: true })
+          .eq('class_session_id', sessionId)
+          .in('status', ['confirmed', 'pending', 'in_progress']);
+
+        if ((count || 0) >= session.capacity) {
+          return { valid: false, errorMessage: 'This session just filled up. Please choose another.' };
+        }
+
+        return {
+          valid: true,
+          data: {
+            _class_session_id: session.id,
+            date: session.date,
+            time: session.start_time.slice(0, 5),
+            staff_id: session.staff_id || null,
+            location_id: session.location_id || null,
+          },
+        };
+      },
+      async next() {
+        // Skip date, staff, time selection — session determines all of these
+        // Route to quantity step for class bookings (supports multi-spot booking)
+        return 'select_quantity';
       },
     },
 
@@ -1440,6 +1569,32 @@ export const schedulingFlow: FlowDefinition = {
           return true;
         }
 
+        // For class bookings, check remaining capacity of the selected session
+        const isClass = ctx.session.session_data._service_is_class;
+        if (isClass) {
+          const sessionId = ctx.session.session_data._class_session_id as string | undefined;
+          if (sessionId) {
+            const { data: session } = await ctx.supabase
+              .from('class_sessions')
+              .select('capacity')
+              .eq('id', sessionId)
+              .single();
+            const { count } = await ctx.supabase
+              .from('bookings')
+              .select('id', { count: 'exact', head: true })
+              .eq('class_session_id', sessionId)
+              .in('status', ['confirmed', 'pending', 'in_progress']);
+            const remaining = (session?.capacity || 1) - (count || 0);
+            if (remaining <= 1) {
+              ctx.session.session_data.party_size = 1;
+              return true;
+            }
+            // Store remaining for prompt/validation
+            ctx.session.session_data._class_remaining_spots = remaining;
+          }
+          return false;
+        }
+
         // Skip if max capacity is 1 or not set (single-person service)
         const maxCap = ctx.session.session_data._service_max_capacity as number | null | undefined;
         if (!maxCap || maxCap <= 1) {
@@ -1450,34 +1605,60 @@ export const schedulingFlow: FlowDefinition = {
         return false;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const isClass = ctx.session.session_data._service_is_class;
+
+        // Class booking: use "spots" terminology and respect remaining capacity
+        if (isClass) {
+          const remaining = (ctx.session.session_data._class_remaining_spots as number) || 1;
+          const maxSpots = Math.min(remaining, 10);
+          const buttons = maxSpots <= 3
+            ? [
+                { id: '1', title: '1 spot' },
+                ...(maxSpots >= 2 ? [{ id: '2', title: '2 spots' }] : []),
+              ]
+            : [
+                { id: '1', title: '1 spot' },
+                { id: '2', title: '2 spots' },
+                ...(maxSpots >= 4 ? [{ id: '4', title: '4 spots' }] : [{ id: String(maxSpots), title: `${maxSpots} spots` }]),
+              ];
+          return [{
+            type: 'buttons',
+            body: `How many spots would you like to book?\n\n${remaining} spot${remaining === 1 ? '' : 's'} available. Type a number (1-${maxSpots}).`,
+            buttons,
+          }];
+        }
+
+        // Normal service: use category-appropriate or neutral terminology
         const category = ctx.business?.category || 'restaurant';
         const labels = getCategoryLabels(category);
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const maxQty = (meta.max_party_size as number) || getMaxQuantity(category);
-        // Adapt button options to sensible values per category
-        const singularLabel = labels.quantityLabel === 'guests' ? 'guest' : '';
+        const qtyLabel = labels.quantityLabel || 'people';
+        const singularLabel = qtyLabel === 'guests' ? 'guest' : (qtyLabel === 'people' ? 'person' : '');
         const buttons = maxQty <= 3
           ? [
               { id: '1', title: `1 ${singularLabel}`.trim() },
-              { id: '2', title: `2 ${labels.quantityLabel}` },
+              { id: '2', title: `2 ${qtyLabel}` },
             ]
           : [
               { id: '1', title: `1 ${singularLabel}`.trim() },
-              { id: '2', title: `2 ${labels.quantityLabel}` },
-              { id: '4', title: `4 ${labels.quantityLabel}` },
+              { id: '2', title: `2 ${qtyLabel}` },
+              { id: '4', title: `4 ${qtyLabel}` },
             ];
-        return [
-          {
-            type: 'buttons',
-            body: `How many ${labels.quantityLabel}?`,
-            buttons,
-          },
-          { type: 'text', text: `Or type a number (1-${maxQty}).` },
-        ];
+        return [{
+          type: 'buttons',
+          body: `How many ${qtyLabel} is this booking for?\n\nOr type a number (1-${maxQty}).`,
+          buttons,
+        }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const isClass = ctx.session.session_data._service_is_class;
+        const remaining = (ctx.session.session_data._class_remaining_spots as number) || undefined;
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
-        const maxQty = (meta.max_party_size as number) || getMaxQuantity(ctx.business?.category || 'restaurant');
+        const maxQty = isClass
+          ? Math.min(remaining || 10, 10)
+          : ((meta.max_party_size as number) || getMaxQuantity(ctx.business?.category || 'restaurant'));
+
         let size = parseInt(input, 10);
         // Try natural language extraction if bare parseInt failed ("for 3 guests", "table for 4", "we are 5")
         if (isNaN(size) && !/^\d+$/.test(input.trim())) {
@@ -1486,7 +1667,8 @@ export const schedulingFlow: FlowDefinition = {
           if (entities.quantity) size = entities.quantity;
         }
         if (isNaN(size) || size < 1 || size > maxQty) {
-          return { valid: false, errorMessage: `Please enter a number between 1 and ${maxQty}.` };
+          const unit = isClass ? 'spots' : 'people';
+          return { valid: false, errorMessage: `Please enter a number between 1 and ${maxQty} ${unit}.` };
         }
         ctx.intelligence.resetAbuse(ctx.from);
         return { valid: true, data: { party_size: size } };
@@ -2373,6 +2555,7 @@ export const schedulingFlow: FlowDefinition = {
                 p_buffer_minutes: (d._service_buffer_minutes as number) || 0,
                 p_duration: (d.service_duration as number) || 30,
                 p_bot_session_id: ctx.session.id,
+                p_class_session_id: (d._class_session_id as string) || null,
                 p_enrollment_id: packageEnrollmentId,
               });
 
@@ -2419,6 +2602,7 @@ export const schedulingFlow: FlowDefinition = {
                 p_buffer_minutes: (d._service_buffer_minutes as number) || 0,
                 p_duration: (d.service_duration as number) || 30,
                 p_bot_session_id: ctx.session.id,
+                p_class_session_id: (d._class_session_id as string) || null,
               })
               .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 

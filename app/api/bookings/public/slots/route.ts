@@ -105,7 +105,7 @@ export async function GET(request: NextRequest) {
     } else {
       const { data: service, error: svcError } = await supabase
         .from('services')
-        .select('duration_minutes, buffer_minutes, max_capacity, metadata, requires_staff, staff_ids')
+        .select('duration_minutes, buffer_minutes, max_capacity, metadata, requires_staff, staff_ids, is_class')
         .eq('id', serviceId!)
         .eq('business_id', businessId)
         .eq('is_active', true)
@@ -114,6 +114,27 @@ export async function GET(request: NextRequest) {
       if (svcError || !service) {
         return NextResponse.json({ error: 'Service not found' }, { status: 404 });
       }
+
+      // Class services: return sessions instead of arbitrary time slots
+      if (service.is_class) {
+        const { data: sessions } = await supabase
+          .rpc('get_upcoming_class_sessions', { p_service_id: serviceId, p_limit: 20 });
+        const classSessions = (sessions || [])
+          .filter((s: { spots_taken: number; capacity: number; status: string }) =>
+            s.status === 'scheduled' && s.spots_taken < s.capacity)
+          .map((s: { session_id: string; session_date: string; start_time: string; end_time: string; capacity: number; spots_taken: number; staff_name: string | null; location_name: string | null }) => ({
+            session_id: s.session_id,
+            date: s.session_date,
+            time: s.start_time?.slice(0, 5),
+            end_time: s.end_time?.slice(0, 5),
+            available: s.capacity - s.spots_taken,
+            capacity: s.capacity,
+            staff_name: s.staff_name,
+            location_name: s.location_name,
+          }));
+        return NextResponse.json({ slots: classSessions, is_class: true });
+      }
+
       itemDuration = service.duration_minutes || 30;
       itemBuffer = service.buffer_minutes || 0;
       itemMaxCapacity = service.max_capacity;

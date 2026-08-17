@@ -96,6 +96,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
     items: [
       { icon: Gift, label: 'Instant Win', path: '/promotions', roles: ADMIN_PERMISSIONS['promotions'] },
       { icon: ClipboardList, label: 'Bookings', path: '/bookings', roles: ADMIN_PERMISSIONS['bookings'] },
+      { icon: Users, label: 'Class Sessions', path: '/class-sessions', roles: ADMIN_PERMISSIONS['bookings'] },
       { icon: ShoppingCart, label: 'Orders', path: '/orders', roles: ADMIN_PERMISSIONS['orders'] },
       { icon: CreditCard, label: 'Payments', path: '/payments', roles: ADMIN_PERMISSIONS['payments'] },
       { icon: RefreshCw, label: 'Subscriptions', path: '/subscriptions', roles: ADMIN_PERMISSIONS['subscriptions'] },

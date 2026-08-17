@@ -521,6 +521,11 @@ const INFORMATIONAL_PATTERNS = [
 function detectSemanticFamily(text: string, broadIntent: SmartParseResult['intent']): import('./semantic-types').SemanticFamily {
   // Specific family patterns take priority over broad intent.
   // Order matters: check more specific families first.
+  // Class booking: "book a class", "yoga class", "classes", "join a class"
+  if (/\b(book|join|sign\s*up|register|enrol)\b.*\bclass/i.test(text)) return 'class_booking';
+  if (/\bclass(es)?\b/i.test(text) && !/\b(first[\s-]?class|world[\s-]?class|class[\s-]?action)\b/i.test(text)) return 'class_booking';
+  if (/\b(yoga|pilates|aerobics|zumba|spin\s*class|crossfit\s*class|dance\s*class|bootcamp)\b/i.test(text)) return 'class_booking';
+
   if (PROPERTY_RESERVATION_PATTERNS.some(p => p.test(text))) return 'property_reservation';
   if (TABLE_RESERVATION_PATTERNS.some(p => p.test(text))) return 'table_reservation';
   if (GIVING_PATTERNS.some(p => p.test(text))) return 'giving';

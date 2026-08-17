@@ -31,6 +31,7 @@ export async function POST(request: NextRequest) {
       staffId,
       notes,
       sendConfirmation,
+      classSessionId,
     } = body;
 
     // Validate required fields — exactly one of serviceId or appointmentId
@@ -43,6 +44,12 @@ export async function POST(request: NextRequest) {
     if (serviceId && appointmentId) {
       return NextResponse.json({ error: 'Provide serviceId or appointmentId, not both' }, { status: 400 });
     }
+    if (classSessionId && appointmentId) {
+      return NextResponse.json({ error: 'Cannot combine appointmentId and classSessionId' }, { status: 400 });
+    }
+    if (classSessionId && !serviceId) {
+      return NextResponse.json({ error: 'classSessionId requires serviceId' }, { status: 400 });
+    }
 
     // Reject past dates
     const today = new Date().toISOString().split('T')[0];
@@ -50,13 +57,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Date cannot be in the past' }, { status: 400 });
     }
 
-    // ── Capability enforcement: appointment OR scheduling / create_new ──
+    // ── Resolve authoritative service type for capability enforcement ──
     const serviceClient = createServiceClient();
-    const guard = await requireAnyCapability(supabase, serviceClient, {
-      businessId, userId: user.id, capabilities: ['appointment', 'scheduling'], action: 'create_new',
-    });
-    if (!guard.allowed) {
-      return NextResponse.json(guard.denial, { status: guard.status });
+
+    // Detect class service from the authoritative record
+    let isClassService = false;
+    if (serviceId) {
+      const { data: svcCheck } = await serviceClient
+        .from('services')
+        .select('is_class')
+        .eq('id', serviceId)
+        .eq('business_id', businessId)
+        .maybeSingle();
+      isClassService = svcCheck?.is_class ?? false;
+    }
+
+    // Class service requires class_booking + classSessionId
+    if (isClassService) {
+      if (!classSessionId) {
+        return NextResponse.json({ error: 'Class services require a classSessionId' }, { status: 400 });
+      }
+      const guard = await requireAnyCapability(supabase, serviceClient, {
+        businessId, userId: user.id, capabilities: ['class_booking' as import('@/lib/capabilities/types').CapabilityId], action: 'create_new',
+      });
+      if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
+    } else {
+      const guard = await requireAnyCapability(supabase, serviceClient, {
+        businessId, userId: user.id, capabilities: ['appointment', 'scheduling'], action: 'create_new',
+      });
+      if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
     }
 
     // Get business name/country for notifications
@@ -106,8 +135,9 @@ export async function POST(request: NextRequest) {
       itemRequiresStaff = service.requires_staff ?? false;
     }
 
-    // Reject requires_staff items without a staff assignment
-    if (itemRequiresStaff && !staffId) {
+    // Reject requires_staff items without a staff assignment (non-class only)
+    // Class bookings use session instructor — DB authority validates
+    if (itemRequiresStaff && !staffId && !classSessionId) {
       return NextResponse.json({ error: 'This service requires a staff member to be assigned' }, { status: 400 });
     }
 
@@ -170,6 +200,7 @@ export async function POST(request: NextRequest) {
         p_buffer_minutes: itemBufferMinutes,
         p_duration: itemDuration,
         p_appointment_id: appointmentId || null,
+        p_class_session_id: classSessionId || null,
       })
       .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 

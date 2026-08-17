@@ -175,6 +175,8 @@ vi.mock('@/lib/supabase/service', () => ({
         : table === 'businesses' ? mockBusinessLookup2
         : table === 'business_staff' ? mockStaffLookup2
         : vi.fn().mockResolvedValue({ data: null, error: null }),
+      // maybeSingle used by is_class check — default to non-class service
+      maybeSingle: vi.fn().mockResolvedValue({ data: { is_class: false }, error: null }),
     })),
     rpc: mockRpc2,
   })),
@@ -523,9 +525,14 @@ describeDb('Real PostgreSQL: appointment booking authority', () => {
   const CUST_ID = '00000000-0000-0000-0000-00000a170005';
 
   beforeAll(() => {
-    // Apply migration 318
-    const migration318 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
-    runSQL(migration318);
+    // Apply migration 318 only if check_appointment_schedule doesn't exist yet
+    // (in CI, all migrations are already applied to waaiio_test — re-applying 318
+    // would create a 27-arg book_slot_atomic overload conflicting with 321's 28-arg)
+    const fnExists = runSQL(`SELECT count(*) FROM pg_proc WHERE proname = 'check_appointment_schedule';`);
+    if (fnExists === '0') {
+      const migration318 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
+      runSQL(migration318);
+    }
 
     runSQL(`
       ALTER TABLE auth.users DISABLE TRIGGER ALL;

@@ -656,9 +656,7 @@ export class FlowExecutor {
       try {
         const msg = shouldTranslate ? await this.translateMessage(messages[i], lang!) : messages[i];
         await this.sendSingleMessage(to, msg);
-        if (i < messages.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
+        // Sequential sends preserve ordering — no artificial delay needed
       } catch (err) {
         logger.error('[EXECUTOR] Failed to send message', i + 1, 'of', messages.length, 'to', to, ':', err);
       }

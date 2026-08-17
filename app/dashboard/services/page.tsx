@@ -171,7 +171,6 @@ export default function ServicesPage() {
 
   async function fetchClassRoster(serviceId: string) {
     const supabase = createClient();
-    // Get next upcoming class date
     const today = new Date().toISOString().split('T')[0];
     const { data } = await supabase
       .from('bookings')
@@ -272,7 +271,6 @@ export default function ServicesPage() {
     setShowClassSchedule(service.is_class || false);
     setClassRoster([]);
     if (service.id) fetchAddons(service.id);
-    // Fetch class roster if this is a class
     if (service.is_class && service.id) fetchClassRoster(service.id);
     setView('edit');
   }
@@ -630,58 +628,18 @@ export default function ServicesPage() {
                 </div>
               )}
 
-              {/* Group Class toggle */}
-              <div className="flex items-center justify-between py-1">
-                <div>
-                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Group Class <Tooltip text="Mark this as a group class with capacity limits. Customers sign up for available slots. Set max students below." /></p>
-                  <p className="text-xs text-gray-400 dark:text-gray-500">Multiple students can book the same time slot</p>
+              {/* Group Class indicator — classes are managed at /dashboard/classes */}
+              {form.is_class && (
+                <div className="flex items-center justify-between py-1">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Group Class</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">Managed at the <a href="/dashboard/classes" className="text-brand hover:underline">Classes page</a></p>
+                  </div>
+                  <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">Class</span>
                 </div>
-                <button type="button" onClick={() => {
-                  const next = !form.is_class;
-                  setForm({ ...form, is_class: next, class_schedule: next ? form.class_schedule : [] });
-                  setShowClassSchedule(next);
-                }}
-                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.is_class ? 'bg-brand' : 'bg-gray-200'}`}>
-                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.is_class ? '22px' : '2px' }} />
-                </button>
-              </div>
+              )}
               {form.is_class && showClassSchedule && (
                 <div className="ml-1 pb-2 space-y-3">
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1.5">Class Schedule</p>
-                    <p className="text-xs text-gray-400 mb-2">Set the recurring days and times for this class</p>
-                    {form.class_schedule.map((entry, i) => (
-                      <div key={i} className="flex items-center gap-2 mb-2">
-                        <select value={entry.day} onChange={(e) => {
-                          const updated = [...form.class_schedule];
-                          updated[i] = { ...updated[i], day: e.target.value };
-                          setForm({ ...form, class_schedule: updated });
-                        }} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100">
-                          {WEEKDAYS.map(d => <option key={d.key} value={d.key}>{d.short}</option>)}
-                        </select>
-                        <input type="time" value={entry.time} onChange={(e) => {
-                          const updated = [...form.class_schedule];
-                          updated[i] = { ...updated[i], time: e.target.value };
-                          setForm({ ...form, class_schedule: updated });
-                        }} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
-                        <button type="button" onClick={() => {
-                          setForm({ ...form, class_schedule: form.class_schedule.filter((_, j) => j !== i) });
-                        }} className="text-red-400 hover:text-red-600 text-sm">&times;</button>
-                      </div>
-                    ))}
-                    <button type="button" onClick={() => {
-                      setForm({ ...form, class_schedule: [...form.class_schedule, { day: 'monday', time: '09:00' }] });
-                    }} className="rounded-lg border border-dashed border-gray-300 px-3 py-1.5 text-xs text-gray-500 hover:border-brand hover:text-brand">
-                      + Add Day/Time
-                    </button>
-                  </div>
-                  {/* Max Students */}
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Max Students per Class</label>
-                    <input type="number" min={2} value={(form as unknown as Record<string, unknown>).max_capacity as number || ''}
-                      onChange={(e) => setForm({ ...form, ...{ max_capacity: Number(e.target.value) || null } } as Service)}
-                      placeholder="e.g. 20" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
-                  </div>
                   {/* Class Roster (edit mode only) */}
                   {view === 'edit' && form.id && classRoster.length > 0 && (
                     <div>
@@ -1103,7 +1061,7 @@ export default function ServicesPage() {
         </div>
       )}
 
-      {/* Filter tabs — only show if there are both services and classes */}
+      {/* Filter tabs — show if there are both services and classes */}
       {services.length > 0 && services.some(s => s.is_class) && (
         <div className="mt-4 flex gap-1 rounded-lg bg-gray-100 dark:bg-gray-800 p-1 w-fit">
           {(['all', 'services', 'classes'] as const).map(tab => (

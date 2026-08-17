@@ -69,7 +69,7 @@ export async function dispatchAction(
         const routeToMenu = async (_s: BotSession, _f: string) => {};
         await handleMyOrders(supabase, messageSender, sendText, routeToMenu, sess, from, '');
       };
-    } else if (semanticFamily === 'service_time_booking' || semanticFamily === 'property_reservation' || semanticFamily === 'table_reservation') {
+    } else if (semanticFamily === 'service_time_booking' || semanticFamily === 'class_booking' || semanticFamily === 'property_reservation' || semanticFamily === 'table_reservation') {
       targetStep = 'my_bookings';
       handler = async (sess) => {
         const { handleMyBookings } = await import('./handlers/my-bookings');
@@ -85,7 +85,7 @@ export async function dispatchAction(
 
   // MANAGE_EXISTING
   if (requestedAction === 'manage_existing') {
-    if (semanticFamily === 'service_time_booking' || semanticFamily === 'property_reservation' || semanticFamily === 'table_reservation') {
+    if (semanticFamily === 'service_time_booking' || semanticFamily === 'class_booking' || semanticFamily === 'property_reservation' || semanticFamily === 'table_reservation') {
       targetStep = 'my_bookings';
       handler = async (sess) => {
         const { handleMyBookings } = await import('./handlers/my-bookings');

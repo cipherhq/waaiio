@@ -48,6 +48,8 @@ export function getCapabilityLabel(cap: CapabilityId, category: string, customLa
       return 'My Invoices';
     case 'waiver':
       return 'Sign Waiver';
+    case 'class_booking':
+      return 'Book a Class';
     default:
       return cap;
   }

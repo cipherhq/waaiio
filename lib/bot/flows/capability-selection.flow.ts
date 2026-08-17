@@ -26,6 +26,7 @@ function getFirstStepForCapability(cap: CapabilityId): string {
     case 'queue': return 'queue_start';
     case 'loyalty': return 'loyalty_menu';
     case 'invoice': return 'invoice_list';
+    case 'class_booking': return 'select_service';
     default: return 'select_service';
   }
 }
@@ -44,7 +45,7 @@ const selectCapabilityStep: FlowStepConfig = {
     const businessId = ctx.business.id;
 
     // Filter out non-user-facing capabilities
-    const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'class_booking', 'multi_location']);
+    const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'multi_location']);
     if (capabilities.includes('scheduling')) { nonUserFacing.add('payment'); nonUserFacing.add('invoice'); }
     let userFacing = capabilities.filter(c => !nonUserFacing.has(c));
 
@@ -68,7 +69,13 @@ const selectCapabilityStep: FlowStepConfig = {
         }
         case 'scheduling': {
           const { count } = await ctx.supabase.from('services').select('id', { count: 'exact', head: true })
-            .eq('business_id', businessId).eq('is_active', true).neq('service_type', 'giving').is('deleted_at', null);
+            .eq('business_id', businessId).eq('is_active', true).neq('service_type', 'giving').is('deleted_at', null)
+            .or('is_class.is.null,is_class.eq.false');
+          return [cap, (count || 0) > 0];
+        }
+        case 'class_booking': {
+          const { count } = await ctx.supabase.from('services').select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId).eq('is_active', true).eq('is_class', true).is('deleted_at', null);
           return [cap, (count || 0) > 0];
         }
         case 'ticketing': {

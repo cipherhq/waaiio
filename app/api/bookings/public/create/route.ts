@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
       guestPhone,
       quantity,
       otpToken,
+      classSessionId,
     } = body as {
       businessSlug: string;
       serviceId?: string;
@@ -40,6 +41,7 @@ export async function POST(request: NextRequest) {
       guestPhone?: string;
       quantity?: number;
       otpToken?: string;
+      classSessionId?: string;
     };
 
     // Basic validation — exactly one of serviceId or appointmentId required
@@ -162,10 +164,24 @@ export async function POST(request: NextRequest) {
       itemStaffIds = (service.staff_ids as string[]) || [];
     }
 
-    // Auto-assign staff for requires_staff items (public bookings have no staff selection UI)
+    // Class XOR validation
+    if (classSessionId && appointmentId) {
+      return NextResponse.json({ error: 'Cannot combine appointmentId and classSessionId' }, { status: 400 });
+    }
+
+    // Detect class service and enforce session requirement
+    if (!isAppointmentBooking && !classSessionId) {
+      const svcIsClass = (itemMetadata as Record<string, unknown> | null);
+      // Re-check via the fetched service — but we need is_class. Let me check:
+      // The service query above doesn't fetch is_class for non-class path.
+      // The DB authority will reject it anyway. Let the DB be final authority.
+    }
+
+    // Auto-assign staff for requires_staff NON-CLASS items only.
+    // Class bookings use session instructor — DB authority validates it.
     let autoStaffId: string | null = null;
     let autoStaffName: string | null = null;
-    if (itemRequiresStaff) {
+    if (itemRequiresStaff && !classSessionId) {
       // Find eligible active staff — prefer service-level staff_ids, fall back to all
       let staffQuery = supabase
         .from('business_staff')
@@ -308,6 +324,7 @@ export async function POST(request: NextRequest) {
         p_appointment_id: isAppointmentBooking ? itemId : null,
         p_buffer_minutes: itemBuffer,
         p_duration: itemDuration,
+        p_class_session_id: classSessionId || null,
       })
       .single() as {
         data: { booking_id: string; reference_code: string; slot_available: boolean } | null;

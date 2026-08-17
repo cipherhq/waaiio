@@ -5,6 +5,7 @@
 
 export type SemanticFamily =
   | 'service_time_booking'
+  | 'class_booking'
   | 'property_reservation'
   | 'table_reservation'
   | 'ordering'
@@ -26,6 +27,7 @@ export type RequestedAction =
 /** Map a semantic family to the capability IDs that can fulfill it */
 export const FAMILY_TO_CAPABILITIES: Record<string, string[]> = {
   service_time_booking: ['scheduling', 'appointment'],
+  class_booking: ['class_booking'],
   property_reservation: ['reservation'],
   table_reservation: ['table_reservation'],
   ordering: ['ordering'],
@@ -38,7 +40,7 @@ export const FAMILY_TO_CAPABILITIES: Record<string, string[]> = {
 
 /** Valid SemanticFamily values for validation */
 export const VALID_SEMANTIC_FAMILIES: readonly string[] = [
-  'service_time_booking', 'property_reservation', 'table_reservation',
+  'service_time_booking', 'class_booking', 'property_reservation', 'table_reservation',
   'ordering', 'ticketing', 'giving', 'payment', 'queue', 'waitlist',
 ];
 

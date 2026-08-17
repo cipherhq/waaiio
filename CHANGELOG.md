@@ -19,7 +19,31 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-13
+
+### feat(P1-CLASS-1): Classes dashboard page
+
+- **What:** New `/dashboard/classes` page with two tabs: Classes (list of class services) and Upcoming Sessions (derived from bookings + class schedules).
+- **Files:** `app/dashboard/classes/page.tsx` (NEW), `components/dashboard/Sidebar.tsx` (added Classes nav item)
+- **Details:**
+  - Classes tab: shows all services with `is_class=true`, displays name, price, duration, capacity, schedule summary, active status. "Create Class" dialog inserts into `services` with `is_class: true`.
+  - Sessions tab: derives sessions from `bookings` table (grouped by service_id/date/time) plus projected sessions from `class_schedule` JSONB for next 4 weeks. Color-coded capacity badges (green/amber/red). Click session for detail dialog with attendee list.
+  - Session detail dialog: shows attendees (guest_name, phone, status, party_size). "Cancel Session" cancels all bookings for that session with confirmation dialog.
+  - Sidebar: "Classes" item in manage section, gated on `class_booking` capability, uses UserGroup icon.
+- **Affects:** Dashboard navigation, class_booking capability visibility
+- **Could break:** Nothing — new page only, no existing code modified except Sidebar nav item addition
+
+---
+
 ## 2026-08-14
+
+### fix(P1-CLASS-1): canonical class sessions and booking authority
+
+- **Feature:** Complete class booking capability. Classes = services with `is_class=true`. Class sessions = concrete occurrences from recurrence rules. Bookings identify exact session via `class_session_id`.
+- **Migration 322:** `class_recurrence_rules`, `class_sessions` (idempotent UNIQUE), `bookings.class_session_id` FK, `generate_class_sessions` RPC, `get_upcoming_class_sessions` RPC, extended `book_slot_atomic`/`reschedule_booking_atomic`/`book_manual_slot_atomic` with `p_class_session_id`.
+- **Dashboard:** Classes page + sidebar entry. **WhatsApp:** `select_class_session` step. **Public:** Sessions instead of time slots for class services. **Manual/Admin:** Class session awareness.
+- **Architecture:** ONE canonical booking authority. Per-session capacity via SUM(party_size). Independent session capacity. Instructor reuses P1-STAFF-1.
+- **Tests:** 22 source + 24 real PG tests. CI: `P1-CLASS-1 class session booking authority DB tests`.
 
 ### fix(P1-STAFF-1): staff schedule enforcement at booking authority
 
