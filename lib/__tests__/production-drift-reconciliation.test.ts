@@ -181,28 +181,99 @@ describe.skipIf(!TEST_DB)('Production Drift Reconciliation (migration 325)', () 
     psql(dbUrl(DB_A), SCHEMA_STUBS);
     psql(dbUrl(DB_B), SCHEMA_STUBS);
 
-    // ── Database A: Clean chain (all migrations 001..324) ──
+    // ── Database A: Clean canonical chain (321 + 322) — must succeed independently ──
+    // This proves the canonical migrations work on their own, before 325 is tested.
+    // Failures here are real migration defects — do NOT catch/continue.
     const migrationDir = 'supabase/migrations';
-    const files = execSync(`ls ${migrationDir}/*.sql`, { encoding: 'utf-8' })
-      .trim().split('\n').sort();
 
-    for (const f of files) {
-      const basename = f.split('/').pop()!;
-      const num = parseInt(basename.split('_')[0], 10);
-      // Apply all migrations up to and including 322
-      // Skip 323+ (bot_context already applied, 324 separate scope)
-      if (num > 322) break;
-      try {
-        psqlFile(dbUrl(DB_A), f);
-      } catch (e: unknown) {
-        const err = e as { stderr?: string };
-        // Some migrations may reference objects not in our stubs; skip non-critical failures
-        console.warn(`Warning: ${basename} had issues in DB_A: ${(err.stderr || '').slice(0, 200)}`);
-      }
-    }
+    // Database A needs the same prerequisite stubs as Database B for FK references
+    psql(dbUrl(DB_A), `
+      CREATE TABLE IF NOT EXISTS businesses (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL, slug TEXT, owner_id UUID REFERENCES auth.users(id),
+        address TEXT, city TEXT, neighborhood TEXT, phone TEXT,
+        status TEXT DEFAULT 'active', payout_mode TEXT, country_code TEXT,
+        verification_level TEXT, subscription_tier TEXT DEFAULT 'free',
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS business_members (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID REFERENCES businesses(id), user_id UUID REFERENCES auth.users(id)
+      );
+      CREATE TABLE IF NOT EXISTS admin_audit_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        actor_id UUID, action TEXT, entity_type TEXT, entity_id TEXT,
+        details JSONB, created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS business_staff (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID REFERENCES businesses(id), name TEXT, is_active BOOLEAN DEFAULT true
+      );
+      CREATE TABLE IF NOT EXISTS business_locations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID REFERENCES businesses(id), name TEXT, is_active BOOLEAN DEFAULT true
+      );
+      CREATE TABLE IF NOT EXISTS services (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID REFERENCES businesses(id),
+        name TEXT, description TEXT, price INTEGER DEFAULT 0,
+        duration_minutes INTEGER DEFAULT 60, max_capacity INTEGER DEFAULT 1,
+        is_class BOOLEAN DEFAULT false, is_active BOOLEAN DEFAULT true,
+        class_schedule JSONB DEFAULT '[]',
+        requires_staff BOOLEAN DEFAULT false, buffer_minutes INTEGER DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS appointments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID REFERENCES businesses(id),
+        max_capacity INTEGER DEFAULT 1, buffer_minutes INTEGER DEFAULT 0,
+        duration_minutes INTEGER DEFAULT 30, requires_staff BOOLEAN DEFAULT false
+      );
+      DO $$ BEGIN CREATE TYPE flow_type AS ENUM ('scheduling','appointment','ordering','reservation','ticketing','payment','recurring','crowdfunding','giving','class'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE TYPE booking_channel AS ENUM ('whatsapp','dashboard','api','web'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE TYPE deposit_status AS ENUM ('none','pending','paid','refunded'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE TYPE reservation_status AS ENUM ('pending','confirmed','cancelled','completed','no_show','in_progress'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      CREATE TABLE IF NOT EXISTS bookings (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID REFERENCES businesses(id),
+        user_id UUID, service_id UUID REFERENCES services(id),
+        appointment_id UUID REFERENCES appointments(id),
+        staff_id UUID, staff_name TEXT, date DATE, time TIME,
+        party_size INTEGER DEFAULT 1, flow_type flow_type,
+        channel booking_channel DEFAULT 'whatsapp',
+        deposit_amount INTEGER DEFAULT 0, deposit_status deposit_status DEFAULT 'none',
+        status reservation_status DEFAULT 'pending',
+        guest_name TEXT, guest_phone TEXT, guest_email TEXT,
+        special_requests TEXT, venue_address TEXT, end_date DATE,
+        addons_snapshot JSONB, promo_code_id UUID, total_amount INTEGER DEFAULT 0,
+        quantity INTEGER DEFAULT 1, location_id UUID, bot_session_id UUID,
+        reference_code TEXT DEFAULT substr(md5(random()::text), 1, 8),
+        notes TEXT, confirmed_at TIMESTAMPTZ,
+        original_date DATE, original_time TEXT, rescheduled_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS promo_codes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID REFERENCES businesses(id), code TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE OR REPLACE FUNCTION check_appointment_schedule(
+        p_appointment_id UUID, p_business_id UUID, p_date DATE, p_time TEXT
+      ) RETURNS TABLE(allowed BOOLEAN, reason TEXT) AS $$
+        SELECT true, NULL::text;
+      $$ LANGUAGE SQL;
+      CREATE OR REPLACE FUNCTION check_staff_availability(
+        p_staff_id UUID, p_business_id UUID, p_date DATE, p_time TEXT, p_duration INTEGER DEFAULT 60
+      ) RETURNS TABLE(allowed BOOLEAN, reason TEXT) AS $$
+        SELECT true, NULL::text;
+      $$ LANGUAGE SQL;
+    `);
 
-    // Now apply 325 on top (should be a no-op on clean chain)
-    psqlFile(dbUrl(DB_A), `${migrationDir}/325_production_drift_reconciliation.sql`);
+    // Apply canonical 321 — must succeed with no catch
+    psqlFile(dbUrl(DB_A), `${migrationDir}/321_promotions_schema.sql`);
+
+    // Apply canonical 322 — must succeed with no catch
+    psqlFile(dbUrl(DB_A), `${migrationDir}/322_class_session_booking.sql`);
 
     // ── Database B: Drift fixture (minimal production state + 325) ──
     // Create the prerequisite tables that production has from earlier migrations
@@ -363,7 +434,62 @@ describe.skipIf(!TEST_DB)('Production Drift Reconciliation (migration 325)', () 
     try { adminExec(`dropdb --if-exists --maintenance-db=${conn.mainDb} ${DB_B}`); } catch { /* ignore */ }
   });
 
-  // ── Schema Convergence Tests ──
+  // ── Clean Chain Postcondition Assertions (DB_A before 325) ──
+
+  it('DRIFT-0a: Clean chain 321 postconditions exist independently', () => {
+    // These must exist from 321 alone, BEFORE 325 is applied
+    for (const table of PROMO_TABLES) {
+      const exists = psql(dbUrl(DB_A), `
+        SELECT EXISTS (SELECT 1 FROM information_schema.tables
+        WHERE table_schema='public' AND table_name='${table}') AS e;
+      `);
+      expect(exists, `321 postcondition: table ${table} missing from clean chain`).toBe('t');
+    }
+    // Canonical 321 functions
+    for (const fn of ['claim_promo_code', 'validate_promo_campaign_activation',
+      'admin_promo_governance', 'activate_promo_campaign']) {
+      const exists = psql(dbUrl(DB_A), `
+        SELECT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace=n.oid
+        WHERE n.nspname='public' AND p.proname='${fn}') AS e;
+      `);
+      expect(exists, `321 postcondition: function ${fn} missing`).toBe('t');
+    }
+  });
+
+  it('DRIFT-0b: Clean chain 322 postconditions exist independently', () => {
+    // class_recurrence_rules and class_sessions must exist from 322
+    for (const table of CLASS_TABLES) {
+      const exists = psql(dbUrl(DB_A), `
+        SELECT EXISTS (SELECT 1 FROM information_schema.tables
+        WHERE table_schema='public' AND table_name='${table}') AS e;
+      `);
+      expect(exists, `322 postcondition: table ${table} missing from clean chain`).toBe('t');
+    }
+    // bookings.class_session_id must exist
+    const csCol = psql(dbUrl(DB_A), `
+      SELECT EXISTS (SELECT 1 FROM information_schema.columns
+      WHERE table_name='bookings' AND column_name='class_session_id') AS e;
+    `);
+    expect(csCol, '322 postcondition: bookings.class_session_id missing').toBe('t');
+    // Canonical RPCs
+    for (const fn of ['generate_class_sessions', 'get_upcoming_class_sessions',
+      'book_slot_atomic', 'create_class_atomic', 'reschedule_booking_atomic']) {
+      const exists = psql(dbUrl(DB_A), `
+        SELECT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace=n.oid
+        WHERE n.nspname='public' AND p.proname='${fn}') AS e;
+      `);
+      expect(exists, `322 postcondition: function ${fn} missing`).toBe('t');
+    }
+  });
+
+  it('DRIFT-0c: Migration 325 is idempotent on canonical clean chain', () => {
+    // Apply 325 on top of already-canonical DB_A — must succeed (no-op)
+    expect(() => {
+      psqlFile(dbUrl(DB_A), 'supabase/migrations/325_production_drift_reconciliation.sql');
+    }).not.toThrow();
+  });
+
+  // ── Schema Convergence Tests (DB_A after 321+322+325 vs DB_B after drift+325) ──
 
   it('DRIFT-1: All target tables exist in both databases', () => {
     const tablesA = psql(dbUrl(DB_A), TABLES_QUERY).split('\n').filter(Boolean);
@@ -461,10 +587,10 @@ describe.skipIf(!TEST_DB)('Production Drift Reconciliation (migration 325)', () 
     }
   });
 
-  it('DRIFT-7: Migration 325 is safe to run twice (idempotent)', () => {
-    // Run 325 again on DB_A — should succeed without errors
+  it('DRIFT-7: Migration 325 is safe to run twice on drift fixture (idempotent)', () => {
+    // Run 325 again on DB_B — should succeed without errors
     expect(() => {
-      psqlFile(dbUrl(DB_A), 'supabase/migrations/325_production_drift_reconciliation.sql');
+      psqlFile(dbUrl(DB_B), 'supabase/migrations/325_production_drift_reconciliation.sql');
     }).not.toThrow();
   });
 
