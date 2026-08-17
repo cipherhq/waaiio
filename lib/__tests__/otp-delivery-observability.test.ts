@@ -342,6 +342,7 @@ describe('OTP webhook handler — executable tests', () => {
   let contractUpdateCalls: Array<Record<string, unknown>>;
   let insertBehavior: (row: Record<string, unknown>) => { error: unknown };
   let attemptLookupResult: { data: unknown; error: unknown };
+  let contractLookupData: { id: string; wa_delivery_status: string | null } | null;
 
   // Shared helpers
   function buildWebhookBody(
@@ -404,10 +405,11 @@ describe('OTP webhook handler — executable tests', () => {
     return obj;
   }
 
-  function setupMocks(opts?: {
-    contractMatch?: { id: string; wa_delivery_status: string | null };
-  }) {
-    const contractData = opts?.contractMatch ?? null;
+  function setupMocks() {
+    // All mutable test state is referenced by variable, not captured by closure,
+    // so a single doMock registration works for all tests — avoiding vi.doMock
+    // re-registration nondeterminism when resetModules() doesn't fully clear
+    // prior doMock entries.
 
     vi.doMock('crypto', async () => {
       const actual = await vi.importActual<typeof import('crypto')>('crypto');
@@ -424,7 +426,7 @@ describe('OTP webhook handler — executable tests', () => {
         from: (table: string) => {
           if (table === 'contracts') {
             return {
-              select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: contractData }) }) }),
+              select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: contractLookupData }) }) }),
               update: (data: Record<string, unknown>) => {
                 contractUpdateCalls.push(data);
                 return { eq: () => ({ in: () => Promise.resolve({ error: null }) }) };
@@ -452,6 +454,7 @@ describe('OTP webhook handler — executable tests', () => {
     insertedEvents = [];
     warnings = [];
     contractUpdateCalls = [];
+    contractLookupData = null;
     insertBehavior = (row) => { insertedEvents.push(row); return { error: null }; };
     attemptLookupResult = { data: { id: 'attempt-uuid-1' }, error: null };
     process.env.META_CLOUD_WABA_ID = 'test-waba';
@@ -592,14 +595,10 @@ describe('OTP webhook handler — executable tests', () => {
 
   // G. Contract regression test
   it('contract match: contract update executes, OTP tracking also runs', async () => {
-    vi.restoreAllMocks();
-    vi.resetModules();
-    insertedEvents = [];
-    warnings = [];
-    contractUpdateCalls = [];
-    insertBehavior = (row) => { insertedEvents.push(row); return { error: null }; };
+    // Set contract lookup to return a match — uses shared mutable variable
+    // referenced by the mock (no doMock re-registration needed)
+    contractLookupData = { id: 'contract-1', wa_delivery_status: null };
     attemptLookupResult = { data: { id: 'attempt-uuid-contract' }, error: null };
-    setupMocks({ contractMatch: { id: 'contract-1', wa_delivery_status: null } });
 
     const { POST } = await import('@/app/api/webhook/meta-cloud/route');
     const res = await POST(makeWebhookRequest(buildWebhookBody('wamid.both', 'delivered')));
