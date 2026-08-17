@@ -17,6 +17,18 @@ If something breaks, check this log to find what changed and when.
 - **Affects:** Payment confirmation lifecycle — these RPCs are only called server-side via the service client
 - **Could break:** Nothing — all callers already use `createServiceClient()` which authenticates as service_role
 
+### fix: use SUM(party_size) for class capacity display, not COUNT(rows)
+
+- **Bug:** Two places in `scheduling.flow.ts` used `COUNT(booking rows)` (via `{ count: 'exact', head: true }`) to check class session capacity, while the DB authority `book_slot_atomic` (migration 322) uses `SUM(party_size)`. For multi-spot bookings (e.g. party_size=3), the display showed 1 occupied instead of 3, inflating apparent availability.
+- **Fix:** Replaced both COUNT patterns with `.select('party_size')` + JS reduce to sum party_size, matching `book_slot_atomic`'s `COALESCE(SUM(b.party_size), 0)` with the same status filter `('confirmed', 'pending', 'in_progress')`.
+- **Locations:**
+  - `select_class_session` validate (~line 535): capacity check before accepting session selection
+  - `select_quantity` skipIf (~line 1582): remaining spots calculation for `_class_remaining_spots`
+- **Files:** `lib/bot/flows/scheduling.flow.ts`, `lib/bot/flows/__tests__/class-capacity-display.test.ts` (NEW)
+- **Tests:** 6 tests: SUM correctness (party_size=3 counts as 3), full capacity rejection, cancelled booking exclusion, remaining spots calculation, auto-skip when 1 spot left, non-class service unaffected
+- **Affects:** WhatsApp bot class booking UX — customers now see correct availability
+- **Could break:** Nothing — the DB authority already enforced correct capacity; this only fixes the display/UX layer to match
+
 ---
 
 ## 2026-08-16
