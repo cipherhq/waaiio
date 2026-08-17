@@ -418,11 +418,52 @@ describe.skipIf(!TEST_DB)('Production Drift Reconciliation (migration 325)', () 
       -- Production has existing indexes
       CREATE INDEX IF NOT EXISTS idx_recurrence_rules_business ON class_recurrence_rules(business_id);
 
-      -- Production has generate_class_sessions and get_upcoming_class_sessions RPCs
-      -- (old versions — 325 will CREATE OR REPLACE them)
+      -- Production has existing indexes on class tables
+      CREATE INDEX IF NOT EXISTS idx_recurrence_rules_service ON class_recurrence_rules(service_id);
+      CREATE INDEX IF NOT EXISTS idx_recurrence_rules_active ON class_recurrence_rules(business_id, is_active) WHERE is_active = true;
+      CREATE INDEX IF NOT EXISTS idx_class_sessions_business ON class_sessions(business_id, date);
+      CREATE INDEX IF NOT EXISTS idx_class_sessions_service ON class_sessions(service_id, date);
 
-      -- Production has book_slot_atomic with 28 args
-      -- (old version — 325 will CREATE OR REPLACE)
+      -- Production has generate_class_sessions (old SECURITY DEFINER version)
+      CREATE OR REPLACE FUNCTION generate_class_sessions(
+        p_service_id UUID,
+        p_days_ahead INTEGER DEFAULT 28
+      ) RETURNS INTEGER
+      LANGUAGE plpgsql SECURITY DEFINER AS $$
+      BEGIN
+        RETURN 0;
+      END;
+      $$;
+
+      -- Production has get_upcoming_class_sessions (old SECURITY DEFINER STABLE version)
+      CREATE OR REPLACE FUNCTION get_upcoming_class_sessions(
+        p_service_id UUID,
+        p_limit INTEGER DEFAULT 10
+      ) RETURNS TABLE(
+        session_id uuid, session_date date, start_time time, end_time time,
+        capacity integer, spots_taken bigint, staff_name text, location_name text, status text
+      )
+      LANGUAGE sql STABLE SECURITY DEFINER AS $$
+        SELECT NULL::uuid, NULL::date, NULL::time, NULL::time, NULL::integer, NULL::bigint, NULL::text, NULL::text, NULL::text LIMIT 0;
+      $$;
+
+      -- Production has book_slot_atomic with canonical 28-arg signature (old version)
+      CREATE OR REPLACE FUNCTION public.book_slot_atomic(
+        p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid,
+        p_date date, p_time text, p_party_size int, p_max_capacity int,
+        p_flow_type text, p_deposit_amount int, p_deposit_status text, p_status text,
+        p_guest_name text, p_guest_phone text, p_guest_email text,
+        p_special_requests text, p_venue_address text, p_end_date date,
+        p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount int, p_staff_name text,
+        p_location_id uuid DEFAULT NULL, p_appointment_id uuid DEFAULT NULL,
+        p_buffer_minutes integer DEFAULT 0, p_duration integer DEFAULT 30,
+        p_bot_session_id uuid DEFAULT NULL, p_class_session_id uuid DEFAULT NULL
+      ) RETURNS TABLE(booking_id uuid, reference_code text, slot_available boolean)
+      LANGUAGE plpgsql SECURITY DEFINER AS $$
+      BEGIN
+        RETURN QUERY SELECT NULL::uuid, NULL::text, false;
+      END;
+      $$;
     `);
 
     // Apply migration 325 on drift fixture
@@ -501,89 +542,251 @@ describe.skipIf(!TEST_DB)('Production Drift Reconciliation (migration 325)', () 
     }
   });
 
-  it('DRIFT-2: Target table columns match between databases', () => {
+  it('DRIFT-2: Target table columns + defaults match between databases', () => {
     for (const table of TARGET_TABLES) {
-      const colsA = psql(dbUrl(DB_A), `
-        SELECT column_name || '|' || data_type || '|' || is_nullable
+      const query = `
+        SELECT column_name || '|' || data_type || '|' || is_nullable || '|' || COALESCE(column_default, 'NULL')
         FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = '${table}'
-        ORDER BY ordinal_position;
-      `).split('\n').filter(Boolean);
-
-      const colsB = psql(dbUrl(DB_B), `
-        SELECT column_name || '|' || data_type || '|' || is_nullable
-        FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = '${table}'
-        ORDER BY ordinal_position;
-      `).split('\n').filter(Boolean);
-
-      expect(colsA.sort(), `Columns mismatch for table ${table}`).toEqual(colsB.sort());
+        ORDER BY column_name;
+      `;
+      const colsA = psql(dbUrl(DB_A), query).split('\n').filter(Boolean);
+      const colsB = psql(dbUrl(DB_B), query).split('\n').filter(Boolean);
+      expect(colsA, `Columns+defaults mismatch for table ${table}`).toEqual(colsB);
     }
   });
 
-  it('DRIFT-3: Target functions exist in both databases', () => {
-    const funcsA = psql(dbUrl(DB_A), FUNCTIONS_QUERY).split('\n').filter(Boolean);
-    const funcsB = psql(dbUrl(DB_B), FUNCTIONS_QUERY).split('\n').filter(Boolean);
-
-    for (const func of TARGET_FUNCTIONS) {
-      const matchA = funcsA.some(f => f.startsWith(func + '|'));
-      const matchB = funcsB.some(f => f.startsWith(func + '|'));
-      expect(matchA, `Function ${func} missing from clean chain (DB_A)`).toBe(true);
-      expect(matchB, `Function ${func} missing from drift fixture (DB_B)`).toBe(true);
+  it('DRIFT-2b: Primary keys match between databases', () => {
+    for (const table of TARGET_TABLES) {
+      const query = `
+        SELECT a.attname
+        FROM pg_constraint con
+        JOIN pg_class c ON c.oid = con.conrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(con.conkey)
+        WHERE n.nspname = 'public' AND c.relname = '${table}' AND con.contype = 'p'
+        ORDER BY a.attname;
+      `;
+      const pkA = psql(dbUrl(DB_A), query).split('\n').filter(Boolean);
+      const pkB = psql(dbUrl(DB_B), query).split('\n').filter(Boolean);
+      expect(pkA, `Primary key mismatch for ${table}`).toEqual(pkB);
     }
   });
 
-  it('DRIFT-4: Function signatures match between databases', () => {
+  it('DRIFT-2c: Foreign keys match between databases', () => {
+    for (const table of TARGET_TABLES) {
+      const query = `
+        SELECT con.conname || '|' ||
+          array_agg(sa.attname ORDER BY sa.attnum)::text || '|' ||
+          ref_c.relname || '|' ||
+          array_agg(ra.attname ORDER BY ra.attnum)::text || '|' ||
+          con.confdeltype::text || '|' || con.confupdtype::text
+        FROM pg_constraint con
+        JOIN pg_class c ON c.oid = con.conrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_class ref_c ON ref_c.oid = con.confrelid
+        JOIN pg_attribute sa ON sa.attrelid = c.oid AND sa.attnum = ANY(con.conkey)
+        JOIN pg_attribute ra ON ra.attrelid = ref_c.oid AND ra.attnum = ANY(con.confkey)
+        WHERE n.nspname = 'public' AND c.relname = '${table}' AND con.contype = 'f'
+        GROUP BY con.conname, ref_c.relname, con.confdeltype, con.confupdtype
+        ORDER BY con.conname;
+      `;
+      const fkA = psql(dbUrl(DB_A), query).split('\n').filter(Boolean);
+      const fkB = psql(dbUrl(DB_B), query).split('\n').filter(Boolean);
+      expect(fkA, `Foreign key mismatch for ${table}`).toEqual(fkB);
+    }
+  });
+
+  it('DRIFT-2d: CHECK constraints match between databases', () => {
+    for (const table of TARGET_TABLES) {
+      const query = `
+        SELECT con.conname || '|' || pg_get_constraintdef(con.oid)
+        FROM pg_constraint con
+        JOIN pg_class c ON c.oid = con.conrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = '${table}' AND con.contype = 'c'
+        ORDER BY con.conname;
+      `;
+      const chkA = psql(dbUrl(DB_A), query).split('\n').filter(Boolean);
+      const chkB = psql(dbUrl(DB_B), query).split('\n').filter(Boolean);
+      expect(chkA, `CHECK constraint mismatch for ${table}`).toEqual(chkB);
+    }
+  });
+
+  it('DRIFT-2e: UNIQUE constraints match between databases', () => {
+    for (const table of TARGET_TABLES) {
+      const query = `
+        SELECT con.conname || '|' || pg_get_constraintdef(con.oid)
+        FROM pg_constraint con
+        JOIN pg_class c ON c.oid = con.conrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = '${table}' AND con.contype = 'u'
+        ORDER BY con.conname;
+      `;
+      const unqA = psql(dbUrl(DB_A), query).split('\n').filter(Boolean);
+      const unqB = psql(dbUrl(DB_B), query).split('\n').filter(Boolean);
+      expect(unqA, `UNIQUE constraint mismatch for ${table}`).toEqual(unqB);
+    }
+  });
+
+  it('DRIFT-2f: Indexes match between databases', () => {
+    for (const table of TARGET_TABLES) {
+      const query = `
+        SELECT pg_get_indexdef(i.indexrelid)
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = '${table}'
+        ORDER BY pg_get_indexdef(i.indexrelid);
+      `;
+      const idxA = psql(dbUrl(DB_A), query).split('\n').filter(Boolean);
+      const idxB = psql(dbUrl(DB_B), query).split('\n').filter(Boolean);
+      expect(idxA, `Index mismatch for ${table}`).toEqual(idxB);
+    }
+  });
+
+  it('DRIFT-2g: bookings.class_session_id FK and index match between databases', () => {
+    // Verify column exists in both
+    for (const db of [DB_A, DB_B]) {
+      const col = psql(dbUrl(db), `
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'bookings' AND column_name = 'class_session_id';
+      `);
+      expect(col, `bookings.class_session_id missing from ${db}`).toBe('class_session_id');
+    }
+
+    // Verify FK target is class_sessions with ON DELETE SET NULL
+    for (const db of [DB_A, DB_B]) {
+      const fk = psql(dbUrl(db), `
+        SELECT ref_c.relname || '|' || con.confdeltype::text
+        FROM pg_constraint con
+        JOIN pg_class c ON c.oid = con.conrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_class ref_c ON ref_c.oid = con.confrelid
+        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(con.conkey)
+        WHERE n.nspname = 'public' AND c.relname = 'bookings'
+          AND con.contype = 'f' AND a.attname = 'class_session_id';
+      `);
+      expect(fk, `bookings.class_session_id FK wrong in ${db}`).toBe('class_sessions|n');
+    }
+
+    // Verify index exists
+    for (const db of [DB_A, DB_B]) {
+      const idx = psql(dbUrl(db), `
+        SELECT COUNT(*) FROM pg_indexes
+        WHERE schemaname = 'public' AND tablename = 'bookings'
+          AND indexname = 'idx_bookings_class_session';
+      `);
+      expect(idx, `idx_bookings_class_session missing from ${db}`).toBe('1');
+    }
+  });
+
+  it('DRIFT-3: Target functions exist in both databases with matching signatures', () => {
     for (const func of TARGET_FUNCTIONS) {
-      const sigsA = psql(dbUrl(DB_A), `
-        SELECT pg_get_function_identity_arguments(p.oid)
+      const query = `
+        SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'
         FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
         WHERE n.nspname = 'public' AND p.proname = '${func}'
         ORDER BY 1;
-      `).split('\n').filter(Boolean);
-
-      const sigsB = psql(dbUrl(DB_B), `
-        SELECT pg_get_function_identity_arguments(p.oid)
-        FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
-        WHERE n.nspname = 'public' AND p.proname = '${func}'
-        ORDER BY 1;
-      `).split('\n').filter(Boolean);
-
+      `;
+      const sigsA = psql(dbUrl(DB_A), query).split('\n').filter(Boolean);
+      const sigsB = psql(dbUrl(DB_B), query).split('\n').filter(Boolean);
+      expect(sigsA.length, `Function ${func} missing from DB_A`).toBeGreaterThan(0);
+      expect(sigsB.length, `Function ${func} missing from DB_B`).toBeGreaterThan(0);
       expect(sigsA, `Function ${func} signature mismatch`).toEqual(sigsB);
     }
   });
 
-  it('DRIFT-5: RLS enabled on same target tables in both databases', () => {
-    for (const table of TARGET_TABLES) {
-      const rlsA = psql(dbUrl(DB_A), `
-        SELECT c.relrowsecurity FROM pg_class c
-        JOIN pg_namespace n ON c.relnamespace = n.oid
-        WHERE n.nspname = 'public' AND c.relname = '${table}';
-      `);
-      const rlsB = psql(dbUrl(DB_B), `
-        SELECT c.relrowsecurity FROM pg_class c
-        JOIN pg_namespace n ON c.relnamespace = n.oid
-        WHERE n.nspname = 'public' AND c.relname = '${table}';
-      `);
-      expect(rlsA, `RLS mismatch for ${table}`).toEqual(rlsB);
+  it('DRIFT-4: Function SECURITY DEFINER and search_path match between databases', () => {
+    for (const func of TARGET_FUNCTIONS) {
+      const query = `
+        SELECT p.proname || '|' ||
+          CASE WHEN p.prosecdef THEN 'SECURITY_DEFINER' ELSE 'INVOKER' END || '|' ||
+          COALESCE(array_to_string(p.proconfig, ','), 'NULL')
+        FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = 'public' AND p.proname = '${func}'
+        ORDER BY p.proname, pg_get_function_identity_arguments(p.oid);
+      `;
+      const secA = psql(dbUrl(DB_A), query).split('\n').filter(Boolean);
+      const secB = psql(dbUrl(DB_B), query).split('\n').filter(Boolean);
+      expect(secA, `Function ${func} security/proconfig mismatch`).toEqual(secB);
     }
   });
 
-  it('DRIFT-6: RLS policies match between databases for target tables', () => {
+  it('DRIFT-4b: Function EXECUTE privileges match for anon, authenticated, service_role', () => {
+    for (const func of TARGET_FUNCTIONS) {
+      // Get the full function signature(s) for privilege check
+      const sigQuery = `
+        SELECT p.oid::text || '|' || pg_get_function_identity_arguments(p.oid)
+        FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = 'public' AND p.proname = '${func}'
+        ORDER BY pg_get_function_identity_arguments(p.oid);
+      `;
+      const sigs = psql(dbUrl(DB_A), sigQuery).split('\n').filter(Boolean);
+      if (sigs.length === 0) continue;
+
+      const privQuery = `
+        SELECT p.proname || '|' || pg_get_function_identity_arguments(p.oid) || '|' ||
+          has_function_privilege('anon', p.oid, 'EXECUTE')::text || '|' ||
+          has_function_privilege('authenticated', p.oid, 'EXECUTE')::text || '|' ||
+          has_function_privilege('service_role', p.oid, 'EXECUTE')::text
+        FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = 'public' AND p.proname = '${func}'
+        ORDER BY pg_get_function_identity_arguments(p.oid);
+      `;
+      const privA = psql(dbUrl(DB_A), privQuery).split('\n').filter(Boolean);
+      const privB = psql(dbUrl(DB_B), privQuery).split('\n').filter(Boolean);
+      expect(privA, `Function ${func} EXECUTE privilege mismatch`).toEqual(privB);
+    }
+  });
+
+  it('DRIFT-5: RLS enabled + FORCE ROW LEVEL SECURITY match between databases', () => {
     for (const table of TARGET_TABLES) {
-      const policiesA = psql(dbUrl(DB_A), `
-        SELECT polname FROM pg_policy
-        JOIN pg_class c ON c.oid = polrelid
-        WHERE c.relname = '${table}' ORDER BY polname;
-      `).split('\n').filter(Boolean);
+      const query = `
+        SELECT c.relrowsecurity::text || '|' || c.relforcerowsecurity::text
+        FROM pg_class c
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE n.nspname = 'public' AND c.relname = '${table}';
+      `;
+      const rlsA = psql(dbUrl(DB_A), query);
+      const rlsB = psql(dbUrl(DB_B), query);
+      expect(rlsA, `RLS/FORCE mismatch for ${table}`).toEqual(rlsB);
+    }
+  });
 
-      const policiesB = psql(dbUrl(DB_B), `
-        SELECT polname FROM pg_policy
-        JOIN pg_class c ON c.oid = polrelid
-        WHERE c.relname = '${table}' ORDER BY polname;
-      `).split('\n').filter(Boolean);
+  it('DRIFT-6: Full RLS policy definitions match between databases', () => {
+    for (const table of TARGET_TABLES) {
+      const query = `
+        SELECT pol.polname || '|' || pol.polcmd::text || '|' ||
+          pol.polroles::text || '|' ||
+          COALESCE(pg_get_expr(pol.polqual, pol.polrelid), 'NULL') || '|' ||
+          COALESCE(pg_get_expr(pol.polwithcheck, pol.polrelid), 'NULL')
+        FROM pg_policy pol
+        JOIN pg_class c ON c.oid = pol.polrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = '${table}'
+        ORDER BY pol.polname;
+      `;
+      const polA = psql(dbUrl(DB_A), query).split('\n').filter(Boolean);
+      const polB = psql(dbUrl(DB_B), query).split('\n').filter(Boolean);
+      expect(polA, `RLS policy definition mismatch for ${table}`).toEqual(polB);
+    }
+  });
 
-      expect(policiesA, `RLS policy mismatch for ${table}`).toEqual(policiesB);
+  it('DRIFT-6b: Table DML grants match for authenticated and service_role', () => {
+    const privileges = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
+    for (const table of TARGET_TABLES) {
+      const query = `
+        SELECT '${table}' || '|' || privilege_type || '|' || grantee
+        FROM information_schema.table_privileges
+        WHERE table_schema = 'public' AND table_name = '${table}'
+          AND grantee IN ('authenticated', 'service_role')
+          AND privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+        ORDER BY privilege_type, grantee;
+      `;
+      const grantsA = psql(dbUrl(DB_A), query).split('\n').filter(Boolean);
+      const grantsB = psql(dbUrl(DB_B), query).split('\n').filter(Boolean);
+      expect(grantsA, `Table grant mismatch for ${table}`).toEqual(grantsB);
     }
   });
 
