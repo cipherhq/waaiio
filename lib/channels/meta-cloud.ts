@@ -8,6 +8,8 @@
  * Docs: https://developers.facebook.com/docs/whatsapp/cloud-api
  */
 
+import { logger } from '@/lib/logger';
+
 export interface MetaCloudCredentials {
   accessToken: string;
   phoneNumberId: string;
@@ -679,8 +681,7 @@ export class MetaCloudService {
     });
     const metaMs = Date.now() - t0;
     if (metaMs > 500) {
-      const { logger: metaLogger } = await import('@/lib/logger');
-      metaLogger.warn(`[META-SEND-PERF] slow_ms=${metaMs} endpoint=${endpoint.split('/').pop()}`);
+      logger.warn(`[META-SEND-PERF] slow_ms=${metaMs} endpoint=${endpoint.split('/').pop()}`);
     }
 
     if (!res.ok) {
