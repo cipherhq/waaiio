@@ -26,16 +26,22 @@ interface ConversationCheckResult {
 export async function checkConversationLimit(
   supabase: SupabaseClient,
   businessId: string,
+  /** BOT-PERF: pass known tier to skip redundant business fetch */
+  knownTier?: string,
 ): Promise<ConversationCheckResult> {
   try {
-    // Get business tier
-    const { data: biz } = await supabase
-      .from('businesses')
-      .select('subscription_tier')
-      .eq('id', businessId)
-      .single();
-
-    const tier = (biz?.subscription_tier || 'free') as 'free' | 'growth' | 'business';
+    // Get business tier — skip DB fetch if already known from caller context
+    let tier: 'free' | 'growth' | 'business';
+    if (knownTier) {
+      tier = knownTier as 'free' | 'growth' | 'business';
+    } else {
+      const { data: biz } = await supabase
+        .from('businesses')
+        .select('subscription_tier')
+        .eq('id', businessId)
+        .single();
+      tier = (biz?.subscription_tier || 'free') as 'free' | 'growth' | 'business';
+    }
 
     // Get limits from platform_settings (admin-editable)
     const settings = await loadPlatformSettings({ useServiceClient: true });

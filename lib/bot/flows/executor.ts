@@ -104,22 +104,12 @@ export class FlowExecutor {
     // Store business ID for outbound tracking
     this.currentBusinessId = business?.id || session.business_id || null;
 
-    // Update last_active_at so returning-customer routing picks the most recently used business
-    await this.supabase
-      .from('bot_sessions')
-      .update({ last_active_at: new Date().toISOString() })
-      .eq('id', session.id);
+    // BOT-PERF: Timing instrumentation for flow executor
+    const _ft0 = Date.now();
+    const _ftimings: Record<string, number> = {};
+    const _fmark = (l: string) => { _ftimings[l] = Date.now() - _ft0; };
 
-    // Check conversation limit before processing
-    if (this.currentBusinessId) {
-      const limit = await checkConversationLimit(this.supabase, this.currentBusinessId);
-      if (!limit.allowed) {
-        await this.sendText(from, getConversationLimitMessage());
-        return;
-      }
-    }
-
-    // Try the primary flow first, then search across all flows
+    // Try the primary flow first, then search across all flows (synchronous registry lookup)
     let step = getFlowStep(flowType as FlowType, stepId);
     let resolvedFlowType: string = flowType;
 
@@ -145,6 +135,53 @@ export class FlowExecutor {
       return;
     }
 
+    // BOT-PERF: Parallelize independent prechecks
+    // last_active_at update, conversation limit check, and step overrides are all
+    // independent of each other and of the flow step resolution above.
+    // last_active_at is non-critical (returning-customer recency, not transactional authority)
+    // so it runs fire-and-forget with error logging to avoid blocking the response.
+    const prechecks: Promise<unknown>[] = [];
+
+    // 1. last_active_at — non-critical, fire-and-forget with error logging
+    Promise.resolve(
+      this.supabase
+        .from('bot_sessions')
+        .update({ last_active_at: new Date().toISOString() })
+        .eq('id', session.id)
+    ).then(() => { _fmark('last_active_at'); })
+      .catch(err => logger.warn('[EXECUTOR] last_active_at update failed (non-critical):', err));
+
+    // 2. Conversation limit check — required, blocks response if over limit
+    //    BOT-PERF: pass known tier to skip redundant business fetch
+    let convLimitResult: { allowed: boolean } = { allowed: true };
+    if (this.currentBusinessId) {
+      prechecks.push(
+        checkConversationLimit(this.supabase, this.currentBusinessId, business?.subscription_tier)
+          .then(r => { convLimitResult = r; _fmark('conv_limit'); })
+      );
+    }
+
+    // 3. Step overrides — needed before skipIf/prompt
+    let override: StepOverride | undefined;
+    if (business) {
+      prechecks.push(
+        loadOverrides(this.supabase, business.id, resolvedFlowType)
+          .then(overrides => { override = overrides.get(stepId); _fmark('load_overrides'); })
+          .catch(err => { logger.warn('[EXECUTOR] loadOverrides failed:', err); _fmark('load_overrides'); })
+      );
+    }
+
+    // Wait for all required prechecks (not last_active_at)
+    await Promise.all(prechecks);
+    _fmark('prechecks_done');
+
+    // Check conversation limit result
+    if (!convLimitResult.allowed) {
+      await this.sendText(from, getConversationLimitMessage());
+      return;
+    }
+
+    // Build flow context (no DB calls — synchronous)
     const lang = (session.session_data._lang as string) || '';
     const ctx: FlowContext = {
       supabase: this.supabase,
@@ -160,18 +197,10 @@ export class FlowExecutor {
       currentCanonical, // CAS-004: ephemeral, not persisted
     };
 
-    // ── Step overrides: load business-level overrides ──
-    let override: StepOverride | undefined;
-    if (business) {
-      try {
-        const overrides = await loadOverrides(this.supabase, business.id, resolvedFlowType);
-        override = overrides.get(stepId);
-      } catch (err) { logger.warn('[EXECUTOR] loadOverrides failed:', err); }
-    }
-
     // Check if step should be skipped (override or programmatic)
     const shouldSkip = override?.action === 'skip'
       || (override?.action !== 'require' && step.skipIf && await step.skipIf(ctx));
+    _fmark('skip_check');
 
     if (shouldSkip) {
       const nextStepId = await step.next(ctx);
@@ -190,9 +219,12 @@ export class FlowExecutor {
         this.trackStepHistory(session, stepId);
         session.conversation_log.push({ role: 'bot', content: override.customPrompt, timestamp: new Date().toISOString() });
         if (!await this.persistConversationLog(session, session.conversation_log)) return;
+        _fmark('cas_persist');
         await this.sendText(from, override.customPrompt);
+        _fmark('meta_send');
       } else {
         const messages = await step.prompt(ctx);
+        _fmark('step_prompt');
         if (messages.length > 0) {
           this.trackStepHistory(session, stepId);
         }
@@ -204,8 +236,11 @@ export class FlowExecutor {
           conversation_log: session.conversation_log,
         });
         if (!promptSaved) return; // stale — another worker already advanced
+        _fmark('cas_persist');
         await this.sendMessages(from, messages, session);
+        _fmark('meta_send');
       }
+      logger.info('[EXECUTOR-PERF] timings_ms', _ftimings);
       return;
     }
 
@@ -464,7 +499,9 @@ export class FlowExecutor {
     }
 
     // Validate input
+    _fmark('pre_validate');
     const result = await step.validate(input, ctx);
+    _fmark('step_validate');
 
     if (!result.valid) {
       // CAS-005: Stale worker must exit silently — no messages, no persistence
@@ -526,9 +563,12 @@ export class FlowExecutor {
     if (!nextStepId) {
       nextStepId = await step.next(ctx);
     }
+    _fmark('step_next');
 
     if (nextStepId) {
       await this.advanceToStep(session, nextStepId, from, ctx);
+      _fmark('advance_done');
+      logger.info('[EXECUTOR-PERF] timings_ms', _ftimings);
     } else {
       // Flow complete — persist log before deactivating
       if (!await this.persistConversationLog(session, session.conversation_log || [])) return;

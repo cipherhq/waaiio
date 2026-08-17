@@ -525,7 +525,69 @@ export class BotService {
       return _cachedProfile;
     };
 
-    let session = await this.getActiveSession(from);
+    // ── BOT-PERF: Single round-trip context bootstrap ──
+    // When preResolvedBusinessId is available (inbound webhook with trusted channel),
+    // use get_bot_context RPC to collapse session + business + capabilities + overrides
+    // into ONE database call instead of 4 sequential queries.
+    // When preResolvedBusinessId is unavailable (marketplace/business-selection entry),
+    // fall back to the existing phone-only session lookup.
+    let session: BotSession | null = null;
+    let _cachedBusiness: BusinessRecord | null = null;
+    let _rpcCapabilities: Array<{ capability: string; is_enabled: boolean; sort_order: number }> | null = null;
+    let _rpcOverrides: string[] | null = null;
+
+    if (preResolvedBusinessId) {
+      // BOT-PERF fast path: tenant-scoped single RPC
+      const { data: ctx } = await this.supabase.rpc('get_bot_context', {
+        p_phone: from,
+        p_business_id: preResolvedBusinessId,
+      });
+      _bmark('rpc_get_bot_context');
+
+      if (ctx?.has_session && ctx.session) {
+        session = {
+          id: ctx.session.id,
+          whatsapp_number: ctx.session.whatsapp_number,
+          user_id: ctx.session.user_id,
+          business_id: ctx.session.business_id,
+          current_step: ctx.session.current_step,
+          session_data: ctx.session.session_data || {},
+          is_active: ctx.session.is_active,
+          expires_at: ctx.session.expires_at,
+          version: ctx.session.version ?? 0,
+        };
+
+        if (ctx.business) {
+          // Build business record with all fields from RPC
+          // operating_hours and status are used downstream but not in BusinessRecord type
+          const bizFromRpc = {
+            id: ctx.business.id,
+            name: ctx.business.name,
+            slug: ctx.business.slug,
+            category: ctx.business.category,
+            flow_type: ctx.business.flow_type,
+            subscription_tier: ctx.business.subscription_tier || 'free',
+            trial_ends_at: ctx.business.trial_ends_at,
+            metadata: ctx.business.metadata || {},
+            country_code: ctx.business.country_code,
+            is_whitelabel: ctx.business.is_whitelabel,
+            payment_gateway: ctx.business.payment_gateway,
+            operating_hours: ctx.business.operating_hours,
+            status: ctx.business.status,
+          };
+          _cachedBusiness = bizFromRpc as unknown as BusinessRecord;
+        }
+
+        // Capabilities and overrides from RPC — used in revalidation below
+        _rpcCapabilities = Array.isArray(ctx.capabilities) ? ctx.capabilities : null;
+        _rpcOverrides = Array.isArray(ctx.capability_overrides) ? ctx.capability_overrides : null;
+      }
+      // If no session found for this business, session remains null — normal new-session flow
+    } else {
+      // Legacy / marketplace fallback: phone-only session lookup
+      session = await this.getActiveSession(from);
+      _bmark('legacy_getActiveSession');
+    }
 
     // ── CAP-001 Point A: Session resume capability revalidation ──
     // When an existing business-associated session is found, refresh capabilities
@@ -533,15 +595,19 @@ export class BotService {
     // This ensures stale sessions cannot bypass entitlement changes (trial expiry,
     // capability disabled, business suspended, etc.).
     // Request-scoped business cache — avoid refetching the same business row
-    let _cachedBusiness: BusinessRecord | null = null;
     if (session?.business_id) {
       try {
-        const { data: currentBiz } = await this.supabase
-          .from('businesses')
-          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, status, is_whitelabel')
-          .eq('id', session.business_id)
-          .single();
-        _cachedBusiness = currentBiz as BusinessRecord | null;
+        // BOT-PERF: Use RPC-provided business if available, otherwise fetch
+        let currentBiz = _cachedBusiness as Record<string, unknown> | null;
+        if (!currentBiz) {
+          const { data: bizData } = await this.supabase
+            .from('businesses')
+            .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, status, is_whitelabel')
+            .eq('id', session.business_id)
+            .single();
+          currentBiz = bizData as Record<string, unknown> | null;
+          _cachedBusiness = currentBiz as BusinessRecord | null;
+        }
 
         if (!currentBiz || currentBiz.status !== 'active') {
           // Business no longer active — deactivate session with recoverable message
@@ -550,21 +616,39 @@ export class BotService {
           return;
         }
 
-        // Re-resolve effective capabilities using canonical policy
-        const [capResult, overrideRows] = await Promise.all([
-          getConfiguredCapabilities(this.supabase, currentBiz.id),
-          this.supabase.from('capability_overrides').select('capability').eq('business_id', currentBiz.id),
-        ]);
+        // BOT-PERF: Use RPC-provided capabilities/overrides if available, otherwise fetch
+        let capResultOk = true;
+        let configuredRows: Array<{ capability: string; is_enabled: boolean; sort_order: number }>;
+        let overrides: string[];
 
-        if (capResult.ok) {
-          const overrides = overrideRows.error
-            ? []
-            : (overrideRows.data || []).map((r: { capability: string }) => r.capability);
+        if (_rpcCapabilities !== null && _rpcOverrides !== null) {
+          // Fast path: capabilities + overrides already loaded from RPC
+          configuredRows = _rpcCapabilities;
+          overrides = _rpcOverrides;
+          _bmark('caps_from_rpc');
+        } else {
+          // Fallback: fetch separately (marketplace/legacy path)
+          const [capResult, overrideRows] = await Promise.all([
+            getConfiguredCapabilities(this.supabase, currentBiz.id as string),
+            this.supabase.from('capability_overrides').select('capability').eq('business_id', currentBiz.id as string),
+          ]);
 
-          let configuredRows = capResult.rows;
+          if (!capResult.ok) {
+            capResultOk = false;
+            configuredRows = [];
+            overrides = [];
+          } else {
+            configuredRows = capResult.rows;
+            overrides = overrideRows.error
+              ? []
+              : (overrideRows.data || []).map((r: { capability: string }) => r.capability);
+          }
+        }
+
+        if (capResultOk) {
           if (configuredRows.length === 0) {
             const { getLegacyDefaultCapabilities } = await import('@/lib/capabilities/legacy-defaults');
-            const legacyDefaults = getLegacyDefaultCapabilities(currentBiz.category);
+            const legacyDefaults = getLegacyDefaultCapabilities(currentBiz.category as string);
             configuredRows = legacyDefaults.map((cap: string, i: number) => ({
               capability: cap, is_enabled: true, sort_order: i,
             }));
@@ -573,8 +657,8 @@ export class BotService {
           const policyResult = resolveEffectiveCaps({
             configuredCapabilities: configuredRows,
             overrides,
-            tier: currentBiz.subscription_tier || 'free',
-            trialEndsAt: currentBiz.trial_ends_at,
+            tier: (currentBiz.subscription_tier as string) || 'free',
+            trialEndsAt: currentBiz.trial_ends_at as string,
           });
 
           // Refresh the session's capabilities array with CURRENT effective set
@@ -600,7 +684,7 @@ export class BotService {
             session.session_data.capabilities = policyResult.effective;
             session.current_step = 'select_capability';
             const ufCaps = getUserFacingCapabilities(policyResult.effective);
-            const recoveryMsg = buildCapabilityRecoveryMessage(activeCap, ufCaps, currentBiz.category || 'other');
+            const recoveryMsg = buildCapabilityRecoveryMessage(activeCap, ufCaps, (currentBiz.category as string) || 'other');
 
             // Persist via CAS (BLOCKER 4: version-gated write)
             const { data: casResult } = await this.supabase.rpc('update_session_cas', {
@@ -655,6 +739,7 @@ export class BotService {
         }
       }
     }
+    _bmark('session_revalidated');
 
     // ── Global "my X" query handlers (location, orders, bookings, receipts, etc.) ──
     const globalResult = await handleGlobalQuery({
