@@ -1159,10 +1159,6 @@ jobs:
           cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_botctx_test; }
           trap cleanup EXIT
           export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/waaiio_botctx_test"
-          echo "Applying migrations to bot-context test database..."
-          for f in supabase/migrations/*.sql; do
-            psql "$TEST_DATABASE_URL" -q -v ON_ERROR_STOP=1 -f "$f" 2>&1 || { echo "❌ Migration failed: $(basename $f)"; exit 1; }
-          done
           echo "Running BOT-PERF get_bot_context real PostgreSQL authority tests..."
           set +e
           OUTPUT=$(npx vitest run lib/__tests__/bot-context-rpc.test.ts 2>&1)
