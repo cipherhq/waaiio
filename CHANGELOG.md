@@ -5,6 +5,20 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-17
+
+### fix(security): revoke anon/authenticated execute on payment confirmation RPCs
+
+- **Bug:** Supabase's `ALTER DEFAULT PRIVILEGES` auto-grants EXECUTE to `anon` and `authenticated` for functions created in the public schema. Migration 307 revoked from `PUBLIC` but that only removes the grant inherited from the PUBLIC pseudo-role — the direct grants to `anon` and `authenticated` remained. This meant 4 SECURITY DEFINER functions that modify payment state (`claim_payment_confirmation`, `renew_payment_confirmation_claim`, `finalize_payment_confirmation`, `release_payment_confirmation`) were callable by unauthenticated and authenticated browser clients.
+- **Fix:** Migration 324: explicit REVOKE ALL from PUBLIC, anon, and authenticated for all 4 functions. GRANT EXECUTE only to service_role. Does not alter function bodies.
+- **Files:** `supabase/migrations/324_payment_confirmation_rpc_grants.sql` (NEW)
+- **Tests:** `lib/__tests__/payment-confirmation-rpc-grants.test.ts` — 21 source verification + 12 real PostgreSQL tests (permission + e2e lifecycle)
+- **CI:** New `PRA payment confirmation RPC grant tests` step in `.github/workflows/ci.yml`
+- **Affects:** Payment confirmation lifecycle — these RPCs are only called server-side via the service client
+- **Could break:** Nothing — all callers already use `createServiceClient()` which authenticates as service_role
+
+---
+
 ## 2026-08-16
 
 ### fix(P1-OVERLOAD): drop stale 26-arg book_slot_atomic overload
