@@ -531,14 +531,15 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: false, errorMessage: 'This session is no longer available. Please choose another.' };
         }
 
-        // Check capacity
-        const { count } = await ctx.supabase
+        // Check capacity using SUM(party_size), matching book_slot_atomic authority
+        const { data: capacityRows } = await ctx.supabase
           .from('bookings')
-          .select('id', { count: 'exact', head: true })
+          .select('party_size')
           .eq('class_session_id', sessionId)
           .in('status', ['confirmed', 'pending', 'in_progress']);
 
-        if ((count || 0) >= session.capacity) {
+        const occupied = (capacityRows || []).reduce((sum, r) => sum + (r.party_size || 1), 0);
+        if (occupied >= session.capacity) {
           return { valid: false, errorMessage: 'This session just filled up. Please choose another.' };
         }
 
@@ -1579,12 +1580,14 @@ export const schedulingFlow: FlowDefinition = {
               .select('capacity')
               .eq('id', sessionId)
               .single();
-            const { count } = await ctx.supabase
+            // SUM(party_size) to match book_slot_atomic authority
+            const { data: capacityRows } = await ctx.supabase
               .from('bookings')
-              .select('id', { count: 'exact', head: true })
+              .select('party_size')
               .eq('class_session_id', sessionId)
               .in('status', ['confirmed', 'pending', 'in_progress']);
-            const remaining = (session?.capacity || 1) - (count || 0);
+            const occupied = (capacityRows || []).reduce((sum, r) => sum + (r.party_size || 1), 0);
+            const remaining = (session?.capacity || 1) - occupied;
             if (remaining <= 1) {
               ctx.session.session_data.party_size = 1;
               return true;
