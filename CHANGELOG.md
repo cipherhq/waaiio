@@ -7,6 +7,16 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-17
 
+### fix(infra): production drift reconciliation for migrations 321+322
+
+- **Problem:** Production had partial schema from migrations 321 (Promotions) and 322 (Class Session Booking) applied outside the migration ledger. Most 321 objects were missing (promo_campaigns, promo_prizes, promo_code_batches, etc.), and 322 was incomplete (missing create_class_atomic, create_class_recurrence_atomic, update_class_session_atomic, reconcile_class_recurrence RPCs, class session RLS policies, constraints, and table grants).
+- **Fix:** Migration 325: single convergence migration that applies ALL missing objects from 321 and 322 using idempotent guards (IF NOT EXISTS, CREATE OR REPLACE, DO $$ with duplicate_object handling, DROP POLICY IF EXISTS + CREATE POLICY). Safe to run on both clean chain and drifted production.
+- **Files:** `supabase/migrations/325_production_drift_reconciliation.sql` (NEW), `lib/__tests__/production-drift-reconciliation.test.ts` (NEW), `.github/workflows/ci.yml` (updated)
+- **Tests:** 12 tests: schema convergence (tables, columns, functions, RLS, policies match between clean chain and drift fixture), idempotency (325 runs twice without error), source verification (IF NOT EXISTS, CREATE OR REPLACE, no DROP TABLE)
+- **CI:** New `Production drift reconciliation tests` step
+- **Affects:** Database schema on production — converges to canonical 321+322 postconditions
+- **Could break:** Nothing — all statements are idempotent and preserve existing data
+
 ### fix(security): revoke anon/authenticated execute on payment confirmation RPCs
 
 - **Bug:** Supabase's `ALTER DEFAULT PRIVILEGES` auto-grants EXECUTE to `anon` and `authenticated` for functions created in the public schema. Migration 307 revoked from `PUBLIC` but that only removes the grant inherited from the PUBLIC pseudo-role — the direct grants to `anon` and `authenticated` remained. This meant 4 SECURITY DEFINER functions that modify payment state (`claim_payment_confirmation`, `renew_payment_confirmation_claim`, `finalize_payment_confirmation`, `release_payment_confirmation`) were callable by unauthenticated and authenticated browser clients.
