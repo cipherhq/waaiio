@@ -93,7 +93,34 @@ function createTableMock(config: {
       if (table === 'profiles') return makeChain({ id: 'profile-1' });
       return makeChain();
     }),
-    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    rpc: vi.fn().mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === 'get_bot_context') {
+        const sess = config.activeSession;
+        if (!sess) return Promise.resolve({ data: { has_session: false }, error: null });
+        return Promise.resolve({
+          data: {
+            has_session: true,
+            session: {
+              id: sess.id, whatsapp_number: args?.p_phone || PHONE,
+              business_id: sess.business_id, current_step: sess.current_step || 'greeting',
+              session_data: sess.session_data || {}, is_active: true,
+              version: sess.version ?? 0, user_id: null,
+              expires_at: new Date(Date.now() + 3600000).toISOString(),
+              created_at: sess.created_at || new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+            business: config.business,
+            capabilities: config.capabilities || [],
+            capability_overrides: (config.overrides || []),
+          },
+          error: null,
+        });
+      }
+      if (name === 'update_session_cas') {
+        return Promise.resolve({ data: { success: true, version: ((args?.p_expected_version as number) ?? 0) + 1 }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    }),
     storage: { from: vi.fn(() => ({ upload: vi.fn(), createSignedUrl: vi.fn(), getPublicUrl: vi.fn() })) },
   } as any;
 }
