@@ -49,6 +49,7 @@ export default function AttendancePage() {
   const [formPhone, setFormPhone] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formSaving, setFormSaving] = useState(false);
+  const [formError, setFormError] = useState('');
 
   const loadEntries = useCallback(async () => {
     setLoading(true);
@@ -75,21 +76,32 @@ export default function AttendancePage() {
     e.preventDefault();
     if (!formName.trim()) return;
     setFormSaving(true);
-    const { error } = await supabase.from('attendance_log').insert({
-      business_id: business.id,
-      customer_name: formName.trim(),
-      customer_phone: formPhone.trim() || null,
-      customer_email: formEmail.trim() || null,
-      source: 'manual',
-      checked_in_at: new Date().toISOString(),
-    });
-    setFormSaving(false);
-    if (!error) {
+    setFormError('');
+    try {
+      const res = await fetch('/api/checkin/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_id: business.id,
+          customer_name: formName.trim(),
+          customer_phone: formPhone.trim() || undefined,
+          customer_email: formEmail.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setFormError(data.error || 'Failed to add check-in');
+        return;
+      }
       setFormName('');
       setFormPhone('');
       setFormEmail('');
       setShowForm(false);
       loadEntries();
+    } catch {
+      setFormError('Network error. Please try again.');
+    } finally {
+      setFormSaving(false);
     }
   }
 
@@ -150,7 +162,7 @@ export default function AttendancePage() {
         />
         <button
           type="button"
-          onClick={() => setShowForm(prev => !prev)}
+          onClick={() => { setShowForm(prev => !prev); setFormError(''); }}
           className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 transition-colors"
         >
           {showForm ? 'Cancel' : 'Add Manual'}
@@ -172,6 +184,9 @@ export default function AttendancePage() {
           onSubmit={handleAddManual}
           className="mb-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4"
         >
+          {formError && (
+            <div className="mb-3 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-sm text-red-700 dark:text-red-300">{formError}</div>
+          )}
           <div className="grid gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">

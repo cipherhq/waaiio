@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
       .from('businesses')
       .select('id, name, phone, assigned_channel_id, whatsapp_channel_id, wa_method, bot_code')
       .eq('id', business_id)
-      .eq('is_active', true)
+      .eq('status', 'active')
       .maybeSingle();
 
     if (!business) {

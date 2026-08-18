@@ -40,7 +40,7 @@ export default function CheckInPage({ params }: { params: { businessId: string }
           .from('businesses')
           .select('name, logo_url')
           .eq('id', businessId)
-          .eq('is_active', true)
+          .eq('status', 'active')
           .abortSignal(controller.signal)
           .maybeSingle();
 
