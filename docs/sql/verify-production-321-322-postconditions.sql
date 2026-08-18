@@ -148,27 +148,55 @@ BEGIN
   END IF;
   RAISE NOTICE '321-RLS PASS: 8 promo tables have RLS';
 
-  -- 321-POL: Every promo table has at least 1 policy
-  SELECT COUNT(*) INTO v_count
-  FROM (
-    SELECT c.relname
-    FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
-    WHERE n.nspname = 'public'
-      AND c.relname IN (
-        'promo_campaigns', 'promo_prizes', 'promo_code_batches',
-        'promo_campaign_codes', 'promo_redemptions',
-        'promo_verification_attempts', 'promo_eligibility_acks',
-        'promo_pending_eligibility'
-      )
-    EXCEPT
-    SELECT DISTINCT c.relname
-    FROM pg_policy pol JOIN pg_class c ON c.oid = pol.polrelid
+  -- 321-POL: Canonical policy set for each promo table
+  -- Canonical 321 creates exactly these policies (name, table, command):
+  -- Tables with _select + _service: promo_campaigns, promo_prizes, promo_code_batches,
+  --   promo_redemptions, promo_verification_attempts
+  -- Tables with _service only: promo_campaign_codes, promo_eligibility_acks, promo_pending_eligibility
+  DECLARE
+    v_expected_policies TEXT[] := ARRAY[
+      'promo_campaigns|promo_campaigns_select|r',
+      'promo_campaigns|promo_campaigns_service|*',
+      'promo_prizes|promo_prizes_select|r',
+      'promo_prizes|promo_prizes_service|*',
+      'promo_code_batches|promo_code_batches_select|r',
+      'promo_code_batches|promo_code_batches_service|*',
+      'promo_campaign_codes|promo_campaign_codes_service|*',
+      'promo_redemptions|promo_redemptions_select|r',
+      'promo_redemptions|promo_redemptions_service|*',
+      'promo_verification_attempts|promo_attempts_select|r',
+      'promo_verification_attempts|promo_attempts_service|*',
+      'promo_eligibility_acks|promo_elig_acks_service|*',
+      'promo_pending_eligibility|promo_pending_elig_service|*'
+    ];
+    v_pol TEXT;
+    v_pol_parts TEXT[];
+  BEGIN
+    -- Verify each canonical policy exists
+    FOREACH v_pol IN ARRAY v_expected_policies LOOP
+      v_pol_parts := string_to_array(v_pol, '|');
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_policy pol
+        JOIN pg_class c ON c.oid = pol.polrelid
+        WHERE c.relname = v_pol_parts[1]
+          AND pol.polname = v_pol_parts[2]
+          AND pol.polcmd::text = v_pol_parts[3]
+      ) THEN
+        RAISE EXCEPTION '321-POL FAIL: missing canonical policy % on %', v_pol_parts[2], v_pol_parts[1];
+      END IF;
+    END LOOP;
+
+    -- Verify NO unexpected extra policies on promo tables
+    SELECT COUNT(*) INTO v_count
+    FROM pg_policy pol
+    JOIN pg_class c ON c.oid = pol.polrelid
     WHERE c.relname LIKE 'promo_%'
-  ) missing;
-  IF v_count > 0 THEN
-    RAISE EXCEPTION '321-POL FAIL: % promo tables have no RLS policies', v_count;
-  END IF;
-  RAISE NOTICE '321-POL PASS: all promo tables have policies';
+      AND NOT (c.relname || '|' || pol.polname || '|' || pol.polcmd::text) = ANY(v_expected_policies);
+    IF v_count > 0 THEN
+      RAISE EXCEPTION '321-POL FAIL: % unexpected extra policies on promo tables', v_count;
+    END IF;
+    RAISE NOTICE '321-POL PASS: canonical promo policy set (13 policies, no extras)';
+  END;
 
   RAISE NOTICE '── MIGRATION 322: Classes ──';
 
@@ -320,23 +348,171 @@ BEGIN
   END IF;
   RAISE NOTICE '322-RLS PASS: class tables have RLS + FORCE ROW LEVEL SECURITY';
 
-  -- 322-POL: Both class tables have at least 1 policy
-  SELECT COUNT(*) INTO v_count
-  FROM (
-    SELECT c.relname
-    FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
-    WHERE n.nspname = 'public'
-      AND c.relname IN ('class_recurrence_rules', 'class_sessions')
-    EXCEPT
-    SELECT DISTINCT c.relname
-    FROM pg_policy pol JOIN pg_class c ON c.oid = pol.polrelid
-    WHERE c.relname IN ('class_recurrence_rules', 'class_sessions')
-  ) missing;
-  IF v_count > 0 THEN
-    RAISE EXCEPTION '322-POL FAIL: % class tables have no RLS policies', v_count;
-  END IF;
-  RAISE NOTICE '322-POL PASS: class tables have policies';
+  -- 322-POL: Canonical policy set for class tables
+  -- Canonical 322 end state (after DROP POLICY hardening):
+  -- class_recurrence_rules: crr_owner_select (s), crr_service_all (*)
+  -- class_sessions: cs_owner_select (s), cs_service_all (*)
+  -- INSERT/UPDATE/DELETE owner policies were DROPPED for RLS hardening
+  DECLARE
+    v_class_expected_policies TEXT[] := ARRAY[
+      'class_recurrence_rules|crr_owner_select|r',
+      'class_recurrence_rules|crr_service_all|*',
+      'class_sessions|cs_owner_select|r',
+      'class_sessions|cs_service_all|*'
+    ];
+    v_cpol TEXT;
+    v_cpol_parts TEXT[];
+  BEGIN
+    FOREACH v_cpol IN ARRAY v_class_expected_policies LOOP
+      v_cpol_parts := string_to_array(v_cpol, '|');
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_policy pol
+        JOIN pg_class c ON c.oid = pol.polrelid
+        WHERE c.relname = v_cpol_parts[1]
+          AND pol.polname = v_cpol_parts[2]
+          AND pol.polcmd::text = v_cpol_parts[3]
+      ) THEN
+        RAISE EXCEPTION '322-POL FAIL: missing canonical policy % on %', v_cpol_parts[2], v_cpol_parts[1];
+      END IF;
+    END LOOP;
 
-  RAISE NOTICE '══ ALL POSTCONDITION CHECKS PASSED ══';
+    -- No unexpected extra policies on class tables
+    SELECT COUNT(*) INTO v_count
+    FROM pg_policy pol
+    JOIN pg_class c ON c.oid = pol.polrelid
+    WHERE c.relname IN ('class_recurrence_rules', 'class_sessions')
+      AND NOT (c.relname || '|' || pol.polname || '|' || pol.polcmd::text) = ANY(v_class_expected_policies);
+    IF v_count > 0 THEN
+      RAISE EXCEPTION '322-POL FAIL: % unexpected extra policies on class tables', v_count;
+    END IF;
+    RAISE NOTICE '322-POL PASS: canonical class policy set (4 policies, no extras)';
+  END;
+
+  -- 322-OVERLOAD: Exactly one book_slot_atomic overload with canonical 28-arg signature
+  SELECT COUNT(*) INTO v_count
+  FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+  WHERE n.nspname = 'public' AND p.proname = 'book_slot_atomic';
+  IF v_count != 1 THEN
+    RAISE EXCEPTION '322-OVERLOAD FAIL: expected exactly 1 book_slot_atomic overload, found %', v_count;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public' AND p.proname = 'book_slot_atomic' AND p.pronargs = 28
+  ) THEN
+    RAISE EXCEPTION '322-OVERLOAD FAIL: canonical 28-arg book_slot_atomic not found';
+  END IF;
+  RAISE NOTICE '322-OVERLOAD PASS: exactly 1 book_slot_atomic overload (28 args)';
+
+  -- 322-DISC-PUB: get_upcoming_class_sessions PUBLIC must NOT have EXECUTE
+  DECLARE
+    v_disc_pub_oid OID;
+  BEGIN
+    SELECT p.oid INTO v_disc_pub_oid
+    FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public' AND p.oid = 'public.get_upcoming_class_sessions(uuid,integer)'::regprocedure;
+    IF has_function_privilege('public', v_disc_pub_oid, 'EXECUTE') THEN
+      RAISE EXCEPTION '322-DISC-PUB FAIL: PUBLIC can EXECUTE get_upcoming_class_sessions (should be revoked)';
+    END IF;
+    RAISE NOTICE '322-DISC-PUB PASS: PUBLIC cannot EXECUTE get_upcoming_class_sessions';
+  END;
+
+  -- 322-TGRANT: Canonical table grants from migration 322
+  -- authenticated must have SELECT, INSERT, UPDATE, DELETE on class_sessions and class_recurrence_rules
+  -- anon must NOT have any DML on these tables
+  DECLARE
+    v_tbl TEXT;
+    v_priv TEXT;
+  BEGIN
+    FOREACH v_tbl IN ARRAY ARRAY['class_sessions', 'class_recurrence_rules'] LOOP
+      FOREACH v_priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
+        IF NOT has_table_privilege('authenticated', 'public.' || v_tbl, v_priv) THEN
+          RAISE EXCEPTION '322-TGRANT FAIL: authenticated cannot % on %', v_priv, v_tbl;
+        END IF;
+      END LOOP;
+      -- anon must NOT have any DML
+      FOREACH v_priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
+        IF has_table_privilege('anon', 'public.' || v_tbl, v_priv) THEN
+          RAISE EXCEPTION '322-TGRANT FAIL: anon has % on % (not canonical)', v_priv, v_tbl;
+        END IF;
+      END LOOP;
+    END LOOP;
+    RAISE NOTICE '322-TGRANT PASS: class table grants canonical (authenticated=SIUD, anon=none)';
+  END;
+
+  RAISE NOTICE '══ ALL 321+322 POSTCONDITION CHECKS PASSED ══';
 END;
 $verify$;
+
+-- ══════════════════════════════════════════════════════════════
+-- MIGRATION 323: get_bot_context canonical end-state verification
+-- ══════════════════════════════════════════════════════════════
+
+DO $verify_323$
+DECLARE
+  v_count INTEGER;
+BEGIN
+  RAISE NOTICE '── MIGRATION 323: get_bot_context ──';
+
+  -- 323-SIG: Canonical 2-arg signature exists
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public' AND p.oid = 'public.get_bot_context(text,uuid)'::regprocedure
+  ) THEN
+    RAISE EXCEPTION '323-SIG FAIL: public.get_bot_context(text,uuid) not found';
+  END IF;
+  RAISE NOTICE '323-SIG PASS: get_bot_context(text,uuid) exists';
+
+  -- 323-SEC: SECURITY DEFINER + search_path=public
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public'
+      AND p.oid = 'public.get_bot_context(text,uuid)'::regprocedure
+      AND p.prosecdef = true
+      AND p.proconfig @> ARRAY['search_path=public']
+  ) THEN
+    RAISE EXCEPTION '323-SEC FAIL: get_bot_context missing SECURITY DEFINER or search_path=public';
+  END IF;
+  RAISE NOTICE '323-SEC PASS: SECURITY DEFINER + search_path=public';
+
+  -- 323-GRANT: Exact privilege matrix
+  DECLARE
+    v_oid OID;
+  BEGIN
+    SELECT p.oid INTO v_oid FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public' AND p.oid = 'public.get_bot_context(text,uuid)'::regprocedure;
+
+    IF has_function_privilege('public', v_oid, 'EXECUTE') THEN
+      RAISE EXCEPTION '323-GRANT FAIL: PUBLIC can EXECUTE get_bot_context';
+    END IF;
+    IF has_function_privilege('anon', v_oid, 'EXECUTE') THEN
+      RAISE EXCEPTION '323-GRANT FAIL: anon can EXECUTE get_bot_context';
+    END IF;
+    IF has_function_privilege('authenticated', v_oid, 'EXECUTE') THEN
+      RAISE EXCEPTION '323-GRANT FAIL: authenticated can EXECUTE get_bot_context';
+    END IF;
+    IF NOT has_function_privilege('service_role', v_oid, 'EXECUTE') THEN
+      RAISE EXCEPTION '323-GRANT FAIL: service_role cannot EXECUTE get_bot_context';
+    END IF;
+    RAISE NOTICE '323-GRANT PASS: PUBLIC=no, anon=no, authenticated=no, service_role=yes';
+  END;
+
+  -- 323-OLD: Old single-arg overload must NOT exist
+  SELECT COUNT(*) INTO v_count
+  FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+  WHERE n.nspname = 'public' AND p.proname = 'get_bot_context' AND p.pronargs = 1;
+  IF v_count > 0 THEN
+    RAISE EXCEPTION '323-OLD FAIL: stale get_bot_context(text) overload still exists';
+  END IF;
+
+  -- Also verify exactly one overload total
+  SELECT COUNT(*) INTO v_count
+  FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+  WHERE n.nspname = 'public' AND p.proname = 'get_bot_context';
+  IF v_count != 1 THEN
+    RAISE EXCEPTION '323-OLD FAIL: expected exactly 1 get_bot_context overload, found %', v_count;
+  END IF;
+  RAISE NOTICE '323-OLD PASS: no stale overloads, exactly 1 canonical function';
+
+  RAISE NOTICE '══ ALL 323 POSTCONDITION CHECKS PASSED ══';
+END;
+$verify_323$;

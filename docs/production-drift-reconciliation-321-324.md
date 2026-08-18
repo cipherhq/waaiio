@@ -143,15 +143,21 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
 This script raises an exception on ANY mismatch. It verifies:
 
 **321 Promotions:** 8 tables, 9 enums, 11 functions, SECURITY DEFINER + search_path,
-exact RPC privilege matrix (9 service-role-only RPCs using exact signatures,
-validate_promo_campaign_activation also service-role-only per canonical 321 final
-REVOKE), RLS on all 8 tables, policies exist.
+exact RPC privilege matrix using regprocedure signatures (9 service-role-only RPCs
+including get_promo_campaign_aggregates and validate_promo_campaign_activation),
+RLS on all 8 tables, exact canonical policy set (13 policies, no extras permitted).
 
 **322 Classes:** 2 class tables, bookings.class_session_id FK → class_sessions with
-confdeltype='n' (SET NULL), idx_bookings_class_session index, 9 RPCs with SECURITY
-DEFINER + search_path, exact privilege matrix using canonical signatures (8
-service-role-only RPCs, get_upcoming_class_sessions intentionally discoverable by
-anon+authenticated+service_role), RLS + FORCE ROW LEVEL SECURITY, policies exist.
+confdeltype='n' (SET NULL), idx_bookings_class_session, exactly 1 book_slot_atomic
+overload (28 args), 9 RPCs with SECURITY DEFINER + search_path, exact privilege
+matrix (8 service-role-only, get_upcoming_class_sessions: PUBLIC=no, anon=yes,
+authenticated=yes, service_role=yes), RLS + FORCE ROW LEVEL SECURITY, exact
+canonical policy set (4 policies, no extras), table grants (authenticated=SIUD,
+anon=none).
+
+**323 get_bot_context:** exact 2-arg signature, SECURITY DEFINER + search_path,
+PUBLIC/anon/authenticated=no EXECUTE, service_role=yes, no stale single-arg
+overload, exactly 1 overload total.
 
 **This verifier MUST complete successfully.** Any failed invariant = ABORT.
 
@@ -208,7 +214,10 @@ SELECT 'bookings_with_class_session', COUNT(*) FROM bookings WHERE class_session
 
 ## PHASE C -- MIGRATION HISTORY RECONCILIATION
 
-Only proceed after Phase B postconditions pass.
+Only proceed after ALL of:
+- B1: migration 325 applied successfully
+- B2: canonical 321+322+323 postcondition verifier PASSED (all checks)
+- B3: data counts unchanged from A5 captures
 
 ### C1. Record migrations 321, 322, 323 in ledger
 
