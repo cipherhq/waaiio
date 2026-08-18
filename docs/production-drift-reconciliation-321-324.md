@@ -133,218 +133,63 @@ curl -s -X POST "https://api.supabase.com/v1/projects/cxcmiqotkowhxinjbytg/datab
   -d "$(jq -n --arg q "$SQL" '{query: $q}')"
 ```
 
-### B2. Verify 321 Promotions postconditions
+### B2. Run fail-closed canonical postcondition verifier
 
-**Tables (expect 8):**
-
-```sql
-SELECT table_name FROM information_schema.tables
-WHERE table_schema = 'public'
-  AND table_name IN (
-    'promo_campaigns', 'promo_prizes', 'promo_code_batches',
-    'promo_campaign_codes', 'promo_redemptions',
-    'promo_verification_attempts', 'promo_eligibility_acks',
-    'promo_pending_eligibility'
-  )
-ORDER BY table_name;
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f docs/sql/verify-production-321-322-postconditions.sql
 ```
 
-**ABORT if count != 8.**
+This script raises an exception on ANY mismatch. It verifies:
 
-**Enums (expect 9):**
+**321 Promotions:** 8 tables, 9 enums, 11 functions, SECURITY DEFINER + search_path,
+anon/authenticated/service_role EXECUTE grants, RLS on all 8 tables, policies exist.
 
-```sql
-SELECT typname FROM pg_type
-WHERE typname IN (
-  'promo_campaign_status', 'promo_code_entry_mode', 'promo_prize_type',
-  'promo_batch_status', 'promo_batch_source', 'promo_code_status',
-  'promo_code_outcome', 'promo_fulfillment_status', 'promo_attempt_result'
-)
-ORDER BY typname;
-```
+**322 Classes:** 2 class tables, bookings.class_session_id FK → class_sessions with
+confdeltype='n' (SET NULL), idx_bookings_class_session index, 9 RPCs with SECURITY
+DEFINER + search_path, anon/authenticated/service_role EXECUTE grants, RLS + FORCE
+ROW LEVEL SECURITY, policies exist.
 
-**ABORT if count != 9.**
+**This verifier MUST complete successfully.** Any failed invariant = ABORT.
 
-**Columns, constraints, indexes (concise metadata check):**
+The verifier is source-controlled at `docs/sql/verify-production-321-322-postconditions.sql`
+and matches the invariants proven by `production-drift-reconciliation.test.ts`.
 
-```sql
--- Promo table column counts (structure integrity)
-SELECT t.table_name, COUNT(*) AS col_count
-FROM information_schema.columns c
-JOIN information_schema.tables t ON t.table_name = c.table_name
-WHERE t.table_schema = 'public' AND t.table_name LIKE 'promo_%'
-GROUP BY t.table_name ORDER BY t.table_name;
-
--- PK/FK/UNIQUE/CHECK constraint counts per promo table
-SELECT c.relname AS table_name, con.contype::text AS constraint_type, COUNT(*)
-FROM pg_constraint con
-JOIN pg_class c ON c.oid = con.conrelid
-WHERE c.relname LIKE 'promo_%'
-GROUP BY c.relname, con.contype ORDER BY c.relname, con.contype;
-
--- Index count per promo table
-SELECT tablename, COUNT(*) AS idx_count
-FROM pg_indexes WHERE tablename LIKE 'promo_%'
-GROUP BY tablename ORDER BY tablename;
-```
-
-**Functions (expect 11), security, grants:**
+For diagnostic purposes, the following human-readable queries may also be run:
 
 ```sql
-SELECT p.proname,
-  pg_get_function_identity_arguments(p.oid) AS args,
-  p.prosecdef AS security_definer,
-  COALESCE(array_to_string(p.proconfig, ','), 'none') AS config,
-  has_function_privilege('anon', p.oid, 'EXECUTE') AS anon_exec,
-  has_function_privilege('service_role', p.oid, 'EXECUTE') AS svc_exec
+-- Diagnostic: full function details (not authoritative — use verifier)
+SELECT p.proname, pg_get_function_identity_arguments(p.oid) AS args,
+  p.prosecdef, COALESCE(array_to_string(p.proconfig, ','), 'none') AS config,
+  has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
+  has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authed,
+  has_function_privilege('service_role', p.oid, 'EXECUTE') AS svc
 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
 WHERE n.nspname = 'public'
   AND p.proname IN (
-    'claim_promo_code', 'validate_promo_campaign_activation',
-    'admin_promo_governance', 'activate_promo_campaign',
-    'commit_promo_code_chunk', 'commit_promo_import_chunk',
-    'get_promo_campaign_aggregates', 'reset_promo_failed_batch',
-    'create_promo_batch_atomic', 'update_promo_campaign_updated_at',
-    'validate_promo_campaign_status_transition'
+    'claim_promo_code', 'admin_promo_governance', 'book_slot_atomic',
+    'generate_class_sessions', 'create_class_atomic'
   )
 ORDER BY p.proname;
-```
 
-**ABORT if:** count != 11, or any SECURITY DEFINER function is missing, or config missing search_path=public.
-
-**RLS + policies:**
-
-```sql
--- RLS enabled on all promo tables
-SELECT c.relname, c.relrowsecurity
-FROM pg_class c WHERE c.relname LIKE 'promo_%'
-  AND c.relkind = 'r' ORDER BY c.relname;
-
--- Policy count per promo table
-SELECT c.relname, COUNT(*) AS policy_count
-FROM pg_policy pol
-JOIN pg_class c ON c.oid = pol.polrelid
-WHERE c.relname LIKE 'promo_%'
-GROUP BY c.relname ORDER BY c.relname;
-```
-
-**ABORT if:** Any promo table has relrowsecurity=false or zero policies.
-
-### B3. Verify 322 Classes postconditions
-
-**Tables and columns:**
-
-```sql
--- class_recurrence_rules columns
-SELECT column_name, data_type, is_nullable
-FROM information_schema.columns
-WHERE table_name = 'class_recurrence_rules' ORDER BY ordinal_position;
-
--- class_sessions columns
-SELECT column_name, data_type, is_nullable
-FROM information_schema.columns
-WHERE table_name = 'class_sessions' ORDER BY ordinal_position;
-```
-
-**bookings.class_session_id — FK, ON DELETE, index:**
-
-```sql
--- FK exists with ON DELETE SET NULL
-SELECT con.conname,
-  a.attname AS source_column,
-  cf.relname AS target_table,
-  con.confdeltype::text AS on_delete
-FROM pg_constraint con
-JOIN pg_class c ON c.oid = con.conrelid
-JOIN pg_class cf ON cf.oid = con.confrelid
-JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(con.conkey)
-WHERE c.relname = 'bookings' AND a.attname = 'class_session_id' AND con.contype = 'f';
--- Must show: target_table=class_sessions, on_delete=a (SET NULL)
-
--- Index exists
-SELECT indexname FROM pg_indexes
-WHERE tablename = 'bookings' AND indexname = 'idx_bookings_class_session';
-```
-
-**ABORT if:** FK missing, target != class_sessions, on_delete != 'a', or index missing.
-
-**Constraints and indexes on class tables:**
-
-```sql
--- Constraint counts (PK, FK, UNIQUE, CHECK)
-SELECT c.relname, con.contype::text, COUNT(*)
-FROM pg_constraint con
-JOIN pg_class c ON c.oid = con.conrelid
-WHERE c.relname IN ('class_recurrence_rules', 'class_sessions')
-GROUP BY c.relname, con.contype ORDER BY c.relname, con.contype;
-
--- Index definitions
-SELECT tablename, indexname, indexdef
-FROM pg_indexes
+-- Diagnostic: index definitions
+SELECT tablename, indexname, indexdef FROM pg_indexes
 WHERE tablename IN ('class_recurrence_rules', 'class_sessions')
 ORDER BY tablename, indexname;
-```
 
-**RPCs — signatures, security, grants (expect 9):**
-
-```sql
-SELECT p.proname,
-  pg_get_function_identity_arguments(p.oid) AS args,
-  p.prosecdef AS security_definer,
-  COALESCE(array_to_string(p.proconfig, ','), 'none') AS config,
-  has_function_privilege('anon', p.oid, 'EXECUTE') AS anon_exec,
-  has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authed_exec,
-  has_function_privilege('service_role', p.oid, 'EXECUTE') AS svc_exec
-FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
-WHERE n.nspname = 'public'
-  AND p.proname IN (
-    'generate_class_sessions', 'get_upcoming_class_sessions',
-    'book_slot_atomic', 'book_manual_slot_atomic',
-    'reschedule_booking_atomic', 'create_class_atomic',
-    'create_class_recurrence_atomic', 'update_class_session_atomic',
-    'reconcile_class_recurrence'
-  )
-ORDER BY p.proname;
-```
-
-**ABORT if:** count != 9, or any is missing SECURITY DEFINER, or config missing search_path=public.
-
-**RLS + FORCE ROW LEVEL SECURITY:**
-
-```sql
-SELECT relname, relrowsecurity, relforcerowsecurity
-FROM pg_class WHERE relname IN ('class_recurrence_rules', 'class_sessions');
--- Both must be true/true
-```
-
-**ABORT if:** Either table has relrowsecurity=false or relforcerowsecurity=false.
-
-**Policies (full definition check):**
-
-```sql
+-- Diagnostic: policy definitions
 SELECT c.relname, pol.polname, pol.polcmd::text,
   pg_get_expr(pol.polqual, pol.polrelid) AS using_expr,
   pg_get_expr(pol.polwithcheck, pol.polrelid) AS check_expr
-FROM pg_policy pol
-JOIN pg_class c ON c.oid = pol.polrelid
-WHERE c.relname IN ('class_recurrence_rules', 'class_sessions')
+FROM pg_policy pol JOIN pg_class c ON c.oid = pol.polrelid
+WHERE c.relname IN ('class_recurrence_rules', 'class_sessions',
+  'promo_campaigns', 'promo_redemptions')
 ORDER BY c.relname, pol.polname;
 ```
 
-**Table grants:**
+### B3. Verify existing data intact
 
-```sql
-SELECT grantee, table_name, privilege_type
-FROM information_schema.table_privileges
-WHERE table_schema = 'public'
-  AND table_name IN ('class_recurrence_rules', 'class_sessions')
-  AND grantee IN ('anon', 'authenticated', 'service_role')
-ORDER BY table_name, grantee, privilege_type;
-```
-
-### B4. Verify existing data intact
-
-Compare to counts captured in Phase A5:
+Compare to counts captured in Phase A5 (must be identical):
 
 ```sql
 SELECT 'class_recurrence_rules' AS table_name, COUNT(*) AS row_count FROM class_recurrence_rules
