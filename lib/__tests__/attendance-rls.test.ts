@@ -108,8 +108,12 @@ describe('Attendance check-in API — input validation contract', () => {
       expect(routeSource).toContain('createServiceClient');
     });
 
-    it('verifies business is active before inserting', () => {
-      expect(routeSource).toContain(".eq('is_active', true)");
+    it('verifies business status is active (not is_active)', () => {
+      expect(routeSource).toContain(".eq('status', 'active')");
+      // Extract the businesses query block and verify it doesn't use is_active
+      const bizQueryMatch = routeSource.match(/from\s*\(\s*['"]businesses['"]\s*\)([\s\S]*?)\.maybeSingle/);
+      expect(bizQueryMatch).toBeTruthy();
+      expect(bizQueryMatch![1]).not.toContain('is_active');
     });
   });
 
