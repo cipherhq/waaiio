@@ -1292,6 +1292,37 @@ jobs:
           psql "$DBURL" -v ON_ERROR_STOP=1 -f docs/sql/verify-production-321-322-postconditions.sql
           echo "✅ Production postcondition verifier complete — all checks passed."
 
+      - name: Class ACL reconciliation tests (migration 326)
+        if: hashFiles('lib/__tests__/class-acl-reconciliation.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_acl326_test
+          createdb --maintenance-db=waaiio_test waaiio_acl326_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_acl326_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/waaiio_acl326_test"
+          echo "Running class ACL reconciliation tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/class-acl-reconciliation.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ ACL 326 tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ ACL 326 tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No ACL 326 tests passed."; exit 1; fi
+          echo "✅ Class ACL reconciliation tests complete — zero skips, zero failures."
+
   # ── Engineering Governance ──
   governance:
     name: Engineering governance
