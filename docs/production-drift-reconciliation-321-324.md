@@ -60,7 +60,25 @@ WHERE table_schema = 'public'
 ORDER BY table_name;
 ```
 
-### A5. Capture function signatures and security
+**ABORT if:** class_recurrence_rules or class_sessions missing (fixture assumes present).
+
+### A5. Capture BEFORE data counts
+
+Record these values BEFORE any schema changes. They will be compared
+to post-325 values in Phase B4 to prove no data loss.
+
+```sql
+-- Record these exact counts before migration 325:
+SELECT 'class_recurrence_rules' AS table_name, COUNT(*) AS row_count FROM class_recurrence_rules
+UNION ALL
+SELECT 'class_sessions', COUNT(*) FROM class_sessions
+UNION ALL
+SELECT 'bookings_with_class_session', COUNT(*) FROM bookings WHERE class_session_id IS NOT NULL;
+```
+
+Save the output. These are production-state values — do not hardcode expectations.
+
+### A6. Capture function signatures and security
 
 ```sql
 SELECT p.proname,
@@ -84,6 +102,23 @@ ORDER BY p.proname;
 
 **ABORT if:** Observed state differs materially from the tested drift fixture (e.g., tables missing that fixture assumes present, extra columns not accounted for, functions with different arg counts).
 
+### A7. Capture payment confirmation RPC grant state
+
+```sql
+SELECT p.proname,
+  has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
+  has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authed,
+  has_function_privilege('service_role', p.oid, 'EXECUTE') AS svc
+FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE n.nspname = 'public'
+  AND p.proname IN (
+    'claim_payment_confirmation', 'renew_payment_confirmation_claim',
+    'finalize_payment_confirmation', 'release_payment_confirmation'
+  );
+```
+
+**Expected before 324:** anon=true, authenticated=true, service_role=true (overly permissive).
+
 ---
 
 ## PHASE B -- SCHEMA CONVERGENCE
@@ -98,10 +133,11 @@ curl -s -X POST "https://api.supabase.com/v1/projects/cxcmiqotkowhxinjbytg/datab
   -d "$(jq -n --arg q "$SQL" '{query: $q}')"
 ```
 
-### B2. Verify 321 postconditions
+### B2. Verify 321 Promotions postconditions
+
+**Tables (expect 8):**
 
 ```sql
--- All promo tables exist
 SELECT table_name FROM information_schema.tables
 WHERE table_schema = 'public'
   AND table_name IN (
@@ -111,69 +147,214 @@ WHERE table_schema = 'public'
     'promo_pending_eligibility'
   )
 ORDER BY table_name;
--- Expected: 8 rows
+```
 
--- Promo enums exist
+**ABORT if count != 8.**
+
+**Enums (expect 9):**
+
+```sql
 SELECT typname FROM pg_type
-WHERE typname IN ('promo_campaign_status', 'promo_code_entry_mode',
-  'promo_prize_type', 'promo_batch_status', 'promo_batch_source');
--- Expected: 5 rows
+WHERE typname IN (
+  'promo_campaign_status', 'promo_code_entry_mode', 'promo_prize_type',
+  'promo_batch_status', 'promo_batch_source', 'promo_code_status',
+  'promo_code_outcome', 'promo_fulfillment_status', 'promo_attempt_result'
+)
+ORDER BY typname;
+```
 
--- Promo functions exist
-SELECT proname FROM pg_proc p
-JOIN pg_namespace n ON p.pronamespace = n.oid
+**ABORT if count != 9.**
+
+**Columns, constraints, indexes (concise metadata check):**
+
+```sql
+-- Promo table column counts (structure integrity)
+SELECT t.table_name, COUNT(*) AS col_count
+FROM information_schema.columns c
+JOIN information_schema.tables t ON t.table_name = c.table_name
+WHERE t.table_schema = 'public' AND t.table_name LIKE 'promo_%'
+GROUP BY t.table_name ORDER BY t.table_name;
+
+-- PK/FK/UNIQUE/CHECK constraint counts per promo table
+SELECT c.relname AS table_name, con.contype::text AS constraint_type, COUNT(*)
+FROM pg_constraint con
+JOIN pg_class c ON c.oid = con.conrelid
+WHERE c.relname LIKE 'promo_%'
+GROUP BY c.relname, con.contype ORDER BY c.relname, con.contype;
+
+-- Index count per promo table
+SELECT tablename, COUNT(*) AS idx_count
+FROM pg_indexes WHERE tablename LIKE 'promo_%'
+GROUP BY tablename ORDER BY tablename;
+```
+
+**Functions (expect 11), security, grants:**
+
+```sql
+SELECT p.proname,
+  pg_get_function_identity_arguments(p.oid) AS args,
+  p.prosecdef AS security_definer,
+  COALESCE(array_to_string(p.proconfig, ','), 'none') AS config,
+  has_function_privilege('anon', p.oid, 'EXECUTE') AS anon_exec,
+  has_function_privilege('service_role', p.oid, 'EXECUTE') AS svc_exec
+FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
 WHERE n.nspname = 'public'
-  AND proname IN ('claim_promo_code', 'validate_promo_campaign_activation',
+  AND p.proname IN (
+    'claim_promo_code', 'validate_promo_campaign_activation',
     'admin_promo_governance', 'activate_promo_campaign',
     'commit_promo_code_chunk', 'commit_promo_import_chunk',
     'get_promo_campaign_aggregates', 'reset_promo_failed_batch',
     'create_promo_batch_atomic', 'update_promo_campaign_updated_at',
-    'validate_promo_campaign_status_transition');
--- Expected: 11 rows
+    'validate_promo_campaign_status_transition'
+  )
+ORDER BY p.proname;
 ```
 
-### B3. Verify 322 postconditions
+**ABORT if:** count != 11, or any SECURITY DEFINER function is missing, or config missing search_path=public.
+
+**RLS + policies:**
 
 ```sql
--- class_recurrence_rules and class_sessions exist with correct columns
-SELECT column_name FROM information_schema.columns
+-- RLS enabled on all promo tables
+SELECT c.relname, c.relrowsecurity
+FROM pg_class c WHERE c.relname LIKE 'promo_%'
+  AND c.relkind = 'r' ORDER BY c.relname;
+
+-- Policy count per promo table
+SELECT c.relname, COUNT(*) AS policy_count
+FROM pg_policy pol
+JOIN pg_class c ON c.oid = pol.polrelid
+WHERE c.relname LIKE 'promo_%'
+GROUP BY c.relname ORDER BY c.relname;
+```
+
+**ABORT if:** Any promo table has relrowsecurity=false or zero policies.
+
+### B3. Verify 322 Classes postconditions
+
+**Tables and columns:**
+
+```sql
+-- class_recurrence_rules columns
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
 WHERE table_name = 'class_recurrence_rules' ORDER BY ordinal_position;
 
-SELECT column_name FROM information_schema.columns
+-- class_sessions columns
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
 WHERE table_name = 'class_sessions' ORDER BY ordinal_position;
+```
 
--- bookings.class_session_id exists with FK
-SELECT conname FROM pg_constraint con
+**bookings.class_session_id — FK, ON DELETE, index:**
+
+```sql
+-- FK exists with ON DELETE SET NULL
+SELECT con.conname,
+  a.attname AS source_column,
+  cf.relname AS target_table,
+  con.confdeltype::text AS on_delete
+FROM pg_constraint con
 JOIN pg_class c ON c.oid = con.conrelid
+JOIN pg_class cf ON cf.oid = con.confrelid
 JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(con.conkey)
 WHERE c.relname = 'bookings' AND a.attname = 'class_session_id' AND con.contype = 'f';
+-- Must show: target_table=class_sessions, on_delete=a (SET NULL)
 
--- Class RPCs exist with SECURITY DEFINER and search_path = public
-SELECT p.proname, p.prosecdef, p.proconfig
+-- Index exists
+SELECT indexname FROM pg_indexes
+WHERE tablename = 'bookings' AND indexname = 'idx_bookings_class_session';
+```
+
+**ABORT if:** FK missing, target != class_sessions, on_delete != 'a', or index missing.
+
+**Constraints and indexes on class tables:**
+
+```sql
+-- Constraint counts (PK, FK, UNIQUE, CHECK)
+SELECT c.relname, con.contype::text, COUNT(*)
+FROM pg_constraint con
+JOIN pg_class c ON c.oid = con.conrelid
+WHERE c.relname IN ('class_recurrence_rules', 'class_sessions')
+GROUP BY c.relname, con.contype ORDER BY c.relname, con.contype;
+
+-- Index definitions
+SELECT tablename, indexname, indexdef
+FROM pg_indexes
+WHERE tablename IN ('class_recurrence_rules', 'class_sessions')
+ORDER BY tablename, indexname;
+```
+
+**RPCs — signatures, security, grants (expect 9):**
+
+```sql
+SELECT p.proname,
+  pg_get_function_identity_arguments(p.oid) AS args,
+  p.prosecdef AS security_definer,
+  COALESCE(array_to_string(p.proconfig, ','), 'none') AS config,
+  has_function_privilege('anon', p.oid, 'EXECUTE') AS anon_exec,
+  has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authed_exec,
+  has_function_privilege('service_role', p.oid, 'EXECUTE') AS svc_exec
 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
 WHERE n.nspname = 'public'
-  AND p.proname IN ('generate_class_sessions', 'get_upcoming_class_sessions',
-    'book_slot_atomic', 'create_class_atomic', 'reschedule_booking_atomic',
-    'book_manual_slot_atomic', 'create_class_recurrence_atomic',
-    'update_class_session_atomic', 'reconcile_class_recurrence');
--- All must show prosecdef=true, proconfig includes search_path=public
+  AND p.proname IN (
+    'generate_class_sessions', 'get_upcoming_class_sessions',
+    'book_slot_atomic', 'book_manual_slot_atomic',
+    'reschedule_booking_atomic', 'create_class_atomic',
+    'create_class_recurrence_atomic', 'update_class_session_atomic',
+    'reconcile_class_recurrence'
+  )
+ORDER BY p.proname;
+```
 
--- RLS + FORCE enabled on class tables
+**ABORT if:** count != 9, or any is missing SECURITY DEFINER, or config missing search_path=public.
+
+**RLS + FORCE ROW LEVEL SECURITY:**
+
+```sql
 SELECT relname, relrowsecurity, relforcerowsecurity
 FROM pg_class WHERE relname IN ('class_recurrence_rules', 'class_sessions');
 -- Both must be true/true
 ```
 
-### B4. Verify existing data intact
+**ABORT if:** Either table has relrowsecurity=false or relforcerowsecurity=false.
+
+**Policies (full definition check):**
 
 ```sql
-SELECT COUNT(*) FROM class_recurrence_rules;
-SELECT COUNT(*) FROM class_sessions;
-SELECT COUNT(*) FROM bookings WHERE class_session_id IS NOT NULL;
--- Counts must match pre-migration values (compare with A4 captures)
+SELECT c.relname, pol.polname, pol.polcmd::text,
+  pg_get_expr(pol.polqual, pol.polrelid) AS using_expr,
+  pg_get_expr(pol.polwithcheck, pol.polrelid) AS check_expr
+FROM pg_policy pol
+JOIN pg_class c ON c.oid = pol.polrelid
+WHERE c.relname IN ('class_recurrence_rules', 'class_sessions')
+ORDER BY c.relname, pol.polname;
 ```
 
-**ABORT if:** Any postcondition check fails, any table/function/column missing, or data counts differ from pre-migration.
+**Table grants:**
+
+```sql
+SELECT grantee, table_name, privilege_type
+FROM information_schema.table_privileges
+WHERE table_schema = 'public'
+  AND table_name IN ('class_recurrence_rules', 'class_sessions')
+  AND grantee IN ('anon', 'authenticated', 'service_role')
+ORDER BY table_name, grantee, privilege_type;
+```
+
+### B4. Verify existing data intact
+
+Compare to counts captured in Phase A5:
+
+```sql
+SELECT 'class_recurrence_rules' AS table_name, COUNT(*) AS row_count FROM class_recurrence_rules
+UNION ALL
+SELECT 'class_sessions', COUNT(*) FROM class_sessions
+UNION ALL
+SELECT 'bookings_with_class_session', COUNT(*) FROM bookings WHERE class_session_id IS NOT NULL;
+```
+
+**ABORT if:** Any count differs from the A5 pre-migration values.
 
 ---
 
