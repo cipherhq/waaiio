@@ -143,12 +143,15 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
 This script raises an exception on ANY mismatch. It verifies:
 
 **321 Promotions:** 8 tables, 9 enums, 11 functions, SECURITY DEFINER + search_path,
-anon/authenticated/service_role EXECUTE grants, RLS on all 8 tables, policies exist.
+exact RPC privilege matrix (9 service-role-only RPCs using exact signatures,
+validate_promo_campaign_activation also service-role-only per canonical 321 final
+REVOKE), RLS on all 8 tables, policies exist.
 
 **322 Classes:** 2 class tables, bookings.class_session_id FK → class_sessions with
 confdeltype='n' (SET NULL), idx_bookings_class_session index, 9 RPCs with SECURITY
-DEFINER + search_path, anon/authenticated/service_role EXECUTE grants, RLS + FORCE
-ROW LEVEL SECURITY, policies exist.
+DEFINER + search_path, exact privilege matrix using canonical signatures (8
+service-role-only RPCs, get_upcoming_class_sessions intentionally discoverable by
+anon+authenticated+service_role), RLS + FORCE ROW LEVEL SECURITY, policies exist.
 
 **This verifier MUST complete successfully.** Any failed invariant = ABORT.
 

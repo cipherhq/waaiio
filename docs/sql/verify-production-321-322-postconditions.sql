@@ -76,34 +76,61 @@ BEGIN
   END IF;
   RAISE NOTICE '321-SEC PASS: 9 promo RPCs SECURITY DEFINER + search_path';
 
-  -- 321-GRANT: Sensitive promo RPCs not executable by anon/authenticated
-  SELECT COUNT(*) INTO v_count
-  FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
-  WHERE n.nspname = 'public'
-    AND p.proname IN (
-      'claim_promo_code', 'admin_promo_governance', 'activate_promo_campaign',
-      'commit_promo_code_chunk', 'commit_promo_import_chunk',
-      'reset_promo_failed_batch', 'create_promo_batch_atomic'
-    )
-    AND (has_function_privilege('anon', p.oid, 'EXECUTE')
-      OR has_function_privilege('authenticated', p.oid, 'EXECUTE'));
-  IF v_count > 0 THEN
-    RAISE EXCEPTION '321-GRANT FAIL: % promo RPCs are executable by anon or authenticated', v_count;
-  END IF;
-  -- service_role must have EXECUTE
-  SELECT COUNT(*) INTO v_count
-  FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
-  WHERE n.nspname = 'public'
-    AND p.proname IN (
-      'claim_promo_code', 'admin_promo_governance', 'activate_promo_campaign',
-      'commit_promo_code_chunk', 'commit_promo_import_chunk',
-      'reset_promo_failed_batch', 'create_promo_batch_atomic'
-    )
-    AND has_function_privilege('service_role', p.oid, 'EXECUTE');
-  IF v_count != 7 THEN
-    RAISE EXCEPTION '321-GRANT FAIL: expected 7 promo RPCs executable by service_role, found %', v_count;
-  END IF;
-  RAISE NOTICE '321-GRANT PASS: promo RPCs grant restrictions correct';
+  -- 321-GRANT-SVC: 8 service-role-only promo RPCs (using exact signatures)
+  -- These must have: anon=no, authenticated=no, service_role=yes
+  DECLARE
+    v_svc_only_promo TEXT[] := ARRAY[
+      'claim_promo_code(uuid,uuid,text,text,text)',
+      'admin_promo_governance(uuid,text,uuid,text,text)',
+      'activate_promo_campaign(uuid,uuid,text)',
+      'commit_promo_code_chunk(uuid,integer,jsonb,integer)',
+      'commit_promo_import_chunk(uuid,jsonb)',
+      'get_promo_campaign_aggregates(uuid[])',
+      'reset_promo_failed_batch(uuid)',
+      'create_promo_batch_atomic(uuid,promo_batch_source,integer)'
+    ];
+    v_fn TEXT;
+  BEGIN
+    FOREACH v_fn IN ARRAY v_svc_only_promo LOOP
+      IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = 'public' AND p.oid = ('public.' || v_fn)::regprocedure) THEN
+        RAISE EXCEPTION '321-GRANT-SVC FAIL: function % not found', v_fn;
+      END IF;
+      IF has_function_privilege('anon', ('public.' || v_fn)::regprocedure, 'EXECUTE') THEN
+        RAISE EXCEPTION '321-GRANT-SVC FAIL: anon can EXECUTE %', v_fn;
+      END IF;
+      IF has_function_privilege('authenticated', ('public.' || v_fn)::regprocedure, 'EXECUTE') THEN
+        RAISE EXCEPTION '321-GRANT-SVC FAIL: authenticated can EXECUTE %', v_fn;
+      END IF;
+      IF NOT has_function_privilege('service_role', ('public.' || v_fn)::regprocedure, 'EXECUTE') THEN
+        RAISE EXCEPTION '321-GRANT-SVC FAIL: service_role cannot EXECUTE %', v_fn;
+      END IF;
+    END LOOP;
+    RAISE NOTICE '321-GRANT-SVC PASS: 8 service-role-only promo RPCs';
+  END;
+
+  -- 321-GRANT-VAL: validate_promo_campaign_activation is also service-role-only
+  -- Canonical 321: GRANT authenticated then REVOKE authenticated (net effect: service_role only)
+  DECLARE
+    v_validate_oid OID;
+  BEGIN
+    SELECT p.oid INTO v_validate_oid
+    FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public' AND p.oid = 'public.validate_promo_campaign_activation(uuid)'::regprocedure;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION '321-GRANT-VAL FAIL: validate_promo_campaign_activation(uuid) not found';
+    END IF;
+    IF has_function_privilege('anon', v_validate_oid, 'EXECUTE') THEN
+      RAISE EXCEPTION '321-GRANT-VAL FAIL: anon can EXECUTE validate_promo_campaign_activation';
+    END IF;
+    IF has_function_privilege('authenticated', v_validate_oid, 'EXECUTE') THEN
+      RAISE EXCEPTION '321-GRANT-VAL FAIL: authenticated can EXECUTE validate_promo_campaign_activation (should be revoked per canonical 321)';
+    END IF;
+    IF NOT has_function_privilege('service_role', v_validate_oid, 'EXECUTE') THEN
+      RAISE EXCEPTION '321-GRANT-VAL FAIL: service_role cannot EXECUTE validate_promo_campaign_activation';
+    END IF;
+    RAISE NOTICE '321-GRANT-VAL PASS: validate_promo_campaign_activation grants correct (anon=no, authenticated=no, service_role=yes)';
+  END;
 
   -- 321-RLS: All 8 promo tables have RLS enabled
   SELECT COUNT(*) INTO v_count
@@ -226,38 +253,60 @@ BEGIN
   END IF;
   RAISE NOTICE '322-SEC PASS: 9 class RPCs SECURITY DEFINER + search_path';
 
-  -- 322-GRANT: Sensitive class RPCs not executable by anon or authenticated
-  -- (get_upcoming_class_sessions is intentionally granted to anon/authenticated for discovery)
-  SELECT COUNT(*) INTO v_count
-  FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
-  WHERE n.nspname = 'public'
-    AND p.proname IN (
-      'book_slot_atomic', 'book_manual_slot_atomic',
-      'reschedule_booking_atomic', 'create_class_atomic',
-      'create_class_recurrence_atomic', 'update_class_session_atomic',
-      'reconcile_class_recurrence', 'generate_class_sessions'
-    )
-    AND (has_function_privilege('anon', p.oid, 'EXECUTE')
-      OR has_function_privilege('authenticated', p.oid, 'EXECUTE'));
-  IF v_count > 0 THEN
-    RAISE EXCEPTION '322-GRANT FAIL: % sensitive class RPCs are executable by anon or authenticated', v_count;
-  END IF;
-  -- service_role must have EXECUTE on all 9
-  SELECT COUNT(*) INTO v_count
-  FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
-  WHERE n.nspname = 'public'
-    AND p.proname IN (
-      'generate_class_sessions', 'get_upcoming_class_sessions',
-      'book_slot_atomic', 'book_manual_slot_atomic',
-      'reschedule_booking_atomic', 'create_class_atomic',
-      'create_class_recurrence_atomic', 'update_class_session_atomic',
-      'reconcile_class_recurrence'
-    )
-    AND has_function_privilege('service_role', p.oid, 'EXECUTE');
-  IF v_count != 9 THEN
-    RAISE EXCEPTION '322-GRANT FAIL: expected 9 class RPCs executable by service_role, found %', v_count;
-  END IF;
-  RAISE NOTICE '322-GRANT PASS: class RPC grant restrictions correct';
+  -- 322-GRANT-SVC: 8 sensitive class RPCs — service-role-only (using exact signatures)
+  DECLARE
+    v_svc_only_class TEXT[] := ARRAY[
+      'book_slot_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,integer,text,text,text,text,text,text,text,date,jsonb,uuid,integer,text,uuid,uuid,integer,integer,uuid,uuid)',
+      'book_manual_slot_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,integer,integer,uuid,uuid)',
+      'reschedule_booking_atomic(uuid,uuid,date,text,integer,uuid)',
+      'create_class_atomic(uuid,text,integer,integer,integer,text,time without time zone,uuid,uuid,integer,text)',
+      'create_class_recurrence_atomic(uuid,uuid,text,time without time zone,uuid,uuid,integer,date,date)',
+      'update_class_session_atomic(uuid,uuid,text,text,integer,uuid,boolean)',
+      'reconcile_class_recurrence(uuid,uuid,text,text,time without time zone,uuid,uuid,integer,date,date,boolean,boolean)',
+      'generate_class_sessions(uuid,integer)'
+    ];
+    v_fn TEXT;
+  BEGIN
+    FOREACH v_fn IN ARRAY v_svc_only_class LOOP
+      IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = 'public' AND p.oid = ('public.' || v_fn)::regprocedure) THEN
+        RAISE EXCEPTION '322-GRANT-SVC FAIL: function % not found', v_fn;
+      END IF;
+      IF has_function_privilege('anon', ('public.' || v_fn)::regprocedure, 'EXECUTE') THEN
+        RAISE EXCEPTION '322-GRANT-SVC FAIL: anon can EXECUTE %', v_fn;
+      END IF;
+      IF has_function_privilege('authenticated', ('public.' || v_fn)::regprocedure, 'EXECUTE') THEN
+        RAISE EXCEPTION '322-GRANT-SVC FAIL: authenticated can EXECUTE %', v_fn;
+      END IF;
+      IF NOT has_function_privilege('service_role', ('public.' || v_fn)::regprocedure, 'EXECUTE') THEN
+        RAISE EXCEPTION '322-GRANT-SVC FAIL: service_role cannot EXECUTE %', v_fn;
+      END IF;
+    END LOOP;
+    RAISE NOTICE '322-GRANT-SVC PASS: 8 service-role-only class RPCs';
+  END;
+
+  -- 322-GRANT-DISC: get_upcoming_class_sessions is intentionally public for discovery
+  -- Canonical 322: GRANT anon, authenticated, service_role
+  DECLARE
+    v_disc_oid OID;
+  BEGIN
+    SELECT p.oid INTO v_disc_oid
+    FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public' AND p.oid = 'public.get_upcoming_class_sessions(uuid,integer)'::regprocedure;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION '322-GRANT-DISC FAIL: get_upcoming_class_sessions(uuid,integer) not found';
+    END IF;
+    IF NOT has_function_privilege('anon', v_disc_oid, 'EXECUTE') THEN
+      RAISE EXCEPTION '322-GRANT-DISC FAIL: anon cannot EXECUTE get_upcoming_class_sessions (should be allowed for discovery)';
+    END IF;
+    IF NOT has_function_privilege('authenticated', v_disc_oid, 'EXECUTE') THEN
+      RAISE EXCEPTION '322-GRANT-DISC FAIL: authenticated cannot EXECUTE get_upcoming_class_sessions (should be allowed for discovery)';
+    END IF;
+    IF NOT has_function_privilege('service_role', v_disc_oid, 'EXECUTE') THEN
+      RAISE EXCEPTION '322-GRANT-DISC FAIL: service_role cannot EXECUTE get_upcoming_class_sessions';
+    END IF;
+    RAISE NOTICE '322-GRANT-DISC PASS: get_upcoming_class_sessions grants correct (anon=yes, authenticated=yes, service_role=yes)';
+  END;
 
   -- 322-RLS: class tables have RLS + FORCE ROW LEVEL SECURITY
   SELECT COUNT(*) INTO v_count
