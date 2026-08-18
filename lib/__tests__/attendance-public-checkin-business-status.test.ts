@@ -1,12 +1,13 @@
 /**
- * Attendance primary-flow contract tests.
+ * Attendance source-level regression guards.
  *
- * Verifies:
- * - Public check-in page and API use businesses.status = 'active' (not is_active)
- * - Manual check-in uses authenticated server API (not browser-side insert)
- * - Business status gating: active passes, pending/suspended/unknown rejected
- * - Input validation consistency
- * - Source is forced to 'manual' server-side
+ * These are static source-string checks that guard architectural invariants:
+ * - Public check-in page and API must use businesses.status = 'active' (not is_active)
+ * - Manual check-in must use authenticated server API (not browser-side insert)
+ * - Dashboard must not directly insert attendance_log from the browser
+ *
+ * For executable route behavior tests (calling actual handlers), see:
+ * attendance-checkin-routes.test.ts
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
@@ -34,21 +35,21 @@ const dashboardPageSource = readFileSync(
   'utf-8',
 );
 
-describe('Attendance primary-flow contract', () => {
-  describe('PUBLIC CHECK-IN — business status gating', () => {
-    it('1. public page uses status = active', () => {
+describe('Attendance source-level regression guards', () => {
+  describe('PUBLIC CHECK-IN — source regression', () => {
+    it('1. public page source uses status = active', () => {
       expect(checkinPageSource).toContain(".eq('status', 'active')");
     });
 
-    it('2. public page does NOT query is_active', () => {
+    it('2. public page source does NOT reference is_active', () => {
       expect(checkinPageSource).not.toContain('is_active');
     });
 
-    it('3. API route uses status = active', () => {
+    it('3. API route source uses status = active', () => {
       expect(checkinApiSource).toContain(".eq('status', 'active')");
     });
 
-    it('4. API route does NOT query businesses by is_active', () => {
+    it('4. API route source does NOT query businesses by is_active', () => {
       // is_active is valid for whatsapp_channels, but must not be used for businesses
       const bizQueryMatch = checkinApiSource.match(/from\s*\(\s*['"]businesses['"]\s*\)([\s\S]*?)\.maybeSingle/);
       expect(bizQueryMatch).toBeTruthy();
@@ -56,65 +57,35 @@ describe('Attendance primary-flow contract', () => {
     });
   });
 
-  describe('PUBLIC CHECK-IN — API behavior contracts', () => {
-    it('5. API returns 404 when business not found (status gating)', () => {
-      // When .eq('status', 'active') finds no match, business is null → 404
+  describe('PUBLIC CHECK-IN — source architecture guards', () => {
+    it('5. API source contains 404 path tied to business check', () => {
       expect(checkinApiSource).toContain("{ error: 'Business not found' }");
-      expect(checkinApiSource).toContain('status: 404');
-      // Verify the 404 is tied to the business check
       expect(checkinApiSource).toMatch(/if\s*\(\s*!business\s*\)\s*\{[\s\S]*?status:\s*404/);
     });
 
-    it('6. API returns success after valid insert', () => {
-      expect(checkinApiSource).toContain('success: true');
-      // Source is forced to 'web' server-side
+    it('6. API source forces source to "web" server-side', () => {
       expect(checkinApiSource).toContain("source: 'web'");
     });
   });
 
-  describe('MANUAL CHECK-IN — server-side API', () => {
-    it('7. manual API endpoint exists', () => {
-      expect(manualApiSource).toBeTruthy();
-    });
-
-    it('8. manual API authenticates user', () => {
+  describe('MANUAL CHECK-IN — source architecture guards', () => {
+    it('7. manual API source contains auth check and 401 path', () => {
       expect(manualApiSource).toContain('auth.getUser()');
-      expect(manualApiSource).toContain("{ error: 'Unauthorized' }");
       expect(manualApiSource).toContain('status: 401');
     });
 
-    it('9. manual API verifies business ownership', () => {
+    it('8. manual API source verifies business ownership', () => {
       expect(manualApiSource).toContain("eq('owner_id', user.id)");
     });
 
-    it('10. manual API forces source to manual server-side', () => {
-      expect(manualApiSource).toContain("source: 'manual'");
-      // Must not accept source from request body
+    it('9. manual API source does not destructure "source" from request body', () => {
       const destructuredFields = manualApiSource.match(/const\s*\{([^}]+)\}\s*=\s*body/);
-      if (destructuredFields) {
-        expect(destructuredFields[1]).not.toContain('source');
-      }
+      expect(destructuredFields).toBeTruthy();
+      expect(destructuredFields![1]).not.toContain('source');
     });
 
-    it('11. manual API uses service client for insert', () => {
+    it('10. manual API source uses service client for insert', () => {
       expect(manualApiSource).toContain('createServiceClient');
-    });
-
-    it('12. manual API validates name length', () => {
-      expect(manualApiSource).toContain('trimmedName.length > 200');
-    });
-
-    it('13. manual API validates phone', () => {
-      expect(manualApiSource).toContain('cleanPhone.length < 7');
-      expect(manualApiSource).toContain('cleanPhone.length > 20');
-    });
-
-    it('14. manual API validates email', () => {
-      expect(manualApiSource).toContain("!trimmedEmail.includes('@')");
-    });
-
-    it('15. manual API validates notes length', () => {
-      expect(manualApiSource).toContain('trimmedNotes.length > 2000');
     });
   });
 
