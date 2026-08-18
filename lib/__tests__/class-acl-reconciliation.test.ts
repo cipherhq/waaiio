@@ -22,6 +22,16 @@ function getConnInfo() {
 
 const DB_NAME = 'waaiio_acl326_test';
 
+/** Maintenance DB used for dropdb/createdb — must NOT be the test DB itself. */
+function maintenanceDb(): string {
+  if (!TEST_DB) return 'postgres';
+  const url = new URL(TEST_DB);
+  const fromUrl = url.pathname.slice(1);
+  // If TEST_DATABASE_URL already points at the test DB (CI pre-creates it),
+  // fall back to 'postgres' so dropdb doesn't try to drop its own connection.
+  return fromUrl === DB_NAME ? 'postgres' : fromUrl;
+}
+
 function dbUrl(): string {
   if (!TEST_DB) return '';
   const url = new URL(TEST_DB);
@@ -77,8 +87,9 @@ describe.skipIf(!TEST_DB)('Class ACL Reconciliation (migration 326)', () => {
   }
 
   beforeAll(() => {
-    try { adminExec(`dropdb --if-exists --maintenance-db=${conn.mainDb} ${DB_NAME}`); } catch { /* ignore */ }
-    adminExec(`createdb --maintenance-db=${conn.mainDb} ${DB_NAME}`);
+    const mdb = maintenanceDb();
+    try { adminExec(`dropdb --if-exists --maintenance-db=${mdb} ${DB_NAME}`); } catch { /* ignore */ }
+    adminExec(`createdb --maintenance-db=${mdb} ${DB_NAME}`);
 
     // Apply stubs + canonical 321 + 322 + 323
     psql(STUBS);
@@ -111,7 +122,7 @@ describe.skipIf(!TEST_DB)('Class ACL Reconciliation (migration 326)', () => {
   }, 120_000);
 
   afterAll(() => {
-    try { adminExec(`dropdb --if-exists --maintenance-db=${conn.mainDb} ${DB_NAME}`); } catch { /* ignore */ }
+    try { adminExec(`dropdb --if-exists --maintenance-db=${maintenanceDb()} ${DB_NAME}`); } catch { /* ignore */ }
   });
 
   // ── Pre-326: Verifier MUST fail ──
