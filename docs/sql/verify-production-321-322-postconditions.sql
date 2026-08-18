@@ -148,54 +148,93 @@ BEGIN
   END IF;
   RAISE NOTICE '321-RLS PASS: 8 promo tables have RLS';
 
-  -- 321-POL: Canonical policy set for each promo table
-  -- Canonical 321 creates exactly these policies (name, table, command):
-  -- Tables with _select + _service: promo_campaigns, promo_prizes, promo_code_batches,
-  --   promo_redemptions, promo_verification_attempts
-  -- Tables with _service only: promo_campaign_codes, promo_eligibility_acks, promo_pending_eligibility
+  -- 321-POL: Canonical policy set — full definition verification
+  -- Verifies: table, name, command, roles, USING references auth.uid() where expected,
+  -- service_role policies use USING(true)/WITH CHECK(true), no extras on the 8 target tables
   DECLARE
-    v_expected_policies TEXT[] := ARRAY[
-      'promo_campaigns|promo_campaigns_select|r',
-      'promo_campaigns|promo_campaigns_service|*',
-      'promo_prizes|promo_prizes_select|r',
-      'promo_prizes|promo_prizes_service|*',
-      'promo_code_batches|promo_code_batches_select|r',
-      'promo_code_batches|promo_code_batches_service|*',
-      'promo_campaign_codes|promo_campaign_codes_service|*',
-      'promo_redemptions|promo_redemptions_select|r',
-      'promo_redemptions|promo_redemptions_service|*',
-      'promo_verification_attempts|promo_attempts_select|r',
-      'promo_verification_attempts|promo_attempts_service|*',
-      'promo_eligibility_acks|promo_elig_acks_service|*',
-      'promo_pending_eligibility|promo_pending_elig_service|*'
+    -- table|name|cmd|expected_roles ('*' for all-roles default policies)
+    v_promo_policies TEXT[] := ARRAY[
+      'promo_campaigns|promo_campaigns_select|r|authenticated',
+      'promo_campaigns|promo_campaigns_service|*|service_role',
+      'promo_prizes|promo_prizes_select|r|authenticated',
+      'promo_prizes|promo_prizes_service|*|service_role',
+      'promo_code_batches|promo_code_batches_select|r|authenticated',
+      'promo_code_batches|promo_code_batches_service|*|service_role',
+      'promo_campaign_codes|promo_campaign_codes_service|*|service_role',
+      'promo_redemptions|promo_redemptions_select|r|authenticated',
+      'promo_redemptions|promo_redemptions_service|*|service_role',
+      'promo_verification_attempts|promo_attempts_select|r|authenticated',
+      'promo_verification_attempts|promo_attempts_service|*|service_role',
+      'promo_eligibility_acks|promo_elig_acks_service|*|service_role',
+      'promo_pending_eligibility|promo_pending_elig_service|*|service_role'
     ];
     v_pol TEXT;
-    v_pol_parts TEXT[];
+    v_parts TEXT[];
+    v_actual_roles TEXT;
+    v_actual_using TEXT;
+    v_actual_check TEXT;
+    -- Exact list of 8 canonical 321 tables (not LIKE 'promo_%')
+    v_promo_target_tables TEXT[] := ARRAY[
+      'promo_campaigns', 'promo_prizes', 'promo_code_batches',
+      'promo_campaign_codes', 'promo_redemptions',
+      'promo_verification_attempts', 'promo_eligibility_acks',
+      'promo_pending_eligibility'
+    ];
   BEGIN
-    -- Verify each canonical policy exists
-    FOREACH v_pol IN ARRAY v_expected_policies LOOP
-      v_pol_parts := string_to_array(v_pol, '|');
-      IF NOT EXISTS (
-        SELECT 1 FROM pg_policy pol
-        JOIN pg_class c ON c.oid = pol.polrelid
-        WHERE c.relname = v_pol_parts[1]
-          AND pol.polname = v_pol_parts[2]
-          AND pol.polcmd::text = v_pol_parts[3]
-      ) THEN
-        RAISE EXCEPTION '321-POL FAIL: missing canonical policy % on %', v_pol_parts[2], v_pol_parts[1];
+    FOREACH v_pol IN ARRAY v_promo_policies LOOP
+      v_parts := string_to_array(v_pol, '|');
+      -- Check policy exists with correct roles
+      SELECT
+        pg_catalog.array_to_string(
+          ARRAY(SELECT rolname FROM pg_roles WHERE oid = ANY(pol.polroles) ORDER BY rolname), ','
+        ),
+        COALESCE(pg_get_expr(pol.polqual, pol.polrelid), 'NULL'),
+        COALESCE(pg_get_expr(pol.polwithcheck, pol.polrelid), 'NULL')
+      INTO v_actual_roles, v_actual_using, v_actual_check
+      FROM pg_policy pol
+      JOIN pg_class c ON c.oid = pol.polrelid
+      WHERE c.relname = v_parts[1] AND pol.polname = v_parts[2] AND pol.polcmd::text = v_parts[3];
+
+      IF NOT FOUND THEN
+        RAISE EXCEPTION '321-POL FAIL: missing policy % on %', v_parts[2], v_parts[1];
+      END IF;
+
+      -- Verify roles match (empty string = default/all roles for non-role-specific)
+      IF v_parts[4] = 'service_role' AND v_actual_roles != 'service_role' THEN
+        RAISE EXCEPTION '321-POL FAIL: policy % roles=% expected service_role', v_parts[2], v_actual_roles;
+      END IF;
+      IF v_parts[4] = 'authenticated' AND v_actual_roles != 'authenticated' THEN
+        RAISE EXCEPTION '321-POL FAIL: policy % roles=% expected authenticated', v_parts[2], v_actual_roles;
+      END IF;
+
+      -- Service policies must use USING(true) WITH CHECK(true)
+      IF v_parts[4] = 'service_role' THEN
+        IF v_actual_using != 'true' OR v_actual_check != 'true' THEN
+          RAISE EXCEPTION '321-POL FAIL: service policy % has non-trivial USING/CHECK', v_parts[2];
+        END IF;
+      END IF;
+
+      -- Authenticated SELECT policies must reference auth.uid() in USING
+      IF v_parts[4] = 'authenticated' AND v_parts[3] = 'r' THEN
+        IF v_actual_using NOT LIKE '%auth.uid()%' THEN
+          RAISE EXCEPTION '321-POL FAIL: authenticated SELECT policy % does not reference auth.uid()', v_parts[2];
+        END IF;
       END IF;
     END LOOP;
 
-    -- Verify NO unexpected extra policies on promo tables
+    -- No unexpected extra policies on the exact 8 canonical 321 tables
     SELECT COUNT(*) INTO v_count
     FROM pg_policy pol
     JOIN pg_class c ON c.oid = pol.polrelid
-    WHERE c.relname LIKE 'promo_%'
-      AND NOT (c.relname || '|' || pol.polname || '|' || pol.polcmd::text) = ANY(v_expected_policies);
+    WHERE c.relname = ANY(v_promo_target_tables)
+      AND NOT (c.relname || '|' || pol.polname || '|' || pol.polcmd::text || '|' ||
+        pg_catalog.array_to_string(
+          ARRAY(SELECT rolname FROM pg_roles WHERE oid = ANY(pol.polroles) ORDER BY rolname), ','
+        )) = ANY(v_promo_policies);
     IF v_count > 0 THEN
-      RAISE EXCEPTION '321-POL FAIL: % unexpected extra policies on promo tables', v_count;
+      RAISE EXCEPTION '321-POL FAIL: % unexpected extra policies on canonical 321 tables', v_count;
     END IF;
-    RAISE NOTICE '321-POL PASS: canonical promo policy set (13 policies, no extras)';
+    RAISE NOTICE '321-POL PASS: canonical promo policy set (13 policies, roles/USING/CHECK verified, no extras)';
   END;
 
   RAISE NOTICE '── MIGRATION 322: Classes ──';
@@ -348,31 +387,60 @@ BEGIN
   END IF;
   RAISE NOTICE '322-RLS PASS: class tables have RLS + FORCE ROW LEVEL SECURITY';
 
-  -- 322-POL: Canonical policy set for class tables
+  -- 322-POL: Canonical policy set — full definition verification
   -- Canonical 322 end state (after DROP POLICY hardening):
-  -- class_recurrence_rules: crr_owner_select (s), crr_service_all (*)
-  -- class_sessions: cs_owner_select (s), cs_service_all (*)
-  -- INSERT/UPDATE/DELETE owner policies were DROPPED for RLS hardening
+  -- owner SELECT policies (default roles) reference auth.uid()
+  -- service_role ALL policies use USING(true) WITH CHECK(true)
+  -- No INSERT/UPDATE/DELETE owner policies (dropped for RLS hardening)
   DECLARE
-    v_class_expected_policies TEXT[] := ARRAY[
-      'class_recurrence_rules|crr_owner_select|r',
-      'class_recurrence_rules|crr_service_all|*',
-      'class_sessions|cs_owner_select|r',
-      'class_sessions|cs_service_all|*'
+    -- table|name|cmd|expected_roles
+    -- Empty roles = default (all roles, no explicit TO clause)
+    v_class_policies TEXT[] := ARRAY[
+      'class_recurrence_rules|crr_owner_select|r|',
+      'class_recurrence_rules|crr_service_all|*|service_role',
+      'class_sessions|cs_owner_select|r|',
+      'class_sessions|cs_service_all|*|service_role'
     ];
     v_cpol TEXT;
-    v_cpol_parts TEXT[];
+    v_cparts TEXT[];
+    v_cr TEXT;
+    v_cu TEXT;
+    v_cc TEXT;
   BEGIN
-    FOREACH v_cpol IN ARRAY v_class_expected_policies LOOP
-      v_cpol_parts := string_to_array(v_cpol, '|');
-      IF NOT EXISTS (
-        SELECT 1 FROM pg_policy pol
-        JOIN pg_class c ON c.oid = pol.polrelid
-        WHERE c.relname = v_cpol_parts[1]
-          AND pol.polname = v_cpol_parts[2]
-          AND pol.polcmd::text = v_cpol_parts[3]
-      ) THEN
-        RAISE EXCEPTION '322-POL FAIL: missing canonical policy % on %', v_cpol_parts[2], v_cpol_parts[1];
+    FOREACH v_cpol IN ARRAY v_class_policies LOOP
+      v_cparts := string_to_array(v_cpol, '|');
+      SELECT
+        pg_catalog.array_to_string(
+          ARRAY(SELECT rolname FROM pg_roles WHERE oid = ANY(pol.polroles) ORDER BY rolname), ','
+        ),
+        COALESCE(pg_get_expr(pol.polqual, pol.polrelid), 'NULL'),
+        COALESCE(pg_get_expr(pol.polwithcheck, pol.polrelid), 'NULL')
+      INTO v_cr, v_cu, v_cc
+      FROM pg_policy pol
+      JOIN pg_class c ON c.oid = pol.polrelid
+      WHERE c.relname = v_cparts[1] AND pol.polname = v_cparts[2] AND pol.polcmd::text = v_cparts[3];
+
+      IF NOT FOUND THEN
+        RAISE EXCEPTION '322-POL FAIL: missing policy % on %', v_cparts[2], v_cparts[1];
+      END IF;
+
+      -- Verify roles
+      IF v_cparts[4] = 'service_role' AND v_cr != 'service_role' THEN
+        RAISE EXCEPTION '322-POL FAIL: policy % roles=% expected service_role', v_cparts[2], v_cr;
+      END IF;
+
+      -- Service policies must use USING(true) WITH CHECK(true)
+      IF v_cparts[4] = 'service_role' THEN
+        IF v_cu != 'true' OR v_cc != 'true' THEN
+          RAISE EXCEPTION '322-POL FAIL: service policy % has non-trivial USING/CHECK', v_cparts[2];
+        END IF;
+      END IF;
+
+      -- Owner SELECT policies must reference auth.uid()
+      IF v_cparts[3] = 'r' AND v_cparts[4] = '' THEN
+        IF v_cu NOT LIKE '%auth.uid()%' THEN
+          RAISE EXCEPTION '322-POL FAIL: owner SELECT policy % does not reference auth.uid()', v_cparts[2];
+        END IF;
       END IF;
     END LOOP;
 
@@ -381,11 +449,14 @@ BEGIN
     FROM pg_policy pol
     JOIN pg_class c ON c.oid = pol.polrelid
     WHERE c.relname IN ('class_recurrence_rules', 'class_sessions')
-      AND NOT (c.relname || '|' || pol.polname || '|' || pol.polcmd::text) = ANY(v_class_expected_policies);
+      AND NOT EXISTS (
+        SELECT 1 FROM unnest(v_class_policies) AS ep
+        WHERE (c.relname || '|' || pol.polname || '|' || pol.polcmd::text) = substring(ep from '([^|]+\|[^|]+\|[^|]+)')
+      );
     IF v_count > 0 THEN
       RAISE EXCEPTION '322-POL FAIL: % unexpected extra policies on class tables', v_count;
     END IF;
-    RAISE NOTICE '322-POL PASS: canonical class policy set (4 policies, no extras)';
+    RAISE NOTICE '322-POL PASS: canonical class policy set (4 policies, roles/USING/CHECK verified, no extras)';
   END;
 
   -- 322-OVERLOAD: Exactly one book_slot_atomic overload with canonical 28-arg signature

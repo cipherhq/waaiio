@@ -145,15 +145,19 @@ This script raises an exception on ANY mismatch. It verifies:
 **321 Promotions:** 8 tables, 9 enums, 11 functions, SECURITY DEFINER + search_path,
 exact RPC privilege matrix using regprocedure signatures (9 service-role-only RPCs
 including get_promo_campaign_aggregates and validate_promo_campaign_activation),
-RLS on all 8 tables, exact canonical policy set (13 policies, no extras permitted).
+RLS on all 8 tables, exact canonical policy set with full definition verification
+(13 policies — name, command, roles, USING expression references auth.uid() where
+expected, service_role policies use USING(true)/WITH CHECK(true), no extras on the
+exact 8 canonical 321 tables, unrelated promo_codes policies tolerated).
 
 **322 Classes:** 2 class tables, bookings.class_session_id FK → class_sessions with
 confdeltype='n' (SET NULL), idx_bookings_class_session, exactly 1 book_slot_atomic
 overload (28 args), 9 RPCs with SECURITY DEFINER + search_path, exact privilege
 matrix (8 service-role-only, get_upcoming_class_sessions: PUBLIC=no, anon=yes,
 authenticated=yes, service_role=yes), RLS + FORCE ROW LEVEL SECURITY, exact
-canonical policy set (4 policies, no extras), table grants (authenticated=SIUD,
-anon=none).
+canonical policy set with full definition verification (4 policies — owner SELECT
+references auth.uid(), service ALL uses USING(true)/WITH CHECK(true), no extras),
+table grants (authenticated=SIUD, anon=none).
 
 **323 get_bot_context:** exact 2-arg signature, SECURITY DEFINER + search_path,
 PUBLIC/anon/authenticated=no EXECUTE, service_role=yes, no stale single-arg
