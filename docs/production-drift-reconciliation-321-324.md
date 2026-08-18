@@ -133,6 +133,24 @@ curl -s -X POST "https://api.supabase.com/v1/projects/cxcmiqotkowhxinjbytg/datab
   -d "$(jq -n --arg q "$SQL" '{query: $q}')"
 ```
 
+**PRODUCTION NOTE (2026-08-18):** Migration 325 was applied successfully.
+The postcondition verifier then identified that Supabase default privileges
+left `book_slot_atomic` callable by `anon`/`authenticated`, and class tables
+had excessive DML grants (TRUNCATE/REFERENCES/TRIGGER) for `anon`/`authenticated`.
+Migration 326 was created to correct these ACL issues.
+
+### B1b. Apply migration 326 (ACL reconciliation)
+
+```bash
+SQL=$(cat supabase/migrations/326_class_acl_reconciliation.sql)
+curl -s -X POST "https://api.supabase.com/v1/projects/cxcmiqotkowhxinjbytg/database/query" \
+  -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n --arg q "$SQL" '{query: $q}')"
+```
+
+**ABORT if:** Migration 326 returns any SQL error.
+
 ### B2. Run fail-closed canonical postcondition verifier
 
 ```bash
@@ -230,15 +248,16 @@ supabase migration repair --status applied 321 --project-ref cxcmiqotkowhxinjbyt
 supabase migration repair --status applied 322 --project-ref cxcmiqotkowhxinjbytg
 supabase migration repair --status applied 323 --project-ref cxcmiqotkowhxinjbytg
 supabase migration repair --status applied 325 --project-ref cxcmiqotkowhxinjbytg
+supabase migration repair --status applied 326 --project-ref cxcmiqotkowhxinjbytg
 ```
 
 ### C2. Verify ledger entries
 
 ```sql
 SELECT version FROM supabase_migrations.schema_migrations
-WHERE version IN ('321', '322', '323', '325')
+WHERE version IN ('321', '322', '323', '325', '326')
 ORDER BY version;
--- Expected: 321, 322, 323, 325
+-- Expected: 321, 322, 323, 325, 326
 ```
 
 **ABORT if:** Any entry missing after repair commands.
