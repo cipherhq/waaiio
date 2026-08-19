@@ -5,15 +5,6 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
 import type { PromoFulfillmentStatus } from '@/lib/promotions/types';
 
-/** Valid forward-only fulfillment transitions. */
-const VALID_FULFILLMENT_TRANSITIONS: Record<PromoFulfillmentStatus, PromoFulfillmentStatus[]> = {
-  pending: ['processing', 'fulfilled', 'rejected', 'cancelled'],
-  processing: ['fulfilled', 'rejected', 'cancelled'],
-  fulfilled: [],
-  rejected: [],
-  cancelled: [],
-};
-
 const ALL_FULFILLMENT_STATUSES: PromoFulfillmentStatus[] = [
   'pending',
   'processing',
@@ -22,6 +13,12 @@ const ALL_FULFILLMENT_STATUSES: PromoFulfillmentStatus[] = [
   'cancelled',
 ];
 
+/**
+ * PUT /api/promotions/fulfillment
+ *
+ * Delegates to transition_promo_fulfillment RPC for atomic, race-safe
+ * fulfillment transitions with verification gating and fulfilled_by tracking.
+ */
 export async function PUT(request: NextRequest) {
   let body: Record<string, unknown>;
   try {
@@ -68,62 +65,39 @@ export async function PUT(request: NextRequest) {
     );
   }
 
-  // Fetch redemption and verify it belongs to this business
-  const { data: redemption, error: fetchError } = await service
-    .from('promo_redemptions')
-    .select('id, business_id, fulfillment_status, outcome')
-    .eq('id', redemptionId)
-    .eq('business_id', businessId)
-    .maybeSingle();
+  // Delegate to atomic DB RPC — handles locking, transition validation,
+  // verification gating, and fulfilled_by tracking
+  const { data: result, error: rpcError } = await service.rpc('transition_promo_fulfillment', {
+    p_business_id: businessId,
+    p_redemption_id: redemptionId,
+    p_next_status: fulfillmentStatus,
+    p_actor_user_id: user.id,
+    p_fulfillment_reference: fulfillmentReference?.trim() || null,
+    p_fulfillment_notes: fulfillmentNotes?.trim() || null,
+  });
 
-  if (fetchError || !redemption) {
-    return NextResponse.json({ error: 'Redemption not found' }, { status: 404 });
-  }
-
-  const currentStatus = redemption.fulfillment_status as PromoFulfillmentStatus;
-  const nextStatus = fulfillmentStatus as PromoFulfillmentStatus;
-
-  // Validate transition — fulfillment is forward-only
-  const allowed = VALID_FULFILLMENT_TRANSITIONS[currentStatus] || [];
-  if (!allowed.includes(nextStatus)) {
-    return NextResponse.json(
-      {
-        error: `Invalid fulfillment transition from '${currentStatus}' to '${nextStatus}'. ${
-          allowed.length > 0
-            ? `Allowed transitions: ${allowed.join(', ')}`
-            : `'${currentStatus}' is a terminal state and cannot be changed.`
-        }`,
-      },
-      { status: 422 },
-    );
-  }
-
-  const now = new Date().toISOString();
-  const updates: Record<string, unknown> = {
-    fulfillment_status: nextStatus,
-  };
-
-  if (fulfillmentReference !== undefined) {
-    updates.fulfillment_reference = fulfillmentReference?.trim() || null;
-  }
-  if (fulfillmentNotes !== undefined) {
-    updates.fulfillment_notes = fulfillmentNotes?.trim() || null;
-  }
-  if (nextStatus === 'fulfilled') {
-    updates.fulfilled_at = now;
-  }
-
-  const { data: updated, error: updateError } = await service
-    .from('promo_redemptions')
-    .update(updates)
-    .eq('id', redemptionId)
-    .select()
-    .single();
-
-  if (updateError) {
-    logger.error('[PROMOTIONS] fulfillment update error:', updateError);
+  if (rpcError) {
+    logger.error('[PROMOTIONS] fulfillment RPC error:', rpcError);
     return NextResponse.json({ error: 'Failed to update fulfillment status' }, { status: 500 });
   }
+
+  if (!result?.success) {
+    const reason = result?.reason || 'unknown';
+    if (reason === 'not_found') {
+      return NextResponse.json({ error: 'Redemption not found' }, { status: 404 });
+    }
+    if (reason === 'secure_pickup_verification_required') {
+      return NextResponse.json({ error: 'Secure pickup verification is required before fulfillment', reason }, { status: 422 });
+    }
+    return NextResponse.json({ error: `Fulfillment transition failed: ${reason}`, ...result }, { status: 422 });
+  }
+
+  // Fetch updated redemption for response
+  const { data: updated } = await service
+    .from('promo_redemptions')
+    .select('*')
+    .eq('id', redemptionId)
+    .single();
 
   return NextResponse.json({ redemption: updated });
 }

@@ -117,3 +117,31 @@ export function generateClaimReference(): string {
   const hex = randomBytes(8).toString('hex').toUpperCase();
   return `WAA-${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}`;
 }
+
+/**
+ * Generate a 6-digit numeric OTP for secure pickup verification.
+ * Uses crypto.randomInt (rejection-sampled, no modulo bias).
+ */
+export function generatePickupOtp(): string {
+  return String(randomInt(100000, 999999));
+}
+
+/**
+ * Generate HMAC for pickup verification token.
+ * Domain-separated to prevent cross-use with code HMACs.
+ *
+ * Input: promo-pickup-v1 | business_id | redemption_id | phone_e164 | token
+ *
+ * A database leak cannot trivially enumerate 6-digit OTPs because the
+ * HMAC key is not stored in the database.
+ */
+export function hashPickupToken(
+  businessId: string,
+  redemptionId: string,
+  phoneE164: string,
+  token: string,
+): string {
+  const key = PROMO_HMAC_KEY || 'dev-promo-key';
+  const input = `promo-pickup-v1|${businessId}|${redemptionId}|${phoneE164}|${token}`;
+  return createHmac('sha256', key).update(input).digest('hex');
+}
