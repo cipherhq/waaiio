@@ -250,3 +250,76 @@ describe('bot_code behavior', () => {
     expect(helperBody).toContain("not('bot_code', 'is', null)");
   });
 });
+
+describe('DirectoryClient error handling', () => {
+  it('checks res.ok before parsing JSON', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/(marketing)/directory/DirectoryClient.tsx', 'utf-8');
+    expect(src).toContain('res.ok');
+  });
+
+  it('renders temporary-unavailable on error, not "No businesses found"', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/(marketing)/directory/DirectoryClient.tsx', 'utf-8');
+    // fetchError state must exist and gate rendering
+    expect(src).toContain('fetchError');
+    expect(src).toContain('Directory is temporarily unavailable');
+    // Error state must render BEFORE the zero-results check
+    const errorIdx = src.indexOf('fetchError ?');
+    const zeroIdx = src.indexOf('No businesses found');
+    expect(errorIdx).toBeGreaterThan(-1);
+    expect(zeroIdx).toBeGreaterThan(errorIdx);
+  });
+
+  it('uses try/catch/finally to ensure loading always completes', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/(marketing)/directory/DirectoryClient.tsx', 'utf-8');
+    expect(src).toContain('finally');
+    expect(src).toContain('setLoading(false)');
+  });
+
+  it('clears error state on subsequent success', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/(marketing)/directory/DirectoryClient.tsx', 'utf-8');
+    // setFetchError(false) must be called before setting business data
+    const clearIdx = src.indexOf('setFetchError(false)');
+    const setDataIdx = src.indexOf('setBusinesses(data.businesses');
+    expect(clearIdx).toBeGreaterThan(-1);
+    expect(setDataIdx).toBeGreaterThan(clearIdx);
+  });
+
+  it('handles network/fetch rejection via catch block', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/(marketing)/directory/DirectoryClient.tsx', 'utf-8');
+    // catch must set fetchError
+    expect(src).toContain('catch');
+    expect(src).toContain('setFetchError(true)');
+  });
+});
+
+describe('bot marketplace search failure handling', () => {
+  it('bot.service.ts checks searchResult.ok before formatting', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
+    // Find the marketplace search handler section (needs ~1200 chars to capture the full block)
+    const startIdx = src.indexOf("'search_marketplace'");
+    const searchSection = src.substring(startIdx, startIdx + 1200);
+    // Must check ok before calling formatMarketplaceResults
+    const okCheckIdx = searchSection.indexOf('searchResult.ok');
+    const formatIdx = searchSection.indexOf('formatMarketplaceResults');
+    expect(okCheckIdx).toBeGreaterThan(-1);
+    expect(formatIdx).toBeGreaterThan(okCheckIdx);
+  });
+
+  it('sends generic unavailable message on search failure, not empty results', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
+    const startIdx = src.indexOf("'search_marketplace'");
+    const searchSection = src.substring(startIdx, startIdx + 1200);
+    expect(searchSection).toContain('temporarily unavailable');
+    // The unavailable message must be sent BEFORE formatMarketplaceResults
+    const unavailIdx = searchSection.indexOf('temporarily unavailable');
+    const formatIdx = searchSection.indexOf('formatMarketplaceResults');
+    expect(unavailIdx).toBeLessThan(formatIdx);
+  });
+});

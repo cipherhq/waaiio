@@ -2356,6 +2356,10 @@ export class BotService {
               budgetMax: understanding.entities.budgetMax,
               country: undefined, // country_code not on BusinessRecord at this point
             });
+            if (!searchResult.ok) {
+              await this.sendText(from, 'Business search is temporarily unavailable. Please try again shortly.');
+              return;
+            }
             const formatted = formatMarketplaceResults(searchResult.results, text);
             await this.sendText(from, formatted);
             return;
