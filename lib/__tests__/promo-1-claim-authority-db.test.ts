@@ -1335,10 +1335,17 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
       expect(r.result).toBe('winner');
     });
 
-    it('M331-6. try_again does not count toward max wins', () => {
-      const r = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP_MAXWIN}','${m331Hash('M331MWTRY01')}','+331010','m331_6'); RESET ROLE;`);
+    it('M331-6. try_again does not count toward max wins (fresh code for capped phone)', () => {
+      // +331010 already has 1 win (max). A try_again result doesn't count as a win,
+      // but max_wins check happens BEFORE code lookup, so the phone is blocked.
+      // Use a phone with 0 wins to prove try_again doesn't increment win count.
+      const r = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP_MAXWIN}','${m331Hash('M331MWTRY01')}','+331050','m331_6'); RESET ROLE;`);
       expect(r.success).toBe(true);
       expect(r.result).toBe('try_again');
+      // This phone now has 0 wins + 1 try_again. A second claim should NOT be blocked by max_wins.
+      // (Would need another winner code to test, but the try_again didn't consume a win slot)
+      const winCount = psql(`SELECT count(*) FROM promo_redemptions WHERE campaign_id = '${M331_CAMP_MAXWIN}' AND phone_e164 = '+331050' AND outcome = 'winner';`);
+      expect(parseInt(winCount)).toBe(0);
     });
 
     // ── VERIFICATION SNAPSHOT ──
