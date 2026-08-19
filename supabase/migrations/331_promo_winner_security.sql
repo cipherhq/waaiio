@@ -43,6 +43,10 @@ ALTER TABLE promo_redemptions
   ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS verified_by UUID REFERENCES auth.users(id);
 
+-- Add updated_at column for tracking fulfillment/verification state changes
+ALTER TABLE promo_redemptions
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
 -- Backfill existing rows:
 -- Winners get phone_verified (they proved identity via WhatsApp claim)
 -- Try-again gets not_required
