@@ -507,7 +507,7 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
       expect(status).toBe('confirmed');
     });
 
-    it('8e. existing marker + pending payment → no confirmation, no stock change', () => {
+    it('8e. existing marker + pending payment → fail-closed (payment_not_successful)', () => {
       psql(`
         INSERT INTO orders (id, business_id, user_id, status, total_amount)
           VALUES ('${ORDER_1}', '${BIZ_ID}', '${USER_ID}', 'pending', 2000);
@@ -517,13 +517,16 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
         UPDATE products SET stock_quantity = 98 WHERE id = '${PRODUCT_A}';
         INSERT INTO order_stock_applications (order_id, item_count) VALUES ('${ORDER_1}', 1);
       `);
+      // Payment-success gate fires BEFORE marker lookup → fail-closed
       const r = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_1}', '${PAY_1}');`);
-      expect(r.applied).toBe(true);
-      expect(r.already_applied).toBe(true);
-      expect(r.order_confirmed).toBe(false);
+      expect(r.applied).toBe(false);
+      expect(r.reason).toBe('payment_not_successful');
 
+      // Stock unchanged, marker preserved, order stays pending
       const stock = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
       expect(parseInt(stock)).toBe(98);
+      const marker = psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${ORDER_1}';`);
+      expect(parseInt(marker)).toBe(1);
       const status = psql(`SELECT status FROM orders WHERE id = '${ORDER_1}';`);
       expect(status).toBe('pending');
     });
@@ -784,30 +787,38 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
       expect(parseInt(markerCount)).toBe(1);
     });
 
-    it('23c. (C) marker exists + payment pending/failed → order NOT confirmed', () => {
+    it('23c. (C) marker exists + pending/failed payment → fail-closed (payment_not_successful)', () => {
       seedQuote(QUOTE_1, 'quoted', CUSTOMER_PHONE);
       const r = psqlJson(`SET ROLE service_role; SELECT accept_order_quote_atomic('${QUOTE_1}', '${CUSTOMER_PHONE}');`);
       expect(r.accepted).toBe(true);
       const orderId = r.order_id as string;
+      const stockAfterAccept = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
 
-      // Pending payment — not yet confirmed by gateway
+      // Pending payment — payment-success gate fires BEFORE marker lookup
       psql(`INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_1}', '${orderId}', 5000, 'pending');`);
       const sr1 = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${orderId}', '${PAY_1}');`);
-      expect(sr1.applied).toBe(true);
-      expect(sr1.already_applied).toBe(true);
-      expect(sr1.order_confirmed).toBe(false);
+      expect(sr1.applied).toBe(false);
+      expect(sr1.reason).toBe('payment_not_successful');
 
-      // Order stays pending
-      const status = psql(`SELECT status FROM orders WHERE id = '${orderId}';`);
-      expect(status).toBe('pending');
+      // Stock unchanged, marker preserved, order stays pending
+      const stock1 = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(stock1).toBe(stockAfterAccept);
+      const marker1 = psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${orderId}';`);
+      expect(parseInt(marker1)).toBe(1);
+      const status1 = psql(`SELECT status FROM orders WHERE id = '${orderId}';`);
+      expect(status1).toBe('pending');
 
-      // Failed payment — also must not confirm
+      // Failed payment — same fail-closed result
       psql(`UPDATE payments SET status = 'failed' WHERE id = '${PAY_1}';`);
       const sr2 = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${orderId}', '${PAY_1}');`);
-      expect(sr2.applied).toBe(true);
-      expect(sr2.already_applied).toBe(true);
-      expect(sr2.order_confirmed).toBe(false);
+      expect(sr2.applied).toBe(false);
+      expect(sr2.reason).toBe('payment_not_successful');
 
+      // Stock unchanged, marker preserved, order stays pending
+      const stock2 = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(stock2).toBe(stockAfterAccept);
+      const marker2 = psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${orderId}';`);
+      expect(parseInt(marker2)).toBe(1);
       const status2 = psql(`SELECT status FROM orders WHERE id = '${orderId}';`);
       expect(status2).toBe('pending');
     });

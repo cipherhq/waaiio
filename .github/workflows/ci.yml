@@ -1323,6 +1323,42 @@ jobs:
           if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No ACL 326 tests passed."; exit 1; fi
           echo "✅ Class ACL reconciliation tests complete — zero skips, zero failures."
 
+      - name: Order stock authority database tests (dedicated database)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_order_stock_test
+          createdb --maintenance-db=waaiio_test waaiio_order_stock_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_order_stock_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_order_stock_test
+          echo "Running order stock authority tests (waaiio_order_stock_test)..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/order-stock-authority.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Order stock authority DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Order stock authority DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No order stock authority DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Order stock authority tests complete — zero skips, zero failures."
+
   # ── Engineering Governance ──
   governance:
     name: Engineering governance
