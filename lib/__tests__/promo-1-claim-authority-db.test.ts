@@ -1024,12 +1024,12 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
     expect(r.success).toBe(false);
     expect(r.error).toContain('draft or scheduled');
   });
-});
 
-// ═══════════════════════════════════════════════════════
-// MIGRATION 330: Claim integrity hardening — Real DB tests
-// ═══════════════════════════════════════════════════════
-describe.skipIf(!canRun)('Migration 330: Claim integrity hardening', () => {
+  // ═══════════════════════════════════════════════════════
+  // MIGRATION 330: Claim integrity hardening — Real DB tests
+  // (nested inside main describe so tables still exist)
+  // ═══════════════════════════════════════════════════════
+  describe('Migration 330: Claim integrity hardening', () => {
   const M330_BIZ = '00000000-0000-0000-0330-000000000001';
   const M330_CAMP = '00000000-0000-0000-0330-100000000001';
   const M330_CAMP_LEGACY = '00000000-0000-0000-0330-100000000002';
@@ -1205,4 +1205,5 @@ describe.skipIf(!canRun)('Migration 330: Claim integrity hardening', () => {
     expect(r.ok).toBe(false);
     expect(r.output).toContain('unique'); // promo_code_id uniqueness
   });
-});
+  }); // end Migration 330
+}); // end main PROMO-1
