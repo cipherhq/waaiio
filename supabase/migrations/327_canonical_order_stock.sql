@@ -94,7 +94,34 @@ BEGIN
   WHERE order_id = p_order_id;
 
   IF FOUND THEN
-    RETURN jsonb_build_object('applied', true, 'already_applied', true);
+    -- Stock was already deducted. Do NOT decrement again.
+    -- But if a payment_id is provided (payment-confirmed context), the order
+    -- may still need confirmation (pending→confirmed). This happens when
+    -- quote acceptance reserved stock (inserted marker) and payment arrives later.
+    IF p_payment_id IS NOT NULL AND v_order.status = 'pending' THEN
+      -- Validate payment belongs to this order
+      PERFORM id FROM payments
+      WHERE id = p_payment_id
+        AND (order_id = p_order_id OR metadata->>'order_id' = p_order_id::text);
+      IF NOT FOUND THEN
+        RETURN jsonb_build_object('applied', true, 'already_applied', true,
+          'order_confirmed', false, 'reason', 'payment_order_mismatch');
+      END IF;
+      -- Verify payment is actually successful before confirming order
+      PERFORM id FROM payments
+      WHERE id = p_payment_id AND status = 'success';
+      IF FOUND THEN
+        UPDATE orders SET status = 'confirmed', updated_at = NOW()
+        WHERE id = p_order_id AND status = 'pending';
+        RETURN jsonb_build_object('applied', true, 'already_applied', true,
+          'order_confirmed', true);
+      END IF;
+      -- Payment exists but not success — do not confirm
+      RETURN jsonb_build_object('applied', true, 'already_applied', true,
+        'order_confirmed', false);
+    END IF;
+    RETURN jsonb_build_object('applied', true, 'already_applied', true,
+      'order_confirmed', false);
   END IF;
 
   -- 5. Lock inventory deterministically + validate + decrement
