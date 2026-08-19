@@ -2851,22 +2851,11 @@ export const orderingFlow: FlowDefinition = {
           ];
         }
 
-        // Free order — decrement stock immediately (no payment needed)
-        for (const item of cart) {
-          if (item.variant_id) {
-            const { error: stockErr } = await ctx.supabase.rpc('decrement_variant_stock', {
-              p_variant_id: item.variant_id,
-              qty: item.quantity,
-            });
-            if (stockErr) logger.error('[ORDERING] decrement_variant_stock error:', stockErr.message);
-          } else {
-            const { error: stockErr } = await ctx.supabase.rpc('decrement_stock', {
-              p_product_id: item.product_id,
-              qty: item.quantity,
-            });
-            if (stockErr) logger.error('[ORDERING] decrement_stock error:', stockErr.message);
-          }
-        }
+        // Free order — decrement stock atomically via canonical RPC
+        const { error: freeStockErr } = await ctx.supabase.rpc('apply_order_stock_once', {
+          p_order_id: order.id,
+        });
+        if (freeStockErr) logger.error('[ORDERING] apply_order_stock_once error (free order):', freeStockErr.message);
 
         // Post-completion: loyalty, feedback, referral
         if (ctx.business) {
@@ -3150,21 +3139,14 @@ export const orderingFlow: FlowDefinition = {
 
             const cart = (sd.cart as CartItem[]) || [];
 
-            // Decrement stock now that payment is verified
-            for (const item of cart) {
-              if (item.variant_id) {
-                const { error: stockErr } = await ctx.supabase.rpc('decrement_variant_stock', {
-                  p_variant_id: item.variant_id,
-                  qty: item.quantity,
-                });
-                if (stockErr) logger.error('[ORDERING] decrement_variant_stock error:', stockErr.message);
-              } else {
-                const { error: stockErr } = await ctx.supabase.rpc('decrement_stock', {
-                  p_product_id: item.product_id,
-                  qty: item.quantity,
-                });
-                if (stockErr) logger.error('[ORDERING] decrement_stock error:', stockErr.message);
-              }
+            // Decrement stock atomically via canonical RPC (idempotent — safe if webhook already applied)
+            const { data: paidStockResult, error: paidStockErr } = await ctx.supabase.rpc('apply_order_stock_once', {
+              p_order_id: sd.order_id as string,
+            });
+            if (paidStockErr) {
+              logger.error('[ORDERING] apply_order_stock_once error (paid order):', paidStockErr.message);
+            } else if (paidStockResult?.already_applied) {
+              logger.info('[ORDERING] Stock already applied for order', sd.order_id);
             }
 
             const totalAmount = (sd.total_amount as number) || 0;

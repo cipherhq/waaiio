@@ -126,7 +126,7 @@ export async function processSuccessfulPayment(
       // Confirm order status (idempotent — only pending → confirmed)
       const { error: orderErr } = await supabase
         .from('orders')
-        .update({ status: 'confirmed', paid_at: new Date().toISOString() })
+        .update({ status: 'confirmed' })
         .eq('id', orderId)
         .in('status', ['pending']);
 
@@ -146,7 +146,7 @@ export async function processSuccessfulPayment(
 
       // Stock decrement: exactly-once via durable application marker (crash-gap safe)
       const { data: stockResult, error: stockErr } = await supabase.rpc('apply_order_stock_once', {
-        p_payment_id: payment.id, p_order_id: orderId,
+        p_order_id: orderId, p_payment_id: payment.id,
       });
       if (stockErr) {
         criticalErrors.push('order_stock_failed');

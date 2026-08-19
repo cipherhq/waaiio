@@ -5,6 +5,22 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-19
+
+### feat(ordering): canonical order-stock authority + atomic quote acceptance
+
+- **Canonical stock invariant:** For any order, inventory is deducted at most once, enforced by `UNIQUE(order_id)` on `order_stock_applications`. Migration 327 changes constraint from `UNIQUE(payment_id, order_id)` to `UNIQUE(order_id)`, makes `payment_id` nullable, fixes `stock` → `stock_quantity` column bug in `apply_order_stock_once`, adds cancelled-order rejection, deterministic inventory locking, and optional stock-sufficiency validation (`p_validate_sufficient`).
+- **Atomic quote acceptance:** Migration 328 adds `accept_order_quote_atomic(p_quote_id, p_customer_phone)` — locks quote, verifies Meta-verified WhatsApp sender identity, derives all financial values from DB, creates order + items, reserves inventory via canonical `apply_order_stock_once` in same transaction, rolls back entirely on insufficient stock. Also adds `reject_order_quote_atomic` with same identity verification. Partial UNIQUE index on `orders.quote_request_id` enforces one-quote-one-order at DB level.
+- **Atomic stale-order cleanup:** Migration 329 adds `cancel_stale_order_atomic(p_order_id)` — locks order, requires status='pending' and age >48h, checks for successful payment (skips if paid), checks canonical stock marker (restores stock only if marker exists, skips if not), cancels order atomically.
+- **Bot flow stock replacement:** Replaced two per-item `decrement_stock`/`decrement_variant_stock` loops in `ordering.flow.ts` with single `apply_order_stock_once` RPC call (atomic, idempotent, crash-safe).
+- **Quote handler rewired:** `quote-response.ts` now calls RPCs directly via service client with Meta-verified `from` as `p_customer_phone`. Side effects (payment init, messaging, notifications) preserved in handler.
+- **Unauthenticated route removed:** Deleted `/api/orders/quote-accept/route.ts` (had no auth beyond rate limiting).
+- **Fix:** Removed non-existent `paid_at` column from order confirmation update in `process-success.ts:129`.
+- **Files:** `supabase/migrations/327_canonical_order_stock.sql` (NEW), `supabase/migrations/328_quote_acceptance_rpcs.sql` (NEW), `supabase/migrations/329_stale_order_atomic_cleanup.sql` (NEW), `lib/__tests__/order-stock-authority.test.ts` (NEW), `lib/bot/handlers/quote-response.ts`, `lib/bot/bot.service.ts`, `lib/bot/flows/ordering.flow.ts`, `lib/payments/process-success.ts`, `app/api/cron/cleanup/route.ts`, `app/api/orders/quote-accept/route.ts` (DELETED)
+- **Tests:** 44 executable PostgreSQL tests covering stock application, concurrency, crash rollback, deposit/balance, identity verification, quote atomicity, cleanup with/without marker, privilege hardening
+- **Affects:** All order stock paths (bot flow, payment webhook, quote acceptance, stale cleanup). Payment finalization lifecycle. Quote acceptance/rejection flow.
+- **Could break:** Any code that calls `apply_order_stock_once` with old `(p_payment_id, p_order_id)` parameter order (now `(p_order_id, p_payment_id)`). Any code that references `/api/orders/quote-accept`. Tests in `payment-authority-db.test.ts` that test the old `apply_order_stock_once` signature against a real DB (those tests use migration 314 directly and would need updating for the new schema).
+
 ## 2026-08-17
 
 ### fix(infra): production drift reconciliation for migrations 321+322

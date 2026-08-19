@@ -2561,7 +2561,7 @@ export class BotService {
   // ── Quote Response Handler ──────────────────────────────
 
   private async handleQuoteResponse(from: string, quoteId: string, action: 'accept' | 'reject'): Promise<void> {
-    return _handleQuoteResponse(this.sendText.bind(this), from, quoteId, action);
+    return _handleQuoteResponse(this.supabase, this.sendText.bind(this), from, quoteId, action);
   }
 
   // ── Ticket Check-in via WhatsApp ──────────────────────
