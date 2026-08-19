@@ -5,7 +5,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import type { PromoPrizeType, PromoCodeEntryMode } from '@/lib/promotions/types';
-import { MIN_GENERATED_BODY_LENGTH, computeBodyLength, validateGeneratedEntropy } from '@/lib/promotions/normalize';
+import { MIN_GENERATED_BODY_LENGTH, computeBodyLength, validateGeneratedEntropy, normalizePromoCode, isImportablePromoCode } from '@/lib/promotions/normalize';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -348,18 +348,38 @@ function Step2Codes({ state, update }: { state: WizardState; update: (p: Partial
         .split(/\r?\n/)
         .map((l) => l.trim())
         .filter(Boolean);
-      // Skip header row if it looks like a header (contains "code" text)
       const dataLines = lines[0]?.toLowerCase().includes('code') ? lines.slice(1) : lines;
-      const codes = dataLines.map((l) => l.split(',')[0].trim().toUpperCase()).filter(Boolean);
-      if (codes.length === 0) {
+      const rawCodes = dataLines.map((l) => l.split(',')[0].trim()).filter(Boolean);
+      if (rawCodes.length === 0) {
         update({ import_error: 'No codes found in file.', import_file: null, import_preview: [], import_total: 0 });
         return;
       }
+      // Validate each code against import security policy
+      let invalidCount = 0;
+      const validCodes: string[] = [];
+      for (const raw of rawCodes) {
+        const normalized = normalizePromoCode(raw);
+        if (isImportablePromoCode(normalized)) {
+          validCodes.push(normalized);
+        } else {
+          invalidCount++;
+        }
+      }
+      if (invalidCount > 0 && validCodes.length === 0) {
+        update({
+          import_error: `All ${rawCodes.length} codes are too short. Imported codes must be at least 10 characters after normalization.`,
+          import_file: null, import_preview: [], import_total: 0,
+        });
+        return;
+      }
+      const errorMsg = invalidCount > 0
+        ? `${invalidCount} of ${rawCodes.length} codes rejected (too short — minimum 10 characters). ${validCodes.length} valid codes will be imported.`
+        : '';
       update({
         import_file: file,
-        import_preview: codes.slice(0, 5),
-        import_total: codes.length,
-        import_error: '',
+        import_preview: validCodes.slice(0, 5),
+        import_total: validCodes.length,
+        import_error: errorMsg,
       });
     };
     reader.readAsText(file);
@@ -426,10 +446,8 @@ function Step2Codes({ state, update }: { state: WizardState; update: (p: Partial
               <Input
                 type="number"
                 value={state.code_count}
-                onChange={(v) => update({ code_count: Math.max(1, Math.min(50_000, Number(v))) })}
+                onChange={(v) => update({ code_count: v === '' ? ('' as unknown as number) : Number(v) })}
                 placeholder="e.g. 10000"
-                min={1}
-                max={50_000}
               />
               <p className="mt-1 text-xs text-gray-400">Min 1 — Max 50,000 per batch.</p>
             </div>
@@ -439,13 +457,8 @@ function Step2Codes({ state, update }: { state: WizardState; update: (p: Partial
                 <Input
                   type="number"
                   value={state.code_length}
-                  onChange={(v) => {
-                    const minTotal = MIN_GENERATED_BODY_LENGTH + (state.code_prefix?.length || 0);
-                    update({ code_length: Math.max(minTotal, Math.min(24, Number(v))) });
-                  }}
+                  onChange={(v) => update({ code_length: v === '' ? ('' as unknown as number) : Number(v) })}
                   placeholder="12"
-                  min={MIN_GENERATED_BODY_LENGTH + (state.code_prefix?.length || 0)}
-                  max={24}
                 />
                 <p className="mt-1 text-xs text-gray-400">
                   Min {MIN_GENERATED_BODY_LENGTH + (state.code_prefix?.length || 0)}, max 24 (must have {MIN_GENERATED_BODY_LENGTH}+ random characters{state.code_prefix ? ` after "${state.code_prefix}" prefix` : ''})
@@ -455,15 +468,7 @@ function Step2Codes({ state, update }: { state: WizardState; update: (p: Partial
                 <FieldLabel>Prefix (optional)</FieldLabel>
                 <Input
                   value={state.code_prefix}
-                  onChange={(v) => {
-                    const newPrefix = v.toUpperCase().slice(0, 4);
-                    const minTotal = MIN_GENERATED_BODY_LENGTH + newPrefix.length;
-                    update({
-                      code_prefix: newPrefix,
-                      // Auto-bump code_length if prefix would reduce body below minimum
-                      code_length: Math.max(state.code_length, minTotal),
-                    });
-                  }}
+                  onChange={(v) => update({ code_prefix: v.toUpperCase().slice(0, 4) })}
                   placeholder="e.g. WIN"
                 />
                 <p className="mt-1 text-xs text-gray-400">Up to 4 characters — prepended to every code</p>
@@ -672,9 +677,8 @@ function Step3Prizes({ state, update }: { state: WizardState; update: (p: Partia
                 <Input
                   type="number"
                   value={prize.quantity}
-                  onChange={(v) => updatePrize(prize._key, { quantity: Math.max(1, Number(v)) })}
+                  onChange={(v) => updatePrize(prize._key, { quantity: v === '' ? ('' as unknown as number) : Number(v) })}
                   placeholder="1"
-                  min={1}
                 />
               </div>
               <div>
@@ -879,9 +883,8 @@ function Step5Eligibility({ state, update }: { state: WizardState; update: (p: P
             <Input
               type="number"
               value={state.max_attempts_per_phone}
-              onChange={(v) => update({ max_attempts_per_phone: Math.max(1, Number(v)) })}
+              onChange={(v) => update({ max_attempts_per_phone: v === '' ? ('' as unknown as number) : Number(v) })}
               placeholder="50"
-              min={1}
             />
             <p className="mt-1 text-xs text-gray-400">A participant will be blocked after this many total attempts.</p>
           </div>
@@ -890,9 +893,8 @@ function Step5Eligibility({ state, update }: { state: WizardState; update: (p: P
             <Input
               type="number"
               value={state.rate_limit_max_attempts}
-              onChange={(v) => update({ rate_limit_max_attempts: Math.max(1, Number(v)) })}
+              onChange={(v) => update({ rate_limit_max_attempts: v === '' ? ('' as unknown as number) : Number(v) })}
               placeholder="10"
-              min={1}
             />
           </div>
           <div>
@@ -900,9 +902,8 @@ function Step5Eligibility({ state, update }: { state: WizardState; update: (p: P
             <Input
               type="number"
               value={state.rate_limit_window_minutes}
-              onChange={(v) => update({ rate_limit_window_minutes: Math.max(1, Number(v)) })}
+              onChange={(v) => update({ rate_limit_window_minutes: v === '' ? ('' as unknown as number) : Number(v) })}
               placeholder="60"
-              min={1}
             />
             <p className="mt-1 text-xs text-gray-400">
               Default: 10 attempts per 60-minute window.
@@ -952,9 +953,8 @@ function Step5Eligibility({ state, update }: { state: WizardState; update: (p: P
               <Input
                 type="number"
                 value={state.eligibility_min_age}
-                onChange={(v) => update({ eligibility_min_age: Math.max(1, Number(v)) })}
+                onChange={(v) => update({ eligibility_min_age: v === '' ? ('' as unknown as number) : Number(v) })}
                 placeholder="18"
-                min={1}
               />
             </div>
             <div>
@@ -1265,12 +1265,17 @@ function validateStep(step: number, state: WizardState): string[] {
   }
   if (step === 2) {
     if (state.code_source === 'generate') {
-      if (!state.code_count || state.code_count < 1) errors.push('Code count must be at least 1.');
-      const entropyCheck = validateGeneratedEntropy(state.code_length, state.code_prefix || null);
-      if (!entropyCheck.valid) {
-        errors.push(entropyCheck.error!);
-      } else if (state.code_length > 24) {
+      const count = Number(state.code_count);
+      if (!count || count < 1 || !Number.isInteger(count)) errors.push('Code count must be a positive integer.');
+      else if (count > 50_000) errors.push('Code count must be at most 50,000.');
+      const len = Number(state.code_length);
+      if (!len || !Number.isInteger(len)) {
+        errors.push('Code length is required.');
+      } else if (len > 24) {
         errors.push('Code length must be at most 24.');
+      } else {
+        const entropyCheck = validateGeneratedEntropy(len, state.code_prefix || null);
+        if (!entropyCheck.valid) errors.push(entropyCheck.error!);
       }
     } else {
       if (!state.import_file) errors.push('Please upload a CSV file.');
@@ -1279,11 +1284,24 @@ function validateStep(step: number, state: WizardState): string[] {
   }
   if (step === 3) {
     const totalWinners = state.prizes.reduce((sum, p) => sum + (Number(p.quantity) || 0), 0);
-    const totalCodes = state.code_source === 'generate' ? state.code_count : state.import_total;
+    const totalCodes = state.code_source === 'generate' ? Number(state.code_count) : state.import_total;
     if (totalWinners > totalCodes && totalCodes > 0) {
       errors.push('Prize allocation exceeds total codes.');
     }
     if (state.prizes.some((p) => !p.name.trim())) errors.push('All prizes require a name.');
+    if (state.prizes.some((p) => !Number(p.quantity) || Number(p.quantity) < 1)) errors.push('Each prize must have a quantity of at least 1.');
+  }
+  if (step === 5) {
+    const phone = Number(state.max_attempts_per_phone);
+    if (!phone || phone < 1 || !Number.isInteger(phone)) errors.push('Max attempts per phone must be a positive integer.');
+    const rlMax = Number(state.rate_limit_max_attempts);
+    if (!rlMax || rlMax < 1 || !Number.isInteger(rlMax)) errors.push('Rate limit max attempts must be a positive integer.');
+    const rlWin = Number(state.rate_limit_window_minutes);
+    if (!rlWin || rlWin < 1 || !Number.isInteger(rlWin)) errors.push('Rate limit window must be a positive integer.');
+    if (state.eligibility_mode !== 'none' && state.eligibility_min_age !== null) {
+      const age = Number(state.eligibility_min_age);
+      if (age !== 0 && (!age || age < 1)) errors.push('Minimum age must be a positive number.');
+    }
   }
   return errors;
 }

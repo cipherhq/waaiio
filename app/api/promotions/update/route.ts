@@ -7,6 +7,7 @@ import {
   isValidStatusTransition,
   type PromoCampaignStatus,
 } from '@/lib/promotions/types';
+import { validatePrefix, validateGeneratedEntropy } from '@/lib/promotions/normalize';
 
 /**
  * Fields that cannot be changed once a campaign has redemptions (integrity-locked).
@@ -120,6 +121,29 @@ export async function PUT(request: NextRequest) {
     // Activation handled atomically — return early
     const { data: activated } = await service.from('promo_campaigns').select('*').eq('id', campaignId).single();
     return NextResponse.json({ campaign: activated });
+  }
+
+  // Validate code entropy when codeLength or codePrefix is being changed
+  if (!campaign.integrity_locked && ('codeLength' in body || 'codePrefix' in body)) {
+    const proposedLength = 'codeLength' in body && body.codeLength !== undefined
+      ? Number(body.codeLength) : (campaign.code_length as number);
+    const proposedPrefix = 'codePrefix' in body
+      ? (body.codePrefix ? String(body.codePrefix).trim().toUpperCase() : '')
+      : ((campaign.code_prefix as string) || '');
+
+    if (!Number.isInteger(proposedLength) || proposedLength < 6 || proposedLength > 24) {
+      return NextResponse.json({ error: 'code_length must be an integer between 6 and 24' }, { status: 400 });
+    }
+    if (proposedPrefix) {
+      const prefixCheck = validatePrefix(proposedPrefix, proposedLength);
+      if (!prefixCheck.valid) {
+        return NextResponse.json({ error: prefixCheck.error }, { status: 400 });
+      }
+    }
+    const entropyCheck = validateGeneratedEntropy(proposedLength, proposedPrefix || null);
+    if (!entropyCheck.valid) {
+      return NextResponse.json({ error: entropyCheck.error }, { status: 400 });
+    }
   }
 
   // Build update payload — only include provided fields

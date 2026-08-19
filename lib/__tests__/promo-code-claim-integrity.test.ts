@@ -309,22 +309,15 @@ describe('Wizard entropy enforcement', () => {
   });
 
   it('step 2 validation uses validateGeneratedEntropy (not hardcoded 6)', () => {
-    expect(wizardSrc).toContain('validateGeneratedEntropy(state.code_length, state.code_prefix');
+    // Now validates with Number(state.code_length) since field can be empty
+    expect(wizardSrc).toContain('validateGeneratedEntropy(len, state.code_prefix');
     expect(wizardSrc).not.toContain("code_length < 6");
     expect(wizardSrc).not.toContain("'Code length must be between 6 and 24'");
-  });
-
-  it('code_length input min is dynamic based on prefix', () => {
-    expect(wizardSrc).toContain('min={MIN_GENERATED_BODY_LENGTH + (state.code_prefix');
   });
 
   it('help text references MIN_GENERATED_BODY_LENGTH, not 6', () => {
     expect(wizardSrc).not.toContain('Min 6, max 24');
     expect(wizardSrc).toContain('{MIN_GENERATED_BODY_LENGTH}');
-  });
-
-  it('prefix change auto-bumps code_length to maintain minimum body', () => {
-    expect(wizardSrc).toContain('Math.max(state.code_length, minTotal)');
   });
 
   it('10/no prefix: validateGeneratedEntropy accepts', () => {
@@ -346,5 +339,98 @@ describe('Wizard entropy enforcement', () => {
   it('24 max remains accepted when body >= 10', () => {
     expect(validateGeneratedEntropy(24).valid).toBe(true);
     expect(validateGeneratedEntropy(24, 'PROM').valid).toBe(true); // body=20
+  });
+});
+
+describe('Numeric input UX', () => {
+  const fs = require('fs');
+  const wizardSrc = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');
+
+  it('no Math.max clamping in numeric onChange handlers', () => {
+    // All 7 numeric fields should use raw value, not Math.max clamping
+    // code_count, code_length, prize quantity, max_attempts, rate_limit_max, rate_limit_window, eligibility_min_age
+    // The only Math.max remaining should be in non-input contexts (display/preview)
+    const onChangeHandlers = wizardSrc.match(/onChange=\{[^}]*Math\.max\(1/g) || [];
+    expect(onChangeHandlers.length).toBe(0);
+  });
+
+  it('fields can become temporarily empty (string passthrough)', () => {
+    // onChange handlers should pass empty string through, not clamp to minimum
+    expect(wizardSrc).toContain("v === '' ? ('' as unknown as number) : Number(v)");
+  });
+
+  it('step validation catches invalid numeric values', () => {
+    // Step 2 validates code_count and code_length
+    expect(wizardSrc).toContain('Code count must be a positive integer');
+    expect(wizardSrc).toContain('Code length is required');
+    // Step 5 validates rate-limit fields
+    expect(wizardSrc).toContain('Max attempts per phone must be a positive integer');
+    expect(wizardSrc).toContain('Rate limit max attempts must be a positive integer');
+    expect(wizardSrc).toContain('Rate limit window must be a positive integer');
+  });
+});
+
+describe('Client CSV import validation', () => {
+  it('handleFile uses normalizePromoCode + isImportablePromoCode', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');
+    expect(src).toContain('normalizePromoCode');
+    expect(src).toContain('isImportablePromoCode');
+  });
+
+  it('short imported codes are rejected client-side', () => {
+    // isImportablePromoCode rejects <10 chars
+    expect(isImportablePromoCode('ABCDE1')).toBe(false);    // 6 chars
+    expect(isImportablePromoCode('ABCDEFG12')).toBe(false);  // 9 chars
+  });
+
+  it('valid imported codes are accepted', () => {
+    expect(isImportablePromoCode('ABCDEFGH12')).toBe(true);  // 10 chars
+  });
+
+  it('historical routing helpers remain legacy-compatible', () => {
+    expect(isRoutablePromoCode('ABCDE1')).toBe(true);  // 6 chars routes
+    expect(isRoutablePromoCode('ABCDEFG12')).toBe(true);  // 9 chars routes
+  });
+
+  it('handleFile shows clear error for invalid imports', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');
+    expect(src).toContain('codes are too short');
+    expect(src).toContain('minimum 10 characters');
+  });
+});
+
+describe('Update API entropy enforcement', () => {
+  const fs = require('fs');
+  const updateSrc = fs.readFileSync('app/api/promotions/update/route.ts', 'utf-8');
+
+  it('imports validatePrefix and validateGeneratedEntropy', () => {
+    expect(updateSrc).toContain('validatePrefix');
+    expect(updateSrc).toContain('validateGeneratedEntropy');
+  });
+
+  it('validates entropy when codeLength or codePrefix is changed', () => {
+    expect(updateSrc).toContain("'codeLength' in body || 'codePrefix' in body");
+    expect(updateSrc).toContain('validateGeneratedEntropy(proposedLength, proposedPrefix');
+  });
+
+  it('uses stored campaign values when only one field is supplied', () => {
+    // proposedLength falls back to campaign.code_length
+    expect(updateSrc).toContain('campaign.code_length');
+    // proposedPrefix falls back to campaign.code_prefix
+    expect(updateSrc).toContain('campaign.code_prefix');
+  });
+
+  it('does not trigger entropy validation for unrelated updates', () => {
+    // Guard: only when codeLength/codePrefix is being changed
+    expect(updateSrc).toContain("'codeLength' in body || 'codePrefix' in body");
+    // Inside !campaign.integrity_locked block
+    expect(updateSrc).toContain('!campaign.integrity_locked');
+  });
+
+  it('preserves integrity_locked behavior', () => {
+    expect(updateSrc).toContain('INTEGRITY_LOCKED_FIELDS');
+    expect(updateSrc).toContain('integrity-locked fields');
   });
 });
