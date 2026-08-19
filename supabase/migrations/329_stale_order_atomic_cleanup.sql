@@ -91,6 +91,20 @@ BEGIN
     RETURN jsonb_build_object('cancelled', false, 'reason', 'has_successful_payment');
   END IF;
 
+  -- 4b. Void all pending payments — serialization contract with payment authority.
+  --
+  -- Payment authority requires status='pending' to transition to 'success',
+  -- so voiding here prevents a late payment from being authorized after
+  -- cleanup commits. Without this, the payment authority's UPDATE to
+  -- status='success' can resume after our FOR UPDATE lock releases,
+  -- creating paid+cancelled inconsistency.
+  UPDATE payments
+  SET status = 'failed',
+      gateway_status = 'stale_order_cancelled',
+      updated_at = NOW()
+  WHERE (order_id = p_order_id OR metadata->>'order_id' = p_order_id::text)
+    AND status = 'pending';
+
   -- 5. Check canonical stock marker
   PERFORM id FROM order_stock_applications WHERE order_id = p_order_id;
 

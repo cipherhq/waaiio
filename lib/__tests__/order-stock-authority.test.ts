@@ -16,6 +16,7 @@
  * - Payment-protected orders
  * - Privilege hardening
  * - orders.paid_at non-reference
+ * - Stale cleanup payment voiding (serialization contract with payment authority)
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { execSync } from 'child_process';
@@ -127,6 +128,8 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
         order_id UUID,
         metadata JSONB DEFAULT '{}'::jsonb,
         gateway_fee INT DEFAULT 0,
+        gateway_status TEXT,
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
         finalization_processing_at TIMESTAMPTZ,
         finalization_completed_at TIMESTAMPTZ,
         finalization_claim_token UUID
@@ -1028,7 +1031,92 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
       expect(parseInt(stock)).toBe(98); // stock stays decremented
     });
 
-    it('48. finalization retry remains idempotent after contention', () => {
+    it('48. cleanup voids pending payments when cancelling order', () => {
+      // Setup: stale order with pending payment
+      psql(`
+        INSERT INTO orders (id, business_id, user_id, status, total_amount, created_at)
+          VALUES ('${ORDER_RACE}', '${BIZ_ID}', '${USER_ID}', 'pending', 1000, NOW() - INTERVAL '72 hours');
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+          VALUES ('${ORDER_RACE}', '${PRODUCT_A}', 2, 500);
+        INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_RACE}', '${ORDER_RACE}', 1000, 'pending');
+      `);
+
+      const cr = psqlJson(`SET ROLE service_role; SELECT cancel_stale_order_atomic('${ORDER_RACE}');`);
+      expect(cr.cancelled).toBe(true);
+
+      // Payment must be voided
+      const payStatus = psql(`SELECT status FROM payments WHERE id = '${PAY_RACE}';`);
+      expect(payStatus).toBe('failed');
+      const payGwStatus = psql(`SELECT gateway_status FROM payments WHERE id = '${PAY_RACE}';`);
+      expect(payGwStatus).toBe('stale_order_cancelled');
+    });
+
+    it('49. cleanup does not void already-successful payments', () => {
+      // Setup: stale order with successful payment (should not be cancelled at all)
+      psql(`
+        INSERT INTO orders (id, business_id, user_id, status, total_amount, created_at)
+          VALUES ('${ORDER_RACE}', '${BIZ_ID}', '${USER_ID}', 'pending', 1000, NOW() - INTERVAL '72 hours');
+        INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_RACE}', '${ORDER_RACE}', 1000, 'success');
+      `);
+
+      const cr = psqlJson(`SET ROLE service_role; SELECT cancel_stale_order_atomic('${ORDER_RACE}');`);
+      expect(cr.cancelled).toBe(false);
+      expect(cr.reason).toBe('has_successful_payment');
+
+      // Payment unchanged
+      const payStatus = psql(`SELECT status FROM payments WHERE id = '${PAY_RACE}';`);
+      expect(payStatus).toBe('success');
+    });
+
+    it('50. race: cleanup wins → payment authority cannot resurrect voided payment', () => {
+      // This is the critical race the serialization contract prevents:
+      // 1. Cleanup locks order + payments FOR UPDATE
+      // 2. Payment authority's UPDATE blocks (waiting for lock)
+      // 3. Cleanup voids payment (pending → failed), cancels order, commits
+      // 4. Payment authority resumes — tries to mark payment success
+      // 5. Payment is 'failed' not 'pending' → authority's eq('status','pending') returns 0 rows
+      //
+      // We simulate post-cleanup state and verify the authority-side gate.
+      psql(`
+        INSERT INTO orders (id, business_id, user_id, status, total_amount, created_at)
+          VALUES ('${ORDER_RACE}', '${BIZ_ID}', '${USER_ID}', 'pending', 1000, NOW() - INTERVAL '72 hours');
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+          VALUES ('${ORDER_RACE}', '${PRODUCT_A}', 2, 500);
+        INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_RACE}', '${ORDER_RACE}', 1000, 'pending');
+      `);
+
+      // Cleanup runs — cancels order, voids payment
+      const cr = psqlJson(`SET ROLE service_role; SELECT cancel_stale_order_atomic('${ORDER_RACE}');`);
+      expect(cr.cancelled).toBe(true);
+
+      // Payment is now 'failed' — authority's WHERE status='pending' won't match
+      const payStatus = psql(`SELECT status FROM payments WHERE id = '${PAY_RACE}';`);
+      expect(payStatus).toBe('failed');
+
+      // Simulate authority trying: UPDATE payments SET status='success' WHERE id=X AND status='pending'
+      const updateResult = psql(`
+        UPDATE payments SET status = 'success'
+        WHERE id = '${PAY_RACE}' AND status = 'pending'
+        RETURNING id;
+      `);
+      // No rows returned — voided payment cannot be resurrected
+      expect(updateResult).toBe('');
+
+      // Payment stays failed
+      const finalStatus = psql(`SELECT status FROM payments WHERE id = '${PAY_RACE}';`);
+      expect(finalStatus).toBe('failed');
+
+      // Order stays cancelled
+      const orderStatus = psql(`SELECT status FROM orders WHERE id = '${ORDER_RACE}';`);
+      expect(orderStatus).toBe('cancelled');
+
+      // apply_order_stock_once also rejects
+      const sr = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_RACE}', '${PAY_RACE}');`);
+      expect(sr.applied).toBe(false);
+      expect(sr.reason).toBe('order_cancelled');
+    });
+
+    it('51. finalization retry remains idempotent after contention', () => {
       // Setup: confirmed order with stock applied
       psql(`
         INSERT INTO orders (id, business_id, user_id, status, total_amount, created_at)
