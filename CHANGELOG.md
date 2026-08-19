@@ -7,6 +7,16 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-19
 
+### fix(ordering): payment-success invariant + hide unfinished service price request + real concurrency tests
+
+- **Payment-success invariant (migration 327):** `apply_order_stock_once` now requires `payment.status = 'success'` when `p_payment_id` is supplied, BEFORE any stock decrement or order confirmation. Previously a pending payment with valid order relationship could trigger stock mutation. `p_payment_id = NULL` remains supported for trusted pre-payment paths (quote acceptance, free orders).
+- **Service Price Request hidden (services page):** Removed the unfinished "Price request" toggle and list badge from `app/dashboard/services/page.tsx`. DB column `services.quote_enabled` preserved — no migration, no backfill, no data change. Existing values intact on save.
+- **Real row-lock concurrency tests:** Replaced advisory-lock-barrier tests (which only proved ordering) with actual overlapping-transaction tests. Session A holds row locks via `FOR UPDATE` + `pg_sleep(3)`, Session B's conflicting UPDATE/RPC blocks on the row lock. Elapsed time > 1.5s proves genuine contention. Both race directions covered.
+- **Files:** `supabase/migrations/327_canonical_order_stock.sql`, `app/dashboard/services/page.tsx`, `lib/__tests__/order-stock-authority.test.ts`
+- **Tests:** 5 new payment-success invariant tests (8a-8e), 2 source tests for Price Request removal, 2 real row-lock concurrency tests replacing advisory-barrier versions
+- **Affects:** Order stock application, payment webhook finalization, service dashboard form
+- **Could break:** Any code calling `apply_order_stock_once` with a non-successful payment_id will now get `payment_not_successful` instead of proceeding. This is the correct behavior — all callers already verify payment success before calling.
+
 ### feat(ordering): canonical order-stock authority + atomic quote acceptance
 
 - **Canonical stock invariant:** For any order, inventory is deducted at most once, enforced by `UNIQUE(order_id)` on `order_stock_applications`. Migration 327 changes constraint from `UNIQUE(payment_id, order_id)` to `UNIQUE(order_id)`, makes `payment_id` nullable, fixes `stock` → `stock_quantity` column bug in `apply_order_stock_once`, adds cancelled-order rejection, deterministic inventory locking, and optional stock-sufficiency validation (`p_validate_sufficient`).

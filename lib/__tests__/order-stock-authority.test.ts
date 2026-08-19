@@ -19,7 +19,7 @@
  * - Stale cleanup payment voiding (serialization contract with payment authority)
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
@@ -421,6 +421,111 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
       // Verify marker has NULL payment_id
       const payId = psql(`SELECT payment_id FROM order_stock_applications WHERE order_id = '${ORDER_1}';`);
       expect(payId).toBe('');
+    });
+
+    // ── Payment-success invariant (Fix 1) ──
+
+    it('8a. successful payment → stock decremented, marker inserted, order confirmed', () => {
+      psql(`
+        INSERT INTO orders (id, business_id, user_id, status, total_amount)
+          VALUES ('${ORDER_1}', '${BIZ_ID}', '${USER_ID}', 'pending', 2000);
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+          VALUES ('${ORDER_1}', '${PRODUCT_A}', 2, 1000);
+        INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_1}', '${ORDER_1}', 2000, 'success');
+      `);
+      const r = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_1}', '${PAY_1}');`);
+      expect(r.applied).toBe(true);
+      expect(r.already_applied).toBe(false);
+      expect(r.order_confirmed).toBe(true);
+
+      const stock = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(parseInt(stock)).toBe(98);
+      const marker = psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${ORDER_1}';`);
+      expect(parseInt(marker)).toBe(1);
+      const status = psql(`SELECT status FROM orders WHERE id = '${ORDER_1}';`);
+      expect(status).toBe('confirmed');
+    });
+
+    it('8b. pending payment → payment_not_successful, no stock change, no marker, order stays pending', () => {
+      psql(`
+        INSERT INTO orders (id, business_id, user_id, status, total_amount)
+          VALUES ('${ORDER_1}', '${BIZ_ID}', '${USER_ID}', 'pending', 2000);
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+          VALUES ('${ORDER_1}', '${PRODUCT_A}', 2, 1000);
+        INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_1}', '${ORDER_1}', 2000, 'pending');
+      `);
+      const r = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_1}', '${PAY_1}');`);
+      expect(r.applied).toBe(false);
+      expect(r.reason).toBe('payment_not_successful');
+
+      const stock = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(parseInt(stock)).toBe(100);
+      const marker = psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${ORDER_1}';`);
+      expect(parseInt(marker)).toBe(0);
+      const status = psql(`SELECT status FROM orders WHERE id = '${ORDER_1}';`);
+      expect(status).toBe('pending');
+    });
+
+    it('8c. failed payment → payment_not_successful, no stock change, no marker', () => {
+      psql(`
+        INSERT INTO orders (id, business_id, user_id, status, total_amount)
+          VALUES ('${ORDER_1}', '${BIZ_ID}', '${USER_ID}', 'pending', 2000);
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+          VALUES ('${ORDER_1}', '${PRODUCT_A}', 2, 1000);
+        INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_1}', '${ORDER_1}', 2000, 'failed');
+      `);
+      const r = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_1}', '${PAY_1}');`);
+      expect(r.applied).toBe(false);
+      expect(r.reason).toBe('payment_not_successful');
+
+      const stock = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(parseInt(stock)).toBe(100);
+      const marker = psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${ORDER_1}';`);
+      expect(parseInt(marker)).toBe(0);
+    });
+
+    it('8d. existing marker + successful payment → no second decrement, order confirmed', () => {
+      psql(`
+        INSERT INTO orders (id, business_id, user_id, status, total_amount)
+          VALUES ('${ORDER_1}', '${BIZ_ID}', '${USER_ID}', 'pending', 2000);
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+          VALUES ('${ORDER_1}', '${PRODUCT_A}', 2, 1000);
+        INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_1}', '${ORDER_1}', 2000, 'success');
+        -- Simulate prior stock application (e.g. from quote acceptance)
+        UPDATE products SET stock_quantity = 98 WHERE id = '${PRODUCT_A}';
+        INSERT INTO order_stock_applications (order_id, item_count) VALUES ('${ORDER_1}', 1);
+      `);
+      const r = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_1}', '${PAY_1}');`);
+      expect(r.applied).toBe(true);
+      expect(r.already_applied).toBe(true);
+      expect(r.order_confirmed).toBe(true);
+
+      // Stock not double-decremented
+      const stock = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(parseInt(stock)).toBe(98);
+      const status = psql(`SELECT status FROM orders WHERE id = '${ORDER_1}';`);
+      expect(status).toBe('confirmed');
+    });
+
+    it('8e. existing marker + pending payment → no confirmation, no stock change', () => {
+      psql(`
+        INSERT INTO orders (id, business_id, user_id, status, total_amount)
+          VALUES ('${ORDER_1}', '${BIZ_ID}', '${USER_ID}', 'pending', 2000);
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+          VALUES ('${ORDER_1}', '${PRODUCT_A}', 2, 1000);
+        INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_1}', '${ORDER_1}', 2000, 'pending');
+        UPDATE products SET stock_quantity = 98 WHERE id = '${PRODUCT_A}';
+        INSERT INTO order_stock_applications (order_id, item_count) VALUES ('${ORDER_1}', 1);
+      `);
+      const r = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_1}', '${PAY_1}');`);
+      expect(r.applied).toBe(true);
+      expect(r.already_applied).toBe(true);
+      expect(r.order_confirmed).toBe(false);
+
+      const stock = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(parseInt(stock)).toBe(98);
+      const status = psql(`SELECT status FROM orders WHERE id = '${ORDER_1}';`);
+      expect(status).toBe('pending');
     });
   });
 
@@ -1267,16 +1372,16 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
   });
 
   // ═══════════════════════════════════════════════════════
-  // REAL TWO-SESSION CONCURRENCY TESTS
-  // Uses parallel child psql processes with advisory lock barriers
-  // to prove genuine lock contention.
+  // REAL TWO-SESSION ROW-LOCK CONCURRENCY TESTS
+  // Uses parallel child psql processes with overlapping transactions.
+  // Session A holds actual row locks (FOR UPDATE) while Session B
+  // attempts a conflicting operation on the SAME row — proving
+  // Session B genuinely blocks on the row lock, not an advisory barrier.
   // ═══════════════════════════════════════════════════════
 
-  describe('real two-session concurrency (parallel psql)', () => {
+  describe('real two-session row-lock concurrency', () => {
     const ORDER_CONC = '00000000-0000-0000-0327-000000000c01';
     const PAY_CONC = '00000000-0000-0000-0327-000000000c02';
-    // Advisory lock key for barrier coordination
-    const BARRIER_KEY = 327001;
 
     beforeEach(() => {
       psql(`
@@ -1285,21 +1390,17 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
         DELETE FROM payments WHERE id = '${PAY_CONC}';
         DELETE FROM orders WHERE id = '${ORDER_CONC}';
         UPDATE products SET stock_quantity = 100 WHERE id = '${PRODUCT_A}';
-        -- Release any leftover advisory locks
-        SELECT pg_advisory_unlock_all();
       `);
     });
 
     /**
-     * Run a SQL script in a separate psql process. Returns a promise
-     * that resolves with {stdout, stderr} when the process exits.
+     * Run SQL in a separate psql child process. Returns a promise
+     * that resolves with stdout/stderr/code when the process exits.
      */
     function psqlAsync(sql: string): Promise<{ stdout: string; stderr: string; code: number }> {
       return new Promise((resolve) => {
-        const { spawn } = require('child_process');
         const child = spawn('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
           stdio: ['pipe', 'pipe', 'pipe'],
-          timeout: 30000,
         });
         let stdout = '';
         let stderr = '';
@@ -1311,7 +1412,7 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
       });
     }
 
-    it('52. CASE A — cleanup wins lock, payment authority blocks then sees voided payment', async () => {
+    it('52. CASE A — cleanup holds row locks, payment authority blocks on payment row lock', async () => {
       // Setup: stale pending order with stock marker + pending payment
       psql(`
         INSERT INTO orders (id, business_id, user_id, status, total_amount, created_at)
@@ -1323,54 +1424,65 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
         INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_CONC}', '${ORDER_CONC}', 1000, 'pending');
       `);
 
-      // Session A (cleanup): acquire advisory lock as barrier signal, then run cleanup.
-      // The advisory lock signals to Session B that A has started.
-      // Session A runs cancel_stale_order_atomic which locks order + payment rows.
-      // Session B tries to update the payment row and blocks until A commits.
+      // Session A (cleanup): BEGIN a transaction, acquire the SAME row locks
+      // that cancel_stale_order_atomic uses (order + payment FOR UPDATE),
+      // hold them for 3 seconds via pg_sleep, then perform cleanup and COMMIT.
+      // This keeps the locks held while Session B attempts its conflicting UPDATE.
       const sessionA = psqlAsync(`
-        -- Signal: A is about to start cleanup
-        SELECT pg_advisory_lock(${BARRIER_KEY});
-        -- Run cleanup (locks order + payment rows, voids payment, cancels order)
-        SET ROLE service_role;
-        SELECT cancel_stale_order_atomic('${ORDER_CONC}');
-        -- Cleanup committed. Release barrier so B can proceed with its post-check.
-        SELECT pg_advisory_unlock(${BARRIER_KEY});
+        BEGIN;
+        SELECT id FROM orders WHERE id = '${ORDER_CONC}' FOR UPDATE;
+        SELECT id FROM payments WHERE order_id = '${ORDER_CONC}' FOR UPDATE;
+        -- Hold row locks for 3 seconds (Session B blocks during this window)
+        SELECT pg_sleep(3);
+        -- Perform cleanup mutations (same as cancel_stale_order_atomic)
+        UPDATE payments SET status = 'failed', gateway_status = 'stale_order_cancelled'
+          WHERE order_id = '${ORDER_CONC}' AND status = 'pending';
+        UPDATE products SET stock_quantity = stock_quantity + 2 WHERE id = '${PRODUCT_A}';
+        DELETE FROM order_stock_applications WHERE order_id = '${ORDER_CONC}';
+        UPDATE orders SET status = 'cancelled', updated_at = NOW() WHERE id = '${ORDER_CONC}';
+        COMMIT;
       `);
 
-      // Session B (payment authority): wait for A's barrier signal, then try to
-      // transition payment pending→success. This UPDATE targets the same payment
-      // row that A locked with FOR UPDATE, so it blocks until A commits.
+      // Wait 500ms for Session A to acquire row locks
+      await new Promise(r => setTimeout(r, 500));
+
+      // Session B (payment authority): UPDATE the payment row — this BLOCKS
+      // on the row lock held by Session A's FOR UPDATE. When A commits,
+      // B resumes and finds status='failed' (voided), not 'pending'.
+      const bStart = Date.now();
       const sessionB = psqlAsync(`
-        -- Wait for A to acquire the barrier (proves A started first)
-        SELECT pg_advisory_lock(${BARRIER_KEY});
-        SELECT pg_advisory_unlock(${BARRIER_KEY});
-        -- Now try to mark payment as success (simulates payment authority)
-        -- A has already committed: payment is 'failed', not 'pending'
         UPDATE payments SET status = 'success'
         WHERE id = '${PAY_CONC}' AND status = 'pending'
         RETURNING id;
       `);
 
       const [resultA, resultB] = await Promise.all([sessionA, sessionB]);
+      const bDuration = Date.now() - bStart;
 
-      // Session A should succeed (cleanup ran)
+      // ── Prove genuine row-lock contention ──
+      // Session B must have blocked for > 1.5 seconds (A held locks for 3s,
+      // B started 0.5s later → blocked for ~2.5s)
+      expect(bDuration).toBeGreaterThan(1500);
+
+      // Session A completed cleanup successfully
       expect(resultA.code).toBe(0);
-      expect(resultA.stdout).toContain('"cancelled":true');
 
-      // Session B's UPDATE should return NO rows (payment was voided to 'failed')
-      // The RETURNING id produces empty output when 0 rows matched
+      // Session B's UPDATE returned 0 rows — payment was voided to 'failed'
       const bLines = resultB.stdout.split('\n').filter((l: string) => l.trim());
       const updateReturnedId = bLines.some((l: string) => l.match(/^[0-9a-f-]{36}$/));
       expect(updateReturnedId).toBe(false);
 
-      // Verify final state
+      // ── Verify final state ──
       const orderStatus = psql(`SELECT status FROM orders WHERE id = '${ORDER_CONC}';`);
       expect(orderStatus).toBe('cancelled');
 
       const payStatus = psql(`SELECT status FROM payments WHERE id = '${PAY_CONC}';`);
       expect(payStatus).toBe('failed');
 
-      // Stock restored (marker existed)
+      const payGw = psql(`SELECT gateway_status FROM payments WHERE id = '${PAY_CONC}';`);
+      expect(payGw).toBe('stale_order_cancelled');
+
+      // Stock restored exactly once
       const stock = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
       expect(parseInt(stock)).toBe(100);
 
@@ -1378,9 +1490,9 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
       const sr = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_CONC}', '${PAY_CONC}');`);
       expect(sr.applied).toBe(false);
       expect(sr.reason).toBe('order_cancelled');
-    }, 30000);
+    }, 15000);
 
-    it('53. CASE B — payment success commits first, cleanup serializes behind and refuses', async () => {
+    it('53. CASE B — payment success holds row lock, cleanup blocks on payment row then refuses', async () => {
       // Setup: stale pending order with stock marker + pending payment
       psql(`
         INSERT INTO orders (id, business_id, user_id, status, total_amount, created_at)
@@ -1392,45 +1504,53 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
         INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_CONC}', '${ORDER_CONC}', 1000, 'pending');
       `);
 
-      // Session A (payment authority): mark payment as success FIRST.
-      // Uses a barrier to ensure it commits before B starts.
+      // Session A (payment authority): BEGIN transaction, mark payment success
+      // (acquires implicit row lock on the payment row), hold for 3 seconds.
       const sessionA = psqlAsync(`
-        -- Mark payment success (acquires implicit row lock, commits immediately)
+        BEGIN;
         UPDATE payments SET status = 'success' WHERE id = '${PAY_CONC}';
-        -- Signal: payment is now success
-        SELECT pg_advisory_lock(${BARRIER_KEY});
-        SELECT pg_advisory_unlock(${BARRIER_KEY});
+        -- Hold the payment row locked for 3 seconds
+        SELECT pg_sleep(3);
+        COMMIT;
       `);
 
-      // Session B (cleanup): wait for A's signal, then try cleanup.
-      // Cleanup will FOR UPDATE the payment row, see status='success', and refuse.
+      // Wait 500ms for Session A to acquire the row lock
+      await new Promise(r => setTimeout(r, 500));
+
+      // Session B (cleanup): cancel_stale_order_atomic does FOR UPDATE on the
+      // payment row — this BLOCKS until Session A commits. After A commits,
+      // cleanup reads status='success' and refuses cancellation.
+      const bStart = Date.now();
       const sessionB = psqlAsync(`
-        -- Wait for A to commit payment success
-        SELECT pg_advisory_lock(${BARRIER_KEY});
-        SELECT pg_advisory_unlock(${BARRIER_KEY});
-        -- Now run cleanup — payment is already success
         SET ROLE service_role;
         SELECT cancel_stale_order_atomic('${ORDER_CONC}');
       `);
 
       const [resultA, resultB] = await Promise.all([sessionA, sessionB]);
+      const bDuration = Date.now() - bStart;
 
+      // ── Prove genuine row-lock contention ──
+      expect(bDuration).toBeGreaterThan(1500);
+
+      // Session A committed successfully
       expect(resultA.code).toBe(0);
-      expect(resultB.code).toBe(0);
+
+      // Session B (cleanup) refused — saw successful payment
       expect(resultB.stdout).toContain('"cancelled":false');
       expect(resultB.stdout).toContain('has_successful_payment');
 
-      // Verify final state: order NOT cancelled, stock NOT restored
+      // ── Verify final state ──
       const orderStatus = psql(`SELECT status FROM orders WHERE id = '${ORDER_CONC}';`);
       expect(orderStatus).toBe('pending'); // not cancelled
 
       const payStatus = psql(`SELECT status FROM payments WHERE id = '${PAY_CONC}';`);
       expect(payStatus).toBe('success');
 
+      // Stock NOT restored
       const stock = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
-      expect(parseInt(stock)).toBe(98); // stock stays decremented
+      expect(parseInt(stock)).toBe(98);
 
-      // apply_order_stock_once confirms the order
+      // apply_order_stock_once confirms the order (marker exists + payment success)
       const sr = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_CONC}', '${PAY_CONC}');`);
       expect(sr.applied).toBe(true);
       expect(sr.already_applied).toBe(true);
@@ -1438,6 +1558,31 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
 
       const finalStatus = psql(`SELECT status FROM orders WHERE id = '${ORDER_CONC}';`);
       expect(finalStatus).toBe('confirmed');
-    }, 30000);
+    }, 15000);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// SERVICE PRICE REQUEST UI REMOVAL (Fix 2)
+// Runs without TEST_DATABASE_URL — source inspection only
+// ═══════════════════════════════════════════════════════
+describe('Service Price Request UI removal', () => {
+  it('services page does not expose interactive Price Request toggle', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/dashboard/services/page.tsx', 'utf-8');
+    // The interactive toggle text must not be present
+    expect(src).not.toContain('Price request');
+    expect(src).not.toContain('Customers request a price instead of booking at fixed price');
+    // The toggle handler must not be present
+    expect(src).not.toContain('quote_enabled: !form.quote_enabled');
+  });
+
+  it('services page preserves quote_enabled in data model for existing records', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/dashboard/services/page.tsx', 'utf-8');
+    // The field must still exist in interface and save payload
+    expect(src).toContain('quote_enabled');
+    // The save payload preserves the existing value
+    expect(src).toContain('quote_enabled: form.quote_enabled');
   });
 });

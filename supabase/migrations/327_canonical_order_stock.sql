@@ -78,13 +78,21 @@ BEGIN
     RETURN jsonb_build_object('applied', false, 'reason', 'order_cancelled');
   END IF;
 
-  -- 3. Validate payment→order relationship when payment_id is supplied
+  -- 3. Validate payment→order relationship AND payment success when payment_id is supplied.
+  --    INVARIANT: stock/order mutation requires payment.status = 'success'.
+  --    p_payment_id = NULL is allowed for trusted pre-payment paths (quote acceptance, free orders).
   IF p_payment_id IS NOT NULL THEN
     PERFORM id FROM payments
     WHERE id = p_payment_id
       AND (order_id = p_order_id OR metadata->>'order_id' = p_order_id::text);
     IF NOT FOUND THEN
       RETURN jsonb_build_object('applied', false, 'reason', 'payment_order_mismatch');
+    END IF;
+    -- Payment must be successful before any stock/order mutation
+    PERFORM id FROM payments
+    WHERE id = p_payment_id AND status = 'success';
+    IF NOT FOUND THEN
+      RETURN jsonb_build_object('applied', false, 'reason', 'payment_not_successful');
     END IF;
   END IF;
 
