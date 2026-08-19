@@ -35,7 +35,7 @@ function psqlJson(sql: string): Record<string, unknown> {
 }
 function psqlMayFail(sql: string): { ok: boolean; output: string } {
   try {
-    const output = execSync(`psql "${dbUrl}" -tAXq`, {
+    const output = execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
       input: sql, encoding: 'utf-8', timeout: 15000,
     }).trim();
     return { ok: true, output };
@@ -541,6 +541,7 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
       psql(`
         DELETE FROM order_stock_applications;
         DELETE FROM order_items;
+        DELETE FROM payments WHERE id IN ('${PAY_1}', '${PAY_2}');
         DELETE FROM orders;
         DELETE FROM quote_requests;
         UPDATE products SET stock_quantity = 100 WHERE id = '${PRODUCT_A}';
@@ -908,7 +909,7 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
       psql(`
         DELETE FROM order_stock_applications;
         DELETE FROM order_items;
-        DELETE FROM payments WHERE id IN ('${PAY_STALE_OK}');
+        DELETE FROM payments WHERE id IN ('${PAY_STALE_OK}', '${PAY_1}');
         DELETE FROM orders WHERE id IN ('${ORDER_STALE_MARK}','${ORDER_STALE_NO_MARK}','${ORDER_STALE_PAID}','${ORDER_CONFIRMED}');
         UPDATE products SET stock_quantity = 100 WHERE id = '${PRODUCT_A}';
         UPDATE products SET stock_quantity = 50 WHERE id = '${PRODUCT_B}';
