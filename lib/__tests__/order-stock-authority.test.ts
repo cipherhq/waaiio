@@ -1399,8 +1399,9 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
       psql(`
         DELETE FROM order_stock_applications;
         DELETE FROM order_items;
-        DELETE FROM payments WHERE id = '${PAY_CONC}';
-        DELETE FROM orders WHERE id = '${ORDER_CONC}';
+        DELETE FROM payments;
+        DELETE FROM orders;
+        DELETE FROM quote_requests;
         UPDATE products SET stock_quantity = 100 WHERE id = '${PRODUCT_A}';
       `);
     });
