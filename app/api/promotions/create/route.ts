@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
 import type { PromoPrizeType } from '@/lib/promotions/types';
-import { validatePrefix } from '@/lib/promotions/normalize';
+import { validatePrefix, validateGeneratedEntropy } from '@/lib/promotions/normalize';
 
 interface PrizeInput {
   name: string;
@@ -130,10 +130,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Validate code_length: 6..24
+  // Validate code_length: must produce at least MIN_GENERATED_BODY_LENGTH random characters
   const effectiveLength = typeof code_length === 'number' ? code_length : 12;
-  if (effectiveLength < 6 || effectiveLength > 24 || !Number.isInteger(effectiveLength)) {
-    return NextResponse.json({ error: 'code_length must be an integer between 6 and 24' }, { status: 400 });
+  if (effectiveLength < 10 || effectiveLength > 24 || !Number.isInteger(effectiveLength)) {
+    return NextResponse.json({ error: 'code_length must be an integer between 10 and 24' }, { status: 400 });
   }
 
   // Validate code_prefix
@@ -143,6 +143,12 @@ export async function POST(request: NextRequest) {
     if (!prefixValidation.valid) {
       return NextResponse.json({ error: prefixValidation.error }, { status: 400 });
     }
+  }
+
+  // Enforce minimum random body entropy for generated codes
+  const entropyCheck = validateGeneratedEntropy(effectiveLength, normalizedPrefix || null);
+  if (!entropyCheck.valid) {
+    return NextResponse.json({ error: entropyCheck.error }, { status: 400 });
   }
 
   // Prizes come as a top-level array
@@ -173,6 +179,32 @@ export async function POST(request: NextRequest) {
       { error: `code_config.source must be one of: ${validSources.join(', ')}` },
       { status: 400 },
     );
+  }
+
+  // Validate fraud-control numerics (server-authoritative)
+  if (max_attempts_per_phone !== undefined) {
+    const v = Number(max_attempts_per_phone);
+    if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+      return NextResponse.json({ error: 'max_attempts_per_phone must be a positive integer' }, { status: 400 });
+    }
+  }
+  if (rate_limit_window_minutes !== undefined) {
+    const v = Number(rate_limit_window_minutes);
+    if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+      return NextResponse.json({ error: 'rate_limit_window_minutes must be a positive integer' }, { status: 400 });
+    }
+  }
+  if (rate_limit_max_attempts !== undefined) {
+    const v = Number(rate_limit_max_attempts);
+    if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+      return NextResponse.json({ error: 'rate_limit_max_attempts must be a positive integer' }, { status: 400 });
+    }
+  }
+  if (eligibility_min_age !== undefined && eligibility_min_age !== null) {
+    const v = Number(eligibility_min_age);
+    if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+      return NextResponse.json({ error: 'eligibility_min_age must be a positive integer' }, { status: 400 });
+    }
   }
 
   // Insert campaign

@@ -98,8 +98,12 @@ describe('looksLikePromoCode', () => {
     expect(looksLikePromoCode('user@example.com')).toBe(false);
   });
 
-  it('matches a 6-char code with digit (minimum)', () => {
+  it('matches a 6-char code with digit (legacy compatible)', () => {
     expect(looksLikePromoCode('ABCDE1')).toBe(true);
+  });
+
+  it('matches a 10-char code with digit', () => {
+    expect(looksLikePromoCode('ABCDEFGH12')).toBe(true);
   });
 
   it('rejects pure-alpha codes (likely natural language)', () => {

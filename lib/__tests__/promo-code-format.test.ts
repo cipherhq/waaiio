@@ -81,11 +81,19 @@ describe('code_length = total normalized length including prefix', () => {
 });
 
 describe('boundary code lengths', () => {
-  it('6-char code is routable', () => {
+  it('6-char code is routable (legacy compatible)', () => {
     const bodyLen = computeBodyLength(6);
     const code = generateSecureCode(bodyLen);
     const normalized = normalizePromoCode(code);
     expect(normalized.length).toBe(6);
+    expect(isRoutablePromoCode(normalized)).toBe(true);
+  });
+
+  it('10-char code is routable', () => {
+    const bodyLen = computeBodyLength(10);
+    const code = generateSecureCode(bodyLen);
+    const normalized = normalizePromoCode(code);
+    expect(normalized.length).toBe(10);
     expect(isRoutablePromoCode(normalized)).toBe(true);
   });
 
@@ -148,10 +156,16 @@ describe('code-space calculation', () => {
 });
 
 describe('prefix validation', () => {
-  it('valid prefix accepted', () => {
-    expect(validatePrefix('WIN', 12).valid).toBe(true);
-    expect(validatePrefix('A1', 12).valid).toBe(true);
-    expect(validatePrefix('', 12).valid).toBe(true);
+  it('valid prefix accepted (with sufficient body entropy)', () => {
+    expect(validatePrefix('WIN', 13).valid).toBe(true);  // body=10 ✓
+    expect(validatePrefix('WIN', 14).valid).toBe(true);  // body=11 ✓
+    expect(validatePrefix('A1', 12).valid).toBe(true);   // body=10 ✓
+    expect(validatePrefix('', 12).valid).toBe(true);     // body=12 ✓
+  });
+
+  it('prefix rejected when body falls below 10', () => {
+    expect(validatePrefix('WIN', 12).valid).toBe(false);   // body=9 ✗
+    expect(validatePrefix('PROM', 13).valid).toBe(false);  // body=9 ✗
   });
 
   it('prefix # rejected', () => {

@@ -5,7 +5,7 @@
  * Batch progress is DB-authoritative — app does NOT overwrite RPC-managed state.
  */
 import { createServiceClient } from '@/lib/supabase/service';
-import { normalizePromoCode, getDisplaySuffix, isRoutablePromoCode } from './normalize';
+import { normalizePromoCode, getDisplaySuffix, isImportablePromoCode } from './normalize';
 import { hashPromoCode, encryptPromoCode } from './crypto';
 
 const IMPORT_CHUNK_SIZE = 500;
@@ -47,7 +47,7 @@ export async function previewImport(
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const normalized = normalizePromoCode(row.code);
-    if (!isRoutablePromoCode(normalized)) { malformedRows++; errors.push({ row: i + 1, code: row.code, error: 'Invalid code format' }); continue; }
+    if (!isImportablePromoCode(normalized)) { malformedRows++; errors.push({ row: i + 1, code: row.code, error: 'Invalid code format' }); continue; }
     if (normalizedSet.has(normalized)) { duplicateRows++; errors.push({ row: i + 1, code: row.code, error: 'Duplicate code in import file' }); continue; }
     normalizedSet.add(normalized);
     if (row.outcome && !['winner', 'try_again'].includes(row.outcome.toLowerCase())) { errors.push({ row: i + 1, code: row.code, error: `Invalid outcome: ${row.outcome}` }); malformedRows++; continue; }
@@ -83,7 +83,7 @@ export async function executeImport(
 
       for (const row of chunk) {
         const normalized = normalizePromoCode(row.code);
-        if (!isRoutablePromoCode(normalized)) { failed++; continue; }
+        if (!isImportablePromoCode(normalized)) { failed++; continue; }
         if (seenNormalized.has(normalized)) { duplicates++; continue; }
         seenNormalized.add(normalized);
 

@@ -192,7 +192,7 @@ export function looksLikePromoCode(text: string): boolean {
   if (trimmed.includes(' ')) return false;
   // Strip presentation separators (hyphens, dots, underscores)
   const cleaned = trimmed.replace(/[\-._]/g, '');
-  // Must be 6-24 alphanumeric chars
+  // Must be 6-24 alphanumeric chars (legacy-compatible for historical codes)
   if (cleaned.length < 6 || cleaned.length > 24) return false;
   // Must be all alphanumeric
   if (!/^[A-Za-z0-9]+$/.test(cleaned)) return false;

@@ -1024,4 +1024,186 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
     expect(r.success).toBe(false);
     expect(r.error).toContain('draft or scheduled');
   });
-});
+
+  // ═══════════════════════════════════════════════════════
+  // MIGRATION 330: Claim integrity hardening — Real DB tests
+  // (nested inside main describe so tables still exist)
+  // ═══════════════════════════════════════════════════════
+  describe('Migration 330: Claim integrity hardening', () => {
+  const M330_BIZ = '00000000-0000-0000-0330-000000000001';
+  const M330_CAMP = '00000000-0000-0000-0330-100000000001';
+  const M330_CAMP_LEGACY = '00000000-0000-0000-0330-100000000002';
+  const M330_PRIZE = '00000000-0000-0000-0330-200000000001';
+  const M330_BATCH = '00000000-0000-0000-0330-300000000001';
+  const M330_BATCH_LEGACY = '00000000-0000-0000-0330-300000000002';
+  const M330_CODE_WIN = '00000000-0000-0000-0330-400000000001';
+  const M330_CODE_TRY = '00000000-0000-0000-0330-400000000002';
+  const M330_CODE_DUP = '00000000-0000-0000-0330-400000000003';
+
+  function m330Hash(code: string): string {
+    return createHmac('sha256', 'dev-promo-key').update(code).digest('hex');
+  }
+
+  beforeAll(() => {
+    // Create business + legacy campaign (code_length=6) BEFORE migration 330
+    psql(`
+      INSERT INTO businesses (id, name, slug) VALUES ('${M330_BIZ}', 'M330Biz', 'm330') ON CONFLICT DO NOTHING;
+
+      -- Legacy campaign with code_length=6 (pre-hardening)
+      INSERT INTO promo_campaigns (id, business_id, name, status, keyword, code_entry_mode, code_length, rate_limit_max_attempts, rate_limit_window_minutes, max_attempts_per_phone)
+      VALUES ('${M330_CAMP_LEGACY}', '${M330_BIZ}', 'Legacy6', 'active', 'LEG6', 'keyword', 6, 5, 60, 20);
+
+      -- Insert historical duplicate short claim references
+      INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity)
+      VALUES ('${M330_PRIZE}', '${M330_CAMP_LEGACY}', 'LegPrize', 'cash', 5);
+
+      INSERT INTO promo_code_batches (id, campaign_id, source, requested_count, generated_count, status)
+      VALUES ('${M330_BATCH_LEGACY}', '${M330_CAMP_LEGACY}', 'generated', 2, 2, 'completed');
+
+      INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, status)
+      VALUES ('${M330_CODE_DUP}', '${M330_BIZ}', '${M330_CAMP_LEGACY}', '${M330_BATCH_LEGACY}', '${m330Hash('DUPCOD')}', 'COD', 'try_again', 'unused');
+
+      -- Insert two redemptions with duplicate short claim_references (pre-migration historical)
+      INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, status)
+      VALUES ('${M330_BIZ}', '${M330_CAMP_LEGACY}', '${M330_BATCH_LEGACY}', '${m330Hash('HIST01')}', 'T01', 'try_again', 'claimed');
+      INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, status)
+      VALUES ('${M330_BIZ}', '${M330_CAMP_LEGACY}', '${M330_BATCH_LEGACY}', '${m330Hash('HIST02')}', 'T02', 'try_again', 'claimed');
+
+      INSERT INTO promo_redemptions (business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status)
+      SELECT '${M330_BIZ}', '${M330_CAMP_LEGACY}', id, '+111', 'try_again', 'WAA-AAAAAA', 'fulfilled'
+      FROM promo_campaign_codes WHERE normalized_code_hash = '${m330Hash('HIST01')}' AND business_id = '${M330_BIZ}' LIMIT 1;
+
+      INSERT INTO promo_redemptions (business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status)
+      SELECT '${M330_BIZ}', '${M330_CAMP_LEGACY}', id, '+222', 'try_again', 'WAA-AAAAAA', 'fulfilled'
+      FROM promo_campaign_codes WHERE normalized_code_hash = '${m330Hash('HIST02')}' AND business_id = '${M330_BIZ}' LIMIT 1;
+    `);
+
+    // Apply migration 330
+    const fs = require('fs');
+    psql(fs.readFileSync('supabase/migrations/330_promo_code_claim_integrity.sql', 'utf-8'));
+
+    // Create new campaign + codes AFTER migration 330
+    psql(`
+      INSERT INTO promo_campaigns (id, business_id, name, status, keyword, code_entry_mode, code_length, rate_limit_max_attempts, rate_limit_window_minutes, max_attempts_per_phone)
+      VALUES ('${M330_CAMP}', '${M330_BIZ}', 'M330Test', 'active', 'M330', 'keyword', 12, 5, 60, 20);
+
+      INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity)
+      VALUES (gen_random_uuid(), '${M330_CAMP}', 'M330Prize', 'cash', 5)
+      ON CONFLICT DO NOTHING;
+
+      INSERT INTO promo_code_batches (id, campaign_id, source, requested_count, generated_count, status)
+      VALUES ('${M330_BATCH}', '${M330_CAMP}', 'generated', 10, 10, 'completed');
+
+      -- Winner code
+      INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, prize_id, status)
+      SELECT '${M330_CODE_WIN}', '${M330_BIZ}', '${M330_CAMP}', '${M330_BATCH}', '${m330Hash('M330WINNER12')}', 'R12', 'winner', id, 'unused'
+      FROM promo_prizes WHERE campaign_id = '${M330_CAMP}' LIMIT 1;
+
+      -- Try-again code
+      INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, status)
+      VALUES ('${M330_CODE_TRY}', '${M330_BIZ}', '${M330_CAMP}', '${M330_BATCH}', '${m330Hash('M330TRYAGN12')}', 'N12', 'try_again', 'unused');
+
+      GRANT EXECUTE ON FUNCTION claim_promo_code(UUID, UUID, TEXT, TEXT, TEXT) TO service_role;
+    `);
+  });
+
+  afterAll(() => {
+    if (!canRun) return;
+    psql(`
+      DELETE FROM promo_verification_attempts WHERE business_id = '${M330_BIZ}';
+      DELETE FROM promo_redemptions WHERE business_id = '${M330_BIZ}';
+      DELETE FROM promo_campaign_codes WHERE business_id = '${M330_BIZ}';
+      DELETE FROM promo_code_batches WHERE campaign_id IN ('${M330_CAMP}', '${M330_CAMP_LEGACY}');
+      DELETE FROM promo_prizes WHERE campaign_id IN ('${M330_CAMP}', '${M330_CAMP_LEGACY}');
+      DELETE FROM promo_campaigns WHERE business_id = '${M330_BIZ}';
+      DELETE FROM businesses WHERE id = '${M330_BIZ}';
+    `);
+  });
+
+  it('M330-1. winner claim produces new-format claim reference', () => {
+    const r = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M330_BIZ}','${M330_CAMP}','${m330Hash('M330WINNER12')}','+330001','m330_win1'); RESET ROLE;`);
+    expect(r.success).toBe(true);
+    expect(r.result).toBe('winner');
+    // New format: WAA-XXXX-XXXX-XXXX-XXXX (23 chars, 16 hex)
+    const ref = r.claim_reference as string;
+    expect(ref).toMatch(/^WAA-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/);
+    expect(ref.length).toBe(23);
+    expect(r.prize_name).toBeTruthy();
+  });
+
+  it('M330-2. try_again claim works correctly', () => {
+    const r = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M330_BIZ}','${M330_CAMP}','${m330Hash('M330TRYAGN12')}','+330002','m330_try1'); RESET ROLE;`);
+    expect(r.success).toBe(true);
+    expect(r.result).toBe('try_again');
+    const ref = r.claim_reference as string;
+    expect(ref).toMatch(/^WAA-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/);
+  });
+
+  it('M330-3. legacy code_length=6 campaign remains updatable after migration', () => {
+    // UPDATE an unrelated field — must NOT fail due to CHECK constraint
+    const r = psqlMayFail(`UPDATE promo_campaigns SET name = 'Legacy6-Updated' WHERE id = '${M330_CAMP_LEGACY}';`);
+    expect(r.ok).toBe(true);
+    // Verify status change also works
+    const r2 = psqlMayFail(`UPDATE promo_campaigns SET status = 'paused' WHERE id = '${M330_CAMP_LEGACY}';`);
+    expect(r2.ok).toBe(true);
+    // Restore for further tests
+    psql(`UPDATE promo_campaigns SET status = 'active', name = 'Legacy6' WHERE id = '${M330_CAMP_LEGACY}';`);
+  });
+
+  it('M330-4. historical duplicate short claim refs did not break migration', () => {
+    // Both legacy redemptions with WAA-AAAAAA should still exist
+    const count = psql(`SELECT count(*) FROM promo_redemptions WHERE claim_reference = 'WAA-AAAAAA';`);
+    expect(parseInt(count)).toBe(2);
+  });
+
+  it('M330-5. new claim references are unique (DB enforced)', () => {
+    // Two different claims produce different references
+    const refs = psql(`SELECT claim_reference FROM promo_redemptions WHERE business_id = '${M330_BIZ}' AND claim_reference LIKE 'WAA-____-____-____-____';`);
+    const refList = refs.split('\n').filter(Boolean);
+    const unique = new Set(refList);
+    expect(unique.size).toBe(refList.length);
+  });
+
+  it('M330-6. inbound-message idempotency preserved', () => {
+    // Create a fresh unused code for this test
+    psql(`INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, status)
+      VALUES ('${M330_BIZ}', '${M330_CAMP}', '${M330_BATCH}', '${m330Hash('M330IDEMP012')}', 'P12', 'try_again', 'unused');`);
+
+    const r1 = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M330_BIZ}','${M330_CAMP}','${m330Hash('M330IDEMP012')}','+330003','m330_idem'); RESET ROLE;`);
+    expect(r1.success).toBe(true);
+    expect(r1.result).toBe('try_again');
+
+    // Replay same inbound_message_id
+    const r2 = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M330_BIZ}','${M330_CAMP}','${m330Hash('M330IDEMP012')}','+330003','m330_idem'); RESET ROLE;`);
+    expect(r2.success).toBe(true);
+    expect(r2.idempotent_replay).toBe(true);
+    expect(r2.claim_reference).toBe(r1.claim_reference);
+  });
+
+  it('M330-7. same promo code remains single-use', () => {
+    // M330WINNER12 was already claimed in M330-1
+    const r = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M330_BIZ}','${M330_CAMP}','${m330Hash('M330WINNER12')}','+330004','m330_dup1'); RESET ROLE;`);
+    expect(r.success).toBe(false);
+    expect(r.result).toBe('already_claimed');
+  });
+
+  it('M330-8. invalid code returns invalid', () => {
+    const r = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M330_BIZ}','${M330_CAMP}','${m330Hash('DOESNOTEXIST')}','+330005','m330_inv1'); RESET ROLE;`);
+    expect(r.success).toBe(false);
+    expect(r.result).toBe('invalid');
+  });
+
+  it('M330-9. unrelated unique violation re-raises (promo_code_id single-use)', () => {
+    // promo_redemptions has UNIQUE(promo_code_id) — attempting to insert a second
+    // redemption for the same code_id should raise, not be retried as a claim-ref collision.
+    // The M330WINNER12 code is already claimed with a redemption.
+    // Try to manually insert a second redemption for the same promo_code_id:
+    const r = psqlMayFail(`
+      INSERT INTO promo_redemptions (business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status)
+      VALUES ('${M330_BIZ}', '${M330_CAMP}', '${M330_CODE_WIN}', '+999', 'try_again', 'WAA-ZZZZ-ZZZZ-ZZZZ-ZZZZ', 'fulfilled');
+    `);
+    expect(r.ok).toBe(false);
+    expect(r.output).toContain('unique'); // promo_code_id uniqueness
+  });
+  }); // end Migration 330
+}); // end main PROMO-1

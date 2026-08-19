@@ -105,13 +105,15 @@ export function generateCodeBatch(
 }
 
 /**
- * Generate a human-readable claim reference.
- * Format: WAA-XXXXXX (6 chars from secure random)
+ * Generate a human-readable claim reference with exactly 64 bits of entropy.
+ * Format: WAA-XXXX-XXXX-XXXX-XXXX (16 uppercase hex chars from 8 random bytes)
+ *
+ * Old format: WAA-XXXXXX (6 hex chars from UUID = ~24 bits, 16.7M values)
+ * New format: WAA-XXXX-XXXX-XXXX-XXXX (16 hex chars = exactly 64 bits)
+ *
+ * Uses crypto.randomBytes — no modulo bias, no alphabet mapping.
  */
 export function generateClaimReference(): string {
-  let ref = '';
-  for (let i = 0; i < 6; i++) {
-    ref += CODE_ALPHABET[randomInt(0, CODE_ALPHABET.length)];
-  }
-  return `WAA-${ref}`;
+  const hex = randomBytes(8).toString('hex').toUpperCase();
+  return `WAA-${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}`;
 }
