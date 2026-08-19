@@ -393,11 +393,20 @@ describe('Client CSV import validation', () => {
     expect(isRoutablePromoCode('ABCDEFG12')).toBe(true);  // 9 chars routes
   });
 
-  it('handleFile shows clear error for invalid imports', () => {
+  it('handleFile rejects entire file on any invalid code (all-or-nothing)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');
-    expect(src).toContain('codes are too short');
-    expect(src).toContain('minimum 10 characters');
+    // Sets import_file=null, import_total=0 on ANY invalid codes
+    expect(src).toContain('import_file: null, import_preview: [], import_total: 0');
+    // Clear message about fixing CSV
+    expect(src).toContain('Fix the CSV and upload it again');
+  });
+
+  it('handleFile shows invalid count in error message', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');
+    expect(src).toContain('codes are invalid');
+    expect(src).toContain('at least 10 normalized alphanumeric');
   });
 });
 
@@ -432,5 +441,94 @@ describe('Update API entropy enforcement', () => {
   it('preserves integrity_locked behavior', () => {
     expect(updateSrc).toContain('INTEGRITY_LOCKED_FIELDS');
     expect(updateSrc).toContain('integrity-locked fields');
+  });
+
+  it('persists normalized uppercase prefix (not raw input)', () => {
+    // code_prefix persistence must use .toUpperCase()
+    expect(updateSrc).toContain("String(body.codePrefix).trim().toUpperCase()");
+  });
+});
+
+describe('Update API prefix normalization', () => {
+  const fs = require('fs');
+  const src = fs.readFileSync('app/api/promotions/update/route.ts', 'utf-8');
+
+  it('lowercase prefix is normalized to uppercase before persistence', () => {
+    expect(src).toContain('.toUpperCase()');
+    // The persistence line for code_prefix must uppercase
+    const persistLine = src.match(/updates\.code_prefix\s*=.*toUpperCase/);
+    expect(persistLine).toBeTruthy();
+  });
+
+  it('empty/whitespace prefix persists as null', () => {
+    // Ternary: truthy → trim+upper, falsy → null
+    expect(src).toContain('code_prefix') ;
+    const persistPattern = src.match(/updates\.code_prefix\s*=\s*body\.codePrefix\s*\?\s*String.*:\s*null/);
+    expect(persistPattern).toBeTruthy();
+  });
+});
+
+describe('Minimum age validation', () => {
+  const fs = require('fs');
+  const wizardSrc = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');
+
+  it('age validation only applies to age_confirmation mode', () => {
+    expect(wizardSrc).toContain("state.eligibility_mode === 'age_confirmation'");
+    // Must NOT check age for 'none' or 'custom' mode
+    expect(wizardSrc).not.toContain("eligibility_mode !== 'none' && state.eligibility_min_age");
+  });
+
+  it('empty age is invalid in age_confirmation mode', () => {
+    // Number('') => NaN, !Number.isFinite(NaN) => true → error
+    expect(wizardSrc).toContain('Number.isFinite(age)');
+    expect(wizardSrc).toContain('Minimum age is required');
+  });
+
+  it('age validation uses Number.isInteger', () => {
+    expect(wizardSrc).toContain('Number.isInteger(age)');
+  });
+});
+
+describe('Server fraud-control validation', () => {
+  it('create API validates max_attempts_per_phone', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/promotions/create/route.ts', 'utf-8');
+    expect(src).toContain("'max_attempts_per_phone must be a positive integer'");
+  });
+
+  it('create API validates rate_limit_window_minutes', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/promotions/create/route.ts', 'utf-8');
+    expect(src).toContain("'rate_limit_window_minutes must be a positive integer'");
+  });
+
+  it('create API validates rate_limit_max_attempts', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/promotions/create/route.ts', 'utf-8');
+    expect(src).toContain("'rate_limit_max_attempts must be a positive integer'");
+  });
+
+  it('create API validates eligibility_min_age when supplied', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/promotions/create/route.ts', 'utf-8');
+    expect(src).toContain("'eligibility_min_age must be a positive integer'");
+  });
+
+  it('update API validates fraud-control fields only when supplied', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/promotions/update/route.ts', 'utf-8');
+    // Each field guarded by 'fieldName' in body
+    expect(src).toContain("'maxAttemptsPerPhone' in body");
+    expect(src).toContain("'rateLimitWindowMinutes' in body");
+    expect(src).toContain("'rateLimitMaxAttempts' in body");
+    expect(src).toContain("'max_attempts_per_phone must be a positive integer'");
+    expect(src).toContain("'rate_limit_max_attempts must be a positive integer'");
+    expect(src).toContain("'eligibility_min_age must be a positive integer'");
+  });
+
+  it('update API allows null eligibility_min_age', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/promotions/update/route.ts', 'utf-8');
+    expect(src).toContain('eligibility_min_age = null');
   });
 });

@@ -172,12 +172,40 @@ export async function PUT(request: NextRequest) {
     if ('acceptBareCodes' in body) updates.accept_bare_codes = Boolean(body.acceptBareCodes);
     if ('codeFormat' in body && body.codeFormat) updates.code_format = String(body.codeFormat);
     if ('codeLength' in body && body.codeLength) updates.code_length = Number(body.codeLength);
-    if ('codePrefix' in body) updates.code_prefix = body.codePrefix ? String(body.codePrefix).trim() : null;
-    if ('maxAttemptsPerPhone' in body && body.maxAttemptsPerPhone) updates.max_attempts_per_phone = Number(body.maxAttemptsPerPhone);
-    if ('rateLimitWindowMinutes' in body && body.rateLimitWindowMinutes) updates.rate_limit_window_minutes = Number(body.rateLimitWindowMinutes);
-    if ('rateLimitMaxAttempts' in body && body.rateLimitMaxAttempts) updates.rate_limit_max_attempts = Number(body.rateLimitMaxAttempts);
+    if ('codePrefix' in body) updates.code_prefix = body.codePrefix ? String(body.codePrefix).trim().toUpperCase() : null;
+    if ('maxAttemptsPerPhone' in body && body.maxAttemptsPerPhone !== undefined) {
+      const v = Number(body.maxAttemptsPerPhone);
+      if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+        return NextResponse.json({ error: 'max_attempts_per_phone must be a positive integer' }, { status: 400 });
+      }
+      updates.max_attempts_per_phone = v;
+    }
+    if ('rateLimitWindowMinutes' in body && body.rateLimitWindowMinutes !== undefined) {
+      const v = Number(body.rateLimitWindowMinutes);
+      if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+        return NextResponse.json({ error: 'rate_limit_window_minutes must be a positive integer' }, { status: 400 });
+      }
+      updates.rate_limit_window_minutes = v;
+    }
+    if ('rateLimitMaxAttempts' in body && body.rateLimitMaxAttempts !== undefined) {
+      const v = Number(body.rateLimitMaxAttempts);
+      if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+        return NextResponse.json({ error: 'rate_limit_max_attempts must be a positive integer' }, { status: 400 });
+      }
+      updates.rate_limit_max_attempts = v;
+    }
     if ('eligibilityMode' in body && body.eligibilityMode) updates.eligibility_mode = String(body.eligibilityMode);
-    if ('eligibilityMinAge' in body) updates.eligibility_min_age = body.eligibilityMinAge ? Number(body.eligibilityMinAge) : null;
+    if ('eligibilityMinAge' in body) {
+      if (body.eligibilityMinAge !== null && body.eligibilityMinAge !== undefined) {
+        const v = Number(body.eligibilityMinAge);
+        if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+          return NextResponse.json({ error: 'eligibility_min_age must be a positive integer' }, { status: 400 });
+        }
+        updates.eligibility_min_age = v;
+      } else {
+        updates.eligibility_min_age = null;
+      }
+    }
   }
 
   if (Object.keys(updates).length === 1) {

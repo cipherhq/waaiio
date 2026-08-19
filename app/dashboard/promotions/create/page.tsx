@@ -354,32 +354,30 @@ function Step2Codes({ state, update }: { state: WizardState; update: (p: Partial
         update({ import_error: 'No codes found in file.', import_file: null, import_preview: [], import_total: 0 });
         return;
       }
-      // Validate each code against import security policy
+      // Validate ALL codes against import security policy (all-or-nothing)
       let invalidCount = 0;
-      const validCodes: string[] = [];
+      const normalizedCodes: string[] = [];
       for (const raw of rawCodes) {
         const normalized = normalizePromoCode(raw);
         if (isImportablePromoCode(normalized)) {
-          validCodes.push(normalized);
+          normalizedCodes.push(normalized);
         } else {
           invalidCount++;
         }
       }
-      if (invalidCount > 0 && validCodes.length === 0) {
+      if (invalidCount > 0) {
+        // Reject the entire file — server will also reject partial imports
         update({
-          import_error: `All ${rawCodes.length} codes are too short. Imported codes must be at least 10 characters after normalization.`,
+          import_error: `${invalidCount} of ${rawCodes.length} codes are invalid. New imported codes must contain at least 10 normalized alphanumeric characters and at least one digit. Fix the CSV and upload it again.`,
           import_file: null, import_preview: [], import_total: 0,
         });
         return;
       }
-      const errorMsg = invalidCount > 0
-        ? `${invalidCount} of ${rawCodes.length} codes rejected (too short — minimum 10 characters). ${validCodes.length} valid codes will be imported.`
-        : '';
       update({
         import_file: file,
-        import_preview: validCodes.slice(0, 5),
-        import_total: validCodes.length,
-        import_error: errorMsg,
+        import_preview: normalizedCodes.slice(0, 5),
+        import_total: normalizedCodes.length,
+        import_error: '',
       });
     };
     reader.readAsText(file);
@@ -1293,14 +1291,16 @@ function validateStep(step: number, state: WizardState): string[] {
   }
   if (step === 5) {
     const phone = Number(state.max_attempts_per_phone);
-    if (!phone || phone < 1 || !Number.isInteger(phone)) errors.push('Max attempts per phone must be a positive integer.');
+    if (!Number.isFinite(phone) || !Number.isInteger(phone) || phone < 1) errors.push('Max attempts per phone must be a positive integer.');
     const rlMax = Number(state.rate_limit_max_attempts);
-    if (!rlMax || rlMax < 1 || !Number.isInteger(rlMax)) errors.push('Rate limit max attempts must be a positive integer.');
+    if (!Number.isFinite(rlMax) || !Number.isInteger(rlMax) || rlMax < 1) errors.push('Rate limit max attempts must be a positive integer.');
     const rlWin = Number(state.rate_limit_window_minutes);
-    if (!rlWin || rlWin < 1 || !Number.isInteger(rlWin)) errors.push('Rate limit window must be a positive integer.');
-    if (state.eligibility_mode !== 'none' && state.eligibility_min_age !== null) {
+    if (!Number.isFinite(rlWin) || !Number.isInteger(rlWin) || rlWin < 1) errors.push('Rate limit window must be a positive integer.');
+    if (state.eligibility_mode === 'age_confirmation') {
       const age = Number(state.eligibility_min_age);
-      if (age !== 0 && (!age || age < 1)) errors.push('Minimum age must be a positive number.');
+      if (!Number.isFinite(age) || !Number.isInteger(age) || age < 1) {
+        errors.push('Minimum age is required and must be a positive integer for age confirmation.');
+      }
     }
   }
   return errors;
