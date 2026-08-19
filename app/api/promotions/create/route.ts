@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
 import type { PromoPrizeType } from '@/lib/promotions/types';
-import { validatePrefix } from '@/lib/promotions/normalize';
+import { validatePrefix, validateGeneratedEntropy } from '@/lib/promotions/normalize';
 
 interface PrizeInput {
   name: string;
@@ -130,10 +130,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Validate code_length: 6..24
+  // Validate code_length: must produce at least MIN_GENERATED_BODY_LENGTH random characters
   const effectiveLength = typeof code_length === 'number' ? code_length : 12;
-  if (effectiveLength < 6 || effectiveLength > 24 || !Number.isInteger(effectiveLength)) {
-    return NextResponse.json({ error: 'code_length must be an integer between 6 and 24' }, { status: 400 });
+  if (effectiveLength < 10 || effectiveLength > 24 || !Number.isInteger(effectiveLength)) {
+    return NextResponse.json({ error: 'code_length must be an integer between 10 and 24' }, { status: 400 });
   }
 
   // Validate code_prefix
@@ -143,6 +143,12 @@ export async function POST(request: NextRequest) {
     if (!prefixValidation.valid) {
       return NextResponse.json({ error: prefixValidation.error }, { status: 400 });
     }
+  }
+
+  // Enforce minimum random body entropy for generated codes
+  const entropyCheck = validateGeneratedEntropy(effectiveLength, normalizedPrefix || null);
+  if (!entropyCheck.valid) {
+    return NextResponse.json({ error: entropyCheck.error }, { status: 400 });
   }
 
   // Prizes come as a top-level array

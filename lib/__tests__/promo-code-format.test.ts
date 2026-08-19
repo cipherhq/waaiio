@@ -81,12 +81,16 @@ describe('code_length = total normalized length including prefix', () => {
 });
 
 describe('boundary code lengths', () => {
-  it('6-char code is routable', () => {
-    const bodyLen = computeBodyLength(6);
+  it('10-char code is routable (minimum after entropy hardening)', () => {
+    const bodyLen = computeBodyLength(10);
     const code = generateSecureCode(bodyLen);
     const normalized = normalizePromoCode(code);
-    expect(normalized.length).toBe(6);
+    expect(normalized.length).toBe(10);
     expect(isRoutablePromoCode(normalized)).toBe(true);
+  });
+
+  it('9-char code is NOT routable (below minimum)', () => {
+    expect(isRoutablePromoCode('ABCDEF789')).toBe(false);
   });
 
   it('24-char code is routable', () => {
@@ -106,8 +110,8 @@ describe('boundary code lengths', () => {
     expect(isRoutablePromoCode(normalized)).toBe(true);
   });
 
-  it('5-char normalized code is NOT routable', () => {
-    expect(isRoutablePromoCode('ABC12')).toBe(false);
+  it('9-char normalized code is NOT routable (below hardened minimum)', () => {
+    expect(isRoutablePromoCode('ABCDE1234')).toBe(false);
   });
 
   it('25-char normalized code is NOT routable', () => {
@@ -148,10 +152,16 @@ describe('code-space calculation', () => {
 });
 
 describe('prefix validation', () => {
-  it('valid prefix accepted', () => {
-    expect(validatePrefix('WIN', 12).valid).toBe(true);
-    expect(validatePrefix('A1', 12).valid).toBe(true);
-    expect(validatePrefix('', 12).valid).toBe(true);
+  it('valid prefix accepted (with sufficient body entropy)', () => {
+    expect(validatePrefix('WIN', 13).valid).toBe(true);  // body=10 ✓
+    expect(validatePrefix('WIN', 14).valid).toBe(true);  // body=11 ✓
+    expect(validatePrefix('A1', 12).valid).toBe(true);   // body=10 ✓
+    expect(validatePrefix('', 12).valid).toBe(true);     // body=12 ✓
+  });
+
+  it('prefix rejected when body falls below 10', () => {
+    expect(validatePrefix('WIN', 12).valid).toBe(false);   // body=9 ✗
+    expect(validatePrefix('PROM', 13).valid).toBe(false);  // body=9 ✗
   });
 
   it('prefix # rejected', () => {

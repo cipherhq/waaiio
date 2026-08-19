@@ -21,8 +21,9 @@ describe('import: canonical validation', () => {
     expect(isRoutablePromoCode(normalizePromoCode('ABCDEFGHIJKL'))).toBe(false);
   });
 
-  it('code <6 chars is rejected', () => {
+  it('code <10 chars is rejected (hardened minimum)', () => {
     expect(isRoutablePromoCode(normalizePromoCode('AB1C'))).toBe(false);
+    expect(isRoutablePromoCode(normalizePromoCode('ABCDEF1'))).toBe(false);  // 7 chars
   });
 
   it('valid outcome values accepted by parser', () => {
@@ -65,8 +66,8 @@ describe('import: every imported routable code passes looksLikePromoCode', () =>
     expect(isRoutablePromoCode(normalized)).toBe(true);
   });
 
-  it('6-char code with digit is routable', () => {
-    expect(isRoutablePromoCode(normalizePromoCode('ABCDE1'))).toBe(true);
+  it('10-char code with digit is routable (hardened minimum)', () => {
+    expect(isRoutablePromoCode(normalizePromoCode('ABCDEFGH12'))).toBe(true);
   });
 
   it('24-char code with digit is routable', () => {
