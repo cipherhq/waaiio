@@ -45,49 +45,34 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // ── 1b. Restore stock for stale pending orders older than 48 hours ──
+  // ── 1b. Cancel stale pending orders older than 48 hours (atomic per-order) ──
+  // Uses cancel_stale_order_atomic RPC which:
+  //   - Locks order, verifies still pending + stale + no successful payment
+  //   - Restores stock ONLY if canonical stock marker exists
+  //   - Cancels order atomically (crash-safe, concurrent-safe)
   const { data: staleOrders } = await supabase
     .from('orders')
     .select('id')
     .eq('status', 'pending')
     .lt('created_at', staleDate.toISOString());
 
-  let ordersRestored = 0;
+  let ordersCancelled = 0;
+  let ordersStockRestored = 0;
   if (staleOrders && staleOrders.length > 0) {
     for (const order of staleOrders) {
-      // Get order items to restore stock
-      const { data: items } = await supabase
-        .from('order_items')
-        .select('product_id, variant_id, quantity')
-        .eq('order_id', order.id);
+      const { data: result, error } = await supabase.rpc('cancel_stale_order_atomic', {
+        p_order_id: order.id,
+      });
 
-      if (items) {
-        for (const item of items) {
-          if (item.variant_id) {
-            // Atomically restore variant stock
-            await supabase.rpc('restore_variant_stock', {
-              p_variant_id: item.variant_id,
-              qty: item.quantity,
-            });
-          } else {
-            // Atomically restore product stock
-            await supabase.rpc('restore_stock', {
-              p_product_id: item.product_id,
-              qty: item.quantity,
-            });
-          }
-        }
+      if (error) {
+        continue;
       }
 
-      ordersRestored++;
+      if (result?.cancelled) {
+        ordersCancelled++;
+        if (result.stock_restored) ordersStockRestored++;
+      }
     }
-
-    // Cancel the stale orders
-    await supabase
-      .from('orders')
-      .update({ status: 'cancelled' })
-      .eq('status', 'pending')
-      .lt('created_at', staleDate.toISOString());
   }
 
   // ── 2. Clean up old processed webhook events (older than 30 days) ──
@@ -114,7 +99,8 @@ export async function GET(request: NextRequest) {
     ok: true,
     expiredBookings: expiredBookings?.length || 0,
     ticketsRestored,
-    ordersRestored,
+    ordersCancelled,
+    ordersStockRestored,
     deletedWebhookEvents: deletedEvents?.length || 0,
     deletedStaleSessions: deletedSessions?.length || 0,
   });

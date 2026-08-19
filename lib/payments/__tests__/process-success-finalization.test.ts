@@ -165,12 +165,15 @@ describe('processSuccessfulPayment — FinalizationResult', () => {
 
   // ── Order + Stock ──
 
-  it('order confirmation DB error → criticalSuccess false', async () => {
+  it('order confirmation is handled by apply_order_stock_once (no separate order update)', async () => {
+    // Order status confirmation (pending→confirmed) is now inside apply_order_stock_once.
+    // A standalone order update error path no longer exists in processSuccessfulPayment.
+    // The stock RPC is the sole authority for order confirmation.
     const { processSuccessfulPayment } = await import('../process-success');
-    const supabase = buildSupabase({ orderUpdateError: { message: 'db error' } });
+    const supabase = buildSupabase({ stockRpcError: { message: 'stock rpc failed' } });
     const r = await processSuccessfulPayment(supabase, { id: 'p1', amount: 5000, booking_id: null, invoice_id: null, campaign_id: null, order_id: 'ord1' });
     expect(r.criticalSuccess).toBe(false);
-    expect(r.errors).toContain('order_confirmation_failed');
+    expect(r.errors).toContain('order_stock_failed');
   });
 
   it('stock decrement RPC error → criticalSuccess false', async () => {

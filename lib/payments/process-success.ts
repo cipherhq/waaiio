@@ -120,21 +120,13 @@ export async function processSuccessfulPayment(
   }
 
   // 4. Confirm order + stock decrement (exactly-once via apply_order_stock_once)
+  // apply_order_stock_once now also confirms order status (pending → confirmed)
+  // inside the same FOR UPDATE lock, creating a real serialization contract with
+  // cancel_stale_order_atomic. The order status update was previously a separate
+  // unprotected call that could race with cleanup.
   const orderId = payment.order_id || (payment.metadata?.order_id as string) || null;
   if (orderId) {
     try {
-      // Confirm order status (idempotent — only pending → confirmed)
-      const { error: orderErr } = await supabase
-        .from('orders')
-        .update({ status: 'confirmed', paid_at: new Date().toISOString() })
-        .eq('id', orderId)
-        .in('status', ['pending']);
-
-      if (orderErr) {
-        criticalErrors.push('order_confirmation_failed');
-        logger.withContext({ op: 'process-success.order', ...safeLogErrorContext(orderErr) }).error('[PROCESS-SUCCESS] Order confirmation DB error');
-      }
-
       try {
         await recordPlatformFee(supabase, {
           orderId, paymentId: payment.id, paymentAmount: payment.amount, gatewayFee: payment.gateway_fee,
@@ -144,9 +136,11 @@ export async function processSuccessfulPayment(
         logger.withContext({ op: 'platform-fee.order', ...safeLogErrorContext(feeErr) }).error('[PLATFORM-FEE] Failed to record fee for order');
       }
 
-      // Stock decrement: exactly-once via durable application marker (crash-gap safe)
+      // Stock decrement + order confirmation: exactly-once via durable marker (crash-gap safe).
+      // This is the SOLE authority for order pending→confirmed transition.
+      // Serialized with cancel_stale_order_atomic via FOR UPDATE on order row.
       const { data: stockResult, error: stockErr } = await supabase.rpc('apply_order_stock_once', {
-        p_payment_id: payment.id, p_order_id: orderId,
+        p_order_id: orderId, p_payment_id: payment.id,
       });
       if (stockErr) {
         criticalErrors.push('order_stock_failed');

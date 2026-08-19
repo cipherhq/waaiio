@@ -487,9 +487,12 @@ describe('Existing behavior preserved', () => {
     expect(source).toContain(".in('status', ['pending'])");
   });
 
-  it('order confirmation still uses .in(status, [pending]) guard', () => {
+  it('order confirmation handled by apply_order_stock_once RPC (no standalone update)', () => {
+    // Order status confirmation (pending→confirmed) is now inside the
+    // apply_order_stock_once RPC under FOR UPDATE lock — no standalone
+    // .from('orders').update() call exists in the order section.
     const orderSection = source.split('// 4. Confirm order')[1].split('// 5. Confirm reservation')[0];
-    expect(orderSection).toContain(".in('status', ['pending'])");
+    expect(orderSection).toContain('apply_order_stock_once');
   });
 
   it('reservation confirmation still uses .in(status, [pending]) guard', () => {
