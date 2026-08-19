@@ -65,8 +65,6 @@ export async function GET(request: NextRequest) {
       });
 
       if (error) {
-        // Log but continue — other orders may still be cleanable
-        console.error(`[CLEANUP] cancel_stale_order_atomic error for ${order.id}:`, error.message);
         continue;
       }
 
