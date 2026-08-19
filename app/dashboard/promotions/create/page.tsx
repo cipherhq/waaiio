@@ -73,6 +73,7 @@ interface PrizeTier {
   value: string;
   currency: string;
   fulfillment_instructions: string;
+  verification_mode: string;
 }
 
 interface WizardState {
@@ -106,6 +107,7 @@ interface WizardState {
   max_attempts_per_phone: number;
   rate_limit_max_attempts: number;
   rate_limit_window_minutes: number;
+  max_wins_per_participant: number | string;
   eligibility_mode: 'none' | 'age_confirmation' | 'custom';
   eligibility_min_age: number;
   eligibility_prompt: string;
@@ -595,6 +597,7 @@ function Step3Prizes({ state, update }: { state: WizardState; update: (p: Partia
           value: '',
           currency: 'NGN',
           fulfillment_instructions: '',
+          verification_mode: 'standard',
         },
       ],
     });
@@ -708,6 +711,22 @@ function Step3Prizes({ state, update }: { state: WizardState; update: (p: Partia
                   placeholder="Internal notes on how to deliver this prize to winners..."
                   rows={2}
                 />
+              </div>
+              <div className="sm:col-span-2">
+                <FieldLabel>Winner Verification</FieldLabel>
+                <Select
+                  value={prize.verification_mode || 'standard'}
+                  onChange={(v) => updatePrize(prize._key, { verification_mode: v })}
+                  options={[
+                    { value: 'standard', label: 'Standard — Claim code + WhatsApp number' },
+                    { value: 'secure_pickup', label: 'Secure Pickup — One-time verification code before fulfillment' },
+                  ]}
+                />
+                <p className="mt-1 text-xs text-gray-400">
+                  {(prize.verification_mode || 'standard') === 'secure_pickup'
+                    ? 'A verification code will be sent to the winner\'s WhatsApp before they can collect this prize.'
+                    : 'Winners are verified by their original claiming WhatsApp number.'}
+                </p>
               </div>
             </div>
           </Card>
@@ -905,6 +924,18 @@ function Step5Eligibility({ state, update }: { state: WizardState; update: (p: P
             />
             <p className="mt-1 text-xs text-gray-400">
               Default: 10 attempts per 60-minute window.
+            </p>
+          </div>
+          <div>
+            <FieldLabel>Maximum wins per participant</FieldLabel>
+            <Input
+              type="number"
+              value={state.max_wins_per_participant}
+              onChange={(v) => update({ max_wins_per_participant: v === '' ? '' : Number(v) })}
+              placeholder="Unlimited"
+            />
+            <p className="mt-1 text-xs text-gray-400">
+              Leave empty for unlimited. Set to 1 to allow only one win per phone number.
             </p>
           </div>
         </div>
@@ -1248,6 +1279,7 @@ const INITIAL_STATE: WizardState = {
   max_attempts_per_phone: 50,
   rate_limit_max_attempts: 10,
   rate_limit_window_minutes: 60,
+  max_wins_per_participant: '',
   eligibility_mode: 'none',
   eligibility_min_age: 18,
   eligibility_prompt: '',
@@ -1385,6 +1417,7 @@ export default function CreatePromotionPage() {
         eligibility_mode: state.eligibility_mode,
         eligibility_prompt: state.eligibility_prompt.trim() || null,
         eligibility_min_age: state.eligibility_mode === 'age_confirmation' ? state.eligibility_min_age : null,
+        max_wins_per_participant: state.max_wins_per_participant === '' ? null : Number(state.max_wins_per_participant),
         winner_message: state.winner_message,
         try_again_message: state.try_again_message,
         invalid_message: state.invalid_message,
@@ -1400,6 +1433,7 @@ export default function CreatePromotionPage() {
         value: p.value ? Number(p.value) : null,
         currency: p.value ? p.currency : null,
         fulfillment_instructions: p.fulfillment_instructions.trim() || null,
+        verification_mode: p.verification_mode || 'standard',
         sort_order: i,
       }));
 
