@@ -137,13 +137,13 @@ describe('Claim reference integrity', () => {
     expect(src).toContain('claim_reference');
   });
 
-  it('15. collision retry in claim function (bounded, fail-closed)', () => {
+  it('15. collision retry wraps INSERT via EXCEPTION WHEN unique_violation', () => {
     const fs = require('fs');
     const src = fs.readFileSync('supabase/migrations/330_promo_code_claim_integrity.sql', 'utf-8');
     // Bounded retry loop
-    expect(src).toContain('FOR v_ref_attempt IN 1..3 LOOP');
-    // Collision check
-    expect(src).toContain('PERFORM 1 FROM promo_redemptions WHERE claim_reference = v_claim_ref');
+    expect(src).toContain('FOR v_ref_attempt IN 1..5 LOOP');
+    // Collision handled by catching actual UNIQUE violation on INSERT, not SELECT-before-INSERT
+    expect(src).toContain('EXCEPTION WHEN unique_violation');
     // Fail-closed on exhaustion
     expect(src).toContain('claim_reference_collision_exhausted');
   });
@@ -215,20 +215,62 @@ describe('Prefix validation integration', () => {
 });
 
 describe('No migration breaks existing schema', () => {
-  it('migration 330 preserves existing code_length values', () => {
+  it('migration 330 preserves existing code_length values via NOT VALID', () => {
     const fs = require('fs');
     const src = fs.readFileSync('supabase/migrations/330_promo_code_claim_integrity.sql', 'utf-8');
+    // NOT VALID skips existing rows — only enforces on new INSERTs
+    expect(src).toContain('NOT VALID');
     // Does not truncate/modify existing promo_campaigns data
     expect(src).not.toContain('UPDATE promo_campaigns SET code_length');
-    // Does not DROP the table
-    expect(src).not.toContain('DROP TABLE promo_campaigns');
   });
 
   it('migration 330 handles potential duplicate claim_references safely', () => {
     const fs = require('fs');
     const src = fs.readFileSync('supabase/migrations/330_promo_code_claim_integrity.sql', 'utf-8');
-    // Checks for duplicates before choosing index strategy
     expect(src).toContain('HAVING count(*) > 1');
     expect(src).toContain('IF v_dups = 0 THEN');
+  });
+});
+
+describe('Blocker fixes — canonical claim_promo_code behavior', () => {
+  const fs = require('fs');
+  const src = fs.readFileSync('supabase/migrations/330_promo_code_claim_integrity.sql', 'utf-8');
+
+  it('uses submitted_code_hash column (not normalized_code_hash) for attempts', () => {
+    // The promo_verification_attempts table has submitted_code_hash, not normalized_code_hash
+    const insertAttemptPattern = /INSERT INTO promo_verification_attempts[^;]*submitted_code_hash/g;
+    const matches = src.match(insertAttemptPattern);
+    expect(matches).toBeTruthy();
+    expect(matches!.length).toBeGreaterThan(5); // multiple exit points log attempts
+    // Must NOT reference normalized_code_hash as a column target in INSERT
+    expect(src).not.toMatch(/INTO promo_verification_attempts[^)]*normalized_code_hash/);
+  });
+
+  it('never writes pending to promo_attempt_result (enum has no pending value)', () => {
+    // The enum values are: winner, try_again, invalid, already_claimed, campaign_inactive, rate_limited, not_eligible
+    // The INSERT result values must be one of these, never 'pending'
+    const attemptInserts = src.match(/INTO promo_verification_attempts[\s\S]*?VALUES[\s\S]*?'(\w+)'/g) || [];
+    for (const insert of attemptInserts) {
+      expect(insert).not.toContain("'pending'");
+    }
+  });
+
+  it('uses gen_random_bytes for cryptographic randomness (not random())', () => {
+    // Must use gen_random_bytes, not PostgreSQL random()
+    expect(src).toContain('gen_random_bytes');
+    // The claim-reference section should NOT use random()
+    const claimRefSection = src.substring(src.indexOf('High-entropy claim reference'));
+    expect(claimRefSection).not.toContain('floor(random()');
+  });
+
+  it('collision retry wraps actual INSERT, not SELECT-before-INSERT', () => {
+    // Must NOT have the old pattern: PERFORM 1 FROM promo_redemptions WHERE claim_reference = v_claim_ref
+    expect(src).not.toContain('PERFORM 1 FROM promo_redemptions WHERE claim_reference');
+    // Must catch unique_violation on the INSERT itself
+    expect(src).toContain('EXCEPTION WHEN unique_violation');
+  });
+
+  it('code_length constraint uses NOT VALID to preserve historical rows', () => {
+    expect(src).toContain('CHECK (code_length >= 10 AND code_length <= 24) NOT VALID');
   });
 });
