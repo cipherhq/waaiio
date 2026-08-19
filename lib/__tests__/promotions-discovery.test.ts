@@ -10,26 +10,31 @@ describe('Promotions Sidebar navigation', () => {
   const fs = require('fs');
   const sidebarSrc = fs.readFileSync('components/dashboard/Sidebar.tsx', 'utf-8');
 
-  it('1. Promotions nav item exists with promo_verification capability', () => {
-    expect(sidebarSrc).toContain("href: '/dashboard/promotions'");
-    expect(sidebarSrc).toContain("label: 'Promotions'");
-    expect(sidebarSrc).toContain("capabilities: ['promo_verification']");
+  it('1. exactly ONE Sidebar item routes to /dashboard/promotions', () => {
+    const matches = sidebarSrc.match(/href:\s*'\/dashboard\/promotions'/g);
+    expect(matches).toBeTruthy();
+    expect(matches!.length).toBe(1);
   });
 
-  it('2. Promotions is hidden when capability is unavailable (capability gating)', () => {
-    // The Sidebar capability gating logic: items with capabilities are shown
-    // only when the business has that capability enabled. Otherwise they go to "more".
-    // Verify the gating logic is present.
-    expect(sidebarSrc).toContain('item.capabilities.some(cap => capabilities.includes(cap))');
-    // Promotions uses this same gating (has capabilities array)
+  it('2. the existing Promotions item uses promo_verification capability', () => {
+    // Find the block containing /dashboard/promotions and verify it has promo_verification
     const promoMatch = sidebarSrc.match(/href:\s*'\/dashboard\/promotions'[\s\S]{0,200}capabilities:\s*\['promo_verification'\]/);
     expect(promoMatch).toBeTruthy();
   });
 
-  it('3. Promotions Sidebar link routes to /dashboard/promotions', () => {
-    const match = sidebarSrc.match(/href:\s*'(\/dashboard\/promotions)'/);
-    expect(match).toBeTruthy();
-    expect(match![1]).toBe('/dashboard/promotions');
+  it('3. the existing item remains capability-gated via Sidebar logic', () => {
+    expect(sidebarSrc).toContain('item.capabilities.some(cap => capabilities.includes(cap))');
+  });
+
+  it('4. no duplicate — the single entry is in the engage section, not manage', () => {
+    // Find all nav item blocks containing /dashboard/promotions
+    // Each block ends with "section: '...'"
+    const blocks = sidebarSrc.match(/\{[^}]*href:\s*'\/dashboard\/promotions'[^}]*\}/g);
+    expect(blocks).toBeTruthy();
+    expect(blocks!.length).toBe(1);
+    // The single block must be in the 'engage' section
+    expect(blocks![0]).toContain("section: 'engage'");
+    expect(blocks![0]).not.toContain("section: 'manage'");
   });
 });
 
