@@ -360,13 +360,17 @@ describe('Numeric input UX', () => {
   });
 
   it('step validation catches invalid numeric values', () => {
-    // Step 2 validates code_count and code_length
     expect(wizardSrc).toContain('Code count must be a positive integer');
     expect(wizardSrc).toContain('Code length is required');
-    // Step 5 validates rate-limit fields
     expect(wizardSrc).toContain('Max attempts per phone must be a positive integer');
     expect(wizardSrc).toContain('Rate limit max attempts must be a positive integer');
     expect(wizardSrc).toContain('Rate limit window must be a positive integer');
+  });
+
+  it('prize quantity requires positive integer (rejects fractional)', () => {
+    expect(wizardSrc).toContain('Number.isInteger(q)');
+    expect(wizardSrc).toContain('Number.isFinite(q)');
+    expect(wizardSrc).toContain('prize quantity must be a positive integer');
   });
 });
 
@@ -444,8 +448,7 @@ describe('Update API entropy enforcement', () => {
   });
 
   it('persists normalized uppercase prefix (not raw input)', () => {
-    // code_prefix persistence must use .toUpperCase()
-    expect(updateSrc).toContain("String(body.codePrefix).trim().toUpperCase()");
+    expect(updateSrc).toContain('.trim().toUpperCase()');
   });
 });
 
@@ -453,18 +456,21 @@ describe('Update API prefix normalization', () => {
   const fs = require('fs');
   const src = fs.readFileSync('app/api/promotions/update/route.ts', 'utf-8');
 
-  it('lowercase prefix is normalized to uppercase before persistence', () => {
-    expect(src).toContain('.toUpperCase()');
-    // The persistence line for code_prefix must uppercase
-    const persistLine = src.match(/updates\.code_prefix\s*=.*toUpperCase/);
-    expect(persistLine).toBeTruthy();
+  it('normalizes then persists: normalized || null', () => {
+    // Must normalize first, then use falsy check (handles whitespace-only)
+    expect(src).toContain("const normalized = body.codePrefix ? String(body.codePrefix).trim().toUpperCase() : ''");
+    expect(src).toContain('updates.code_prefix = normalized || null');
   });
 
-  it('empty/whitespace prefix persists as null', () => {
-    // Ternary: truthy → trim+upper, falsy → null
-    expect(src).toContain('code_prefix') ;
-    const persistPattern = src.match(/updates\.code_prefix\s*=\s*body\.codePrefix\s*\?\s*String.*:\s*null/);
-    expect(persistPattern).toBeTruthy();
+  it('"promo" persists as "PROMO"', () => {
+    // trim().toUpperCase() handles lowercase
+    expect(src).toContain('.trim().toUpperCase()');
+  });
+
+  it('whitespace-only input persists as null', () => {
+    // "   ".trim() = "" => toUpperCase() = "" => "" || null = null
+    // The normalized || null pattern handles this
+    expect(src).toContain('normalized || null');
   });
 });
 

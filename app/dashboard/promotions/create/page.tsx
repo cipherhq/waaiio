@@ -1287,7 +1287,10 @@ function validateStep(step: number, state: WizardState): string[] {
       errors.push('Prize allocation exceeds total codes.');
     }
     if (state.prizes.some((p) => !p.name.trim())) errors.push('All prizes require a name.');
-    if (state.prizes.some((p) => !Number(p.quantity) || Number(p.quantity) < 1)) errors.push('Each prize must have a quantity of at least 1.');
+    if (state.prizes.some((p) => {
+      const q = Number(p.quantity);
+      return !Number.isFinite(q) || !Number.isInteger(q) || q < 1;
+    })) errors.push('Each prize quantity must be a positive integer.');
   }
   if (step === 5) {
     const phone = Number(state.max_attempts_per_phone);

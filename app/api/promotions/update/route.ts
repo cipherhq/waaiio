@@ -172,7 +172,10 @@ export async function PUT(request: NextRequest) {
     if ('acceptBareCodes' in body) updates.accept_bare_codes = Boolean(body.acceptBareCodes);
     if ('codeFormat' in body && body.codeFormat) updates.code_format = String(body.codeFormat);
     if ('codeLength' in body && body.codeLength) updates.code_length = Number(body.codeLength);
-    if ('codePrefix' in body) updates.code_prefix = body.codePrefix ? String(body.codePrefix).trim().toUpperCase() : null;
+    if ('codePrefix' in body) {
+      const normalized = body.codePrefix ? String(body.codePrefix).trim().toUpperCase() : '';
+      updates.code_prefix = normalized || null;
+    }
     if ('maxAttemptsPerPhone' in body && body.maxAttemptsPerPhone !== undefined) {
       const v = Number(body.maxAttemptsPerPhone);
       if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
