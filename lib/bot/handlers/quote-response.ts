@@ -109,11 +109,10 @@ export async function handleQuoteResponse(
       return;
     }
 
-    // Idempotent accept — order already exists
-    if (result.already_accepted) {
-      await sendText(from, `Your order *${result.reference_code}* is already being processed.`);
-      return;
-    }
+    // For both fresh and already_accepted: fall through to payment initialization.
+    // initializePayment is idempotent — it reuses existing pending payments and
+    // won't create duplicates. This recovers payment if acceptance committed but
+    // payment init failed/crashed on a previous attempt.
 
     // Fetch business details for payment + notifications
     const { data: biz } = await supabase
@@ -130,7 +129,23 @@ export async function handleQuoteResponse(
     const referenceCode = result.reference_code as string;
     const customerPhone = result.customer_phone as string;
 
+    // If order already has a successful payment, just inform — don't re-initialize
+    if (result.already_accepted) {
+      const { data: successPay } = await supabase
+        .from('payments')
+        .select('id')
+        .eq('order_id', orderId)
+        .eq('status', 'success')
+        .limit(1)
+        .maybeSingle();
+      if (successPay) {
+        await sendText(from, `Your order *${referenceCode}* is already paid and being processed.`);
+        return;
+      }
+    }
+
     // Initialize payment and send link to customer
+    // initializePayment is idempotent: reuses existing pending payment if amount/currency/gateway match
     const paymentAmount = depositAmount > 0 ? depositAmount : total;
     if (paymentAmount > 0 && customerPhone) {
       // Look up user_id for payment initialization
@@ -197,7 +212,10 @@ export async function handleQuoteResponse(
       await sendText(from, `✅ *Order Confirmed!*\n\n🔑 Ref: *${referenceCode}*\n\nNo payment required.`);
     }
 
-    // Notify business owner of acceptance
+    // Notify business owner of acceptance (skip on retry — owner was already notified)
+    if (result.already_accepted) {
+      return;
+    }
     try {
       const ownerPhone = (biz?.phone as string) || ((biz?.profiles as unknown as { phone?: string })?.phone);
       if (ownerPhone) {

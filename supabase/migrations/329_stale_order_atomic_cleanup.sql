@@ -45,11 +45,46 @@ BEGIN
     RETURN jsonb_build_object('cancelled', false, 'reason', 'not_stale');
   END IF;
 
-  -- 4. Payment gate: do not cancel if a successful payment exists
+  -- 4. Payment gate: serialization contract with payment authority.
+  --
+  -- Lock all payment rows FOR UPDATE, then check for success/finalization.
+  -- apply_order_stock_once is the sole authority for order confirmation
+  -- (pending→confirmed) AND stock application, both under a FOR UPDATE
+  -- lock on the order row. This creates two-point serialization:
+  --   Point 1: Order row FOR UPDATE (both cleanup and apply_order_stock_once)
+  --   Point 2: Payment rows FOR UPDATE (cleanup locks, webhook blocks)
+  --
+  -- Race A (cleanup holds locks, webhook arrives):
+  --   Cleanup holds order + payment row locks → payment authority's
+  --   UPDATE on payment row BLOCKS → cleanup checks (no success) →
+  --   cancels → commits → payment authority resumes → marks payment
+  --   'success' → processSuccessfulPayment → apply_order_stock_once
+  --   acquires order FOR UPDATE → status='cancelled' → rejects.
+  --   Stock remains restored. Order stays cancelled.
+  --
+  -- Race B (payment authority commits payment='success' first):
+  --   Payment authority commits payment.status='success' → cleanup
+  --   FOR UPDATE on payment row → reads 'success' → refuses to cancel.
+  --
+  -- Race C (payment authority UPDATE in-flight):
+  --   Payment authority holds implicit lock on payment row → cleanup
+  --   FOR UPDATE blocks → authority commits (success) → cleanup reads
+  --   'success' → refuses to cancel.
+  --
+  -- Also check finalization_processing_at: if a finalization claim is
+  -- active (< 5 min old), a payment webhook is actively processing.
+  PERFORM id FROM payments
+  WHERE (order_id = p_order_id OR metadata->>'order_id' = p_order_id::text)
+  FOR UPDATE;
+
   SELECT EXISTS (
     SELECT 1 FROM payments
     WHERE (order_id = p_order_id OR metadata->>'order_id' = p_order_id::text)
-      AND status = 'success'
+      AND (
+        status = 'success'
+        OR (finalization_processing_at IS NOT NULL
+            AND finalization_processing_at > NOW() - INTERVAL '5 minutes')
+      )
   ) INTO v_has_payment;
 
   IF v_has_payment THEN

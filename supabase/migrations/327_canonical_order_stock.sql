@@ -155,7 +155,19 @@ BEGIN
   INSERT INTO order_stock_applications (order_id, payment_id, item_count)
   VALUES (p_order_id, p_payment_id, v_count);
 
-  RETURN jsonb_build_object('applied', true, 'already_applied', false, 'items', v_count);
+  -- 8. When called with a payment_id (payment-confirmed context), also transition
+  --    order from pending→confirmed INSIDE this same transaction/lock. This creates
+  --    a real serialization contract with cancel_stale_order_atomic: both hold the
+  --    order row FOR UPDATE, so only one can transition the status.
+  --    Without this, the order status update in processSuccessfulPayment runs
+  --    outside the FOR UPDATE lock and can race with cleanup.
+  IF p_payment_id IS NOT NULL AND v_order.status = 'pending' THEN
+    UPDATE orders SET status = 'confirmed', updated_at = NOW()
+    WHERE id = p_order_id AND status = 'pending';
+  END IF;
+
+  RETURN jsonb_build_object('applied', true, 'already_applied', false, 'items', v_count,
+    'order_confirmed', (p_payment_id IS NOT NULL AND v_order.status = 'pending'));
 END;
 $$;
 

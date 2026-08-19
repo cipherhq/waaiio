@@ -74,13 +74,19 @@ BEGIN
 
   -- ── 4. Status checks ──
   IF v_quote.status = 'accepted' THEN
-    -- Idempotent: return existing order
-    SELECT id, reference_code INTO v_existing_order
+    -- Idempotent: return existing order with full financial data for payment recovery
+    SELECT id, reference_code, total_amount, deposit_amount, balance_amount
+    INTO v_existing_order
     FROM orders WHERE quote_request_id = p_quote_id LIMIT 1;
     RETURN jsonb_build_object(
       'accepted', true, 'already_accepted', true,
       'order_id', v_existing_order.id,
-      'reference_code', v_existing_order.reference_code
+      'reference_code', v_existing_order.reference_code,
+      'total', COALESCE(v_existing_order.total_amount, 0),
+      'deposit_amount', COALESCE(v_existing_order.deposit_amount, 0),
+      'balance_amount', COALESCE(v_existing_order.balance_amount, 0),
+      'customer_phone', v_quote.customer_phone,
+      'business_id', v_quote.business_id
     );
   END IF;
 

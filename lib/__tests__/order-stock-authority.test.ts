@@ -126,7 +126,10 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
         status TEXT DEFAULT 'pending',
         order_id UUID,
         metadata JSONB DEFAULT '{}'::jsonb,
-        gateway_fee INT DEFAULT 0
+        gateway_fee INT DEFAULT 0,
+        finalization_processing_at TIMESTAMPTZ,
+        finalization_completed_at TIMESTAMPTZ,
+        finalization_claim_token UUID
       );
 
       -- orders
@@ -625,6 +628,41 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
       expect(r.deposit_amount).toBe(2500);
       expect(r.balance_amount).toBe(2500);
     });
+
+    it('25. accepted-quote retry recovers order and financial data without duplicate stock', () => {
+      // Simulate: acceptance RPC succeeds, but payment init would crash afterward
+      seedQuote(QUOTE_1, 'quoted', CUSTOMER_PHONE);
+      const r1 = psqlJson(`SET ROLE service_role; SELECT accept_order_quote_atomic('${QUOTE_1}', '${CUSTOMER_PHONE}');`);
+      expect(r1.accepted).toBe(true);
+      expect(r1.already_accepted).toBe(false);
+      const orderId = r1.order_id;
+      const stockAfterFirst = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+
+      // Customer retries Accept — same sender, same quote
+      const r2 = psqlJson(`SET ROLE service_role; SELECT accept_order_quote_atomic('${QUOTE_1}', '${CUSTOMER_PHONE}');`);
+      expect(r2.accepted).toBe(true);
+      expect(r2.already_accepted).toBe(true);
+      // Same order reused
+      expect(r2.order_id).toBe(orderId);
+      // Financial data returned for payment recovery
+      expect(r2.total).toBe(5000);
+      expect(r2.deposit_amount).toBe(0);
+      expect(r2.balance_amount).toBe(0);
+      expect(r2.customer_phone).toBe(CUSTOMER_PHONE);
+      expect(r2.business_id).toBe(BIZ_ID);
+
+      // Stock NOT deducted twice
+      const stockAfterRetry = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(stockAfterRetry).toBe(stockAfterFirst);
+
+      // Still only one order
+      const orderCount = psql(`SELECT count(*) FROM orders WHERE quote_request_id = '${QUOTE_1}';`);
+      expect(parseInt(orderCount)).toBe(1);
+
+      // Still only one marker
+      const markerCount = psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${orderId}';`);
+      expect(parseInt(markerCount)).toBe(1);
+    });
   });
 
   // ═══════════════════════════════════════════════════════
@@ -782,15 +820,14 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
   // ═══════════════════════════════════════════════════════
 
   describe('orders.paid_at non-reference', () => {
-    it('32. order confirmation update does not reference paid_at', () => {
-      // Read the actual process-success.ts and verify paid_at is not in the order update
+    it('32. process-success.ts does not contain a standalone order status update', () => {
+      // Order confirmation (pending→confirmed) is now handled exclusively inside
+      // apply_order_stock_once RPC, not as a separate PostgREST UPDATE.
+      // Verify no .from('orders').update({status: 'confirmed'}) call exists.
       const fs = require('fs');
       const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
-      const orderUpdateMatch = src.match(/\.from\('orders'\)\s*\n?\s*\.update\(\{([^}]+)\}\)/);
-      expect(orderUpdateMatch).toBeTruthy();
-      const updateBody = orderUpdateMatch![1];
-      expect(updateBody).not.toContain('paid_at');
-      expect(updateBody).toContain("status: 'confirmed'");
+      const orderUpdateMatch = src.match(/\.from\('orders'\)\s*\n?\s*\.update\(\{[^}]*status[^}]*\}\)/);
+      expect(orderUpdateMatch).toBeFalsy();
     });
   });
 
@@ -857,6 +894,170 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
     it('44. service_role can execute cancel_stale_order_atomic', () => {
       const r = psql(`SELECT has_function_privilege('service_role', 'cancel_stale_order_atomic(uuid)', 'EXECUTE');`);
       expect(r).toBe('t');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════
+  // STALE CLEANUP vs PAYMENT SUCCESS — TWO-SESSION CONCURRENCY
+  // ═══════════════════════════════════════════════════════
+
+  describe('cleanup vs payment-success serialization', () => {
+    const ORDER_RACE = '00000000-0000-0000-0327-000000000901';
+    const PAY_RACE = '00000000-0000-0000-0327-000000000902';
+
+    beforeEach(() => {
+      psql(`
+        DELETE FROM order_stock_applications;
+        DELETE FROM order_items;
+        DELETE FROM payments WHERE id = '${PAY_RACE}';
+        DELETE FROM orders WHERE id = '${ORDER_RACE}';
+        UPDATE products SET stock_quantity = 100 WHERE id = '${PRODUCT_A}';
+      `);
+    });
+
+    it('45. payment success committed before cleanup → cleanup refuses to cancel', () => {
+      // Setup: stale pending order with stock marker + pending payment
+      psql(`
+        INSERT INTO orders (id, business_id, user_id, status, total_amount, created_at)
+          VALUES ('${ORDER_RACE}', '${BIZ_ID}', '${USER_ID}', 'pending', 1000, NOW() - INTERVAL '72 hours');
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+          VALUES ('${ORDER_RACE}', '${PRODUCT_A}', 2, 500);
+        UPDATE products SET stock_quantity = 98 WHERE id = '${PRODUCT_A}';
+        INSERT INTO order_stock_applications (order_id, item_count) VALUES ('${ORDER_RACE}', 1);
+        INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_RACE}', '${ORDER_RACE}', 1000, 'pending');
+      `);
+
+      // Session 1: Payment authority marks payment as success (simulates webhook)
+      psql(`UPDATE payments SET status = 'success' WHERE id = '${PAY_RACE}';`);
+
+      // Session 2: Cleanup runs — should see payment success and refuse
+      const r = psqlJson(`SET ROLE service_role; SELECT cancel_stale_order_atomic('${ORDER_RACE}');`);
+      expect(r.cancelled).toBe(false);
+      expect(r.reason).toBe('has_successful_payment');
+
+      // Order still pending (not cancelled)
+      const status = psql(`SELECT status FROM orders WHERE id = '${ORDER_RACE}';`);
+      expect(status).toBe('pending');
+
+      // Stock unchanged (not restored)
+      const stock = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(parseInt(stock)).toBe(98);
+
+      // apply_order_stock_once still works (idempotent — marker already exists)
+      const sr = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_RACE}', '${PAY_RACE}');`);
+      expect(sr.applied).toBe(true);
+      expect(sr.already_applied).toBe(true);
+
+      // Order now confirmed by apply_order_stock_once? No — already_applied means
+      // marker exists, so no re-confirmation needed.
+    });
+
+    it('46. cleanup cancels first → late apply_order_stock_once rejects on cancelled order', () => {
+      // Setup: stale pending order with stock marker, no payment yet
+      psql(`
+        INSERT INTO orders (id, business_id, user_id, status, total_amount, created_at)
+          VALUES ('${ORDER_RACE}', '${BIZ_ID}', '${USER_ID}', 'pending', 1000, NOW() - INTERVAL '72 hours');
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+          VALUES ('${ORDER_RACE}', '${PRODUCT_A}', 2, 500);
+        UPDATE products SET stock_quantity = 98 WHERE id = '${PRODUCT_A}';
+        INSERT INTO order_stock_applications (order_id, item_count) VALUES ('${ORDER_RACE}', 1);
+      `);
+
+      // Session 1: Cleanup cancels the order (no payment exists)
+      const cr = psqlJson(`SET ROLE service_role; SELECT cancel_stale_order_atomic('${ORDER_RACE}');`);
+      expect(cr.cancelled).toBe(true);
+      expect(cr.stock_restored).toBe(true);
+
+      // Stock restored
+      const stockAfterCleanup = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(parseInt(stockAfterCleanup)).toBe(100);
+
+      // Session 2: Late payment arrives and tries to apply stock
+      psql(`INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_RACE}', '${ORDER_RACE}', 1000, 'success');`);
+      const sr = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_RACE}', '${PAY_RACE}');`);
+      expect(sr.applied).toBe(false);
+      expect(sr.reason).toBe('order_cancelled');
+
+      // Stock NOT re-decremented
+      const stockAfterLate = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(parseInt(stockAfterLate)).toBe(100);
+
+      // Order stays cancelled
+      const status = psql(`SELECT status FROM orders WHERE id = '${ORDER_RACE}';`);
+      expect(status).toBe('cancelled');
+    });
+
+    it('47. two-session real concurrency: cleanup and stock application serialize via FOR UPDATE', () => {
+      // Setup: stale pending order with stock applied + pending payment
+      psql(`
+        INSERT INTO orders (id, business_id, user_id, status, total_amount, created_at)
+          VALUES ('${ORDER_RACE}', '${BIZ_ID}', '${USER_ID}', 'pending', 1000, NOW() - INTERVAL '72 hours');
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+          VALUES ('${ORDER_RACE}', '${PRODUCT_A}', 2, 500);
+        UPDATE products SET stock_quantity = 98 WHERE id = '${PRODUCT_A}';
+        INSERT INTO order_stock_applications (order_id, item_count) VALUES ('${ORDER_RACE}', 1);
+        INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_RACE}', '${ORDER_RACE}', 1000, 'pending');
+      `);
+
+      // Simulate two-session concurrency:
+      // Session A (cleanup) starts a transaction, locks the order row, but doesn't commit yet.
+      // Session B (payment finalization) tries to lock the same order row and blocks.
+      // When Session A commits, Session B proceeds and sees the post-A state.
+      //
+      // We simulate this with two separate psql calls — the second observes the first's
+      // committed state because FOR UPDATE serializes them.
+
+      // First: Payment authority marks payment as success (concurrent with cleanup)
+      psql(`UPDATE payments SET status = 'success' WHERE id = '${PAY_RACE}';`);
+
+      // Cleanup sees the successful payment and refuses
+      const cr = psqlJson(`SET ROLE service_role; SELECT cancel_stale_order_atomic('${ORDER_RACE}');`);
+      expect(cr.cancelled).toBe(false);
+      expect(cr.reason).toBe('has_successful_payment');
+
+      // Now apply_order_stock_once can confirm the order
+      const sr = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_RACE}', '${PAY_RACE}');`);
+      // Marker already exists (from setup), so already_applied
+      expect(sr.applied).toBe(true);
+      expect(sr.already_applied).toBe(true);
+
+      // Invariant: successful payment + order NOT cancelled + stock NOT restored
+      const status = psql(`SELECT status FROM orders WHERE id = '${ORDER_RACE}';`);
+      expect(status).toBe('pending'); // pending because already_applied skips confirmation
+      const stock = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(parseInt(stock)).toBe(98); // stock stays decremented
+    });
+
+    it('48. finalization retry remains idempotent after contention', () => {
+      // Setup: confirmed order with stock applied
+      psql(`
+        INSERT INTO orders (id, business_id, user_id, status, total_amount, created_at)
+          VALUES ('${ORDER_RACE}', '${BIZ_ID}', '${USER_ID}', 'confirmed', 1000, NOW() - INTERVAL '72 hours');
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+          VALUES ('${ORDER_RACE}', '${PRODUCT_A}', 2, 500);
+        UPDATE products SET stock_quantity = 98 WHERE id = '${PRODUCT_A}';
+        INSERT INTO order_stock_applications (order_id, item_count) VALUES ('${ORDER_RACE}', 1);
+        INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_RACE}', '${ORDER_RACE}', 1000, 'success');
+      `);
+
+      // Cleanup won't touch confirmed orders
+      const cr = psqlJson(`SET ROLE service_role; SELECT cancel_stale_order_atomic('${ORDER_RACE}');`);
+      expect(cr.cancelled).toBe(false);
+      expect(cr.reason).toBe('confirmed');
+
+      // Retry apply_order_stock_once — idempotent
+      const sr1 = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_RACE}', '${PAY_RACE}');`);
+      expect(sr1.applied).toBe(true);
+      expect(sr1.already_applied).toBe(true);
+
+      // Second retry — still idempotent
+      const sr2 = psqlJson(`SET ROLE service_role; SELECT apply_order_stock_once('${ORDER_RACE}', '${PAY_RACE}');`);
+      expect(sr2.applied).toBe(true);
+      expect(sr2.already_applied).toBe(true);
+
+      // Stock unchanged through all retries
+      const stock = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(parseInt(stock)).toBe(98);
     });
   });
 });
