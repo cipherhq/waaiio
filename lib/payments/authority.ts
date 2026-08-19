@@ -165,17 +165,42 @@ export async function authorizeAndFinalize(
     return reject(`Currency mismatch: expected ${payment.currency}, got ${verified.currency}`, 'currency_mismatch');
   }
 
-  // Mark provider-paid if not already
+  // Mark provider-paid if not already.
+  // Require status='pending' — stale-order cleanup voids payments to 'failed',
+  // and this gate prevents a late webhook from resurrecting a voided payment.
   if (payment.status !== 'success') {
-    const { error: updateError } = await supabase
+    const { data: paidRows, error: updateError } = await supabase
       .from('payments')
       .update({ status: 'success', paid_at: new Date().toISOString(), gateway_status: verified.providerStatus || 'success' })
       .eq('id', payment.id)
-      .neq('status', 'success');
+      .eq('status', 'pending')
+      .select('id');
     if (updateError) {
       logger.withContext({ op: 'authority.mark-paid', ...safeLogErrorContext(updateError) })
         .error(`${logPrefix} Failed to mark payment as provider-paid`);
       return retryable('mark_paid_error', { providerPaid: false, businessFinalized: false, customerConfirmed: false });
+    }
+    if (!paidRows?.length) {
+      // No rows transitioned — either another authority worker already marked it
+      // 'success' (safe to continue), or stale-order cleanup voided it to 'failed'
+      const { data: refreshed } = await supabase
+        .from('payments')
+        .select('status')
+        .eq('id', payment.id)
+        .single();
+      if (refreshed?.status === 'success') {
+        // Concurrent authority already paid — continue to Stage 2
+        logger.info(`${logPrefix} Payment ${payment.id} already marked success by concurrent authority`);
+      } else {
+        // Payment was voided by stale-order cleanup — order is cancelled.
+        // Provider may have collected money; this needs reconciliation.
+        logger.error(`${logPrefix} Payment ${payment.id} status is '${refreshed?.status}' — voided by stale-order cleanup, requires reconciliation`);
+        Sentry.captureException(
+          new Error(`Payment voided by stale cleanup: ${payment.id}, status=${refreshed?.status}`),
+          { tags: { component: 'payment-authority', operation: 'stale-voided' } },
+        );
+        return reject(`Payment voided by order cleanup — status: ${refreshed?.status}`, 'payment_voided_stale_cleanup');
+      }
     }
   }
   const stagesPaid = { providerPaid: true, businessFinalized: false, customerConfirmed: false };

@@ -920,17 +920,6 @@ export default function ServicesPage() {
                   </button>
                 </div>
 
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Price request</p>
-                    <p className="text-xs text-gray-400 dark:text-gray-500">Customers request a price instead of booking at fixed price</p>
-                  </div>
-                  <button type="button" onClick={() => setForm({ ...form, quote_enabled: !form.quote_enabled })}
-                    className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.quote_enabled ? 'bg-brand' : 'bg-gray-200'}`}>
-                    <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.quote_enabled ? '22px' : '2px' }} />
-                  </button>
-                </div>
-
                 {/* Max capacity */}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Max bookings per time slot</label>
@@ -1142,7 +1131,6 @@ export default function ServicesPage() {
                       {service.is_class && service.class_schedule?.length > 0 && (
                         <span>{service.class_schedule.map(cs => cs.day.slice(0, 3)).join('/')}{service.class_schedule[0]?.time ? ` ${service.class_schedule[0].time}` : ''}</span>
                       )}
-                      {service.quote_enabled && <span className="text-amber-600">Price Request</span>}
                       {(service.gallery_urls || []).length > 0 && <span>{service.gallery_urls.length} photos</span>}
                     </div>
                   </div>

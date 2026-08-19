@@ -68,7 +68,12 @@ function buildSupabase(opts: {
     }),
     update: vi.fn().mockReturnValue({
       eq: vi.fn().mockReturnValue({
-        neq: vi.fn().mockResolvedValue({ data: null, error: opts.updateError ?? null }),
+        eq: vi.fn().mockReturnValue({
+          select: vi.fn().mockResolvedValue({
+            data: opts.updateError ? null : [{ id: 'pay-1' }],
+            error: opts.updateError ?? null,
+          }),
+        }),
       }),
     }),
   }));
