@@ -22,12 +22,22 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceClient();
 
   // Step 1: Use unified marketplace search for filtering & ranking
-  const results = await searchMarketplace(supabase, {
+  const searchResult = await searchMarketplace(supabase, {
     category: category || undefined,
     query: search || undefined,
     country: country || undefined,
     limit: 50,
   });
+
+  // Distinguish DB/query failure from genuine zero results
+  if (!searchResult.ok) {
+    return NextResponse.json(
+      { error: 'Directory search is temporarily unavailable' },
+      { status: 503 },
+    );
+  }
+
+  const results = searchResult.results;
 
   if (results.length === 0) {
     // Still return categories/countries for filter dropdowns even when no businesses match
