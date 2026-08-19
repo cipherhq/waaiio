@@ -493,8 +493,10 @@ const myAccountMenuStep: FlowStepConfig = {
       { title: 'My Quotes', description: 'Price request status', postbackText: 'acct_quotes', show: hasCapability('estimates') },
       // My Points — show if loyalty capability enabled
       { title: 'My Points', description: 'Loyalty balance', postbackText: 'acct_loyalty', show: hasCapability('loyalty') },
-      // Subscriptions — show if recurring capability enabled
-      { title: 'Subscriptions', description: 'Manage recurring payments', postbackText: 'acct_subscriptions', show: hasCapability('recurring') },
+      // Subscriptions — show if recurring OR giving capability enabled
+      // Giving services can be recurring (billing_type='recurring'), creating subscriptions
+      // that members must be able to manage even without the explicit 'recurring' capability.
+      { title: 'Subscriptions', description: 'Manage recurring payments', postbackText: 'acct_subscriptions', show: hasCapability('recurring', 'giving') },
       // Get Receipt — always show
       { title: 'Get Receipt', description: 'Download your last receipt', postbackText: 'acct_receipt', show: true },
       // Switch Business — always show (helps users discover how to change)
