@@ -1549,8 +1549,9 @@ describe.skipIf(!canRun)('Migrations 327-329: Order stock authority + Quote RPCs
       expect(resultA.code).toBe(0);
 
       // Session B (cleanup) refused — saw successful payment
-      expect(resultB.stdout).toContain('"cancelled":false');
+      // PostgreSQL JSONB output may have spaces after colons
       expect(resultB.stdout).toContain('has_successful_payment');
+      expect(resultB.stdout).toMatch(/"cancelled":\s*false/);
 
       // ── Verify final state ──
       const orderStatus = psql(`SELECT status FROM orders WHERE id = '${ORDER_CONC}';`);
