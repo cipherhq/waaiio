@@ -298,3 +298,53 @@ describe('Blocker fixes — canonical claim_promo_code behavior', () => {
     expect(src).toContain('legacy 6-24');
   });
 });
+
+describe('Wizard entropy enforcement', () => {
+  const fs = require('fs');
+  const wizardSrc = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');
+
+  it('wizard imports MIN_GENERATED_BODY_LENGTH and validateGeneratedEntropy', () => {
+    expect(wizardSrc).toContain('MIN_GENERATED_BODY_LENGTH');
+    expect(wizardSrc).toContain('validateGeneratedEntropy');
+  });
+
+  it('step 2 validation uses validateGeneratedEntropy (not hardcoded 6)', () => {
+    expect(wizardSrc).toContain('validateGeneratedEntropy(state.code_length, state.code_prefix');
+    expect(wizardSrc).not.toContain("code_length < 6");
+    expect(wizardSrc).not.toContain("'Code length must be between 6 and 24'");
+  });
+
+  it('code_length input min is dynamic based on prefix', () => {
+    expect(wizardSrc).toContain('min={MIN_GENERATED_BODY_LENGTH + (state.code_prefix');
+  });
+
+  it('help text references MIN_GENERATED_BODY_LENGTH, not 6', () => {
+    expect(wizardSrc).not.toContain('Min 6, max 24');
+    expect(wizardSrc).toContain('{MIN_GENERATED_BODY_LENGTH}');
+  });
+
+  it('prefix change auto-bumps code_length to maintain minimum body', () => {
+    expect(wizardSrc).toContain('Math.max(state.code_length, minTotal)');
+  });
+
+  it('10/no prefix: validateGeneratedEntropy accepts', () => {
+    expect(validateGeneratedEntropy(10).valid).toBe(true);
+  });
+
+  it('<10/no prefix: validateGeneratedEntropy rejects', () => {
+    expect(validateGeneratedEntropy(9).valid).toBe(false);
+  });
+
+  it('14 with 4-char prefix: accepted (body=10)', () => {
+    expect(validateGeneratedEntropy(14, 'PROM').valid).toBe(true);
+  });
+
+  it('12 with 4-char prefix: rejected (body=8)', () => {
+    expect(validateGeneratedEntropy(12, 'PROM').valid).toBe(false);
+  });
+
+  it('24 max remains accepted when body >= 10', () => {
+    expect(validateGeneratedEntropy(24).valid).toBe(true);
+    expect(validateGeneratedEntropy(24, 'PROM').valid).toBe(true); // body=20
+  });
+});

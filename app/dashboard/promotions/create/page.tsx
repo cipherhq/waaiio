@@ -5,6 +5,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import type { PromoPrizeType, PromoCodeEntryMode } from '@/lib/promotions/types';
+import { MIN_GENERATED_BODY_LENGTH, computeBodyLength, validateGeneratedEntropy } from '@/lib/promotions/normalize';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -127,9 +128,10 @@ function makeKey() {
 
 function generateExampleCodes(count: number, length: number, prefix: string): string[] {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bodyLen = computeBodyLength(length, prefix || null);
   const codes: string[] = [];
   for (let i = 0; i < count; i++) {
-    const body = Array.from({ length: length - prefix.length }, () =>
+    const body = Array.from({ length: bodyLen }, () =>
       chars[Math.floor(Math.random() * chars.length)]
     ).join('');
     codes.push(prefix + body);
@@ -437,18 +439,31 @@ function Step2Codes({ state, update }: { state: WizardState; update: (p: Partial
                 <Input
                   type="number"
                   value={state.code_length}
-                  onChange={(v) => update({ code_length: Math.max(6, Math.min(24, Number(v))) })}
+                  onChange={(v) => {
+                    const minTotal = MIN_GENERATED_BODY_LENGTH + (state.code_prefix?.length || 0);
+                    update({ code_length: Math.max(minTotal, Math.min(24, Number(v))) });
+                  }}
                   placeholder="12"
-                  min={6}
+                  min={MIN_GENERATED_BODY_LENGTH + (state.code_prefix?.length || 0)}
                   max={24}
                 />
-                <p className="mt-1 text-xs text-gray-400">Min 6, max 24 characters (including prefix)</p>
+                <p className="mt-1 text-xs text-gray-400">
+                  Min {MIN_GENERATED_BODY_LENGTH + (state.code_prefix?.length || 0)}, max 24 (must have {MIN_GENERATED_BODY_LENGTH}+ random characters{state.code_prefix ? ` after "${state.code_prefix}" prefix` : ''})
+                </p>
               </div>
               <div>
                 <FieldLabel>Prefix (optional)</FieldLabel>
                 <Input
                   value={state.code_prefix}
-                  onChange={(v) => update({ code_prefix: v.toUpperCase().slice(0, 4) })}
+                  onChange={(v) => {
+                    const newPrefix = v.toUpperCase().slice(0, 4);
+                    const minTotal = MIN_GENERATED_BODY_LENGTH + newPrefix.length;
+                    update({
+                      code_prefix: newPrefix,
+                      // Auto-bump code_length if prefix would reduce body below minimum
+                      code_length: Math.max(state.code_length, minTotal),
+                    });
+                  }}
                   placeholder="e.g. WIN"
                 />
                 <p className="mt-1 text-xs text-gray-400">Up to 4 characters — prepended to every code</p>
@@ -1251,7 +1266,12 @@ function validateStep(step: number, state: WizardState): string[] {
   if (step === 2) {
     if (state.code_source === 'generate') {
       if (!state.code_count || state.code_count < 1) errors.push('Code count must be at least 1.');
-      if (state.code_length < 6 || state.code_length > 24) errors.push('Code length must be between 6 and 24.');
+      const entropyCheck = validateGeneratedEntropy(state.code_length, state.code_prefix || null);
+      if (!entropyCheck.valid) {
+        errors.push(entropyCheck.error!);
+      } else if (state.code_length > 24) {
+        errors.push('Code length must be at most 24.');
+      }
     } else {
       if (!state.import_file) errors.push('Please upload a CSV file.');
       if (state.import_error) errors.push(state.import_error);
