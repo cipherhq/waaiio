@@ -56,13 +56,24 @@ export function getDisplaySuffix(normalized: string): string {
 }
 
 /**
- * Validate that a normalized code is routable by the bot.
- * Must match the same criteria as looksLikePromoCode in verify.ts:
+ * Validate that a normalized code is routable by the bot for verification.
+ * Accepts legacy 6-char codes so historical imported promo codes remain redeemable.
  * - 6-24 alphanumeric chars
  * - at least one digit
- * - no spaces
  */
 export function isRoutablePromoCode(normalized: string): boolean {
+  if (normalized.length < 6 || normalized.length > 24) return false;
+  if (!/^[A-Z0-9]+$/.test(normalized)) return false;
+  if (!/\d/.test(normalized)) return false;
+  return true;
+}
+
+/**
+ * Validate that a code meets the hardened minimum for NEW imports.
+ * Existing historical codes use isRoutablePromoCode for redemption routing.
+ * New imports must meet MIN_IMPORTED_CODE_LENGTH to resist brute-force.
+ */
+export function isImportablePromoCode(normalized: string): boolean {
   if (normalized.length < MIN_IMPORTED_CODE_LENGTH || normalized.length > 24) return false;
   if (!/^[A-Z0-9]+$/.test(normalized)) return false;
   if (!/\d/.test(normalized)) return false;

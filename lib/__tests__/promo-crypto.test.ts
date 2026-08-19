@@ -81,11 +81,11 @@ describe('generateClaimReference', () => {
     expect(ref.startsWith('WAA-')).toBe(true);
   });
 
-  it('has WAA-XXXX-XXXX-XXXX format (18 chars, ~60 bits entropy)', () => {
+  it('has WAA-XXXX-XXXX-XXXX-XXXX format (23 chars, exactly 64 bits entropy)', () => {
     const ref = generateClaimReference();
-    // WAA- (4) + 4 + - + 4 + - + 4 = 18
-    expect(ref.length).toBe(18);
-    expect(ref).toMatch(/^WAA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+    // WAA- (4) + 4 + - + 4 + - + 4 + - + 4 = 23
+    expect(ref.length).toBe(23);
+    expect(ref).toMatch(/^WAA-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/);
   });
 
   it('generates unique references (high entropy eliminates collisions)', () => {

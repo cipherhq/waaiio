@@ -81,16 +81,20 @@ describe('code_length = total normalized length including prefix', () => {
 });
 
 describe('boundary code lengths', () => {
-  it('10-char code is routable (minimum after entropy hardening)', () => {
+  it('6-char code is routable (legacy compatible)', () => {
+    const bodyLen = computeBodyLength(6);
+    const code = generateSecureCode(bodyLen);
+    const normalized = normalizePromoCode(code);
+    expect(normalized.length).toBe(6);
+    expect(isRoutablePromoCode(normalized)).toBe(true);
+  });
+
+  it('10-char code is routable', () => {
     const bodyLen = computeBodyLength(10);
     const code = generateSecureCode(bodyLen);
     const normalized = normalizePromoCode(code);
     expect(normalized.length).toBe(10);
     expect(isRoutablePromoCode(normalized)).toBe(true);
-  });
-
-  it('9-char code is NOT routable (below minimum)', () => {
-    expect(isRoutablePromoCode('ABCDEF789')).toBe(false);
   });
 
   it('24-char code is routable', () => {
@@ -110,8 +114,8 @@ describe('boundary code lengths', () => {
     expect(isRoutablePromoCode(normalized)).toBe(true);
   });
 
-  it('9-char normalized code is NOT routable (below hardened minimum)', () => {
-    expect(isRoutablePromoCode('ABCDE1234')).toBe(false);
+  it('5-char normalized code is NOT routable', () => {
+    expect(isRoutablePromoCode('ABC12')).toBe(false);
   });
 
   it('25-char normalized code is NOT routable', () => {

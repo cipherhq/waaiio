@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parsePromoCsv, previewImport } from '@/lib/promotions/import';
-import { normalizePromoCode, isRoutablePromoCode } from '@/lib/promotions/normalize';
+import { normalizePromoCode, isRoutablePromoCode, isImportablePromoCode } from '@/lib/promotions/normalize';
 
 describe('import: canonical validation', () => {
   it('valid code with digit is routable', () => {
@@ -21,9 +21,8 @@ describe('import: canonical validation', () => {
     expect(isRoutablePromoCode(normalizePromoCode('ABCDEFGHIJKL'))).toBe(false);
   });
 
-  it('code <10 chars is rejected (hardened minimum)', () => {
+  it('code <6 chars is rejected (routing minimum)', () => {
     expect(isRoutablePromoCode(normalizePromoCode('AB1C'))).toBe(false);
-    expect(isRoutablePromoCode(normalizePromoCode('ABCDEF1'))).toBe(false);  // 7 chars
   });
 
   it('valid outcome values accepted by parser', () => {
@@ -66,8 +65,16 @@ describe('import: every imported routable code passes looksLikePromoCode', () =>
     expect(isRoutablePromoCode(normalized)).toBe(true);
   });
 
-  it('10-char code with digit is routable (hardened minimum)', () => {
-    expect(isRoutablePromoCode(normalizePromoCode('ABCDEFGH12'))).toBe(true);
+  it('6-char code with digit is routable (legacy compatible)', () => {
+    expect(isRoutablePromoCode(normalizePromoCode('ABCDE1'))).toBe(true);
+  });
+
+  it('10-char code with digit is importable (new minimum)', () => {
+    expect(isImportablePromoCode(normalizePromoCode('ABCDEFGH12'))).toBe(true);
+  });
+
+  it('6-char code is NOT importable (below new import minimum)', () => {
+    expect(isImportablePromoCode(normalizePromoCode('ABCDE1'))).toBe(false);
   });
 
   it('24-char code with digit is routable', () => {

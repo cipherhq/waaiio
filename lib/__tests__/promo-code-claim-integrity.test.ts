@@ -15,6 +15,7 @@ import {
   validateGeneratedEntropy,
   validatePrefix,
   isRoutablePromoCode,
+  isImportablePromoCode,
   MIN_GENERATED_BODY_LENGTH,
   MIN_IMPORTED_CODE_LENGTH,
 } from '@/lib/promotions/normalize';
@@ -100,14 +101,31 @@ describe('Generated code entropy', () => {
 });
 
 describe('Imported code validation', () => {
-  it('10. weak short imports rejected (< 10 chars)', () => {
-    expect(isRoutablePromoCode('ABC123')).toBe(false);     // 6 chars
-    expect(isRoutablePromoCode('ABCDEF789')).toBe(false);  // 9 chars
+  it('10. weak short NEW imports rejected (< 10 chars)', () => {
+    expect(isImportablePromoCode('ABC123')).toBe(false);     // 6 chars
+    expect(isImportablePromoCode('ABCDEF789')).toBe(false);  // 9 chars
   });
 
-  it('11. safe imports accepted (>= 10 chars)', () => {
-    expect(isRoutablePromoCode('ABCDEFGH12')).toBe(true);  // 10 chars
-    expect(isRoutablePromoCode('WIN7PM4XQ9N2WF')).toBe(true); // 14 chars
+  it('11. safe NEW imports accepted (>= 10 chars)', () => {
+    expect(isImportablePromoCode('ABCDEFGH12')).toBe(true);  // 10 chars
+    expect(isImportablePromoCode('WIN7PM4XQ9N2WF')).toBe(true); // 14 chars
+  });
+
+  it('A. legacy 6-char code still routes for redemption', () => {
+    expect(isRoutablePromoCode('ABCDE1')).toBe(true);
+  });
+
+  it('B. legacy 9-char code still routes for redemption', () => {
+    expect(isRoutablePromoCode('ABCDEFG12')).toBe(true);
+  });
+
+  it('C. NEW 6-9 char CSV imports rejected', () => {
+    expect(isImportablePromoCode('ABCDE1')).toBe(false);
+    expect(isImportablePromoCode('ABCDEFG12')).toBe(false);
+  });
+
+  it('D. NEW >=10 char imports succeed', () => {
+    expect(isImportablePromoCode('ABCDEFGH12')).toBe(true);
   });
 
   it('12. duplicate normalization preserved', () => {
@@ -121,12 +139,11 @@ describe('Imported code validation', () => {
 });
 
 describe('Claim reference integrity', () => {
-  it('13. new references have WAA-XXXX-XXXX-XXXX format (~60 bits)', () => {
+  it('13. new references have WAA-XXXX-XXXX-XXXX-XXXX format (exactly 64 bits)', () => {
     const ref = generateClaimReference();
-    // Format: WAA-XXXX-XXXX-XXXX
-    expect(ref).toMatch(/^WAA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
-    // Total reference length: 4 (WAA-) + 4 + 1 (-) + 4 + 1 (-) + 4 = 18
-    expect(ref.length).toBe(18);
+    // Format: WAA-XXXX-XXXX-XXXX-XXXX (16 uppercase hex chars from 8 random bytes)
+    expect(ref).toMatch(/^WAA-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/);
+    expect(ref.length).toBe(23);
   });
 
   it('14. claim_reference uniqueness enforced by DB migration', () => {
@@ -215,12 +232,11 @@ describe('Prefix validation integration', () => {
 });
 
 describe('No migration breaks existing schema', () => {
-  it('migration 330 preserves existing code_length values via NOT VALID', () => {
+  it('migration 330 preserves legacy code_length 6-24 DB constraint', () => {
     const fs = require('fs');
     const src = fs.readFileSync('supabase/migrations/330_promo_code_claim_integrity.sql', 'utf-8');
-    // NOT VALID skips existing rows — only enforces on new INSERTs
-    expect(src).toContain('NOT VALID');
-    // Does not truncate/modify existing promo_campaigns data
+    // Must NOT alter the DB constraint — API layer is the security authority
+    expect(src).not.toContain('ALTER TABLE promo_campaigns ADD CONSTRAINT chk_code_length');
     expect(src).not.toContain('UPDATE promo_campaigns SET code_length');
   });
 
@@ -255,22 +271,30 @@ describe('Blocker fixes — canonical claim_promo_code behavior', () => {
     }
   });
 
-  it('uses gen_random_bytes for cryptographic randomness (not random())', () => {
-    // Must use gen_random_bytes, not PostgreSQL random()
-    expect(src).toContain('gen_random_bytes');
-    // The claim-reference section should NOT use random()
+  it('uses gen_random_bytes(8) for exactly 64 bits of cryptographic randomness', () => {
+    expect(src).toContain('gen_random_bytes(8)');
+    expect(src).toContain("encode(gen_random_bytes(8), 'hex')");
+    // Must NOT use random() or modulo-biased alphabet mapping
     const claimRefSection = src.substring(src.indexOf('High-entropy claim reference'));
     expect(claimRefSection).not.toContain('floor(random()');
+    expect(claimRefSection).not.toContain('% v_alpha_len');
   });
 
   it('collision retry wraps actual INSERT, not SELECT-before-INSERT', () => {
-    // Must NOT have the old pattern: PERFORM 1 FROM promo_redemptions WHERE claim_reference = v_claim_ref
     expect(src).not.toContain('PERFORM 1 FROM promo_redemptions WHERE claim_reference');
-    // Must catch unique_violation on the INSERT itself
     expect(src).toContain('EXCEPTION WHEN unique_violation');
   });
 
-  it('code_length constraint uses NOT VALID to preserve historical rows', () => {
-    expect(src).toContain('CHECK (code_length >= 10 AND code_length <= 24) NOT VALID');
+  it('collision retry only retries claim_reference index violations', () => {
+    expect(src).toContain('GET STACKED DIAGNOSTICS v_constraint_name = CONSTRAINT_NAME');
+    expect(src).toContain("v_constraint_name = 'idx_promo_redemptions_claim_ref_unique'");
+    expect(src).toContain('RAISE;'); // re-raises unrelated violations
+  });
+
+  it('code_length DB constraint preserved at legacy 6-24 (API enforces >=10)', () => {
+    // Migration must NOT change the DB constraint to >= 10
+    expect(src).not.toContain('CHECK (code_length >= 10');
+    // Comment explains why
+    expect(src).toContain('legacy 6-24');
   });
 });

@@ -1,21 +1,24 @@
 -- Migration 330: Promo code + claim integrity hardening
 --
--- 1. Claim reference entropy: WAA-XXXX-XXXX-XXXX (~60 bits)
---    with UNIQUE constraint and collision retry via exception handler.
+-- 1. Claim reference entropy: WAA-XXXX-XXXX-XXXX-XXXX (64 bits via gen_random_bytes(8))
+--    with UNIQUE constraint and collision retry via EXCEPTION WHEN unique_violation.
+--    Retry ONLY on claim_reference index collision; re-raises other unique violations.
 --
--- 2. code_length constraint: NEW campaigns must have code_length >= 10.
---    Historical rows preserved via NOT VALID + separate validation.
+-- 2. code_length DB constraint preserved at 6-24 (legacy compatible).
+--    API/generation layers enforce >=10 random body chars for new campaigns.
 --
 -- The claim function is restored from the canonical 325 version with
 -- ONLY the claim-reference generation changed.
 
 -- ═══════════════════════════════════════════════════════
--- Step 1: code_length constraint for NEW rows only
+-- Step 1: code_length constraint — preserve legacy 6-24
 -- ═══════════════════════════════════════════════════════
--- Drop old constraint, add NOT VALID (skips existing rows, enforces on new INSERTs/UPDATEs).
-ALTER TABLE promo_campaigns DROP CONSTRAINT IF EXISTS chk_code_length;
-ALTER TABLE promo_campaigns ADD CONSTRAINT chk_code_length
-  CHECK (code_length >= 10 AND code_length <= 24) NOT VALID;
+-- The DB constraint stays at 6-24 so historical campaigns (code_length < 10)
+-- remain updatable (pause, end, edit). Security authority for minimum 10
+-- random body chars is enforced at the creation API and generation API layers.
+-- This is intentional: the DB allows legacy rows to exist and be maintained,
+-- but the API prevents NEW weak campaigns and blocks code generation for old ones.
+-- No constraint change needed — the original chk_code_length (6-24) is correct.
 
 -- ═══════════════════════════════════════════════════════
 -- Step 2: Claim reference uniqueness
@@ -33,7 +36,7 @@ BEGIN
     RAISE NOTICE '330: Global UNIQUE index on claim_reference (no historical duplicates)';
   ELSE
     CREATE UNIQUE INDEX IF NOT EXISTS idx_promo_redemptions_claim_ref_unique
-      ON promo_redemptions (claim_reference) WHERE length(claim_reference) > 10;
+      ON promo_redemptions (claim_reference) WHERE length(claim_reference) > 15;
     RAISE NOTICE '330: Partial UNIQUE index on new-format claim_reference (% legacy dups preserved)', v_dups;
   END IF;
 END $$;
@@ -70,12 +73,10 @@ DECLARE
   v_prize_currency TEXT;
   v_elig_ack BOOLEAN;
   -- Claim-reference generation
-  v_ref_bytes BYTEA;
+  v_ref_hex TEXT;
   v_ref_attempt INT;
-  v_alphabet TEXT := '234679ACDEFGHJKMNPQRTUVWXYZ';
-  v_alpha_len INT := 27;
-  v_ref_parts TEXT[3];
   v_inserted BOOLEAN;
+  v_constraint_name TEXT;
 BEGIN
   -- ── Advisory locks (identical to 325) ──
   IF p_inbound_message_id IS NOT NULL THEN
@@ -191,20 +192,14 @@ BEGIN
   UPDATE promo_campaigns SET integrity_locked = true, updated_at = now() WHERE id = p_campaign_id AND integrity_locked = false;
 
   -- ══ CHANGED vs 325: High-entropy claim reference with collision retry ══
-  -- Generate WAA-XXXX-XXXX-XXXX using gen_random_bytes() (cryptographically secure).
-  -- 12 characters from 27-char alphabet ≈ 57 bits of entropy.
-  -- Collision retry wraps the actual INSERT via EXCEPTION handler on unique_violation.
+  -- Format: WAA-XXXX-XXXX-XXXX-XXXX (16 uppercase hex chars = exactly 64 cryptographic bits)
+  -- Source: gen_random_bytes(8) → hex → uppercase → grouped
+  -- Collision retry wraps the INSERT and inspects the violated constraint name
+  -- to distinguish claim_reference collisions from other unique violations.
   v_inserted := false;
   FOR v_ref_attempt IN 1..5 LOOP
-    -- Generate 12 random bytes, map each to alphabet position
-    v_ref_bytes := gen_random_bytes(12);
-    FOR i IN 0..2 LOOP
-      v_ref_parts[i+1] := '';
-      FOR j IN 0..3 LOOP
-        v_ref_parts[i+1] := v_ref_parts[i+1] || substr(v_alphabet, (get_byte(v_ref_bytes, i*4+j) % v_alpha_len) + 1, 1);
-      END LOOP;
-    END LOOP;
-    v_claim_ref := 'WAA-' || v_ref_parts[1] || '-' || v_ref_parts[2] || '-' || v_ref_parts[3];
+    v_ref_hex := upper(encode(gen_random_bytes(8), 'hex'));
+    v_claim_ref := 'WAA-' || substr(v_ref_hex, 1, 4) || '-' || substr(v_ref_hex, 5, 4) || '-' || substr(v_ref_hex, 9, 4) || '-' || substr(v_ref_hex, 13, 4);
 
     BEGIN
       INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, inbound_message_id, outcome, prize_id, claim_reference, claimed_at, fulfillment_status)
@@ -214,9 +209,16 @@ BEGIN
       v_inserted := true;
       EXIT; -- success
     EXCEPTION WHEN unique_violation THEN
-      -- claim_reference collision — retry with new reference
-      IF v_ref_attempt = 5 THEN
-        RAISE EXCEPTION 'claim_reference_collision_exhausted: failed after 5 attempts';
+      -- Only retry if the collision is on the claim_reference index.
+      -- Re-raise immediately for any other unique violation (promo_code_id, inbound_message_id, etc.)
+      GET STACKED DIAGNOSTICS v_constraint_name = CONSTRAINT_NAME;
+      IF v_constraint_name IS NOT NULL AND v_constraint_name = 'idx_promo_redemptions_claim_ref_unique' THEN
+        IF v_ref_attempt = 5 THEN
+          RAISE EXCEPTION 'claim_reference_collision_exhausted: failed after 5 attempts';
+        END IF;
+        -- retry with new reference
+      ELSE
+        RAISE; -- re-raise non-claim-ref unique violations immediately
       END IF;
     END;
   END LOOP;
