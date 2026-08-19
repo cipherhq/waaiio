@@ -67,6 +67,7 @@ export default function DirectoryClient() {
   const [categories, setCategories] = useState<CategoryOption[]>([{ key: '', label: 'All Categories', icon: '🔍' }]);
   const [countries, setCountries] = useState<CountryOption[]>([{ code: '', name: 'All Countries', flag: '🌍' }]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
   const [country, setCountry] = useState('');
   const [category, setCategory] = useState('');
   const [search, setSearch] = useState('');
@@ -88,17 +89,27 @@ export default function DirectoryClient() {
   useEffect(() => {
     async function load() {
       setLoading(true);
-      const params = new URLSearchParams();
-      if (country) params.set('country', country);
-      if (category) params.set('category', category);
-      if (debouncedSearch) params.set('search', debouncedSearch);
+      try {
+        const params = new URLSearchParams();
+        if (country) params.set('country', country);
+        if (category) params.set('category', category);
+        if (debouncedSearch) params.set('search', debouncedSearch);
 
-      const res = await fetch(`/api/directory?${params}`);
-      const data: DirectoryData = await res.json();
-      setBusinesses(data.businesses || []);
-      setCategories([{ key: '', label: 'All Categories', icon: '🔍' }, ...(data.categories || [])]);
-      setCountries([{ code: '', name: 'All Countries', flag: '🌍' }, ...(data.countries || [])]);
-      setLoading(false);
+        const res = await fetch(`/api/directory?${params}`);
+        if (!res.ok) {
+          setFetchError(true);
+          return;
+        }
+        const data: DirectoryData = await res.json();
+        setFetchError(false);
+        setBusinesses(data.businesses || []);
+        setCategories([{ key: '', label: 'All Categories', icon: '🔍' }, ...(data.categories || [])]);
+        setCountries([{ code: '', name: 'All Countries', flag: '🌍' }, ...(data.countries || [])]);
+      } catch {
+        setFetchError(true);
+      } finally {
+        setLoading(false);
+      }
     }
     load();
   }, [country, category, debouncedSearch]);
@@ -159,6 +170,11 @@ export default function DirectoryClient() {
         {loading ? (
           <div className="mt-12 flex justify-center">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
+          </div>
+        ) : fetchError ? (
+          <div className="mt-12 rounded-2xl border border-gray-200 bg-white py-16 text-center">
+            <p className="text-lg text-gray-500">Directory is temporarily unavailable</p>
+            <p className="mt-1 text-sm text-gray-400">Please try again in a moment</p>
           </div>
         ) : businesses.length === 0 ? (
           <div className="mt-12 rounded-2xl border border-gray-200 bg-white py-16 text-center">

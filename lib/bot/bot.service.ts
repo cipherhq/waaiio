@@ -2343,7 +2343,7 @@ export class BotService {
 
           // Handle marketplace search (no business context needed)
           if (understanding.recommendedAction === 'search_marketplace') {
-            const results = await searchMarketplace(this.supabase, {
+            const searchResult = await searchMarketplace(this.supabase, {
               category: understanding.entities.category,
               query:
                 understanding.entities.serviceName ||
@@ -2356,7 +2356,11 @@ export class BotService {
               budgetMax: understanding.entities.budgetMax,
               country: undefined, // country_code not on BusinessRecord at this point
             });
-            const formatted = formatMarketplaceResults(results, text);
+            if (!searchResult.ok) {
+              await this.sendText(from, 'Business search is temporarily unavailable. Please try again shortly.');
+              return;
+            }
+            const formatted = formatMarketplaceResults(searchResult.results, text);
             await this.sendText(from, formatted);
             return;
           }

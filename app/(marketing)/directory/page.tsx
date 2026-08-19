@@ -1,4 +1,5 @@
 import { createServiceClient } from '@/lib/supabase/service';
+import { applyDirectoryEligibility } from '@/lib/marketplace/search';
 import DirectoryClient from './DirectoryClient';
 
 export const revalidate = 60;
@@ -6,18 +7,18 @@ export const revalidate = 60;
 /**
  * Server component wrapper for directory page.
  * Pre-renders business names/categories for SEO — search engines see real content.
- * Client component handles interactive filtering.
+ * Uses the same canonical eligibility as the API/search path.
  */
 export default async function DirectoryPage() {
   // Pre-fetch business list for SEO (server-rendered HTML)
   let businessNames: Array<{ name: string; category: string; city: string }> = [];
   try {
     const supabase = createServiceClient();
-    const { data } = await supabase
-      .from('businesses')
-      .select('name, category, city')
-      .eq('status', 'active')
-      .not('bot_code', 'is', null)
+    const { data } = await applyDirectoryEligibility(
+      supabase
+        .from('businesses')
+        .select('name, category, city'),
+    )
       .order('name')
       .limit(100);
     businessNames = data || [];

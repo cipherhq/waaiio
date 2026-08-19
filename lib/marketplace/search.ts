@@ -75,26 +75,57 @@ interface BusinessRow {
   operating_hours: unknown;
 }
 
+// ── Canonical public-directory eligibility ─────────────
+// Single source of truth for both SSR and API directory paths.
+// A business is publicly discoverable when ALL of:
+//   1. status = 'active'           — business lifecycle
+//   2. bot_code IS NOT NULL        — required for WhatsApp interaction
+//   3. discovery_enabled = true    — explicit opt-in via /dashboard/discovery
+
+/** Maximum results the directory will return in a single request. */
+const DIRECTORY_MAX_RESULTS = 50;
+
+/**
+ * Apply canonical directory eligibility filters to a Supabase query on the
+ * businesses table. Used by both SSR pre-rendering and API/search paths
+ * to ensure identical eligibility semantics.
+ */
+// eslint-disable-next-line
+export function applyDirectoryEligibility(query: any): any {
+  return query
+    .eq('status', 'active')
+    .not('bot_code', 'is', null)
+    .eq('discovery_enabled', true);
+}
+
+// ── Search result type with error distinction ─────────
+
+export interface MarketplaceSearchResult {
+  results: MarketplaceResult[];
+  /** True if the search completed without database errors. */
+  ok: boolean;
+  /** Error message when ok=false (not exposed to users). */
+  error?: string;
+}
+
 // ── Main search function ───────────────────────────────
 
 export async function searchMarketplace(
   supabase: SupabaseClient,
   criteria: MarketplaceSearchCriteria,
-): Promise<MarketplaceResult[]> {
-  const limit = Math.min(criteria.limit || 5, 10);
+): Promise<MarketplaceSearchResult> {
+  const limit = Math.min(criteria.limit || 20, DIRECTORY_MAX_RESULTS);
 
   try {
-    let query = supabase
-      .from('businesses')
-      .select(
-        'id, name, category, description, address, phone, bot_code, city, slug, country_code, ' +
-        'latitude, longitude, discovery_enabled, discovery_description, price_band, ' +
-        'supports_delivery, max_group_size, is_verified, metadata, operating_hours',
-      )
-      .eq('is_active', true)
-      .eq('status', 'active')
-      // Respect discovery_enabled: treat null as true (backward compat)
-      .or('discovery_enabled.is.null,discovery_enabled.eq.true');
+    let query = applyDirectoryEligibility(
+      supabase
+        .from('businesses')
+        .select(
+          'id, name, category, description, address, phone, bot_code, city, slug, country_code, ' +
+          'latitude, longitude, discovery_enabled, discovery_description, price_band, ' +
+          'supports_delivery, max_group_size, is_verified, metadata, operating_hours',
+        ),
+    );
 
     // Category filter
     if (criteria.category) {
@@ -135,10 +166,10 @@ export async function searchMarketplace(
 
     if (error) {
       logger.error('[MARKETPLACE] Search error:', error.message);
-      return [];
+      return { results: [], ok: false, error: error.message };
     }
 
-    if (!businesses || businesses.length === 0) return [];
+    if (!businesses || businesses.length === 0) return { results: [], ok: true };
 
     // Score and rank results
     const scored = businesses.map((biz) => {
@@ -235,10 +266,10 @@ export async function searchMarketplace(
     scored.sort((a, b) => b._score - a._score);
 
     // Return top results without internal score
-    return scored.slice(0, limit).map(({ _score: _, ...rest }) => rest);
+    return { results: scored.slice(0, limit).map(({ _score: _, ...rest }) => rest), ok: true };
   } catch (err) {
     logger.error('[MARKETPLACE] Search failed:', err);
-    return [];
+    return { results: [], ok: false, error: err instanceof Error ? err.message : 'unknown' };
   }
 }
 
