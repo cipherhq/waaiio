@@ -33,6 +33,12 @@ ALTER TABLE promo_prizes
 ALTER TABLE promo_campaigns
   ADD COLUMN IF NOT EXISTS max_wins_per_participant INT;
 -- NULL = unlimited. Positive integer = max wins per phone.
+-- DB constraint: NULL or >= 1
+DO $$ BEGIN
+  ALTER TABLE promo_campaigns ADD CONSTRAINT chk_max_wins
+    CHECK (max_wins_per_participant IS NULL OR max_wins_per_participant >= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ═══════════════════════════════════════════════════════
 -- Step 4: Redemption verification snapshot
@@ -72,6 +78,10 @@ CREATE TABLE IF NOT EXISTS promo_pickup_verifications (
   send_count        INT NOT NULL DEFAULT 1,
   send_window_start TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_sent_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  delivery_status   TEXT NOT NULL DEFAULT 'pending' CHECK (delivery_status IN ('pending', 'sent', 'failed')),
+  provider_message_id TEXT,
+  delivered_at      TIMESTAMPTZ,
 
   used_at           TIMESTAMPTZ,
   verified_by       UUID REFERENCES auth.users(id),
@@ -537,7 +547,154 @@ REVOKE EXECUTE ON FUNCTION verify_promo_pickup(UUID, UUID, TEXT, UUID) FROM auth
 GRANT EXECUTE ON FUNCTION verify_promo_pickup(UUID, UUID, TEXT, UUID) TO service_role;
 
 -- ═══════════════════════════════════════════════════════
--- Step 9: Privilege verification
+-- Step 9: Atomic OTP issue authority
+-- ═══════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION issue_promo_pickup(
+  p_business_id UUID,
+  p_redemption_id UUID,
+  p_token_hmac TEXT,
+  p_expires_at TIMESTAMPTZ
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_redemption RECORD;
+  v_existing RECORD;
+  v_verification_id UUID;
+  v_new_send_count INT;
+  v_window_start TIMESTAMPTZ;
+BEGIN
+  -- Lock redemption
+  SELECT * INTO v_redemption
+  FROM promo_redemptions
+  WHERE id = p_redemption_id AND business_id = p_business_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'not_found');
+  END IF;
+  IF v_redemption.outcome != 'winner' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'not_winner');
+  END IF;
+  IF v_redemption.verification_mode != 'secure_pickup' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'not_secure_pickup');
+  END IF;
+  IF v_redemption.fulfillment_status IN ('fulfilled', 'rejected', 'cancelled') THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'terminal_fulfillment');
+  END IF;
+  IF v_redemption.verification_status = 'verified' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'already_verified');
+  END IF;
+
+  -- Check existing active token
+  SELECT * INTO v_existing
+  FROM promo_pickup_verifications
+  WHERE redemption_id = p_redemption_id AND used_at IS NULL
+  FOR UPDATE;
+
+  IF FOUND THEN
+    -- Resend cooldown: 60 seconds
+    IF v_existing.last_sent_at > now() - INTERVAL '60 seconds' THEN
+      RETURN jsonb_build_object('success', false, 'reason', 'cooldown',
+        'retry_after_seconds', EXTRACT(EPOCH FROM (v_existing.last_sent_at + INTERVAL '60 seconds' - now()))::int);
+    END IF;
+
+    -- Send window: 5 per 10 minutes
+    IF v_existing.send_window_start > now() - INTERVAL '10 minutes' AND v_existing.send_count >= 5 THEN
+      RETURN jsonb_build_object('success', false, 'reason', 'send_window_exhausted');
+    END IF;
+
+    -- Determine new send count / window
+    IF v_existing.send_window_start <= now() - INTERVAL '10 minutes' THEN
+      v_new_send_count := 1;
+      v_window_start := now();
+    ELSE
+      v_new_send_count := v_existing.send_count + 1;
+      v_window_start := v_existing.send_window_start;
+    END IF;
+
+    -- Invalidate old token
+    UPDATE promo_pickup_verifications SET used_at = now(), updated_at = now()
+    WHERE id = v_existing.id;
+  ELSE
+    v_new_send_count := 1;
+    v_window_start := now();
+  END IF;
+
+  -- If redemption was locked (attempt exhaustion), reset to phone_verified
+  -- so the new OTP can be verified
+  IF v_redemption.verification_status = 'locked' THEN
+    UPDATE promo_redemptions SET verification_status = 'phone_verified', updated_at = now()
+    WHERE id = p_redemption_id;
+  END IF;
+
+  -- Create new verification
+  INSERT INTO promo_pickup_verifications (
+    business_id, redemption_id, phone_e164,
+    token_hmac, expires_at,
+    send_count, send_window_start, last_sent_at,
+    delivery_status
+  ) VALUES (
+    p_business_id, p_redemption_id, v_redemption.phone_e164,
+    p_token_hmac, p_expires_at,
+    v_new_send_count, v_window_start, now(),
+    'pending'
+  )
+  RETURNING id INTO v_verification_id;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'verification_id', v_verification_id,
+    'phone_e164', v_redemption.phone_e164,
+    'send_count', v_new_send_count
+  );
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION issue_promo_pickup(UUID, UUID, TEXT, TIMESTAMPTZ) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION issue_promo_pickup(UUID, UUID, TEXT, TIMESTAMPTZ) FROM anon;
+REVOKE EXECUTE ON FUNCTION issue_promo_pickup(UUID, UUID, TEXT, TIMESTAMPTZ) FROM authenticated;
+GRANT EXECUTE ON FUNCTION issue_promo_pickup(UUID, UUID, TEXT, TIMESTAMPTZ) TO service_role;
+
+-- ═══════════════════════════════════════════════════════
+-- Step 10: Delivery finalization
+-- ═══════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION finalize_promo_pickup_delivery(
+  p_verification_id UUID,
+  p_status TEXT,
+  p_provider_message_id TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF p_status NOT IN ('sent', 'failed') THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'invalid_status');
+  END IF;
+
+  UPDATE promo_pickup_verifications SET
+    delivery_status = p_status,
+    provider_message_id = COALESCE(p_provider_message_id, provider_message_id),
+    delivered_at = CASE WHEN p_status = 'sent' THEN now() ELSE NULL END,
+    updated_at = now()
+  WHERE id = p_verification_id AND delivery_status = 'pending';
+
+  RETURN jsonb_build_object('success', true);
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION finalize_promo_pickup_delivery(UUID, TEXT, TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION finalize_promo_pickup_delivery(UUID, TEXT, TEXT) FROM anon;
+REVOKE EXECUTE ON FUNCTION finalize_promo_pickup_delivery(UUID, TEXT, TEXT) FROM authenticated;
+GRANT EXECUTE ON FUNCTION finalize_promo_pickup_delivery(UUID, TEXT, TEXT) TO service_role;
+
+-- ═══════════════════════════════════════════════════════
+-- Step 11: Privilege verification
 -- ═══════════════════════════════════════════════════════
 DO $$
 DECLARE v_has BOOLEAN;
@@ -559,6 +716,18 @@ BEGIN
   IF NOT v_has THEN RAISE EXCEPTION '331: service_role cannot execute verify_promo_pickup'; END IF;
   SELECT has_function_privilege('anon', 'verify_promo_pickup(uuid, uuid, text, uuid)', 'EXECUTE') INTO v_has;
   IF v_has THEN RAISE EXCEPTION '331: anon CAN execute verify_promo_pickup'; END IF;
+
+  -- issue_promo_pickup
+  SELECT has_function_privilege('service_role', 'issue_promo_pickup(uuid, uuid, text, timestamptz)', 'EXECUTE') INTO v_has;
+  IF NOT v_has THEN RAISE EXCEPTION '331: service_role cannot execute issue_promo_pickup'; END IF;
+  SELECT has_function_privilege('anon', 'issue_promo_pickup(uuid, uuid, text, timestamptz)', 'EXECUTE') INTO v_has;
+  IF v_has THEN RAISE EXCEPTION '331: anon CAN execute issue_promo_pickup'; END IF;
+
+  -- finalize_promo_pickup_delivery
+  SELECT has_function_privilege('service_role', 'finalize_promo_pickup_delivery(uuid, text, text)', 'EXECUTE') INTO v_has;
+  IF NOT v_has THEN RAISE EXCEPTION '331: service_role cannot execute finalize_promo_pickup_delivery'; END IF;
+  SELECT has_function_privilege('anon', 'finalize_promo_pickup_delivery(uuid, text, text)', 'EXECUTE') INTO v_has;
+  IF v_has THEN RAISE EXCEPTION '331: anon CAN execute finalize_promo_pickup_delivery'; END IF;
 
   RAISE NOTICE '331: All privilege checks passed';
 END $$;

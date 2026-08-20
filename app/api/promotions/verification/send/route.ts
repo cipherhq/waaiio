@@ -8,15 +8,14 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { stripPlus } from '@/lib/utils/phone';
 
 const OTP_EXPIRY_MINUTES = 10;
-const RESEND_COOLDOWN_SECONDS = 60;
-const MAX_SENDS_PER_WINDOW = 5;
-const SEND_WINDOW_MINUTES = 10;
 
 /**
  * POST /api/promotions/verification/send
  *
  * Issue a secure pickup verification OTP to the winning WhatsApp number.
+ * Uses atomic issue_promo_pickup RPC for concurrency safety.
  * Does NOT accept a destination phone — derived from the redemption record.
+ * Raw OTP never returned in API response, never logged, never stored.
  */
 export async function POST(request: NextRequest) {
   let body: Record<string, unknown>;
@@ -41,127 +40,106 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-  // Fetch redemption — phone is server-authoritative
-  const { data: redemption, error: fetchErr } = await service
+  // Read redemption phone server-side (never accept from browser)
+  const { data: redemption } = await service
     .from('promo_redemptions')
-    .select('id, business_id, phone_e164, outcome, verification_mode, verification_status, fulfillment_status')
+    .select('phone_e164')
     .eq('id', redemptionId)
     .eq('business_id', businessId)
     .maybeSingle();
 
-  if (fetchErr || !redemption) {
+  if (!redemption) {
     return NextResponse.json({ error: 'Redemption not found' }, { status: 404 });
   }
-  if (redemption.outcome !== 'winner') {
-    return NextResponse.json({ error: 'Only winner redemptions require verification' }, { status: 422 });
-  }
-  if (redemption.verification_mode !== 'secure_pickup') {
-    return NextResponse.json({ error: 'This redemption uses standard verification' }, { status: 422 });
-  }
-  if (redemption.verification_status === 'verified') {
-    return NextResponse.json({ error: 'Already verified', already_verified: true }, { status: 200 });
-  }
-  if (['fulfilled', 'rejected', 'cancelled'].includes(redemption.fulfillment_status)) {
-    return NextResponse.json({ error: 'Redemption is in terminal fulfillment state' }, { status: 422 });
-  }
+  const authoritativePhone = redemption.phone_e164;
 
-  const phone = redemption.phone_e164;
-
-  // Check existing verification — resend cooldown + window limits
-  const { data: existing } = await service
-    .from('promo_pickup_verifications')
-    .select('*')
-    .eq('redemption_id', redemptionId)
-    .is('used_at', null)
-    .maybeSingle();
-
-  if (existing) {
-    // Resend cooldown
-    const lastSent = new Date(existing.last_sent_at);
-    const cooldownEnd = new Date(lastSent.getTime() + RESEND_COOLDOWN_SECONDS * 1000);
-    if (new Date() < cooldownEnd) {
-      const remaining = Math.ceil((cooldownEnd.getTime() - Date.now()) / 1000);
-      return NextResponse.json({ error: `Please wait ${remaining} seconds before requesting a new code` }, { status: 429 });
-    }
-
-    // Send window limit
-    const windowStart = new Date(existing.send_window_start);
-    const windowEnd = new Date(windowStart.getTime() + SEND_WINDOW_MINUTES * 60 * 1000);
-    if (new Date() < windowEnd && existing.send_count >= MAX_SENDS_PER_WINDOW) {
-      return NextResponse.json({ error: 'Too many verification codes sent. Please try again later.' }, { status: 429 });
-    }
-
-    // Reset window if expired
-    const resetWindow = new Date() >= windowEnd;
-
-    // Invalidate old token by marking used
-    await service.from('promo_pickup_verifications')
-      .update({ used_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq('id', existing.id);
-
-    // Create new verification with incremented send count
-    const otp = generatePickupOtp();
-    const tokenHmac = hashPickupToken(businessId, redemptionId, phone, otp);
-
-    await service.from('promo_pickup_verifications').insert({
-      business_id: businessId,
-      redemption_id: redemptionId,
-      phone_e164: phone,
-      token_hmac: tokenHmac,
-      expires_at: new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000).toISOString(),
-      send_count: resetWindow ? 1 : existing.send_count + 1,
-      send_window_start: resetWindow ? new Date().toISOString() : existing.send_window_start,
-      last_sent_at: new Date().toISOString(),
-    });
-
-    // Send via WhatsApp — OTP only in memory, never in API response
-    try {
-      const resolver = new ChannelResolver(service);
-      const resolved = await resolver.resolveByBusinessId(businessId);
-      if (resolved?.sender) {
-        await resolved.sender.sendText({
-          to: stripPlus(phone),
-          text: `Your pickup verification code is: *${otp}*\n\nIt expires in ${OTP_EXPIRY_MINUTES} minutes.\nOnly share this code with staff when collecting your prize.`,
-        });
-      } else {
-        logger.error('[PROMO-PICKUP] No WhatsApp channel for business', businessId);
-        return NextResponse.json({ error: 'WhatsApp delivery unavailable for this business' }, { status: 503 });
-      }
-    } catch (err) {
-      logger.error('[PROMO-PICKUP] WhatsApp delivery failed:', err);
-      return NextResponse.json({ error: 'Failed to send verification code. Please try again.' }, { status: 503 });
-    }
-
-    return NextResponse.json({ sent: true, expires_in_minutes: OTP_EXPIRY_MINUTES });
-  }
-
-  // No existing verification — create first one
+  // Generate OTP in memory — never persisted as plaintext
   const otp = generatePickupOtp();
-  const tokenHmac = hashPickupToken(businessId, redemptionId, phone, otp);
+  const tokenHmac = hashPickupToken(businessId, redemptionId, authoritativePhone, otp);
+  const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000).toISOString();
 
-  await service.from('promo_pickup_verifications').insert({
-    business_id: businessId,
-    redemption_id: redemptionId,
-    phone_e164: phone,
-    token_hmac: tokenHmac,
-    expires_at: new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000).toISOString(),
+  // Atomic issue — handles locking, cooldown, window limits, lock recovery
+  const { data: issueResult, error: issueError } = await service.rpc('issue_promo_pickup', {
+    p_business_id: businessId,
+    p_redemption_id: redemptionId,
+    p_token_hmac: tokenHmac,
+    p_expires_at: expiresAt,
   });
 
-  // Send via WhatsApp
+  if (issueError) {
+    logger.error('[PROMO-PICKUP] issue RPC error:', issueError);
+    return NextResponse.json({ error: 'Failed to issue verification code' }, { status: 500 });
+  }
+
+  if (!issueResult?.success) {
+    const reason = issueResult?.reason || 'unknown';
+    if (reason === 'cooldown') {
+      return NextResponse.json({ error: `Please wait ${issueResult.retry_after_seconds} seconds before requesting a new code` }, { status: 429 });
+    }
+    if (reason === 'send_window_exhausted') {
+      return NextResponse.json({ error: 'Too many verification codes sent. Please try again later.' }, { status: 429 });
+    }
+    if (reason === 'already_verified') {
+      return NextResponse.json({ verified: true, already_verified: true });
+    }
+    return NextResponse.json({ error: `Cannot issue verification code: ${reason}` }, { status: 422 });
+  }
+
+  const verificationId = issueResult.verification_id as string;
+
+  // Send via WhatsApp — prefer template for proactive delivery
+  let deliveryStatus: 'sent' | 'failed' = 'failed';
+  let messageId: string | undefined;
+
   try {
     const resolver = new ChannelResolver(service);
     const resolved = await resolver.resolveByBusinessId(businessId);
-    if (resolved?.sender) {
-      await resolved.sender.sendText({
-        to: stripPlus(phone),
-        text: `Your pickup verification code is: *${otp}*\n\nIt expires in ${OTP_EXPIRY_MINUTES} minutes.\nOnly share this code with staff when collecting your prize.`,
-      });
-    } else {
+    if (!resolved?.sender) {
       logger.error('[PROMO-PICKUP] No WhatsApp channel for business', businessId);
+      // Mark delivery failed
+      await service.rpc('finalize_promo_pickup_delivery', {
+        p_verification_id: verificationId, p_status: 'failed',
+      });
       return NextResponse.json({ error: 'WhatsApp delivery unavailable for this business' }, { status: 503 });
+    }
+
+    // Try template first (works outside 24h window), fall back to sendText
+    const phone = stripPlus(authoritativePhone);
+    const text = `Your pickup verification code is: *${otp}*\n\nIt expires in ${OTP_EXPIRY_MINUTES} minutes.\nOnly share this code with staff when collecting your prize.`;
+
+    if (resolved.sender.sendTemplate) {
+      try {
+        const result = await resolved.sender.sendTemplate({
+          to: phone,
+          templateName: 'promo_pickup_verification',
+          templateParams: ['Prize', otp, String(OTP_EXPIRY_MINUTES)],
+        });
+        messageId = result?.messageId;
+        deliveryStatus = 'sent';
+      } catch {
+        // Template not provisioned — fall back to sendText
+        const result = await resolved.sender.sendText({ to: phone, text });
+        messageId = result?.messageId;
+        deliveryStatus = 'sent';
+      }
+    } else {
+      const result = await resolved.sender.sendText({ to: phone, text });
+      messageId = result?.messageId;
+      deliveryStatus = 'sent';
     }
   } catch (err) {
     logger.error('[PROMO-PICKUP] WhatsApp delivery failed:', err);
+    deliveryStatus = 'failed';
+  }
+
+  // Finalize delivery state atomically
+  await service.rpc('finalize_promo_pickup_delivery', {
+    p_verification_id: verificationId,
+    p_status: deliveryStatus,
+    p_provider_message_id: messageId || null,
+  });
+
+  if (deliveryStatus === 'failed') {
     return NextResponse.json({ error: 'Failed to send verification code. Please try again.' }, { status: 503 });
   }
 

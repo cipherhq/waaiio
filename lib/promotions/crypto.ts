@@ -12,21 +12,27 @@ import { encryptToken, decryptToken } from '@/lib/encryption';
 
 // HMAC key for code hashing — separate from encryption key
 const PROMO_HMAC_KEY = process.env.PROMO_HMAC_KEY || process.env.TOKEN_ENCRYPTION_KEY || '';
+const DEV_FALLBACK_KEY = 'dev-promo-key';
+
+/**
+ * Canonical HMAC key resolver — fail-closed in production.
+ * Both hashPromoCode and hashPickupToken use this so security
+ * semantics cannot diverge.
+ */
+function resolveHmacKey(): string {
+  if (PROMO_HMAC_KEY) return PROMO_HMAC_KEY;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('PROMO_HMAC_KEY or TOKEN_ENCRYPTION_KEY must be configured in production');
+  }
+  return DEV_FALLBACK_KEY;
+}
 
 /**
  * Generate HMAC-SHA256 hash of a normalized promo code.
  * Used for indexed lookup — never store raw codes, always hash.
  */
 export function hashPromoCode(normalizedCode: string): string {
-  if (!PROMO_HMAC_KEY) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('PROMO_HMAC_KEY or TOKEN_ENCRYPTION_KEY must be configured in production');
-    }
-    return createHmac('sha256', 'dev-promo-key')
-      .update(normalizedCode)
-      .digest('hex');
-  }
-  return createHmac('sha256', PROMO_HMAC_KEY)
+  return createHmac('sha256', resolveHmacKey())
     .update(normalizedCode)
     .digest('hex');
 }
@@ -141,7 +147,6 @@ export function hashPickupToken(
   phoneE164: string,
   token: string,
 ): string {
-  const key = PROMO_HMAC_KEY || 'dev-promo-key';
   const input = `promo-pickup-v1|${businessId}|${redemptionId}|${phoneE164}|${token}`;
-  return createHmac('sha256', key).update(input).digest('hex');
+  return createHmac('sha256', resolveHmacKey()).update(input).digest('hex');
 }

@@ -79,6 +79,14 @@ const WAAIIO_TEMPLATES: TemplateDefinition[] = [
       { type: 'BODY', text: '{{1}} would like your feedback!\n\n{{2}}\n\nTap below to respond.', example: { body_text: [['Runway Salon', 'How was your recent visit?']] } },
     ],
   },
+  {
+    name: 'promo_pickup_verification',
+    category: 'UTILITY',
+    language: 'en_US',
+    components: [
+      { type: 'BODY', text: 'Your {{1}} pickup verification code is {{2}}.\nIt expires in {{3}} minutes.\nOnly share this code with staff when collecting your prize.', example: { body_text: [['Prize', '123456', '10']] } },
+    ],
+  },
 ];
 
 /**
