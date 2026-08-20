@@ -477,6 +477,11 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'reason', 'not_secure_pickup');
   END IF;
 
+  -- Block verification after terminal fulfillment
+  IF v_redemption.fulfillment_status IN ('fulfilled', 'rejected', 'cancelled') THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'terminal_fulfillment');
+  END IF;
+
   -- Already verified — idempotent success
   IF v_redemption.verification_status = 'verified' THEN
     RETURN jsonb_build_object('success', true, 'already_verified', true);
@@ -486,13 +491,19 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'reason', 'verification_locked');
   END IF;
 
-  -- Find active (unused, unexpired) verification record
+  -- Find active (unused) verification record that was successfully delivered
   SELECT * INTO v_verification
   FROM promo_pickup_verifications
-  WHERE redemption_id = p_redemption_id AND used_at IS NULL
+  WHERE redemption_id = p_redemption_id AND used_at IS NULL AND delivery_status = 'sent'
   FOR UPDATE;
 
   IF NOT FOUND THEN
+    -- Check if there's a pending/failed token instead
+    PERFORM 1 FROM promo_pickup_verifications
+    WHERE redemption_id = p_redemption_id AND used_at IS NULL AND delivery_status IN ('pending', 'failed');
+    IF FOUND THEN
+      RETURN jsonb_build_object('success', false, 'reason', 'token_not_delivered');
+    END IF;
     RETURN jsonb_build_object('success', false, 'reason', 'no_active_token');
   END IF;
 
@@ -683,6 +694,10 @@ BEGIN
     delivered_at = CASE WHEN p_status = 'sent' THEN now() ELSE NULL END,
     updated_at = now()
   WHERE id = p_verification_id AND delivery_status = 'pending';
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'no_pending_verification');
+  END IF;
 
   RETURN jsonb_build_object('success', true);
 END;

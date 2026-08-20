@@ -1337,6 +1337,12 @@ function validateStep(step: number, state: WizardState): string[] {
         errors.push('Minimum age is required and must be a positive integer for age confirmation.');
       }
     }
+    if (state.max_wins_per_participant !== '' && state.max_wins_per_participant !== null && state.max_wins_per_participant !== undefined) {
+      const mw = Number(state.max_wins_per_participant);
+      if (!Number.isFinite(mw) || !Number.isInteger(mw) || mw < 1) {
+        errors.push('Maximum wins per participant must be a positive integer or left empty for unlimited.');
+      }
+    }
   }
   return errors;
 }

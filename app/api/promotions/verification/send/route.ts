@@ -87,57 +87,49 @@ export async function POST(request: NextRequest) {
 
   const verificationId = issueResult.verification_id as string;
 
-  // Send via WhatsApp — prefer template for proactive delivery
+  // Send via WhatsApp — template-only for proactive delivery (outside 24h window)
+  // No sendText fallback: if template is not provisioned, delivery fails safely.
+  // Rollout note: connected WABAs must have promo_pickup_verification approved
+  // before Secure Pickup is exposed through PR #147.
   let deliveryStatus: 'sent' | 'failed' = 'failed';
   let messageId: string | undefined;
 
   try {
     const resolver = new ChannelResolver(service);
     const resolved = await resolver.resolveByBusinessId(businessId);
-    if (!resolved?.sender) {
-      logger.error('[PROMO-PICKUP] No WhatsApp channel for business', businessId);
-      // Mark delivery failed
-      await service.rpc('finalize_promo_pickup_delivery', {
+    if (!resolved?.sender || !resolved.sender.sendTemplate) {
+      logger.error('[PROMO-PICKUP] No template-capable WhatsApp channel for business', businessId);
+      const { data: finResult } = await service.rpc('finalize_promo_pickup_delivery', {
         p_verification_id: verificationId, p_status: 'failed',
       });
-      return NextResponse.json({ error: 'WhatsApp delivery unavailable for this business' }, { status: 503 });
+      if (!finResult?.success) logger.error('[PROMO-PICKUP] delivery finalization also failed');
+      return NextResponse.json({ error: 'WhatsApp template delivery unavailable for this business' }, { status: 503 });
     }
 
-    // Try template first (works outside 24h window), fall back to sendText
     const phone = stripPlus(authoritativePhone);
-    const text = `Your pickup verification code is: *${otp}*\n\nIt expires in ${OTP_EXPIRY_MINUTES} minutes.\nOnly share this code with staff when collecting your prize.`;
-
-    if (resolved.sender.sendTemplate) {
-      try {
-        const result = await resolved.sender.sendTemplate({
-          to: phone,
-          templateName: 'promo_pickup_verification',
-          templateParams: ['Prize', otp, String(OTP_EXPIRY_MINUTES)],
-        });
-        messageId = result?.messageId;
-        deliveryStatus = 'sent';
-      } catch {
-        // Template not provisioned — fall back to sendText
-        const result = await resolved.sender.sendText({ to: phone, text });
-        messageId = result?.messageId;
-        deliveryStatus = 'sent';
-      }
-    } else {
-      const result = await resolved.sender.sendText({ to: phone, text });
-      messageId = result?.messageId;
-      deliveryStatus = 'sent';
-    }
+    const result = await resolved.sender.sendTemplate({
+      to: phone,
+      templateName: 'promo_pickup_verification',
+      templateParams: ['Prize', otp, String(OTP_EXPIRY_MINUTES)],
+    });
+    messageId = result?.messageId;
+    deliveryStatus = 'sent';
   } catch (err) {
-    logger.error('[PROMO-PICKUP] WhatsApp delivery failed:', err);
+    logger.error('[PROMO-PICKUP] WhatsApp template delivery failed:', err);
     deliveryStatus = 'failed';
   }
 
   // Finalize delivery state atomically
-  await service.rpc('finalize_promo_pickup_delivery', {
+  const { data: finResult, error: finError } = await service.rpc('finalize_promo_pickup_delivery', {
     p_verification_id: verificationId,
     p_status: deliveryStatus,
     p_provider_message_id: messageId || null,
   });
+  if (finError || !finResult?.success) {
+    logger.error('[PROMO-PICKUP] delivery finalization failed:', finError || finResult?.reason);
+    // Delivery may have succeeded but finalization failed — don't claim success
+    return NextResponse.json({ error: 'Verification code delivery could not be confirmed. Please try again.' }, { status: 503 });
+  }
 
   if (deliveryStatus === 'failed') {
     return NextResponse.json({ error: 'Failed to send verification code. Please try again.' }, { status: 503 });

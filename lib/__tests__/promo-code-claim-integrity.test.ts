@@ -538,3 +538,82 @@ describe('Server fraud-control validation', () => {
     expect(src).toContain('eligibility_min_age = null');
   });
 });
+
+describe('Winner API/UI contract', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const detailSrc = fs.readFileSync(path.resolve(__dirname, '../../app/dashboard/promotions/[id]/page.tsx'), 'utf-8');
+
+  it('winner dashboard uses API prize_name directly (no stale re-enrichment)', () => {
+    // Must NOT re-enrich winners from prize_id map
+    expect(detailSrc).not.toContain("prizeMap.get(w.prize_id)");
+    expect(detailSrc).not.toContain("? prizeMap.get");
+    // Winners data set directly from API
+    expect(detailSrc).toContain('data.winners ||');
+  });
+
+  it('phone not double-masked in winner table', () => {
+    // The table cell should use winner.phone_e164 directly (already masked by API)
+    expect(detailSrc).toContain('{winner.phone_e164}');
+    // Should NOT call maskPhone on already-masked phone in table
+    expect(detailSrc).not.toContain('maskPhone(winner.phone_e164)');
+  });
+});
+
+describe('Delivery authority', () => {
+  it('send route uses template-only delivery (no sendText fallback)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/promotions/verification/send/route.ts', 'utf-8');
+    expect(src).toContain('sendTemplate');
+    // No sendText call — only template delivery
+    expect(src).not.toMatch(/sender\.sendText\(/);
+    // Checks finalization result
+    expect(src).toContain('finResult?.success');
+  });
+
+  it('verify RPC requires delivery_status = sent', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('supabase/migrations/331_promo_winner_security.sql', 'utf-8');
+    // verify_promo_pickup only selects tokens with delivery_status = 'sent'
+    expect(src).toContain("delivery_status = 'sent'");
+    expect(src).toContain("token_not_delivered");
+  });
+
+  it('raw OTP not in send API response', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/promotions/verification/send/route.ts', 'utf-8');
+    // Response only includes { sent: true, expires_in_minutes }
+    expect(src).toContain("sent: true, expires_in_minutes");
+    // OTP variable is used only for HMAC and template params, never in response
+    expect(src).not.toMatch(/NextResponse\.json\([^)]*otp/);
+  });
+});
+
+describe('HMAC production fail-closed', () => {
+  it('hashPickupToken uses same resolveHmacKey as hashPromoCode', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/promotions/crypto.ts', 'utf-8');
+    // Both must call resolveHmacKey()
+    const hmacCalls = src.match(/resolveHmacKey\(\)/g) || [];
+    expect(hmacCalls.length).toBeGreaterThanOrEqual(2);
+    // resolveHmacKey throws in production
+    expect(src).toContain("throw new Error('PROMO_HMAC_KEY or TOKEN_ENCRYPTION_KEY must be configured in production')");
+  });
+});
+
+describe('Max wins client validation', () => {
+  it('wizard rejects 0, negative, fractional max_wins', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');
+    expect(src).toContain('Maximum wins per participant must be a positive integer');
+    expect(src).toContain('Number.isInteger(mw)');
+  });
+
+  it('modal updates verification state after successful verify', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(path.resolve(__dirname, '../../app/dashboard/promotions/[id]/page.tsx'), 'utf-8');
+    expect(src).toContain("verification_status: 'verified'");
+    expect(src).toContain('setFulfillmentModalWinner');
+  });
+});

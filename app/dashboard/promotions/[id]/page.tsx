@@ -463,8 +463,6 @@ export default function PromotionDetailPage() {
     if (!campaign) return;
     setWinnersLoading(true);
     try {
-      // Fetch redemptions via a dedicated winners endpoint (to be created)
-      // For now, fetch from analytics to confirm we have data, and use a stub
       const params = new URLSearchParams({
         businessId: business.id,
         campaignId: id,
@@ -472,15 +470,9 @@ export default function PromotionDetailPage() {
       const res = await fetch(`/api/promotions/winners?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
-        // Enrich with prize names
-        const prizeMap = new Map(prizes.map((p) => [p.id, p.name]));
-        const enriched = (data.winners || []).map((w: Winner) => ({
-          ...w,
-          prize_name: w.prize_id ? prizeMap.get(w.prize_id) || 'Unknown Prize' : 'Try Again',
-        }));
-        setWinners(enriched);
+        // Winners API is canonical — prize_name already resolved via JOIN
+        setWinners(data.winners || []);
       } else {
-        // winners endpoint not yet implemented — show empty state
         setWinners([]);
       }
     } catch {
@@ -1906,8 +1898,11 @@ export default function PromotionDetailPage() {
                         const data = await res.json();
                         if (res.ok && data.sent) {
                           setPickupMessage('Verification code sent to winner\'s WhatsApp.');
+                          // If was locked, issue resets to phone_verified — update modal
+                          setFulfillmentModalWinner((prev) => prev?.verification_status === 'locked' ? { ...prev, verification_status: 'phone_verified' } : prev);
                         } else if (data.already_verified) {
                           setPickupMessage('Already verified!');
+                          setFulfillmentModalWinner((prev) => prev ? { ...prev, verification_status: 'verified' } : null);
                           fetchWinnersFromApi();
                         } else {
                           setPickupMessage(data.error || 'Failed to send code.');
@@ -1945,6 +1940,8 @@ export default function PromotionDetailPage() {
                         if (res.ok && data.verified) {
                           setPickupMessage('Verified successfully!');
                           setPickupOtp('');
+                          // Update modal winner state immediately so fulfillment becomes available
+                          setFulfillmentModalWinner((prev) => prev ? { ...prev, verification_status: 'verified', verified_at: new Date().toISOString() } : null);
                           fetchWinnersFromApi();
                         } else {
                           setPickupMessage(data.error || 'Verification failed.');
