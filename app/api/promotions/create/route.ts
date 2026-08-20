@@ -13,6 +13,7 @@ interface PrizeInput {
   value?: number;
   currency?: string;
   fulfillment_instructions?: string | null;
+  verification_mode?: string;
   sort_order?: number;
 }
 
@@ -74,6 +75,7 @@ export async function POST(request: NextRequest) {
     eligibility_mode,
     eligibility_prompt,
     eligibility_min_age,
+    max_wins_per_participant,
     winner_message,
     try_again_message,
     invalid_message,
@@ -93,6 +95,7 @@ export async function POST(request: NextRequest) {
     max_attempts_per_phone?: number;
     rate_limit_window_minutes?: number;
     rate_limit_max_attempts?: number;
+    max_wins_per_participant?: number | null;
     eligibility_mode?: string;
     eligibility_prompt?: string | null;
     eligibility_min_age?: number | null;
@@ -206,6 +209,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'eligibility_min_age must be a positive integer' }, { status: 400 });
     }
   }
+  if (max_wins_per_participant !== undefined && max_wins_per_participant !== null) {
+    const v = Number(max_wins_per_participant);
+    if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+      return NextResponse.json({ error: 'max_wins_per_participant must be a positive integer or null (unlimited)' }, { status: 400 });
+    }
+  }
+
+  // Validate prize verification_mode
+  const validVerificationModes = ['standard', 'secure_pickup'];
+  for (let i = 0; i < prizeList.length; i++) {
+    const p = prizeList[i];
+    if (p.verification_mode && !validVerificationModes.includes(p.verification_mode as string)) {
+      return NextResponse.json({ error: `prizes[${i}].verification_mode must be one of: ${validVerificationModes.join(', ')}` }, { status: 400 });
+    }
+  }
 
   // Insert campaign
   const { data: campaign, error: campaignError } = await service
@@ -229,6 +247,7 @@ export async function POST(request: NextRequest) {
       eligibility_mode: eligibility_mode || 'none',
       eligibility_prompt: eligibility_prompt?.trim() || null,
       eligibility_min_age: eligibility_min_age || null,
+      max_wins_per_participant: max_wins_per_participant ?? null,
       winner_message: winner_message.trim(),
       try_again_message: try_again_message.trim(),
       invalid_message: invalid_message.trim(),
@@ -260,6 +279,7 @@ export async function POST(request: NextRequest) {
           value: p.value ?? null,
           currency: p.currency?.toUpperCase() || null,
           fulfillment_instructions: p.fulfillment_instructions?.trim() || null,
+          verification_mode: p.verification_mode || 'standard',
           sort_order: p.sort_order ?? i,
         })),
       )

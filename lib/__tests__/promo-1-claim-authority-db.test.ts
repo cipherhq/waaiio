@@ -1206,4 +1206,506 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
     expect(r.output).toContain('unique'); // promo_code_id uniqueness
   });
   }); // end Migration 330
+
+  // ═══════════════════════════════════════════════════════
+  // MIGRATION 331: Winner Security — Real DB tests
+  // ═══════════════════════════════════════════════════════
+  describe('Migration 331: Winner Security', () => {
+    const M331_BIZ = '00000000-0000-0000-0331-000000000001';
+    const M331_CAMP = '00000000-0000-0000-0331-100000000001';
+    const M331_CAMP_MAXWIN = '00000000-0000-0000-0331-100000000002';
+    const M331_PRIZE_STD = '00000000-0000-0000-0331-200000000001';
+    const M331_PRIZE_PICKUP = '00000000-0000-0000-0331-200000000002';
+    const M331_BATCH = '00000000-0000-0000-0331-300000000001';
+    const M331_BATCH_MW = '00000000-0000-0000-0331-300000000002';
+
+    function m331Hash(code: string): string {
+      return createHmac('sha256', 'dev-promo-key').update(code).digest('hex');
+    }
+
+    beforeAll(() => {
+      // Apply migration 331
+      const fs = require('fs');
+      psql(fs.readFileSync('supabase/migrations/331_promo_winner_security.sql', 'utf-8'));
+
+      // Create test data
+      psql(`
+        INSERT INTO businesses (id, name, slug) VALUES ('${M331_BIZ}', 'M331Biz', 'm331') ON CONFLICT DO NOTHING;
+
+        -- Campaign with max_wins_per_participant = 1
+        INSERT INTO promo_campaigns (id, business_id, name, status, keyword, code_entry_mode, code_length,
+          rate_limit_max_attempts, rate_limit_window_minutes, max_attempts_per_phone, max_wins_per_participant)
+        VALUES ('${M331_CAMP_MAXWIN}', '${M331_BIZ}', 'MaxWin1', 'active', 'MW1', 'keyword', 12, 10, 60, 50, 1);
+
+        -- Campaign without max_wins (unlimited)
+        INSERT INTO promo_campaigns (id, business_id, name, status, keyword, code_entry_mode, code_length,
+          rate_limit_max_attempts, rate_limit_window_minutes, max_attempts_per_phone)
+        VALUES ('${M331_CAMP}', '${M331_BIZ}', 'M331Test', 'active', 'M331', 'keyword', 12, 10, 60, 50);
+
+        -- Standard prize
+        INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity, verification_mode)
+        VALUES ('${M331_PRIZE_STD}', '${M331_CAMP}', 'StdPrize', 'cash', 10, 'standard');
+
+        -- Secure pickup prize
+        INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity, verification_mode)
+        VALUES ('${M331_PRIZE_PICKUP}', '${M331_CAMP}', 'PickupPrize', 'product', 5, 'secure_pickup');
+
+        INSERT INTO promo_code_batches (id, campaign_id, source, requested_count, generated_count, status)
+        VALUES ('${M331_BATCH}', '${M331_CAMP}', 'generated', 20, 20, 'completed');
+        INSERT INTO promo_code_batches (id, campaign_id, source, requested_count, generated_count, status)
+        VALUES ('${M331_BATCH_MW}', '${M331_CAMP_MAXWIN}', 'generated', 10, 10, 'completed');
+
+        -- Standard winner code
+        INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, prize_id, status)
+        VALUES ('${M331_BIZ}', '${M331_CAMP}', '${M331_BATCH}', '${m331Hash('M331STDWIN01')}', 'N01', 'winner', '${M331_PRIZE_STD}', 'unused');
+
+        -- Secure pickup winner code
+        INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, prize_id, status)
+        VALUES ('${M331_BIZ}', '${M331_CAMP}', '${M331_BATCH}', '${m331Hash('M331PICKUP01')}', 'P01', 'winner', '${M331_PRIZE_PICKUP}', 'unused');
+
+        -- Try-again code
+        INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, status)
+        VALUES ('${M331_BIZ}', '${M331_CAMP}', '${M331_BATCH}', '${m331Hash('M331TRYAGN01')}', 'A01', 'try_again', 'unused');
+
+        -- Max-wins campaign: 2 winner codes + prize
+        INSERT INTO promo_prizes (campaign_id, name, prize_type, quantity, verification_mode)
+        VALUES ('${M331_CAMP_MAXWIN}', 'MWPrize', 'cash', 10, 'standard');
+
+        INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, prize_id, status)
+        SELECT '${M331_BIZ}', '${M331_CAMP_MAXWIN}', '${M331_BATCH_MW}', '${m331Hash('M331MAXWIN01')}', 'W01', 'winner', id, 'unused'
+        FROM promo_prizes WHERE campaign_id = '${M331_CAMP_MAXWIN}' LIMIT 1;
+
+        INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, prize_id, status)
+        SELECT '${M331_BIZ}', '${M331_CAMP_MAXWIN}', '${M331_BATCH_MW}', '${m331Hash('M331MAXWIN02')}', 'W02', 'winner', id, 'unused'
+        FROM promo_prizes WHERE campaign_id = '${M331_CAMP_MAXWIN}' LIMIT 1;
+
+        -- Try-again code for max-wins campaign
+        INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, status)
+        VALUES ('${M331_BIZ}', '${M331_CAMP_MAXWIN}', '${M331_BATCH_MW}', '${m331Hash('M331MWTRY01')}', 'T01', 'try_again', 'unused');
+
+        GRANT EXECUTE ON FUNCTION claim_promo_code(UUID, UUID, TEXT, TEXT, TEXT) TO service_role;
+        GRANT EXECUTE ON FUNCTION transition_promo_fulfillment(UUID, UUID, TEXT, UUID, TEXT, TEXT) TO service_role;
+        GRANT EXECUTE ON FUNCTION verify_promo_pickup(UUID, UUID, TEXT, UUID) TO service_role;
+      `);
+    });
+
+    afterAll(() => {
+      if (!canRun) return;
+      psql(`
+        DELETE FROM promo_pickup_verifications WHERE business_id = '${M331_BIZ}';
+        DELETE FROM promo_verification_attempts WHERE business_id = '${M331_BIZ}';
+        DELETE FROM promo_redemptions WHERE business_id = '${M331_BIZ}';
+        DELETE FROM promo_campaign_codes WHERE business_id = '${M331_BIZ}';
+        DELETE FROM promo_code_batches WHERE campaign_id IN ('${M331_CAMP}', '${M331_CAMP_MAXWIN}');
+        DELETE FROM promo_prizes WHERE campaign_id IN ('${M331_CAMP}', '${M331_CAMP_MAXWIN}');
+        DELETE FROM promo_campaigns WHERE business_id = '${M331_BIZ}';
+        DELETE FROM businesses WHERE id = '${M331_BIZ}';
+      `);
+    });
+
+    // ── MAX WINS ──
+
+    it('M331-1. unlimited max_wins (NULL) allows multiple wins', () => {
+      const r = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP}','${m331Hash('M331STDWIN01')}','+331001','m331_1'); RESET ROLE;`);
+      expect(r.success).toBe(true);
+      expect(r.result).toBe('winner');
+    });
+
+    it('M331-2. max_wins=1 first winner succeeds', () => {
+      const r = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP_MAXWIN}','${m331Hash('M331MAXWIN01')}','+331010','m331_2'); RESET ROLE;`);
+      expect(r.success).toBe(true);
+      expect(r.result).toBe('winner');
+    });
+
+    it('M331-3. max_wins=1 second win by same phone blocked before code consumption', () => {
+      const r = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP_MAXWIN}','${m331Hash('M331MAXWIN02')}','+331010','m331_3'); RESET ROLE;`);
+      expect(r.success).toBe(false);
+      expect(r.result).toBe('not_eligible');
+      expect(r.reason).toBe('max_wins_reached');
+    });
+
+    it('M331-4. blocked code remains unused', () => {
+      const status = psql(`SELECT status FROM promo_campaign_codes WHERE normalized_code_hash = '${m331Hash('M331MAXWIN02')}';`);
+      expect(status).toBe('unused');
+    });
+
+    it('M331-5. another phone can still claim the unused code', () => {
+      const r = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP_MAXWIN}','${m331Hash('M331MAXWIN02')}','+331020','m331_5'); RESET ROLE;`);
+      expect(r.success).toBe(true);
+      expect(r.result).toBe('winner');
+    });
+
+    it('M331-6. try_again does not count toward max wins (fresh code for capped phone)', () => {
+      // +331010 already has 1 win (max). A try_again result doesn't count as a win,
+      // but max_wins check happens BEFORE code lookup, so the phone is blocked.
+      // Use a phone with 0 wins to prove try_again doesn't increment win count.
+      const r = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP_MAXWIN}','${m331Hash('M331MWTRY01')}','+331050','m331_6'); RESET ROLE;`);
+      expect(r.success).toBe(true);
+      expect(r.result).toBe('try_again');
+      // This phone now has 0 wins + 1 try_again. A second claim should NOT be blocked by max_wins.
+      // (Would need another winner code to test, but the try_again didn't consume a win slot)
+      const winCount = psql(`SELECT count(*) FROM promo_redemptions WHERE campaign_id = '${M331_CAMP_MAXWIN}' AND phone_e164 = '+331050' AND outcome = 'winner';`);
+      expect(parseInt(winCount)).toBe(0);
+    });
+
+    // ── VERIFICATION SNAPSHOT ──
+
+    it('M331-7. standard prize winner snapshots standard + phone_verified', () => {
+      const row = psql(`SELECT verification_mode, verification_status FROM promo_redemptions
+        WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331001' AND outcome = 'winner';`);
+      expect(row).toContain('standard');
+      expect(row).toContain('phone_verified');
+    });
+
+    it('M331-8. secure_pickup prize winner snapshots secure_pickup + phone_verified', () => {
+      // Claim a secure_pickup code
+      const r = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP}','${m331Hash('M331PICKUP01')}','+331030','m331_8'); RESET ROLE;`);
+      expect(r.success).toBe(true);
+      expect(r.verification_mode).toBe('secure_pickup');
+      expect(r.verification_status).toBe('phone_verified');
+    });
+
+    it('M331-9. try_again verification status is not_required', () => {
+      const r = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP}','${m331Hash('M331TRYAGN01')}','+331040','m331_9'); RESET ROLE;`);
+      expect(r.success).toBe(true);
+      expect(r.result).toBe('try_again');
+      const status = psql(`SELECT verification_status FROM promo_redemptions WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331040';`);
+      expect(status).toBe('not_required');
+    });
+
+    // ── FULFILLMENT RPC ──
+
+    it('M331-10. standard phone_verified winner can be fulfilled', () => {
+      const redemptionId = psql(`SELECT id FROM promo_redemptions WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331001' AND outcome = 'winner';`);
+      const r = psqlJson(`SET ROLE service_role; SELECT transition_promo_fulfillment('${M331_BIZ}', '${redemptionId}', 'fulfilled', '${USER_ID}', 'REF-001', 'delivered'); RESET ROLE;`);
+      expect(r.success).toBe(true);
+      expect(r.new_status).toBe('fulfilled');
+
+      // fulfilled_by must be populated
+      const fulfilledBy = psql(`SELECT fulfilled_by FROM promo_redemptions WHERE id = '${redemptionId}';`);
+      expect(fulfilledBy).toBe(USER_ID);
+      const fulfilledAt = psql(`SELECT fulfilled_at IS NOT NULL FROM promo_redemptions WHERE id = '${redemptionId}';`);
+      expect(fulfilledAt).toBe('t');
+    });
+
+    it('M331-11. secure_pickup unverified cannot be fulfilled', () => {
+      const redemptionId = psql(`SELECT id FROM promo_redemptions WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331030' AND outcome = 'winner';`);
+      const r = psqlJson(`SET ROLE service_role; SELECT transition_promo_fulfillment('${M331_BIZ}', '${redemptionId}', 'fulfilled', '${USER_ID}'); RESET ROLE;`);
+      expect(r.success).toBe(false);
+      expect(r.reason).toBe('secure_pickup_verification_required');
+    });
+
+    it('M331-12. fulfilled terminal state cannot be overwritten', () => {
+      const redemptionId = psql(`SELECT id FROM promo_redemptions WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331001' AND outcome = 'winner';`);
+      const r = psqlJson(`SET ROLE service_role; SELECT transition_promo_fulfillment('${M331_BIZ}', '${redemptionId}', 'rejected', '${USER_ID}'); RESET ROLE;`);
+      expect(r.success).toBe(false);
+      expect(r.reason).toBe('invalid_transition');
+    });
+
+    it('M331-13. wrong business fails fulfillment', () => {
+      const redemptionId = psql(`SELECT id FROM promo_redemptions WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331001' LIMIT 1;`);
+      const r = psqlJson(`SET ROLE service_role; SELECT transition_promo_fulfillment('${BIZ_ID}', '${redemptionId}', 'fulfilled', '${USER_ID}'); RESET ROLE;`);
+      expect(r.success).toBe(false);
+      expect(r.reason).toBe('not_found');
+    });
+
+    // ── PRIVILEGE HARDENING ──
+
+    it('M331-14. transition_promo_fulfillment service_role only', () => {
+      const r = psql(`SELECT has_function_privilege('anon', 'transition_promo_fulfillment(uuid, uuid, text, uuid, text, text)', 'EXECUTE');`);
+      expect(r).toBe('f');
+      const r2 = psql(`SELECT has_function_privilege('service_role', 'transition_promo_fulfillment(uuid, uuid, text, uuid, text, text)', 'EXECUTE');`);
+      expect(r2).toBe('t');
+    });
+
+    it('M331-15. verify_promo_pickup service_role only', () => {
+      const r = psql(`SELECT has_function_privilege('anon', 'verify_promo_pickup(uuid, uuid, text, uuid)', 'EXECUTE');`);
+      expect(r).toBe('f');
+      const r2 = psql(`SELECT has_function_privilege('service_role', 'verify_promo_pickup(uuid, uuid, text, uuid)', 'EXECUTE');`);
+      expect(r2).toBe('t');
+    });
+
+    // ── REGRESSION ──
+
+    it('M331-16. claim reference format unchanged (WAA-XXXX-XXXX-XXXX-XXXX)', () => {
+      const refs = psql(`SELECT claim_reference FROM promo_redemptions WHERE business_id = '${M331_BIZ}' LIMIT 1;`);
+      expect(refs).toMatch(/^WAA-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/);
+    });
+
+    // ── OTP ISSUE / VERIFY AUTHORITY ──
+
+    it('M331-17. issue_promo_pickup first issue succeeds', () => {
+      const redemptionId = psql(`SELECT id FROM promo_redemptions WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331030' AND outcome = 'winner';`);
+      const r = psqlJson(`SET ROLE service_role; SELECT issue_promo_pickup('${M331_BIZ}', '${redemptionId}', 'test_hmac_1', (now() + interval '10 minutes')::timestamptz); RESET ROLE;`);
+      expect(r.success).toBe(true);
+      expect(r.verification_id).toBeTruthy();
+      expect(r.phone_e164).toBe('+331030');
+      expect(r.send_count).toBe(1);
+    });
+
+    it('M331-18. resend cooldown enforced (within 60s)', () => {
+      const redemptionId = psql(`SELECT id FROM promo_redemptions WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331030' AND outcome = 'winner';`);
+      const r = psqlJson(`SET ROLE service_role; SELECT issue_promo_pickup('${M331_BIZ}', '${redemptionId}', 'test_hmac_2', (now() + interval '10 minutes')::timestamptz); RESET ROLE;`);
+      expect(r.success).toBe(false);
+      expect(r.reason).toBe('cooldown');
+    });
+
+    it('M331-19. pending delivery token cannot verify', () => {
+      const redemptionId = psql(`SELECT id FROM promo_redemptions WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331030' AND outcome = 'winner';`);
+      // Token exists but delivery_status = 'pending' (not yet finalized to 'sent')
+      const r = psqlJson(`SET ROLE service_role; SELECT verify_promo_pickup('${M331_BIZ}', '${redemptionId}', 'test_hmac_1', '${USER_ID}'); RESET ROLE;`);
+      expect(r.success).toBe(false);
+      expect(r.reason).toBe('token_not_delivered');
+    });
+
+    it('M331-20. sent token can verify with correct HMAC', () => {
+      // Finalize delivery as sent
+      const verificationId = psql(`SELECT id FROM promo_pickup_verifications WHERE redemption_id = (SELECT id FROM promo_redemptions WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331030' AND outcome = 'winner') AND used_at IS NULL;`);
+      psql(`SET ROLE service_role; SELECT finalize_promo_pickup_delivery('${verificationId}', 'sent'); RESET ROLE;`);
+
+      const redemptionId = psql(`SELECT id FROM promo_redemptions WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331030' AND outcome = 'winner';`);
+      const r = psqlJson(`SET ROLE service_role; SELECT verify_promo_pickup('${M331_BIZ}', '${redemptionId}', 'test_hmac_1', '${USER_ID}'); RESET ROLE;`);
+      expect(r.success).toBe(true);
+      expect(r.verified).toBe(true);
+
+      // Verification status updated
+      const status = psql(`SELECT verification_status FROM promo_redemptions WHERE id = '${redemptionId}';`);
+      expect(status).toBe('verified');
+      const verifiedBy = psql(`SELECT verified_by FROM promo_redemptions WHERE id = '${redemptionId}';`);
+      expect(verifiedBy).toBe(USER_ID);
+    });
+
+    it('M331-21. secure_pickup verified can now be fulfilled', () => {
+      const redemptionId = psql(`SELECT id FROM promo_redemptions WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331030' AND outcome = 'winner';`);
+      const r = psqlJson(`SET ROLE service_role; SELECT transition_promo_fulfillment('${M331_BIZ}', '${redemptionId}', 'fulfilled', '${USER_ID}', 'PICKUP-001', 'collected in store'); RESET ROLE;`);
+      expect(r.success).toBe(true);
+      expect(r.new_status).toBe('fulfilled');
+    });
+
+    it('M331-22. terminal fulfillment blocks verification', () => {
+      const redemptionId = psql(`SELECT id FROM promo_redemptions WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331030' AND outcome = 'winner';`);
+      const r = psqlJson(`SET ROLE service_role; SELECT verify_promo_pickup('${M331_BIZ}', '${redemptionId}', 'any_hmac', '${USER_ID}'); RESET ROLE;`);
+      expect(r.success).toBe(false);
+      expect(r.reason).toBe('terminal_fulfillment');
+    });
+
+    it('M331-23. wrong token increments attempts', () => {
+      // Create a fresh secure_pickup code for this test
+      psql(`INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, prize_id, status)
+        VALUES ('${M331_BIZ}', '${M331_CAMP}', '${M331_BATCH}', '${m331Hash('M331PICKUP02')}', 'P02', 'winner', '${M331_PRIZE_PICKUP}', 'unused');`);
+      const claimResult = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP}','${m331Hash('M331PICKUP02')}','+331060','m331_23'); RESET ROLE;`);
+      expect(claimResult.success).toBe(true);
+      const rid = claimResult.redemption_id as string;
+
+      // Issue OTP
+      const issueR = psqlJson(`SET ROLE service_role; SELECT issue_promo_pickup('${M331_BIZ}', '${rid}', 'correct_hmac', (now() + interval '10 minutes')::timestamptz); RESET ROLE;`);
+      expect(issueR.success).toBe(true);
+      const vid = issueR.verification_id as string;
+      // Finalize as sent
+      psql(`SET ROLE service_role; SELECT finalize_promo_pickup_delivery('${vid}', 'sent'); RESET ROLE;`);
+
+      // Wrong HMAC
+      const r = psqlJson(`SET ROLE service_role; SELECT verify_promo_pickup('${M331_BIZ}', '${rid}', 'wrong_hmac', '${USER_ID}'); RESET ROLE;`);
+      expect(r.success).toBe(false);
+      expect(r.reason).toBe('invalid_token');
+      expect(r.attempts_remaining).toBe(4); // 5 max - 0 (pre-increment count) - 1 = 4
+
+      const attempts = psql(`SELECT attempt_count FROM promo_pickup_verifications WHERE id = '${vid}';`);
+      expect(parseInt(attempts)).toBe(1);
+    });
+
+    it('M331-24. issue_promo_pickup service_role only', () => {
+      const r = psql(`SELECT has_function_privilege('anon', 'issue_promo_pickup(uuid, uuid, text, timestamptz)', 'EXECUTE');`);
+      expect(r).toBe('f');
+      const r2 = psql(`SELECT has_function_privilege('service_role', 'issue_promo_pickup(uuid, uuid, text, timestamptz)', 'EXECUTE');`);
+      expect(r2).toBe('t');
+    });
+
+    it('M331-25. finalize_promo_pickup_delivery service_role only', () => {
+      const r = psql(`SELECT has_function_privilege('anon', 'finalize_promo_pickup_delivery(uuid, text, text)', 'EXECUTE');`);
+      expect(r).toBe('f');
+      const r2 = psql(`SELECT has_function_privilege('service_role', 'finalize_promo_pickup_delivery(uuid, text, text)', 'EXECUTE');`);
+      expect(r2).toBe('t');
+    });
+
+    it('M331-26. finalize reports failure on no pending row', () => {
+      const r = psqlJson(`SET ROLE service_role; SELECT finalize_promo_pickup_delivery('00000000-0000-0000-0000-000000000000', 'sent'); RESET ROLE;`);
+      expect(r.success).toBe(false);
+      expect(r.reason).toBe('no_pending_verification');
+    });
+
+    // ── FULFILLMENT RACE ──
+
+    function psqlAsync(sql: string): Promise<{ stdout: string; stderr: string; code: number }> {
+      const { spawn: spawnProc } = require('child_process');
+      return new Promise((resolve) => {
+        const child = spawnProc('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+        child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+        child.on('close', (code: number) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 }));
+        child.stdin.write(sql);
+        child.stdin.end();
+      });
+    }
+
+    it('M331-27. two-session fulfillment race: exactly one terminal wins, loser gets invalid_transition', async () => {
+      psql(`INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, prize_id, status)
+        VALUES ('${M331_BIZ}', '${M331_CAMP}', '${M331_BATCH}', '${m331Hash('M331RACE0001')}', 'R01', 'winner', '${M331_PRIZE_STD}', 'unused');`);
+      const cr = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP}','${m331Hash('M331RACE0001')}','+331070','m331_27'); RESET ROLE;`);
+      expect(cr.success).toBe(true);
+      const rid = cr.redemption_id as string;
+
+      const sessionA = psqlAsync(`
+        BEGIN;
+        SET ROLE service_role;
+        SELECT transition_promo_fulfillment('${M331_BIZ}', '${rid}', 'fulfilled', '${USER_ID}', 'REF-A');
+        SELECT pg_sleep(2);
+        COMMIT;
+      `);
+      await new Promise(r => setTimeout(r, 500));
+      const sessionB = psqlAsync(`
+        SET ROLE service_role;
+        SELECT transition_promo_fulfillment('${M331_BIZ}', '${rid}', 'rejected', '${USER_ID}');
+      `);
+      const [resultA, resultB] = await Promise.all([sessionA, sessionB]);
+
+      const finalStatus = psql(`SELECT fulfillment_status FROM promo_redemptions WHERE id = '${rid}';`);
+      expect(['fulfilled', 'rejected']).toContain(finalStatus);
+      // Winner contains success: true
+      const winnerStdout = finalStatus === 'fulfilled' ? resultA.stdout : resultB.stdout;
+      expect(winnerStdout).toContain('"success": true');
+      // Loser contains invalid_transition
+      const loserStdout = finalStatus === 'fulfilled' ? resultB.stdout : resultA.stdout;
+      expect(loserStdout).toContain('invalid_transition');
+      // Exactly one terminal status
+      const statusCount = psql(`SELECT count(*) FROM promo_redemptions WHERE id = '${rid}';`);
+      expect(parseInt(statusCount)).toBe(1);
+    }, 15000);
+
+    // ── A. Resend invalidates old token ──
+    it('M331-28. resend after cooldown invalidates old token', () => {
+      psql(`INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, prize_id, status)
+        VALUES ('${M331_BIZ}', '${M331_CAMP}', '${M331_BATCH}', '${m331Hash('M331RESEND01')}', 'RS1', 'winner', '${M331_PRIZE_PICKUP}', 'unused');`);
+      const cr = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP}','${m331Hash('M331RESEND01')}','+331080','m331_28'); RESET ROLE;`);
+      const rid = cr.redemption_id as string;
+
+      // First issue
+      const i1 = psqlJson(`SET ROLE service_role; SELECT issue_promo_pickup('${M331_BIZ}', '${rid}', 'hmac_old', (now() + interval '10 minutes')::timestamptz); RESET ROLE;`);
+      expect(i1.success).toBe(true);
+      const vid1 = i1.verification_id as string;
+      psql(`SET ROLE service_role; SELECT finalize_promo_pickup_delivery('${vid1}', 'sent'); RESET ROLE;`);
+
+      // Make old token's last_sent_at old enough for cooldown
+      psql(`UPDATE promo_pickup_verifications SET last_sent_at = now() - interval '2 minutes' WHERE id = '${vid1}';`);
+
+      // Resend — should invalidate old
+      const i2 = psqlJson(`SET ROLE service_role; SELECT issue_promo_pickup('${M331_BIZ}', '${rid}', 'hmac_new', (now() + interval '10 minutes')::timestamptz); RESET ROLE;`);
+      expect(i2.success).toBe(true);
+      const vid2 = i2.verification_id as string;
+      expect(vid2).not.toBe(vid1);
+
+      // Old token is now used_at (invalidated)
+      const oldUsed = psql(`SELECT used_at IS NOT NULL FROM promo_pickup_verifications WHERE id = '${vid1}';`);
+      expect(oldUsed).toBe('t');
+
+      // Old HMAC cannot verify (token invalidated → no active sent token)
+      psql(`SET ROLE service_role; SELECT finalize_promo_pickup_delivery('${vid2}', 'sent'); RESET ROLE;`);
+      const vOld = psqlJson(`SET ROLE service_role; SELECT verify_promo_pickup('${M331_BIZ}', '${rid}', 'hmac_old', '${USER_ID}'); RESET ROLE;`);
+      // Old token's record is used_at!=NULL so it won't match the active query
+      // The new token is active and has HMAC 'hmac_new', so 'hmac_old' fails
+      expect(vOld.success).toBe(false);
+
+      // New HMAC verifies
+      const vNew = psqlJson(`SET ROLE service_role; SELECT verify_promo_pickup('${M331_BIZ}', '${rid}', 'hmac_new', '${USER_ID}'); RESET ROLE;`);
+      expect(vNew.success).toBe(true);
+    });
+
+    // ── B. Locked redemption recovery ──
+    it('M331-29. locked redemption resets to phone_verified on reissue', () => {
+      psql(`INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, prize_id, status)
+        VALUES ('${M331_BIZ}', '${M331_CAMP}', '${M331_BATCH}', '${m331Hash('M331LOCK0001')}', 'LK1', 'winner', '${M331_PRIZE_PICKUP}', 'unused');`);
+      const cr = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP}','${m331Hash('M331LOCK0001')}','+331090','m331_29'); RESET ROLE;`);
+      const rid = cr.redemption_id as string;
+
+      // Issue + finalize sent
+      const i1 = psqlJson(`SET ROLE service_role; SELECT issue_promo_pickup('${M331_BIZ}', '${rid}', 'hmac_lock', (now() + interval '10 minutes')::timestamptz); RESET ROLE;`);
+      const vid = i1.verification_id as string;
+      psql(`SET ROLE service_role; SELECT finalize_promo_pickup_delivery('${vid}', 'sent'); RESET ROLE;`);
+
+      // Exhaust 5 wrong attempts
+      for (let i = 0; i < 5; i++) {
+        psqlJson(`SET ROLE service_role; SELECT verify_promo_pickup('${M331_BIZ}', '${rid}', 'wrong_${i}', '${USER_ID}'); RESET ROLE;`);
+      }
+
+      // Verify locked
+      const lockedStatus = psql(`SELECT verification_status FROM promo_redemptions WHERE id = '${rid}';`);
+      expect(lockedStatus).toBe('locked');
+
+      // Make resend eligible
+      psql(`UPDATE promo_pickup_verifications SET last_sent_at = now() - interval '2 minutes' WHERE redemption_id = '${rid}' AND used_at IS NULL;`);
+
+      // Reissue — should reset to phone_verified
+      const i2 = psqlJson(`SET ROLE service_role; SELECT issue_promo_pickup('${M331_BIZ}', '${rid}', 'hmac_recovery', (now() + interval '10 minutes')::timestamptz); RESET ROLE;`);
+      expect(i2.success).toBe(true);
+
+      const resetStatus = psql(`SELECT verification_status FROM promo_redemptions WHERE id = '${rid}';`);
+      expect(resetStatus).toBe('phone_verified');
+
+      // New token can verify after delivery
+      const vid2 = i2.verification_id as string;
+      psql(`SET ROLE service_role; SELECT finalize_promo_pickup_delivery('${vid2}', 'sent'); RESET ROLE;`);
+      const vr = psqlJson(`SET ROLE service_role; SELECT verify_promo_pickup('${M331_BIZ}', '${rid}', 'hmac_recovery', '${USER_ID}'); RESET ROLE;`);
+      expect(vr.success).toBe(true);
+    });
+
+    // ── C. Failed delivery cannot verify ──
+    it('M331-30. failed delivery token cannot verify', () => {
+      psql(`INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, prize_id, status)
+        VALUES ('${M331_BIZ}', '${M331_CAMP}', '${M331_BATCH}', '${m331Hash('M331FAIL0001')}', 'FL1', 'winner', '${M331_PRIZE_PICKUP}', 'unused');`);
+      const cr = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP}','${m331Hash('M331FAIL0001')}','+331100','m331_30'); RESET ROLE;`);
+      const rid = cr.redemption_id as string;
+
+      const i1 = psqlJson(`SET ROLE service_role; SELECT issue_promo_pickup('${M331_BIZ}', '${rid}', 'hmac_fail', (now() + interval '10 minutes')::timestamptz); RESET ROLE;`);
+      const vid = i1.verification_id as string;
+
+      // Finalize as FAILED
+      psql(`SET ROLE service_role; SELECT finalize_promo_pickup_delivery('${vid}', 'failed'); RESET ROLE;`);
+
+      // Cannot verify — token was never delivered
+      const vr = psqlJson(`SET ROLE service_role; SELECT verify_promo_pickup('${M331_BIZ}', '${rid}', 'hmac_fail', '${USER_ID}'); RESET ROLE;`);
+      expect(vr.success).toBe(false);
+      expect(vr.reason).toBe('token_not_delivered');
+    });
+
+    // ── D. Expired sent token fails ──
+    it('M331-31. expired sent token fails verification', () => {
+      psql(`INSERT INTO promo_campaign_codes (business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, prize_id, status)
+        VALUES ('${M331_BIZ}', '${M331_CAMP}', '${M331_BATCH}', '${m331Hash('M331EXPR0001')}', 'EX1', 'winner', '${M331_PRIZE_PICKUP}', 'unused');`);
+      const cr = psqlJson(`SET ROLE service_role; SELECT claim_promo_code('${M331_BIZ}','${M331_CAMP}','${m331Hash('M331EXPR0001')}','+331110','m331_31'); RESET ROLE;`);
+      const rid = cr.redemption_id as string;
+
+      // Issue with already-past expiry
+      const i1 = psqlJson(`SET ROLE service_role; SELECT issue_promo_pickup('${M331_BIZ}', '${rid}', 'hmac_expired', (now() - interval '1 minute')::timestamptz); RESET ROLE;`);
+      const vid = i1.verification_id as string;
+      psql(`SET ROLE service_role; SELECT finalize_promo_pickup_delivery('${vid}', 'sent'); RESET ROLE;`);
+
+      const vr = psqlJson(`SET ROLE service_role; SELECT verify_promo_pickup('${M331_BIZ}', '${rid}', 'hmac_expired', '${USER_ID}'); RESET ROLE;`);
+      expect(vr.success).toBe(false);
+      expect(vr.reason).toBe('token_expired');
+    });
+
+    // ── E. Used token cannot be reused ──
+    it('M331-32. used token cannot be reused after successful verification', () => {
+      // M331-28 already verified '+331080' — check idempotent
+      const rid = psql(`SELECT id FROM promo_redemptions WHERE campaign_id = '${M331_CAMP}' AND phone_e164 = '+331080' AND outcome = 'winner';`);
+      const vr = psqlJson(`SET ROLE service_role; SELECT verify_promo_pickup('${M331_BIZ}', '${rid}', 'hmac_new', '${USER_ID}'); RESET ROLE;`);
+      // Already verified — idempotent success
+      expect(vr.success).toBe(true);
+      expect(vr.already_verified).toBe(true);
+    });
+  }); // end Migration 331
 }); // end main PROMO-1

@@ -25,6 +25,7 @@ const INTEGRITY_LOCKED_FIELDS = [
   'rateLimitMaxAttempts',
   'eligibilityMode',
   'eligibilityMinAge',
+  'maxWinsPerParticipant',
   'startAt',
   'endAt',
 ];
@@ -207,6 +208,17 @@ export async function PUT(request: NextRequest) {
         updates.eligibility_min_age = v;
       } else {
         updates.eligibility_min_age = null;
+      }
+    }
+    if ('maxWinsPerParticipant' in body) {
+      if (body.maxWinsPerParticipant !== null && body.maxWinsPerParticipant !== undefined) {
+        const v = Number(body.maxWinsPerParticipant);
+        if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+          return NextResponse.json({ error: 'max_wins_per_participant must be a positive integer or null' }, { status: 400 });
+        }
+        updates.max_wins_per_participant = v;
+      } else {
+        updates.max_wins_per_participant = null;
       }
     }
   }
