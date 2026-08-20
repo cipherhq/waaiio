@@ -36,8 +36,27 @@ export function getBrowserTestRunId(): string | undefined {
 let interceptorInstalled = false;
 
 /**
+ * Resolve a URL string against the current page origin using the URL constructor.
+ * Returns true only when resolved.origin exactly equals window.location.origin.
+ * Rejects protocol-relative URLs (//evil.example), look-alike domains, and
+ * any URL whose origin differs from the current page.
+ */
+function isSameOrigin(url: string): boolean {
+  try {
+    const resolved = new URL(url, window.location.href);
+    return resolved.origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Install a fetch interceptor that adds x-test-run-id to same-origin API requests.
- * Automatically called by PostHogProvider. Only activates when test_run_id is set.
+ * Automatically called by PostHogProvider on mount. Installs once regardless of
+ * whether a test-run ID exists at mount time — on every same-origin request it
+ * reads the current sessionStorage value, so setting/clearing the ID after the
+ * dashboard has loaded begins/stops propagation without requiring a reload.
+ *
  * Idempotent — safe across React remounts and HMR.
  * Only adds to same-origin requests (no leakage to third-party hosts).
  * Preserves all existing headers on the original request.
@@ -45,25 +64,30 @@ let interceptorInstalled = false;
 export function installTestRunFetchInterceptor(): void {
   if (typeof window === 'undefined') return;
   if (interceptorInstalled) return;
-  const testRunId = getBrowserTestRunId();
-  if (!testRunId) return;
 
   interceptorInstalled = true;
   const originalFetch = window.fetch;
   window.fetch = function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
-    const isSameOrigin = url.startsWith('/') || url.startsWith(window.location.origin);
-    if (isSameOrigin) {
-      // Preserve existing headers from both init and Request object
-      const existingHeaders = input instanceof Request ? input.headers : undefined;
-      const headers = new Headers(init?.headers || existingHeaders);
-      if (!headers.has(TEST_RUN_HEADER)) {
-        headers.set(TEST_RUN_HEADER, testRunId);
+    if (isSameOrigin(url)) {
+      const testRunId = getBrowserTestRunId();
+      if (testRunId) {
+        // Preserve existing headers from both init and Request object
+        const existingHeaders = input instanceof Request ? input.headers : undefined;
+        const headers = new Headers(init?.headers || existingHeaders);
+        if (!headers.has(TEST_RUN_HEADER)) {
+          headers.set(TEST_RUN_HEADER, testRunId);
+        }
+        return originalFetch.call(this, input, { ...init, headers });
       }
-      return originalFetch.call(this, input, { ...init, headers });
     }
     return originalFetch.call(this, input, init);
   };
+}
+
+/** Reset interceptor state — test use only. */
+export function _resetInterceptorForTest(): void {
+  interceptorInstalled = false;
 }
 
 // ── Event properties ──
@@ -135,20 +159,34 @@ export type ProductEventName = (typeof PRODUCT_EVENTS)[keyof typeof PRODUCT_EVEN
 
 // ── Privacy sanitizer ──
 
-const DENIED_KEYS = new Set([
-  'password', 'token', 'access_token', 'refresh_token', 'secret',
-  'otp', 'card', 'card_number', 'cvv', 'email', 'phone',
-  'message', 'message_body', 'api_key', 'api_secret', 'private_key',
+/**
+ * Allowlist of accepted product-event property keys.
+ * Only these keys pass through to PostHog/logs. Everything else is silently dropped.
+ * This is safer than a denylist because new arbitrary keys cannot leak sensitive values.
+ *
+ * To add a new property: add it to ProductEventProps AND this set.
+ */
+const ALLOWED_KEYS = new Set([
+  // Correlation & identity
+  'test_run_id', 'request_id',
+  // Business context
+  'business_id', 'entity_id', 'entity_type',
+  // Operational
+  'capability', 'status', 'provider', 'error_code',
+  // Messaging (safe identifiers, not content)
+  'message_id',
+  // Financial (amounts, not credentials)
+  'amount', 'currency', 'gateway',
 ]);
 
 /**
- * Remove sensitive properties before capture.
- * Case-insensitive. Returns a new object — does NOT mutate the caller's object.
+ * Remove all properties not in the allowlist before capture.
+ * Returns a new object — does NOT mutate the caller's object.
  */
 export function sanitizeEventProps(props: Record<string, unknown>): Record<string, unknown> {
   const safe: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(props)) {
-    if (!DENIED_KEYS.has(key.toLowerCase())) {
+    if (ALLOWED_KEYS.has(key)) {
       safe[key] = value;
     }
   }

@@ -11,17 +11,14 @@ let posthogInitialized = false;
  * Only initializes PostHog if analytics consent has been given.
  * Listens for consent changes to start/stop tracking dynamically.
  */
-let testRunInterceptorInstalled = false;
-
 export function PostHogProvider({ children }: { children: React.ReactNode }) {
-  // Install test_run_id fetch interceptor once (independent of PostHog consent/key)
+  // Install test_run_id fetch interceptor once (independent of PostHog consent/key).
+  // The interceptor is idempotent internally and reads sessionStorage on each request,
+  // so setting/clearing waaiio_test_run_id after load works without a reload.
   useEffect(() => {
-    if (!testRunInterceptorInstalled) {
-      testRunInterceptorInstalled = true;
-      import('@/lib/observability/product-events').then(({ installTestRunFetchInterceptor }) => {
-        installTestRunFetchInterceptor();
-      }).catch(() => { /* non-critical */ });
-    }
+    import('@/lib/observability/product-events').then(({ installTestRunFetchInterceptor }) => {
+      installTestRunFetchInterceptor();
+    }).catch(() => { /* non-critical */ });
   }, []);
 
   useEffect(() => {
