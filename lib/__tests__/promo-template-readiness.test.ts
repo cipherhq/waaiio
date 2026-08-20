@@ -234,83 +234,185 @@ describe('Legacy provision-templates.ts', () => {
 });
 
 // ═══════════════════════════════════════════════════════
-// BEHAVIORAL TESTS — mocked ChannelResolver/Meta client
+// ROUTE-INVOCATION TESTS — mocked dependencies, real GET()
 // ═══════════════════════════════════════════════════════
 
-describe('Behavioral: template-status readiness resolution', () => {
-  const fs = require('fs');
-  const statusSrc = fs.readFileSync('app/api/promotions/template-status/route.ts', 'utf-8');
+// Mock all external dependencies before importing the route
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: vi.fn(),
+}));
+vi.mock('@/lib/supabase/service', () => ({
+  createServiceClient: vi.fn(() => ({})),
+}));
+vi.mock('@/lib/capabilities/api-guard', () => ({
+  requireCapability: vi.fn(() => ({ allowed: true })),
+}));
+let mockResolvedValue: unknown = null;
+vi.mock('@/lib/channels/channel-resolver', () => {
+  return {
+    ChannelResolver: class MockChannelResolver {
+      resolveByBusinessId() { return Promise.resolve(mockResolvedValue); }
+    },
+  };
+});
+vi.mock('@/lib/logger', () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), withContext: () => ({ error: vi.fn() }) },
+}));
 
-  it('reuses resolved.cloud (decrypted effective Meta client)', () => {
-    // Must use resolved.cloud, not construct a new MetaCloudService
-    expect(statusSrc).toContain('resolved.cloud');
-    expect(statusSrc).not.toContain('new MetaCloudService');
+import { NextRequest } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+import { ChannelResolver } from '@/lib/channels/channel-resolver';
+
+function makeRequest(businessId: string): NextRequest {
+  return new NextRequest(`http://localhost/api/promotions/template-status?businessId=${businessId}`);
+}
+
+function mockAuth() {
+  (createClient as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+    auth: { getUser: () => Promise.resolve({ data: { user: { id: 'user-1' } } }) },
+  });
+}
+
+function mockResolver(resolved: unknown) {
+  mockResolvedValue = resolved;
+}
+
+describe('Route invocation: GET /api/promotions/template-status', () => {
+  let GET: typeof import('@/app/api/promotions/template-status/route').GET;
+
+  beforeAll(async () => {
+    const mod = await import('@/app/api/promotions/template-status/route');
+    GET = mod.GET;
   });
 
-  it('fails closed when resolved.cloud is unavailable', () => {
-    // If the effective channel has no Meta cloud client, return unavailable
-    expect(statusSrc).toContain('!meta');
-    expect(statusSrc).toContain('does not support template management');
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuth();
   });
 
-  it('no independent credential mixing (no raw env token construction)', () => {
-    // Must NOT independently mix channel.meta_access_token || env
-    expect(statusSrc).not.toContain('META_CLOUD_ACCESS_TOKEN');
-    expect(statusSrc).not.toContain('META_CLOUD_WABA_ID');
-    expect(statusSrc).not.toContain('channel.meta_access_token');
+  it('APPROVED template on resolved.cloud → status: ready', async () => {
+    const mockCloud = {
+      getTemplates: vi.fn().mockResolvedValue({
+        data: [{ name: 'promo_pickup_verification', language: 'en_US', status: 'APPROVED' }],
+      }),
+    };
+    mockResolver({
+      channel: { channel_type: 'dedicated', business_id: 'biz-1' },
+      cloud: mockCloud,
+    });
+
+    const res = await GET(makeRequest('biz-1'));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.status).toBe('ready');
+    expect(mockCloud.getTemplates).toHaveBeenCalledOnce();
   });
 
-  it('APPROVED template → ready', () => {
-    expect(statusSrc).toContain("case 'APPROVED'");
-    expect(statusSrc).toContain("readiness = 'ready'");
+  it('PENDING template → status: pending', async () => {
+    mockResolver({
+      channel: { channel_type: 'dedicated', business_id: 'biz-1' },
+      cloud: {
+        getTemplates: vi.fn().mockResolvedValue({
+          data: [{ name: 'promo_pickup_verification', language: 'en_US', status: 'PENDING' }],
+        }),
+      },
+    });
+
+    const res = await GET(makeRequest('biz-1'));
+    const json = await res.json();
+    expect(json.status).toBe('pending');
   });
 
-  it('PENDING template → pending (not ready)', () => {
-    expect(statusSrc).toContain("case 'PENDING'");
-    expect(statusSrc).toContain("readiness = 'pending'");
+  it('no matching template → status: provisioning_required', async () => {
+    mockResolver({
+      channel: { channel_type: 'dedicated', business_id: 'biz-1' },
+      cloud: {
+        getTemplates: vi.fn().mockResolvedValue({ data: [] }),
+      },
+    });
+
+    const res = await GET(makeRequest('biz-1'));
+    const json = await res.json();
+    expect(json.status).toBe('provisioning_required');
   });
 
-  it('missing template → provisioning_required', () => {
-    expect(statusSrc).toContain("'provisioning_required'");
+  it('REJECTED template → status: rejected', async () => {
+    mockResolver({
+      channel: { channel_type: 'dedicated', business_id: 'biz-1' },
+      cloud: {
+        getTemplates: vi.fn().mockResolvedValue({
+          data: [{ name: 'promo_pickup_verification', language: 'en_US', status: 'REJECTED' }],
+        }),
+      },
+    });
+
+    const res = await GET(makeRequest('biz-1'));
+    const json = await res.json();
+    expect(json.status).toBe('rejected');
   });
 
-  it('REJECTED → rejected', () => {
-    expect(statusSrc).toContain("case 'REJECTED'");
-    expect(statusSrc).toContain("readiness = 'rejected'");
+  it('getTemplates() throws → status: unavailable (fail closed)', async () => {
+    mockResolver({
+      channel: { channel_type: 'dedicated', business_id: 'biz-1' },
+      cloud: {
+        getTemplates: vi.fn().mockRejectedValue(new Error('Meta API down')),
+      },
+    });
+
+    const res = await GET(makeRequest('biz-1'));
+    const json = await res.json();
+    expect(json.status).toBe('unavailable');
   });
 
-  it('Meta getTemplates failure → unavailable (fail closed)', () => {
-    expect(statusSrc).toContain('catch (err)');
-    expect(statusSrc).toContain("status: 'unavailable'");
+  it('resolver returns null → status: unavailable', async () => {
+    mockResolver(null);
+
+    const res = await GET(makeRequest('biz-1'));
+    const json = await res.json();
+    expect(json.status).toBe('unavailable');
+    expect(json.message).toContain('No WhatsApp channel');
   });
 
-  it('no channel resolved → unavailable (fail closed)', () => {
-    expect(statusSrc).toContain('!resolved');
-    expect(statusSrc).toContain("status: 'unavailable'");
+  it('resolver returns channel without cloud → status: unavailable', async () => {
+    mockResolver({
+      channel: { channel_type: 'shared', business_id: null },
+      cloud: undefined,
+    });
+
+    const res = await GET(makeRequest('biz-1'));
+    const json = await res.json();
+    expect(json.status).toBe('unavailable');
+    expect(json.message).toContain('does not support template management');
   });
 
-  it('distinguishes business-owned vs managed WABA', () => {
-    expect(statusSrc).toContain('isBusinessOwned');
-    expect(statusSrc).toContain("channel_type === 'dedicated'");
-    expect(statusSrc).toContain('managed');
+  it('getTemplates invoked on the exact resolved.cloud object', async () => {
+    const getTemplatesFn = vi.fn().mockResolvedValue({
+      data: [{ name: 'promo_pickup_verification', language: 'en_US', status: 'APPROVED' }],
+    });
+    mockResolver({
+      channel: { channel_type: 'dedicated', business_id: 'biz-1' },
+      cloud: { getTemplates: getTemplatesFn },
+    });
+
+    await GET(makeRequest('biz-1'));
+    expect(getTemplatesFn).toHaveBeenCalledOnce();
   });
 });
 
-describe('Behavioral: wizard non-2xx fail-closed', () => {
+// ── Source-contract: wizard non-2xx fail-closed ──
+
+describe('Source contract: wizard non-2xx fail-closed', () => {
   const fs = require('fs');
   const wizSrc = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');
 
-  it('non-2xx response sets pickupTemplateReady=false (not null)', () => {
-    // Must handle non-ok response explicitly, not leave at null
-    expect(wizSrc).toContain('} else {');
+  it('non-2xx response sets pickupTemplateReady=false with message', () => {
     expect(wizSrc).toContain('setPickupTemplateReady(false)');
     expect(wizSrc).toContain('Could not check Secure Pickup availability');
   });
 
   it('catch block also sets false (not null)', () => {
-    expect(wizSrc).toContain('catch');
-    // The catch block must also call setPickupTemplateReady(false)
-    const catchIdx = wizSrc.indexOf("} catch {", wizSrc.indexOf('template-status'));
+    const catchIdx = wizSrc.indexOf('} catch {', wizSrc.indexOf('template-status'));
     const catchBlock = wizSrc.substring(catchIdx, catchIdx + 200);
     expect(catchBlock).toContain('setPickupTemplateReady(false)');
   });
