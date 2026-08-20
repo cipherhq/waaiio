@@ -1372,10 +1372,15 @@ export default function CreatePromotionPage() {
     (async () => {
       try {
         const res = await fetch(`/api/promotions/template-status?businessId=${business.id}`);
-        if (!cancelled && res.ok) {
-          const data = await res.json();
-          setPickupTemplateReady(data.status === 'ready');
-          if (data.status !== 'ready') setPickupTemplateMessage(data.message || 'Secure Pickup not available');
+        if (!cancelled) {
+          if (res.ok) {
+            const data = await res.json();
+            setPickupTemplateReady(data.status === 'ready');
+            if (data.status !== 'ready') setPickupTemplateMessage(data.message || 'Secure Pickup not available');
+          } else {
+            setPickupTemplateReady(false);
+            setPickupTemplateMessage('Could not check Secure Pickup availability');
+          }
         }
       } catch {
         if (!cancelled) { setPickupTemplateReady(false); setPickupTemplateMessage('Could not check template status'); }

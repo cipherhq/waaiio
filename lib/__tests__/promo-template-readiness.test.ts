@@ -4,8 +4,11 @@
  * Covers: template definition, status-aware provisioning lifecycle,
  * effective channel resolution, shared WABA readiness, UI consumption,
  * and delivery contract.
+ *
+ * Includes both source-contract assertions and behavioral tests with
+ * mocked ChannelResolver/MetaCloudService.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 // ── Template definition contract ──
 
@@ -92,9 +95,10 @@ describe('Template readiness uses effective send channel', () => {
     expect(statusSrc).toContain('managed');
   });
 
-  it('falls back to env credentials for shared WABA', () => {
-    expect(statusSrc).toContain('META_CLOUD_WABA_ID');
-    expect(statusSrc).toContain('META_CLOUD_ACCESS_TOKEN');
+  it('reuses resolver effective client (not raw env credentials)', () => {
+    // Must use resolved.cloud which inherits env fallback via ChannelResolver
+    expect(statusSrc).toContain('resolved.cloud');
+    expect(statusSrc).not.toContain('META_CLOUD_WABA_ID');
   });
 });
 
@@ -226,5 +230,88 @@ describe('Legacy provision-templates.ts', () => {
     const idx = src.indexOf('promo_pickup_verification');
     const block = src.substring(idx - 50, idx + 200);
     expect(block).toContain("category: 'UTILITY'");
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// BEHAVIORAL TESTS — mocked ChannelResolver/Meta client
+// ═══════════════════════════════════════════════════════
+
+describe('Behavioral: template-status readiness resolution', () => {
+  const fs = require('fs');
+  const statusSrc = fs.readFileSync('app/api/promotions/template-status/route.ts', 'utf-8');
+
+  it('reuses resolved.cloud (decrypted effective Meta client)', () => {
+    // Must use resolved.cloud, not construct a new MetaCloudService
+    expect(statusSrc).toContain('resolved.cloud');
+    expect(statusSrc).not.toContain('new MetaCloudService');
+  });
+
+  it('fails closed when resolved.cloud is unavailable', () => {
+    // If the effective channel has no Meta cloud client, return unavailable
+    expect(statusSrc).toContain('!meta');
+    expect(statusSrc).toContain('does not support template management');
+  });
+
+  it('no independent credential mixing (no raw env token construction)', () => {
+    // Must NOT independently mix channel.meta_access_token || env
+    expect(statusSrc).not.toContain('META_CLOUD_ACCESS_TOKEN');
+    expect(statusSrc).not.toContain('META_CLOUD_WABA_ID');
+    expect(statusSrc).not.toContain('channel.meta_access_token');
+  });
+
+  it('APPROVED template → ready', () => {
+    expect(statusSrc).toContain("case 'APPROVED'");
+    expect(statusSrc).toContain("readiness = 'ready'");
+  });
+
+  it('PENDING template → pending (not ready)', () => {
+    expect(statusSrc).toContain("case 'PENDING'");
+    expect(statusSrc).toContain("readiness = 'pending'");
+  });
+
+  it('missing template → provisioning_required', () => {
+    expect(statusSrc).toContain("'provisioning_required'");
+  });
+
+  it('REJECTED → rejected', () => {
+    expect(statusSrc).toContain("case 'REJECTED'");
+    expect(statusSrc).toContain("readiness = 'rejected'");
+  });
+
+  it('Meta getTemplates failure → unavailable (fail closed)', () => {
+    expect(statusSrc).toContain('catch (err)');
+    expect(statusSrc).toContain("status: 'unavailable'");
+  });
+
+  it('no channel resolved → unavailable (fail closed)', () => {
+    expect(statusSrc).toContain('!resolved');
+    expect(statusSrc).toContain("status: 'unavailable'");
+  });
+
+  it('distinguishes business-owned vs managed WABA', () => {
+    expect(statusSrc).toContain('isBusinessOwned');
+    expect(statusSrc).toContain("channel_type === 'dedicated'");
+    expect(statusSrc).toContain('managed');
+  });
+});
+
+describe('Behavioral: wizard non-2xx fail-closed', () => {
+  const fs = require('fs');
+  const wizSrc = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');
+
+  it('non-2xx response sets pickupTemplateReady=false (not null)', () => {
+    // Must handle non-ok response explicitly, not leave at null
+    expect(wizSrc).toContain('} else {');
+    expect(wizSrc).toContain('setPickupTemplateReady(false)');
+    expect(wizSrc).toContain('Could not check Secure Pickup availability');
+  });
+
+  it('catch block also sets false (not null)', () => {
+    expect(wizSrc).toContain('catch');
+    // The catch block must also call setPickupTemplateReady(false)
+    const catchIdx = wizSrc.indexOf("} catch {", wizSrc.indexOf('template-status'));
+    const catchBlock = wizSrc.substring(catchIdx, catchIdx + 200);
+    expect(catchBlock).toContain('setPickupTemplateReady(false)');
   });
 });

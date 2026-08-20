@@ -3,7 +3,6 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { logger } from '@/lib/logger';
 
 const PICKUP_TEMPLATE_NAME = 'promo_pickup_verification';
@@ -49,21 +48,19 @@ export async function GET(request: NextRequest) {
   const channel = resolved.channel;
   const isBusinessOwned = channel.channel_type === 'dedicated' && channel.business_id === businessId;
 
-  // Determine WABA credentials for the effective channel
-  const wabaId = channel.waba_id || process.env.META_CLOUD_WABA_ID || '';
-  const accessToken = channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '';
-
-  if (!wabaId || !accessToken) {
+  // Reuse the resolver's effective Meta client — same decrypted credentials
+  // and WABA that would be used for actual OTP delivery
+  const meta = resolved.cloud;
+  if (!meta) {
     return NextResponse.json({
       template: PICKUP_TEMPLATE_NAME,
       status: 'unavailable' as TemplateReadiness,
-      message: 'WhatsApp channel credentials are not configured.',
+      message: 'WhatsApp channel does not support template management.',
       managed: !isBusinessOwned,
     });
   }
 
   try {
-    const meta = new MetaCloudService({ accessToken, phoneNumberId: '', wabaId });
     const existing = await meta.getTemplates();
     const template = (existing.data || []).find(
       (t) => t.name === PICKUP_TEMPLATE_NAME && t.language === PICKUP_TEMPLATE_LANGUAGE,
