@@ -39,6 +39,9 @@ interface Winner {
   fulfillment_notes: string | null;
   fulfilled_at: string | null;
   prize_name?: string;
+  verification_mode?: string;
+  verification_status?: string;
+  verified_at?: string | null;
 }
 
 interface MaskedCode {
@@ -340,6 +343,11 @@ export default function PromotionDetailPage() {
   const [fulfillmentNotes, setFulfillmentNotes] = useState('');
   const [fulfillmentSaving, setFulfillmentSaving] = useState(false);
   const [fulfillmentError, setFulfillmentError] = useState('');
+  // Secure pickup verification
+  const [pickupOtp, setPickupOtp] = useState('');
+  const [pickupSending, setPickupSending] = useState(false);
+  const [pickupVerifying, setPickupVerifying] = useState(false);
+  const [pickupMessage, setPickupMessage] = useState('');
 
   /* ---- Fetch campaign detail ---- */
 
@@ -680,6 +688,7 @@ export default function PromotionDetailPage() {
           maxAttemptsPerPhone: settingsForm.max_attempts_per_phone,
           rateLimitWindowMinutes: settingsForm.rate_limit_window_minutes,
           rateLimitMaxAttempts: settingsForm.rate_limit_max_attempts,
+          maxWinsPerParticipant: settingsForm.max_wins_per_participant,
         }),
       });
       const data = await res.json();
@@ -1290,6 +1299,7 @@ export default function PromotionDetailPage() {
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Prize</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Claim Ref</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Claimed At</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Verification</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Fulfillment</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Actions</th>
                   </tr>
@@ -1301,7 +1311,7 @@ export default function PromotionDetailPage() {
                   ).map((winner) => (
                     <tr key={winner.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/20">
                       <td className="px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300">
-                        {maskPhone(winner.phone_e164)}
+                        {winner.phone_e164}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                         {winner.prize_name || '—'}
@@ -1311,6 +1321,21 @@ export default function PromotionDetailPage() {
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
                         {fmt(winner.claimed_at)}
+                      </td>
+                      <td className="px-4 py-3 text-xs">
+                        {winner.verification_mode === 'secure_pickup' ? (
+                          <span className={`inline-flex rounded-full px-2 py-0.5 font-medium ${
+                            winner.verification_status === 'verified' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                            : winner.verification_status === 'locked' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                          }`}>
+                            {winner.verification_status === 'verified' ? 'Pickup verified'
+                              : winner.verification_status === 'locked' ? 'Locked'
+                              : 'Pickup required'}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 dark:text-gray-500">Standard</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <span
@@ -1624,6 +1649,21 @@ export default function PromotionDetailPage() {
                   className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand disabled:opacity-50 disabled:cursor-not-allowed"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Max Wins / Participant
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  value={settingsForm.max_wins_per_participant ?? campaign.max_wins_per_participant ?? ''}
+                  onChange={(e) => setSettingsForm((f) => ({ ...f, max_wins_per_participant: e.target.value === '' ? null : parseInt(e.target.value, 10) }))}
+                  disabled={campaign.integrity_locked}
+                  placeholder="Unlimited"
+                  className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+                <p className="mt-0.5 text-xs text-gray-400">Leave empty for unlimited.</p>
+              </div>
             </div>
           </div>
 
@@ -1816,7 +1856,7 @@ export default function PromotionDetailPage() {
           <div className="space-y-4">
             <div className="rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3 text-sm">
               <p className="text-gray-500 dark:text-gray-400">
-                Participant: <span className="font-mono text-gray-700 dark:text-gray-300">{maskPhone(fulfillmentModalWinner.phone_e164)}</span>
+                Participant: <span className="font-mono text-gray-700 dark:text-gray-300">{fulfillmentModalWinner.phone_e164}</span>
               </p>
               <p className="text-gray-500 dark:text-gray-400">
                 Prize: <span className="font-medium text-gray-700 dark:text-gray-300">{fulfillmentModalWinner.prize_name || '—'}</span>
@@ -1832,7 +1872,97 @@ export default function PromotionDetailPage() {
                   {fulfillmentModalWinner.fulfillment_status}
                 </span>
               </p>
+              <p className="text-gray-500 dark:text-gray-400">
+                Verification:{' '}
+                <span className="font-medium text-gray-700 dark:text-gray-300">
+                  {fulfillmentModalWinner.verification_mode === 'secure_pickup'
+                    ? fulfillmentModalWinner.verification_status === 'verified'
+                      ? 'Pickup verified'
+                      : fulfillmentModalWinner.verification_status === 'locked'
+                        ? 'Verification locked — send new code'
+                        : 'Pickup verification required'
+                    : 'Standard verified'}
+                </span>
+              </p>
             </div>
+
+            {/* Secure Pickup Verification Actions */}
+            {fulfillmentModalWinner.verification_mode === 'secure_pickup' && fulfillmentModalWinner.verification_status !== 'verified' && (
+              <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-3">
+                <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                  Secure pickup verification is required before fulfillment.
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={async () => {
+                      setPickupSending(true);
+                      setPickupMessage('');
+                      try {
+                        const res = await fetch('/api/promotions/verification/send', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ businessId: business.id, redemptionId: fulfillmentModalWinner.id }),
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.sent) {
+                          setPickupMessage('Verification code sent to winner\'s WhatsApp.');
+                        } else if (data.already_verified) {
+                          setPickupMessage('Already verified!');
+                          fetchWinnersFromApi();
+                        } else {
+                          setPickupMessage(data.error || 'Failed to send code.');
+                        }
+                      } catch { setPickupMessage('Network error.'); }
+                      setPickupSending(false);
+                    }}
+                    disabled={pickupSending}
+                    className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+                  >
+                    {pickupSending ? 'Sending...' : 'Send Pickup Code'}
+                  </button>
+                </div>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    value={pickupOtp}
+                    onChange={(e) => setPickupOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="6-digit code"
+                    maxLength={6}
+                    className="w-28 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm font-mono text-center tracking-widest text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
+                  />
+                  <button
+                    onClick={async () => {
+                      if (pickupOtp.length !== 6) return;
+                      setPickupVerifying(true);
+                      setPickupMessage('');
+                      try {
+                        const res = await fetch('/api/promotions/verification/verify', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ businessId: business.id, redemptionId: fulfillmentModalWinner.id, token: pickupOtp }),
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.verified) {
+                          setPickupMessage('Verified successfully!');
+                          setPickupOtp('');
+                          fetchWinnersFromApi();
+                        } else {
+                          setPickupMessage(data.error || 'Verification failed.');
+                        }
+                      } catch { setPickupMessage('Network error.'); }
+                      setPickupVerifying(false);
+                    }}
+                    disabled={pickupVerifying || pickupOtp.length !== 6}
+                    className="rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+                  >
+                    {pickupVerifying ? 'Verifying...' : 'Verify Code'}
+                  </button>
+                </div>
+                {pickupMessage && (
+                  <p className="text-xs text-gray-600 dark:text-gray-400">{pickupMessage}</p>
+                )}
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -1904,13 +2034,26 @@ export default function PromotionDetailPage() {
                 This fulfillment record is in a terminal state and cannot be changed.
               </p>
             ) : (
-              <button
-                onClick={handleFulfillmentSave}
-                disabled={fulfillmentSaving}
-                className="w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
-              >
-                {fulfillmentSaving ? 'Saving...' : 'Update Fulfillment'}
-              </button>
+              <>
+                <button
+                  onClick={handleFulfillmentSave}
+                  disabled={fulfillmentSaving || (
+                    fulfillmentStatus === 'fulfilled' &&
+                    fulfillmentModalWinner?.verification_mode === 'secure_pickup' &&
+                    fulfillmentModalWinner?.verification_status !== 'verified'
+                  )}
+                  className="w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+                >
+                  {fulfillmentSaving ? 'Saving...' : 'Update Fulfillment'}
+                </button>
+                {fulfillmentStatus === 'fulfilled' &&
+                  fulfillmentModalWinner?.verification_mode === 'secure_pickup' &&
+                  fulfillmentModalWinner?.verification_status !== 'verified' && (
+                  <p className="mt-2 text-xs text-amber-600 dark:text-amber-400 text-center">
+                    Verify pickup code before fulfillment.
+                  </p>
+                )}
+              </>
             )}
           </div>
         )}
