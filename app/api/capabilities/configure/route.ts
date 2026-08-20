@@ -172,7 +172,20 @@ export async function POST(request: NextRequest) {
 
   try {
     const { emitServerEvent } = await import('@/lib/observability/server-events');
-    emitServerEvent(request, 'capability.enabled', user.id, { business_id: businessId });
+    const requestedSet = new Set(requestedCaps);
+    const currentSet = new Set(currentSelected);
+    // Newly enabled
+    for (const cap of requestedCaps) {
+      if (!currentSet.has(cap)) {
+        emitServerEvent(request, 'capability.enabled', user.id, { business_id: businessId, capability: cap });
+      }
+    }
+    // Newly disabled
+    for (const cap of currentSelected) {
+      if (!requestedSet.has(cap)) {
+        emitServerEvent(request, 'capability.disabled', user.id, { business_id: businessId, capability: cap });
+      }
+    }
   } catch { /* instrumentation must never fail capability config */ }
 
   return NextResponse.json({ success: true, state: result });

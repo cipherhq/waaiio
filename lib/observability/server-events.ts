@@ -35,7 +35,14 @@ export function emitServerEvent(
     .info(`[EVENT] ${eventName}`);
 
   // Optionally capture to PostHog (non-blocking)
-  import('./product-events').then(({ captureServerEvent }) => {
-    captureServerEvent(eventName, userId, { ...properties, request_id: requestId, test_run_id: testRunId });
+  import('@/lib/posthog/server').then(({ getServerPostHog }) => {
+    const posthog = getServerPostHog();
+    if (posthog) {
+      posthog.capture({
+        distinctId: userId,
+        event: eventName,
+        properties: safe,
+      });
+    }
   }).catch(() => { /* never fail business operations */ });
 }

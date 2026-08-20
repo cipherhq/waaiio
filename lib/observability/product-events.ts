@@ -33,23 +33,30 @@ export function getBrowserTestRunId(): string | undefined {
   }
 }
 
+let interceptorInstalled = false;
+
 /**
  * Install a fetch interceptor that adds x-test-run-id to same-origin API requests.
- * Call once during acceptance session setup. Normal customers never call this.
+ * Automatically called by PostHogProvider. Only activates when test_run_id is set.
+ * Idempotent — safe across React remounts and HMR.
  * Only adds to same-origin requests (no leakage to third-party hosts).
+ * Preserves all existing headers on the original request.
  */
 export function installTestRunFetchInterceptor(): void {
   if (typeof window === 'undefined') return;
+  if (interceptorInstalled) return;
   const testRunId = getBrowserTestRunId();
   if (!testRunId) return;
 
+  interceptorInstalled = true;
   const originalFetch = window.fetch;
   window.fetch = function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-    // Only intercept same-origin requests
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
     const isSameOrigin = url.startsWith('/') || url.startsWith(window.location.origin);
-    if (isSameOrigin && testRunId) {
-      const headers = new Headers(init?.headers);
+    if (isSameOrigin) {
+      // Preserve existing headers from both init and Request object
+      const existingHeaders = input instanceof Request ? input.headers : undefined;
+      const headers = new Headers(init?.headers || existingHeaders);
       if (!headers.has(TEST_RUN_HEADER)) {
         headers.set(TEST_RUN_HEADER, testRunId);
       }
@@ -110,6 +117,7 @@ export const PRODUCT_EVENTS = {
   PAYMENT_COMPLETED: 'payment.completed',
   PAYMENT_FAILED: 'payment.failed',
   PAYMENT_REFUNDED: 'payment.refunded',
+  PAYMENT_FINALIZATION_FAILED: 'payment.finalization_failed',
 
   // Fulfillment
   FULFILLMENT_COMPLETED: 'fulfillment.completed',
@@ -172,27 +180,3 @@ export function captureProductEvent(
   }
 }
 
-/**
- * Emit a product event via PostHog (server-side).
- * Requires distinctId (user_id or anonymous ID).
- * Sensitive properties are stripped before capture.
- */
-export async function captureServerEvent(
-  eventName: ProductEventName,
-  distinctId: string,
-  properties?: ProductEventProps,
-): Promise<void> {
-  try {
-    const { getServerPostHog } = await import('@/lib/posthog/server');
-    const posthog = getServerPostHog();
-    if (posthog) {
-      posthog.capture({
-        distinctId,
-        event: eventName,
-        properties: sanitizeEventProps(properties || {}),
-      });
-    }
-  } catch {
-    /* never break business operations */
-  }
-}
