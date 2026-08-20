@@ -12,6 +12,8 @@ export type PromoCodeStatus = 'unused' | 'claimed' | 'void';
 export type PromoCodeOutcome = 'winner' | 'try_again';
 export type PromoFulfillmentStatus = 'pending' | 'processing' | 'fulfilled' | 'rejected' | 'cancelled';
 export type PromoAttemptResult = 'winner' | 'try_again' | 'invalid' | 'already_claimed' | 'campaign_inactive' | 'rate_limited' | 'not_eligible';
+export type PromoVerificationMode = 'standard' | 'secure_pickup';
+export type PromoVerificationStatus = 'not_required' | 'phone_verified' | 'verified' | 'locked';
 
 export interface PromoCampaign {
   id: string;
@@ -31,6 +33,7 @@ export interface PromoCampaign {
   max_attempts_per_phone: number;
   rate_limit_window_minutes: number;
   rate_limit_max_attempts: number;
+  max_wins_per_participant: number | null;
   eligibility_mode: string;
   eligibility_prompt: string | null;
   eligibility_min_age: number | null;
@@ -55,6 +58,7 @@ export interface PromoPrize {
   value: number | null;
   currency: string | null;
   fulfillment_instructions: string | null;
+  verification_mode: PromoVerificationMode;
   sort_order: number;
   created_at: string;
 }
@@ -107,6 +111,10 @@ export interface PromoRedemption {
   fulfillment_notes: string | null;
   fulfilled_at: string | null;
   fulfilled_by: string | null;
+  verification_mode: PromoVerificationMode;
+  verification_status: PromoVerificationStatus;
+  verified_at: string | null;
+  verified_by: string | null;
 }
 
 export interface PromoVerificationAttempt {
@@ -134,11 +142,15 @@ export interface PromoClaimResult {
   prize_type?: string;
   prize_value?: number;
   prize_currency?: string;
+  verification_mode?: PromoVerificationMode;
+  verification_status?: PromoVerificationStatus;
   idempotent_replay?: boolean;
   /** Set to true when the user must complete eligibility acknowledgment before claiming. */
   eligibility_required?: boolean;
   eligibility_mode?: string;
   eligibility_prompt?: string;
+  /** Reason for not_eligible when max wins reached */
+  reason?: string;
 }
 
 /**

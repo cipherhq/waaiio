@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
 import { generatePromoCodes } from '@/lib/promotions/generate';
-import { computeBodyLength, computeUsableCodeSpace } from '@/lib/promotions/normalize';
+import { computeBodyLength, computeUsableCodeSpace, validateGeneratedEntropy } from '@/lib/promotions/normalize';
 
 export async function POST(request: NextRequest) {
   let body: Record<string, unknown>;
@@ -69,6 +69,12 @@ export async function POST(request: NextRequest) {
   const codeLength = campaign.code_length || 12;
   const codePrefix = campaign.code_prefix || undefined;
   const bodyLen = computeBodyLength(codeLength, codePrefix);
+
+  // Server-side entropy enforcement — even if campaign was created before this rule
+  const entropyCheck = validateGeneratedEntropy(codeLength, codePrefix);
+  if (!entropyCheck.valid) {
+    return NextResponse.json({ error: entropyCheck.error }, { status: 422 });
+  }
 
   // Fetch prizes (needed for both new and retry)
   const { data: prizes } = await service

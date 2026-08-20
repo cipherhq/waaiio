@@ -12,21 +12,27 @@ import { encryptToken, decryptToken } from '@/lib/encryption';
 
 // HMAC key for code hashing — separate from encryption key
 const PROMO_HMAC_KEY = process.env.PROMO_HMAC_KEY || process.env.TOKEN_ENCRYPTION_KEY || '';
+const DEV_FALLBACK_KEY = 'dev-promo-key';
+
+/**
+ * Canonical HMAC key resolver — fail-closed in production.
+ * Both hashPromoCode and hashPickupToken use this so security
+ * semantics cannot diverge.
+ */
+function resolveHmacKey(): string {
+  if (PROMO_HMAC_KEY) return PROMO_HMAC_KEY;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('PROMO_HMAC_KEY or TOKEN_ENCRYPTION_KEY must be configured in production');
+  }
+  return DEV_FALLBACK_KEY;
+}
 
 /**
  * Generate HMAC-SHA256 hash of a normalized promo code.
  * Used for indexed lookup — never store raw codes, always hash.
  */
 export function hashPromoCode(normalizedCode: string): string {
-  if (!PROMO_HMAC_KEY) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('PROMO_HMAC_KEY or TOKEN_ENCRYPTION_KEY must be configured in production');
-    }
-    return createHmac('sha256', 'dev-promo-key')
-      .update(normalizedCode)
-      .digest('hex');
-  }
-  return createHmac('sha256', PROMO_HMAC_KEY)
+  return createHmac('sha256', resolveHmacKey())
     .update(normalizedCode)
     .digest('hex');
 }
@@ -105,13 +111,42 @@ export function generateCodeBatch(
 }
 
 /**
- * Generate a human-readable claim reference.
- * Format: WAA-XXXXXX (6 chars from secure random)
+ * Generate a human-readable claim reference with exactly 64 bits of entropy.
+ * Format: WAA-XXXX-XXXX-XXXX-XXXX (16 uppercase hex chars from 8 random bytes)
+ *
+ * Old format: WAA-XXXXXX (6 hex chars from UUID = ~24 bits, 16.7M values)
+ * New format: WAA-XXXX-XXXX-XXXX-XXXX (16 hex chars = exactly 64 bits)
+ *
+ * Uses crypto.randomBytes — no modulo bias, no alphabet mapping.
  */
 export function generateClaimReference(): string {
-  let ref = '';
-  for (let i = 0; i < 6; i++) {
-    ref += CODE_ALPHABET[randomInt(0, CODE_ALPHABET.length)];
-  }
-  return `WAA-${ref}`;
+  const hex = randomBytes(8).toString('hex').toUpperCase();
+  return `WAA-${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}`;
+}
+
+/**
+ * Generate a 6-digit numeric OTP for secure pickup verification.
+ * Uses crypto.randomInt (rejection-sampled, no modulo bias).
+ */
+export function generatePickupOtp(): string {
+  return String(randomInt(100000, 999999));
+}
+
+/**
+ * Generate HMAC for pickup verification token.
+ * Domain-separated to prevent cross-use with code HMACs.
+ *
+ * Input: promo-pickup-v1 | business_id | redemption_id | phone_e164 | token
+ *
+ * A database leak cannot trivially enumerate 6-digit OTPs because the
+ * HMAC key is not stored in the database.
+ */
+export function hashPickupToken(
+  businessId: string,
+  redemptionId: string,
+  phoneE164: string,
+  token: string,
+): string {
+  const input = `promo-pickup-v1|${businessId}|${redemptionId}|${phoneE164}|${token}`;
+  return createHmac('sha256', resolveHmacKey()).update(input).digest('hex');
 }

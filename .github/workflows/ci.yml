@@ -78,7 +78,7 @@ jobs:
   # ── Migration Validation (real PostgreSQL) ──
   migrations:
     name: Migration validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     services:
       postgres:
@@ -108,10 +108,10 @@ jobs:
       - name: Install Node.js dependencies
         run: npm ci
 
-      - name: Install Supabase prerequisites
+      - name: Verify PostgreSQL client
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client
+          command -v psql
+          psql --version
 
       - name: Create Supabase schema prerequisites
         env:

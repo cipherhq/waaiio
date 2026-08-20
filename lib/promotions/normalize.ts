@@ -56,11 +56,10 @@ export function getDisplaySuffix(normalized: string): string {
 }
 
 /**
- * Validate that a normalized code is routable by the bot.
- * Must match the same criteria as looksLikePromoCode in verify.ts:
+ * Validate that a normalized code is routable by the bot for verification.
+ * Accepts legacy 6-char codes so historical imported promo codes remain redeemable.
  * - 6-24 alphanumeric chars
  * - at least one digit
- * - no spaces
  */
 export function isRoutablePromoCode(normalized: string): boolean {
   if (normalized.length < 6 || normalized.length > 24) return false;
@@ -70,6 +69,33 @@ export function isRoutablePromoCode(normalized: string): boolean {
 }
 
 /**
+ * Validate that a code meets the hardened minimum for NEW imports.
+ * Existing historical codes use isRoutablePromoCode for redemption routing.
+ * New imports must meet MIN_IMPORTED_CODE_LENGTH to resist brute-force.
+ */
+export function isImportablePromoCode(normalized: string): boolean {
+  if (normalized.length < MIN_IMPORTED_CODE_LENGTH || normalized.length > 24) return false;
+  if (!/^[A-Z0-9]+$/.test(normalized)) return false;
+  if (!/\d/.test(normalized)) return false;
+  return true;
+}
+
+/**
+ * Minimum random body characters for generated promo codes.
+ * Prefix contributes ZERO security entropy — this minimum is enforced
+ * regardless of prefix length.
+ */
+export const MIN_GENERATED_BODY_LENGTH = 10;
+
+/**
+ * Minimum normalized length for imported promo codes.
+ * Imported codes cannot be guaranteed random, but excessively short
+ * codes are trivially guessable. 10 characters provides a reasonable
+ * floor without rejecting legitimate merchant inventories.
+ */
+export const MIN_IMPORTED_CODE_LENGTH = 10;
+
+/**
  * Compute body length for code generation.
  * code_length = TOTAL normalized length (including prefix).
  * body_length = code_length - prefix.length.
@@ -77,6 +103,24 @@ export function isRoutablePromoCode(normalized: string): boolean {
 export function computeBodyLength(codeLength: number, prefix?: string | null): number {
   const prefixLen = prefix ? prefix.length : 0;
   return Math.max(1, codeLength - prefixLen);
+}
+
+/**
+ * Validate that a generated code configuration produces sufficient entropy.
+ * Returns an error message if the body length is below the minimum.
+ */
+export function validateGeneratedEntropy(codeLength: number, prefix?: string | null): { valid: boolean; bodyLength: number; error?: string } {
+  const bodyLength = computeBodyLength(codeLength, prefix);
+  if (bodyLength < MIN_GENERATED_BODY_LENGTH) {
+    const prefixLen = prefix ? prefix.length : 0;
+    const minTotal = MIN_GENERATED_BODY_LENGTH + prefixLen;
+    return {
+      valid: false,
+      bodyLength,
+      error: `Insufficient code entropy: ${bodyLength} random characters (minimum ${MIN_GENERATED_BODY_LENGTH}). ${prefix ? `With prefix "${prefix}" (${prefixLen} chars), code length must be at least ${minTotal}.` : `Code length must be at least ${MIN_GENERATED_BODY_LENGTH}.`}`,
+    };
+  }
+  return { valid: true, bodyLength };
 }
 
 /**
@@ -112,5 +156,9 @@ export function validatePrefix(prefix: string, codeLength: number): { valid: boo
   if (prefix.length > 4) return { valid: false, error: 'Prefix must be 4 characters or fewer' };
   if (prefix.length >= codeLength) return { valid: false, error: 'Prefix must be shorter than code length' };
   if (!/^[A-Z0-9]*$/.test(prefix)) return { valid: false, error: 'Prefix must be uppercase alphanumeric only' };
+  const bodyLength = codeLength - prefix.length;
+  if (bodyLength < MIN_GENERATED_BODY_LENGTH) {
+    return { valid: false, error: `Code length must be at least ${MIN_GENERATED_BODY_LENGTH + prefix.length} with a ${prefix.length}-character prefix (need ${MIN_GENERATED_BODY_LENGTH} random body characters)` };
+  }
   return { valid: true };
 }

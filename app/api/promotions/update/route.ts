@@ -7,6 +7,7 @@ import {
   isValidStatusTransition,
   type PromoCampaignStatus,
 } from '@/lib/promotions/types';
+import { validatePrefix, validateGeneratedEntropy } from '@/lib/promotions/normalize';
 
 /**
  * Fields that cannot be changed once a campaign has redemptions (integrity-locked).
@@ -24,6 +25,7 @@ const INTEGRITY_LOCKED_FIELDS = [
   'rateLimitMaxAttempts',
   'eligibilityMode',
   'eligibilityMinAge',
+  'maxWinsPerParticipant',
   'startAt',
   'endAt',
 ];
@@ -122,6 +124,29 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ campaign: activated });
   }
 
+  // Validate code entropy when codeLength or codePrefix is being changed
+  if (!campaign.integrity_locked && ('codeLength' in body || 'codePrefix' in body)) {
+    const proposedLength = 'codeLength' in body && body.codeLength !== undefined
+      ? Number(body.codeLength) : (campaign.code_length as number);
+    const proposedPrefix = 'codePrefix' in body
+      ? (body.codePrefix ? String(body.codePrefix).trim().toUpperCase() : '')
+      : ((campaign.code_prefix as string) || '');
+
+    if (!Number.isInteger(proposedLength) || proposedLength < 6 || proposedLength > 24) {
+      return NextResponse.json({ error: 'code_length must be an integer between 6 and 24' }, { status: 400 });
+    }
+    if (proposedPrefix) {
+      const prefixCheck = validatePrefix(proposedPrefix, proposedLength);
+      if (!prefixCheck.valid) {
+        return NextResponse.json({ error: prefixCheck.error }, { status: 400 });
+      }
+    }
+    const entropyCheck = validateGeneratedEntropy(proposedLength, proposedPrefix || null);
+    if (!entropyCheck.valid) {
+      return NextResponse.json({ error: entropyCheck.error }, { status: 400 });
+    }
+  }
+
   // Build update payload — only include provided fields
   const updates: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
@@ -148,12 +173,54 @@ export async function PUT(request: NextRequest) {
     if ('acceptBareCodes' in body) updates.accept_bare_codes = Boolean(body.acceptBareCodes);
     if ('codeFormat' in body && body.codeFormat) updates.code_format = String(body.codeFormat);
     if ('codeLength' in body && body.codeLength) updates.code_length = Number(body.codeLength);
-    if ('codePrefix' in body) updates.code_prefix = body.codePrefix ? String(body.codePrefix).trim() : null;
-    if ('maxAttemptsPerPhone' in body && body.maxAttemptsPerPhone) updates.max_attempts_per_phone = Number(body.maxAttemptsPerPhone);
-    if ('rateLimitWindowMinutes' in body && body.rateLimitWindowMinutes) updates.rate_limit_window_minutes = Number(body.rateLimitWindowMinutes);
-    if ('rateLimitMaxAttempts' in body && body.rateLimitMaxAttempts) updates.rate_limit_max_attempts = Number(body.rateLimitMaxAttempts);
+    if ('codePrefix' in body) {
+      const normalized = body.codePrefix ? String(body.codePrefix).trim().toUpperCase() : '';
+      updates.code_prefix = normalized || null;
+    }
+    if ('maxAttemptsPerPhone' in body && body.maxAttemptsPerPhone !== undefined) {
+      const v = Number(body.maxAttemptsPerPhone);
+      if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+        return NextResponse.json({ error: 'max_attempts_per_phone must be a positive integer' }, { status: 400 });
+      }
+      updates.max_attempts_per_phone = v;
+    }
+    if ('rateLimitWindowMinutes' in body && body.rateLimitWindowMinutes !== undefined) {
+      const v = Number(body.rateLimitWindowMinutes);
+      if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+        return NextResponse.json({ error: 'rate_limit_window_minutes must be a positive integer' }, { status: 400 });
+      }
+      updates.rate_limit_window_minutes = v;
+    }
+    if ('rateLimitMaxAttempts' in body && body.rateLimitMaxAttempts !== undefined) {
+      const v = Number(body.rateLimitMaxAttempts);
+      if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+        return NextResponse.json({ error: 'rate_limit_max_attempts must be a positive integer' }, { status: 400 });
+      }
+      updates.rate_limit_max_attempts = v;
+    }
     if ('eligibilityMode' in body && body.eligibilityMode) updates.eligibility_mode = String(body.eligibilityMode);
-    if ('eligibilityMinAge' in body) updates.eligibility_min_age = body.eligibilityMinAge ? Number(body.eligibilityMinAge) : null;
+    if ('eligibilityMinAge' in body) {
+      if (body.eligibilityMinAge !== null && body.eligibilityMinAge !== undefined) {
+        const v = Number(body.eligibilityMinAge);
+        if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+          return NextResponse.json({ error: 'eligibility_min_age must be a positive integer' }, { status: 400 });
+        }
+        updates.eligibility_min_age = v;
+      } else {
+        updates.eligibility_min_age = null;
+      }
+    }
+    if ('maxWinsPerParticipant' in body) {
+      if (body.maxWinsPerParticipant !== null && body.maxWinsPerParticipant !== undefined) {
+        const v = Number(body.maxWinsPerParticipant);
+        if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+          return NextResponse.json({ error: 'max_wins_per_participant must be a positive integer or null' }, { status: 400 });
+        }
+        updates.max_wins_per_participant = v;
+      } else {
+        updates.max_wins_per_participant = null;
+      }
+    }
   }
 
   if (Object.keys(updates).length === 1) {

@@ -67,6 +67,9 @@ export async function GET(request: NextRequest) {
        fulfillment_reference,
        fulfillment_notes,
        fulfilled_at,
+       verification_mode,
+       verification_status,
+       verified_at,
        promo_prizes ( name, prize_type )`,
       { count: 'exact' },
     )
@@ -97,7 +100,9 @@ export async function GET(request: NextRequest) {
     fulfillment_reference: string | null;
     fulfillment_notes: string | null;
     fulfilled_at: string | null;
-    // Supabase returns the joined row as an object (many-to-one via prize_id FK)
+    verification_mode: string;
+    verification_status: string;
+    verified_at: string | null;
     promo_prizes: PrizeJoin | PrizeJoin[] | null;
   };
 
@@ -117,6 +122,9 @@ export async function GET(request: NextRequest) {
     fulfillment_reference: r.fulfillment_reference,
     fulfillment_notes: r.fulfillment_notes,
     fulfilled_at: r.fulfilled_at,
+    verification_mode: r.verification_mode,
+    verification_status: r.verification_status,
+    verified_at: r.verified_at,
   }));
 
   return NextResponse.json({
