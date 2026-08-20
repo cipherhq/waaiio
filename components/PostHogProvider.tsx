@@ -48,7 +48,7 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
         const supabase = createClient();
         supabase.auth.getUser().then(({ data: { user } }) => {
           if (user) {
-            posthog.identify(user.id, { email: user.email });
+            posthog.identify(user.id);
           }
         });
       });
