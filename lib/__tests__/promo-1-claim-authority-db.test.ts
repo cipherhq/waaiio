@@ -1585,7 +1585,7 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
 
       // The winner output contains the winning transition
       const winnerStdout = finalStatus === 'fulfilled' ? resultA.stdout : resultB.stdout;
-      expect(winnerStdout).toContain('"success":true');
+      expect(winnerStdout).toContain('"success": true');
     }, 15000);
   }); // end Migration 331
 }); // end main PROMO-1
