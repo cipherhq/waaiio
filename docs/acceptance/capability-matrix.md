@@ -1,45 +1,43 @@
 # Waaiio 32-Capability Certification Matrix
 
-Generated from `shared/capabilities.ts` canonical capability registry.
-
-Every capability must be verified during production-readiness acceptance.
+Generated from `shared/capabilities.ts` canonical registry + `CAPABILITY_TIER_REQUIREMENTS`.
 
 ## Matrix
 
-| # | Capability ID | Label | Tier | Dashboard Setup Path | Customer/WhatsApp Path | Expected Persisted State | Expected Business Result | Payment Implication | Failure/Edge Case | UX Checkpoint |
-|---|---------------|-------|------|---------------------|----------------------|-------------------------|------------------------|--------------------|--------------------|---------------|
-| 1 | `scheduling` | On-Demand Services | Free | /dashboard/services → create service | Customer requests service via WhatsApp | `services` row, `bookings` row | Booking visible in dashboard | Optional deposit/payment | No available slots, service inactive | Service list, booking confirmation |
-| 2 | `appointment` | Book Appointments | Free | /dashboard/appointments-management → create | Customer picks date/time/staff | `bookings` row with date/time/staff | Booking in calendar + reservations | Deposit required | Double-booking, staff unavailable | Calendar view, appointment detail |
-| 3 | `payment` | Accept Payments | Free | /dashboard/payment-request → create | Customer receives payment link | `payments` row (pending→success) | Payment received notification | Direct payment collection | Failed payment, expired link | Payment request list, status badge |
-| 4 | `ordering` | Take Orders | Free | /dashboard/products → create products | Customer browses menu, adds to cart | `orders` row, `order_items` rows | Order in orders list | Full payment or deposit | Out of stock, cancelled order | Product list, order detail, stock |
-| 5 | `ticketing` | Sell Tickets | Free | /dashboard/events → create event | Customer buys tickets | `event_tickets` rows, QR codes | Ticket sales in dashboard | Ticket payment | Sold out, invalid QR | Event detail, ticket list, check-in |
-| 6 | `reservation` | Book Stays/Rentals | Free | /dashboard/properties → create property | Customer picks check-in/out dates | `reservations` row | Reservation in dashboard | Deposit/full payment | Date conflict, unavailable | Property list, reservation detail |
-| 7 | `table_reservation` | Make Reservations | Free | /dashboard/reservations → configure | Customer reserves table with party size | `reservations` row | Reservation visible | Optional deposit | Full capacity, time conflict | Table layout, reservation list |
-| 8 | `whatsapp_sign` | E-Signatures | Growth | /dashboard/contracts → create contract | Customer receives document link | `contracts` row, `contract_signers` | Signed document | N/A | Expired link, invalid OTP | Contract list, signature status |
-| 9 | `reminders` | Reminders | Free | Settings → enable | Auto-sent before bookings | Reminder sent via WhatsApp | Reduced no-shows | N/A | Failed delivery | Reminder settings |
-| 10 | `crowdfunding` | Run Campaigns | Free | /dashboard/campaigns → create | Donors contribute | `campaign_donations` rows | Campaign progress | Donation payment | Goal reached, campaign ended | Campaign detail, donor list |
-| 11 | `reports` | Documents | Free | /dashboard/reports → view | N/A (business-only) | Report data | Downloadable reports | N/A | Empty data | Report filters, export |
-| 12 | `queue` | Queue Management | Free | /dashboard/queue → configure | Walk-in customers check in | `queue_entries` rows | Queue visible in dashboard | N/A | Queue full | Queue display, turn notification |
-| 13 | `feedback` | Reviews | Free | /dashboard/feedback → view | Customer rates after service | `feedback` rows | Reviews in dashboard | N/A | No feedback submitted | Feedback list, rating display |
-| 14 | `loyalty` | Loyalty | Growth | /dashboard/loyalty → configure | Points earned on purchase | `loyalty_points` rows | Points balance visible | Points-to-discount | Insufficient points | Points history, rewards |
-| 15 | `chat` | Live Chat | Free | /dashboard/chat → view conversations | Customer sends free-form message | `messages` in chat context | Conversation in chat list | N/A | Unread messages | Chat interface, read receipts |
-| 16 | `waitlist` | Waitlist | Free | /dashboard/waitlist → configure | Customer joins waitlist | `waitlist_entries` rows | Waitlist in dashboard | N/A | Auto-notification on availability | Waitlist display, notification |
-| 17 | `referral` | Referrals | Growth | /dashboard/referrals → configure | Customer shares referral code | `referrals` rows | Referral tracking | Referral reward | Invalid code, self-referral | Referral dashboard |
-| 18 | `staff` | Staff Management | Free | /dashboard/staff → add staff | Customer selects staff member | `business_staff` rows | Staff schedule visible | N/A | Staff unavailable | Staff list, schedule |
-| 19 | `invoice` | Send Invoices | Free | /dashboard/invoices → create | Customer receives invoice link | `invoices` row | Invoice in list | Invoice payment | Partial payment, overdue | Invoice detail, payment status |
-| 20 | `survey` | Surveys | Free | /dashboard/surveys → create | Customer answers survey | `survey_responses` rows | Responses in dashboard | N/A | Incomplete survey | Survey builder, results |
-| 21 | `poll` | Polls | Free | /dashboard/polls → create | Customer votes | `poll_votes` rows | Results in dashboard | N/A | Poll closed | Poll results, voting |
-| 22 | `giving` | Collect Donations | Free | /dashboard/giving → create | Supporter gives via WhatsApp | `donations` or service-based | Giving dashboard | Donation payment | Recurring giving | Giving options, donor list |
-| 23 | `broadcast` | Broadcast Messages | Growth | /dashboard/broadcasts → create | All customers receive message | `broadcast_messages` rows | Delivery stats | N/A | Failed delivery, rate limits | Broadcast editor, delivery report |
-| 24 | `recurring` | Subscriptions | Growth | /dashboard/recurring → configure | Customer subscribes | `subscriptions` rows | Active subscriptions | Recurring charge | Failed renewal, cancellation | Subscription list, billing |
-| 25 | `auto_reply` | Auto-Reply | Free | Settings → business hours | Customer messages outside hours | Auto-reply sent | Reduced missed messages | N/A | Incorrect timezone | Business hours config |
-| 26 | `membership` | Membership Tiers | Growth | /dashboard/membership → configure | Customer auto-upgraded | `membership_tiers`, `customer_memberships` | Tier status visible | Tier-based discounts | Tier downgrade | Tier display, benefits |
-| 27 | `estimates` | Quotes/Estimates | Growth | /dashboard/orders/quotes → view | Customer requests quote | `quote_requests` rows | Quote in dashboard | Quote acceptance → order | Quote expired, rejected | Quote detail, acceptance flow |
-| 28 | `packages` | Packages | Free | /dashboard/packages → create | Customer buys package | `packages` rows | Package sales | Package payment | Package expired | Package list, redemption |
-| 29 | `class_booking` | Classes | Free | /dashboard/classes → create | Customer books class spot | `class_sessions`, `bookings` | Class roster visible | Class payment | Class full, cancelled | Class schedule, roster |
-| 30 | `multi_location` | Locations | Growth | /dashboard/locations → add | Customer selects location | `business_locations` rows | Multi-location dashboard | N/A | Location inactive | Location list, switcher |
-| 31 | `waiver` | Waivers | Free | /dashboard/waivers → create | Customer signs waiver | `waivers`, `waiver_signatures` | Signed waiver visible | N/A | Expired, declined | Waiver list, signature status |
-| 32 | `promo_verification` | Promotions | Growth | /dashboard/promotions → create | Customer submits promo code | `promo_campaigns`, `promo_redemptions` | Winners in dashboard | N/A | Max wins, invalid code, locked | Campaign detail, winner queue, fulfillment |
+| # | Capability ID | Canonical Label | Tier | Dashboard Path | WhatsApp Path | Expected State | Payment | Edge Case | UX Checkpoint |
+|---|---------------|----------------|------|----------------|---------------|----------------|---------|-----------|---------------|
+| 1 | `appointment` | Appointments | Free | /dashboard/appointments-management | Customer picks date/time/staff | `bookings` row | Deposit | Double-booking, staff unavailable | Calendar, detail |
+| 2 | `scheduling` | Services | Free | /dashboard/services | Customer requests service | `services`, `bookings` | Optional deposit | Service inactive | Service list |
+| 3 | `payment` | Payments | Free | /dashboard/payment-request | Customer receives payment link | `payments` row | Direct payment | Failed payment, expired link | Payment list |
+| 4 | `ordering` | Online Store | Free | /dashboard/products | Customer browses, orders | `orders`, `order_items` | Full/deposit | Out of stock, cancelled | Product list, order detail |
+| 5 | `ticketing` | Ticketing | Free | /dashboard/events | Customer buys tickets | `event_tickets`, QR | Ticket payment | Sold out | Event detail, check-in |
+| 6 | `giving` | Giving | Free | /dashboard/giving | Supporter gives via WhatsApp | Service-based giving | Donation | Recurring giving | Giving options |
+| 7 | `chat` | Chat | Free | /dashboard/chat | Customer sends message | Chat messages | N/A | Unread messages | Chat interface |
+| 8 | `feedback` | Reviews | Free | /dashboard/feedback | Customer rates service | `feedback` rows | N/A | No feedback | Feedback list |
+| 9 | `poll` | Polls | Free | /dashboard/polls | Customer votes | `poll_votes` | N/A | Poll closed | Poll results |
+| 10 | `reservation` | Reservations | Pro | /dashboard/properties | Customer picks dates | `reservations` | Deposit/full | Date conflict | Property list |
+| 11 | `table_reservation` | Table Reservations | Free | /dashboard/reservations | Customer reserves table | `reservations` | Optional deposit | Full capacity | Reservation list |
+| 12 | `recurring` | Subscriptions | Pro | /dashboard/recurring | Customer subscribes | `subscriptions` | Recurring charge | Failed renewal, cancel | Subscription list |
+| 13 | `broadcast` | Broadcasts | Pro | /dashboard/broadcasts | All customers receive | `broadcast_messages` | N/A | Failed delivery, rate limit | Broadcast editor |
+| 14 | `membership` | Loyalty Tiers | Pro | /dashboard/membership | Auto-upgrade | `membership_tiers` | Tier discounts | Downgrade | Tier display |
+| 15 | `survey` | Surveys | Pro | /dashboard/surveys | Customer answers | `survey_responses` | N/A | Incomplete | Survey builder |
+| 16 | `invoice` | Invoices | Pro | /dashboard/invoices | Customer receives invoice | `invoices` | Invoice payment | Partial, overdue | Invoice detail |
+| 17 | `auto_reply` | Auto-Reply | Pro | Settings → hours | Auto-sent outside hours | Auto-reply sent | N/A | Wrong timezone | Hours config |
+| 18 | `loyalty` | Loyalty | Pro | /dashboard/loyalty | Points earned | `loyalty_points` | Points-to-discount | Insufficient points | Points history |
+| 19 | `referral` | Referral | Pro | /dashboard/referrals | Customer shares code | `referrals` | Referral reward | Self-referral | Referral dashboard |
+| 20 | `reminders` | Reminders | Pro | Settings → enable | Auto-sent before bookings | Reminder sent | N/A | Failed delivery | Reminder settings |
+| 21 | `staff` | Staff | Premium | /dashboard/staff | Customer selects staff | `business_staff` | N/A | Staff unavailable | Staff list |
+| 22 | `whatsapp_sign` | E-Signatures | Premium | /dashboard/contracts | Customer signs document | `contracts`, `signers` | N/A | Expired, invalid OTP | Contract list |
+| 23 | `reports` | Documents | Premium | /dashboard/reports | N/A (business-only) | Report data | N/A | Empty data | Report filters |
+| 24 | `waitlist` | Waitlist | Premium | /dashboard/waitlist | Customer joins waitlist | `waitlist_entries` | N/A | Auto-notification | Waitlist display |
+| 25 | `queue` | Queue | Premium | /dashboard/queue | Walk-in checks in | `queue_entries` | N/A | Queue full | Queue display |
+| 26 | `crowdfunding` | Campaigns | Premium | /dashboard/campaigns | Donors contribute | `campaign_donations` | Donation | Goal reached | Campaign detail |
+| 27 | `estimates` | Estimates & Quotes | Free | /dashboard/orders/quotes | Customer requests quote | `quote_requests` | Quote → order | Expired, rejected | Quote detail |
+| 28 | `packages` | Session Packages | Pro | /dashboard/packages | Customer buys package | VERIFY | Package payment | Package expired | VERIFY |
+| 29 | `class_booking` | Class Booking | Pro | /dashboard/classes | Customer books class | `class_sessions`, `bookings` | Class payment | Class full | Class schedule |
+| 30 | `multi_location` | Multi-Location | Pro | /dashboard/locations | Customer selects location | `business_locations` | N/A | Location inactive | Location list |
+| 31 | `waiver` | Waivers | Pro | /dashboard/waivers | Customer signs waiver | `waivers`, `signatures` | N/A | Expired, declined | Waiver list |
+| 32 | `promo_verification` | Promotions | Pro | /dashboard/promotions | Customer submits code | `promo_campaigns`, `promo_redemptions` | N/A | Max wins, invalid code | Campaign detail |
 
 ## Certification Status
 

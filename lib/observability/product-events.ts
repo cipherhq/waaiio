@@ -33,6 +33,32 @@ export function getBrowserTestRunId(): string | undefined {
   }
 }
 
+/**
+ * Install a fetch interceptor that adds x-test-run-id to same-origin API requests.
+ * Call once during acceptance session setup. Normal customers never call this.
+ * Only adds to same-origin requests (no leakage to third-party hosts).
+ */
+export function installTestRunFetchInterceptor(): void {
+  if (typeof window === 'undefined') return;
+  const testRunId = getBrowserTestRunId();
+  if (!testRunId) return;
+
+  const originalFetch = window.fetch;
+  window.fetch = function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    // Only intercept same-origin requests
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
+    const isSameOrigin = url.startsWith('/') || url.startsWith(window.location.origin);
+    if (isSameOrigin && testRunId) {
+      const headers = new Headers(init?.headers);
+      if (!headers.has(TEST_RUN_HEADER)) {
+        headers.set(TEST_RUN_HEADER, testRunId);
+      }
+      return originalFetch.call(this, input, { ...init, headers });
+    }
+    return originalFetch.call(this, input, init);
+  };
+}
+
 // ── Event properties ──
 
 export interface ProductEventProps {
@@ -99,9 +125,32 @@ export const PRODUCT_EVENTS = {
 
 export type ProductEventName = (typeof PRODUCT_EVENTS)[keyof typeof PRODUCT_EVENTS];
 
+// ── Privacy sanitizer ──
+
+const DENIED_KEYS = new Set([
+  'password', 'token', 'access_token', 'refresh_token', 'secret',
+  'otp', 'card', 'card_number', 'cvv', 'email', 'phone',
+  'message', 'message_body', 'api_key', 'api_secret', 'private_key',
+]);
+
+/**
+ * Remove sensitive properties before capture.
+ * Case-insensitive. Returns a new object — does NOT mutate the caller's object.
+ */
+export function sanitizeEventProps(props: Record<string, unknown>): Record<string, unknown> {
+  const safe: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(props)) {
+    if (!DENIED_KEYS.has(key.toLowerCase())) {
+      safe[key] = value;
+    }
+  }
+  return safe;
+}
+
 /**
  * Emit a product event via PostHog (client-side).
  * Safe to call even when PostHog is not initialized — degrades silently.
+ * Sensitive properties are stripped before capture.
  */
 export function captureProductEvent(
   eventName: ProductEventName,
@@ -109,7 +158,8 @@ export function captureProductEvent(
 ): void {
   if (typeof window === 'undefined') return;
   const testRunId = getBrowserTestRunId();
-  const props = { ...properties, ...(testRunId ? { test_run_id: testRunId } : {}) };
+  const raw = { ...properties, ...(testRunId ? { test_run_id: testRunId } : {}) };
+  const props = sanitizeEventProps(raw);
 
   try {
     import('posthog-js').then(({ default: posthog }) => {
@@ -125,6 +175,7 @@ export function captureProductEvent(
 /**
  * Emit a product event via PostHog (server-side).
  * Requires distinctId (user_id or anonymous ID).
+ * Sensitive properties are stripped before capture.
  */
 export async function captureServerEvent(
   eventName: ProductEventName,
@@ -138,7 +189,7 @@ export async function captureServerEvent(
       posthog.capture({
         distinctId,
         event: eventName,
-        properties: properties || {},
+        properties: sanitizeEventProps(properties || {}),
       });
     }
   } catch {

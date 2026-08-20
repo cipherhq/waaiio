@@ -170,5 +170,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  try {
+    const { emitServerEvent } = await import('@/lib/observability/server-events');
+    emitServerEvent(request, 'capability.enabled', user.id, { business_id: businessId });
+  } catch { /* instrumentation must never fail capability config */ }
+
   return NextResponse.json({ success: true, state: result });
 }

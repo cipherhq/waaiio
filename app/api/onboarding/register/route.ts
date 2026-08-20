@@ -346,6 +346,12 @@ export async function POST(request: NextRequest) {
       sendEmail({ to: userEmail, ...registered }).catch(() => {});
     }
 
+    // Emit production-readiness event
+    try {
+      const { emitServerEvent } = await import('@/lib/observability/server-events');
+      emitServerEvent(request, 'business.created', user.id, { business_id: business.id, entity_id: business.id, entity_type: 'business' });
+    } catch { /* instrumentation must never fail registration */ }
+
     return NextResponse.json({
       business_id: business.id,
       bot_code: business.bot_code,

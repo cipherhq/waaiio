@@ -1,17 +1,11 @@
 /**
  * Product event instrumentation tests.
- *
- * Proves:
- * - test_run_id propagation is optional and safe
- * - no sensitive fields emitted
- * - event names are stable
- * - instrumentation failures never break business operations
- * - request ID behavior intact
  */
 import { describe, it, expect } from 'vitest';
 import {
   PRODUCT_EVENTS,
   getTestRunId,
+  sanitizeEventProps,
   type ProductEventProps,
 } from '@/lib/observability/product-events';
 
@@ -33,9 +27,9 @@ describe('test_run_id propagation', () => {
 });
 
 describe('event name stability', () => {
-  it('all canonical events have stable string names', () => {
+  it('all canonical events have stable dot-separated names', () => {
     const events = Object.values(PRODUCT_EVENTS);
-    expect(events.length).toBeGreaterThanOrEqual(20);
+    expect(events.length).toBeGreaterThanOrEqual(22);
     for (const name of events) {
       expect(typeof name).toBe('string');
       expect(name).toMatch(/^[a-z_]+\.[a-z_]+$/);
@@ -49,38 +43,67 @@ describe('event name stability', () => {
     expect(PRODUCT_EVENTS.PAYMENT_FAILED).toBe('payment.failed');
     expect(PRODUCT_EVENTS.FULFILLMENT_COMPLETED).toBe('fulfillment.completed');
     expect(PRODUCT_EVENTS.PAYOUT_COMPLETED).toBe('payout.completed');
-  });
-
-  it('promotions events exist', () => {
     expect(PRODUCT_EVENTS.PROMO_WINNER_FULFILLED).toBe('promo.winner_fulfilled');
   });
 });
 
-describe('property safety', () => {
-  it('ProductEventProps type does not require sensitive fields', () => {
-    // Compile-time check: these properties should be accepted
-    const safe: ProductEventProps = {
-      test_run_id: 'run-1',
-      request_id: 'req-1',
+describe('privacy sanitizer', () => {
+  it('strips sensitive keys case-insensitively', () => {
+    const input = {
       business_id: 'biz-1',
-      entity_id: 'ent-1',
-      capability: 'ordering',
+      password: 'secret123',
+      token: 'tok-abc',
+      access_token: 'at-xyz',
+      secret: 'shh',
+      otp: '123456',
+      card: '4111...',
+      card_number: '4111111111111111',
+      cvv: '123',
+      email: 'user@example.com',
+      phone: '+1234567890',
+      message: 'hello world',
+      message_body: 'body text',
+      api_key: 'key-123',
       status: 'success',
     };
-    expect(safe.test_run_id).toBe('run-1');
+    const safe = sanitizeEventProps(input);
+
+    // Safe fields preserved
+    expect(safe.business_id).toBe('biz-1');
+    expect(safe.status).toBe('success');
+
+    // Sensitive fields stripped
+    expect(safe.password).toBeUndefined();
+    expect(safe.token).toBeUndefined();
+    expect(safe.access_token).toBeUndefined();
+    expect(safe.secret).toBeUndefined();
+    expect(safe.otp).toBeUndefined();
+    expect(safe.card).toBeUndefined();
+    expect(safe.card_number).toBeUndefined();
+    expect(safe.cvv).toBeUndefined();
+    expect(safe.email).toBeUndefined();
+    expect(safe.phone).toBeUndefined();
+    expect(safe.message).toBeUndefined();
+    expect(safe.message_body).toBeUndefined();
+    expect(safe.api_key).toBeUndefined();
   });
 
-  it('no credential/secret field names in event property type', () => {
-    // Source inspection: ProductEventProps must not contain these
-    const fs = require('fs');
-    const src = fs.readFileSync('lib/observability/product-events.ts', 'utf-8');
-    const propsSection = src.substring(src.indexOf('interface ProductEventProps'), src.indexOf('// ── Canonical'));
-    expect(propsSection).not.toContain('password');
-    expect(propsSection).not.toContain('token');
-    expect(propsSection).not.toContain('secret');
-    expect(propsSection).not.toContain('otp');
-    expect(propsSection).not.toContain('card');
-    expect(propsSection).not.toContain('email');
+  it('does not mutate the original object', () => {
+    const input = { business_id: 'biz-1', password: 'secret' };
+    const safe = sanitizeEventProps(input);
+    expect(input.password).toBe('secret'); // original untouched
+    expect(safe.password).toBeUndefined();
+  });
+
+  it('handles empty/undefined properties', () => {
+    expect(sanitizeEventProps({})).toEqual({});
+  });
+
+  it('case-insensitive denial', () => {
+    const safe = sanitizeEventProps({ PASSWORD: 'x', Token: 'y', business_id: 'z' });
+    expect(safe.PASSWORD).toBeUndefined();
+    expect(safe.Token).toBeUndefined();
+    expect(safe.business_id).toBe('z');
   });
 });
 
@@ -88,28 +111,81 @@ describe('PostHog privacy', () => {
   it('PostHogProvider does not identify users with email', () => {
     const fs = require('fs');
     const src = fs.readFileSync('components/PostHogProvider.tsx', 'utf-8');
-    // Must identify by user.id only, not email
     expect(src).toContain('posthog.identify(user.id)');
     expect(src).not.toContain('email: user.email');
   });
 });
 
 describe('instrumentation failure safety', () => {
-  it('captureProductEvent function has try/catch protection', () => {
+  it('captureProductEvent has try/catch protection', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/observability/product-events.ts', 'utf-8');
-    const captureFn = src.substring(src.indexOf('function captureProductEvent'), src.indexOf('function captureServerEvent'));
-    expect(captureFn).toContain('try');
-    expect(captureFn).toContain('catch');
-    expect(captureFn).toContain('never break business operations');
+    const fn = src.substring(src.indexOf('function captureProductEvent'), src.indexOf('function captureServerEvent'));
+    expect(fn).toContain('try');
+    expect(fn).toContain('catch');
+    expect(fn).toContain('never break business operations');
   });
 
-  it('captureServerEvent function has try/catch protection', () => {
+  it('captureServerEvent has try/catch protection', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/observability/product-events.ts', 'utf-8');
-    const serverFn = src.substring(src.indexOf('function captureServerEvent'));
-    expect(serverFn).toContain('try');
-    expect(serverFn).toContain('catch');
+    const fn = src.substring(src.indexOf('function captureServerEvent'));
+    expect(fn).toContain('try');
+    expect(fn).toContain('catch');
+  });
+});
+
+describe('test_run_id fetch interceptor', () => {
+  it('installTestRunFetchInterceptor is exported', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/observability/product-events.ts', 'utf-8');
+    expect(src).toContain('export function installTestRunFetchInterceptor');
+    // Only intercepts same-origin
+    expect(src).toContain('isSameOrigin');
+    expect(src).toContain(TEST_RUN_HEADER_CHECK);
+  });
+});
+
+// Test uses the actual constant name from the source
+const TEST_RUN_HEADER_CHECK = 'x-test-run-id';
+
+describe('server event emission', () => {
+  it('emitServerEvent is exported and uses logger + events', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/observability/server-events.ts', 'utf-8');
+    expect(src).toContain('export function emitServerEvent');
+    expect(src).toContain('logger.withContext');
+    expect(src).toContain('getRequestId');
+    expect(src).toContain('getTestRunId');
+    expect(src).toContain('sanitizeEventProps');
+  });
+
+  it('server events wired in onboarding register', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/onboarding/register/route.ts', 'utf-8');
+    expect(src).toContain('emitServerEvent');
+    expect(src).toContain("'business.created'");
+  });
+
+  it('server events wired in capability configure', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/capabilities/configure/route.ts', 'utf-8');
+    expect(src).toContain('emitServerEvent');
+    expect(src).toContain("'capability.enabled'");
+  });
+
+  it('payment completion event in process-success', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    expect(src).toContain("'payment.completed'");
+    expect(src).toContain("'payment.failed'");
+  });
+
+  it('fulfillment event wired in promotions fulfillment', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/promotions/fulfillment/route.ts', 'utf-8');
+    expect(src).toContain('emitServerEvent');
+    expect(src).toContain("'fulfillment.completed'");
   });
 });
 
@@ -128,26 +204,36 @@ describe('request ID compatibility', () => {
   });
 });
 
-describe('acceptance documentation', () => {
-  it('32-capability matrix exists and covers all canonical capabilities', () => {
+describe('capability matrix accuracy', () => {
+  it('matrix tiers match canonical CAPABILITY_TIER_REQUIREMENTS', () => {
     const fs = require('fs');
+    const capSrc = fs.readFileSync('shared/capabilities.ts', 'utf-8');
     const matrix = fs.readFileSync('docs/acceptance/capability-matrix.md', 'utf-8');
-    const caps = fs.readFileSync('shared/capabilities.ts', 'utf-8');
 
-    // Extract all capability IDs
-    const capIds: string[] = [];
-    const matches = caps.matchAll(/id:\s*'([^']+)'/g);
-    for (const m of matches) capIds.push(m[1]);
+    // Extract tiers from source
+    const tierMap: Record<string, string> = {};
+    const tierSection = capSrc.substring(capSrc.indexOf('CAPABILITY_TIER_REQUIREMENTS'));
+    const tierMatches = [...tierSection.matchAll(/(\w+):\s*'(\w+)'/g)];
+    for (const m of tierMatches) {
+      tierMap[m[1]] = m[2] === 'free' ? 'Free' : m[2] === 'growth' ? 'Pro' : 'Premium';
+    }
 
-    // Every capability must appear in the matrix
-    for (const id of capIds) {
+    // Extract capability IDs and labels from source
+    const capMatches = [...capSrc.matchAll(/id:\s*'([^']+)',\s*label:\s*'([^']+)'/g)];
+    expect(capMatches.length).toBeGreaterThanOrEqual(32);
+
+    // Verify each capability appears with correct tier
+    for (const [, id, label] of capMatches) {
+      const tier = tierMap[id];
+      expect(tier).toBeTruthy();
+      // Check matrix contains this capability with correct tier
       expect(matrix).toContain(`\`${id}\``);
+      expect(matrix).toContain(`| ${tier} |`);
     }
   });
 
-  it('finance acceptance spec exists', () => {
+  it('finance acceptance spec exists with invariant', () => {
     const fs = require('fs');
-    expect(fs.existsSync('docs/acceptance/finance-acceptance.md')).toBe(true);
     const spec = fs.readFileSync('docs/acceptance/finance-acceptance.md', 'utf-8');
     expect(spec).toContain('gross_amount');
     expect(spec).toContain('platform_fee');

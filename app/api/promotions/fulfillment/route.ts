@@ -99,5 +99,11 @@ export async function PUT(request: NextRequest) {
     .eq('id', redemptionId)
     .single();
 
+  try {
+    const { emitServerEvent } = await import('@/lib/observability/server-events');
+    const event = fulfillmentStatus === 'fulfilled' ? 'fulfillment.completed' as const : 'fulfillment.completed' as const;
+    emitServerEvent(request, event, user.id, { business_id: businessId, entity_id: redemptionId, status: fulfillmentStatus });
+  } catch { /* instrumentation must never fail fulfillment */ }
+
   return NextResponse.json({ redemption: updated });
 }

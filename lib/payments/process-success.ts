@@ -195,6 +195,12 @@ export async function processSuccessfulPayment(
     }
   }
 
+  // Emit product event for payment completion
+  try {
+    const eventName = criticalErrors.length === 0 ? 'payment.completed' : 'payment.failed';
+    logger.withContext({ op: eventName, paymentId: payment.id }).info(`[EVENT] ${eventName}`);
+  } catch { /* instrumentation must never fail payment processing */ }
+
   return {
     criticalSuccess: criticalErrors.length === 0,
     errors: criticalErrors.length > 0 ? criticalErrors : undefined,
