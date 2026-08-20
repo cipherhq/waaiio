@@ -2,18 +2,21 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
+import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { logger } from '@/lib/logger';
 
 const PICKUP_TEMPLATE_NAME = 'promo_pickup_verification';
+const PICKUP_TEMPLATE_LANGUAGE = 'en_US';
 
-type TemplateReadiness = 'ready' | 'pending' | 'provisioning_required' | 'rejected' | 'unavailable' | 'shared_waba';
+export type TemplateReadiness = 'ready' | 'pending' | 'provisioning_required' | 'rejected' | 'unavailable';
 
 /**
  * GET /api/promotions/template-status?businessId=...
  *
  * Returns the readiness status of the Secure Pickup verification template
- * for a specific business. Does NOT call Meta to create/modify templates.
+ * on the EFFECTIVE send channel (the same WABA that ChannelResolver would
+ * use for actual OTP delivery). Does NOT create/modify templates.
  */
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -30,42 +33,50 @@ export async function GET(request: NextRequest) {
   });
   if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-  // Look up dedicated channel
-  const { data: channel } = await service
-    .from('whatsapp_channels')
-    .select('waba_id, meta_access_token, provider')
-    .eq('business_id', businessId)
-    .eq('provider', 'meta_cloud')
-    .eq('is_active', true)
-    .maybeSingle();
+  // Resolve the EFFECTIVE send channel — same path as actual OTP delivery
+  const resolver = new ChannelResolver(service);
+  const resolved = await resolver.resolveByBusinessId(businessId);
 
-  if (!channel?.waba_id || !channel?.meta_access_token) {
-    // Shared WABA — template must be pre-provisioned on the shared WABA
-    // We cannot check status without the shared WABA credentials
+  if (!resolved) {
     return NextResponse.json({
       template: PICKUP_TEMPLATE_NAME,
-      status: 'shared_waba' as TemplateReadiness,
-      message: 'Business uses shared WhatsApp. Template readiness depends on shared WABA configuration.',
+      status: 'unavailable' as TemplateReadiness,
+      message: 'No WhatsApp channel available for this business.',
+      managed: false,
+    });
+  }
+
+  const channel = resolved.channel;
+  const isBusinessOwned = channel.channel_type === 'dedicated' && channel.business_id === businessId;
+
+  // Determine WABA credentials for the effective channel
+  const wabaId = channel.waba_id || process.env.META_CLOUD_WABA_ID || '';
+  const accessToken = channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '';
+
+  if (!wabaId || !accessToken) {
+    return NextResponse.json({
+      template: PICKUP_TEMPLATE_NAME,
+      status: 'unavailable' as TemplateReadiness,
+      message: 'WhatsApp channel credentials are not configured.',
+      managed: !isBusinessOwned,
     });
   }
 
   try {
-    const meta = new MetaCloudService({
-      accessToken: channel.meta_access_token,
-      phoneNumberId: '',
-      wabaId: channel.waba_id,
-    });
-
+    const meta = new MetaCloudService({ accessToken, phoneNumberId: '', wabaId });
     const existing = await meta.getTemplates();
     const template = (existing.data || []).find(
-      (t) => t.name === PICKUP_TEMPLATE_NAME && t.language === 'en_US',
+      (t) => t.name === PICKUP_TEMPLATE_NAME && t.language === PICKUP_TEMPLATE_LANGUAGE,
     );
 
     if (!template) {
       return NextResponse.json({
         template: PICKUP_TEMPLATE_NAME,
         status: 'provisioning_required' as TemplateReadiness,
-        message: 'Template not yet created. Enable Promotions capability to auto-provision.',
+        message: isBusinessOwned
+          ? 'Template not yet created. Enable Promotions capability to auto-provision.'
+          : 'Template not yet available on the managed WhatsApp channel. Contact support.',
+        managed: !isBusinessOwned,
       });
     }
 
@@ -96,6 +107,7 @@ export async function GET(request: NextRequest) {
       status: readiness,
       meta_status: metaStatus,
       message,
+      managed: !isBusinessOwned,
     });
   } catch (err) {
     logger.error('[PROMO-TEMPLATE] Status check failed:', err);
@@ -103,6 +115,7 @@ export async function GET(request: NextRequest) {
       template: PICKUP_TEMPLATE_NAME,
       status: 'unavailable' as TemplateReadiness,
       message: 'Could not check template status.',
+      managed: !isBusinessOwned,
     });
   }
 }

@@ -40,7 +40,7 @@ const CAPABILITY_GROUPS: CapabilityGroup[] = [
   {
     label: 'Customer Engagement',
     icon: '\u{1F465}',
-    ids: ['chat', 'broadcast', 'feedback', 'survey', 'poll', 'loyalty', 'referral', 'membership'],
+    ids: ['chat', 'broadcast', 'feedback', 'survey', 'poll', 'loyalty', 'referral', 'membership', 'promo_verification'],
   },
   {
     label: 'Operations',

@@ -346,13 +346,10 @@ export async function POST(request: NextRequest) {
           results.push({ name: templateDef.name, status: existingStatus, action: 'skipped' });
           continue;
         }
-        // REJECTED / PAUSED / DISABLED — delete and recreate
-        try {
-          await meta.deleteTemplate(templateDef.name);
-          logger.info(`[PROVISION] Deleted ${existingStatus} template "${templateDef.name}" for recreation`);
-        } catch {
-          logger.warn(`[PROVISION] Failed to delete ${existingStatus} template "${templateDef.name}", attempting creation anyway`);
-        }
+        // REJECTED / PAUSED / DISABLED / unknown — report status, do not auto-delete
+        // Destructive recreation requires explicit operator action, not incidental side-effect
+        results.push({ name: templateDef.name, status: existingStatus, action: 'needs_attention' });
+        continue;
       }
 
       try {

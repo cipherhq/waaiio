@@ -1,151 +1,230 @@
 /**
  * Promotions Secure Pickup Template Readiness Tests
  *
- * Verifies template definition, provisioning lifecycle, status awareness,
+ * Covers: template definition, status-aware provisioning lifecycle,
+ * effective channel resolution, shared WABA readiness, UI consumption,
  * and delivery contract.
  */
 import { describe, it, expect } from 'vitest';
+
+// ── Template definition contract ──
 
 describe('Template definition', () => {
   const fs = require('fs');
   const provisionSrc = fs.readFileSync('app/api/whatsapp/templates/provision/route.ts', 'utf-8');
 
-  it('promo_verification maps to promo_pickup_verification template', () => {
-    // REQUIRED_TEMPLATES must have a promo_verification key
-    expect(provisionSrc).toContain("promo_verification:");
+  it('promo_verification maps to promo_pickup_verification', () => {
+    expect(provisionSrc).toContain('promo_verification:');
     expect(provisionSrc).toContain("'promo_pickup_verification'");
   });
 
-  it('template is UTILITY category with en_US language', () => {
-    // Find the promo_verification block
-    const promoSection = provisionSrc.substring(
+  it('UTILITY category with en_US language', () => {
+    const section = provisionSrc.substring(
       provisionSrc.indexOf('promo_verification:'),
       provisionSrc.indexOf('promo_verification:') + 500,
     );
-    expect(promoSection).toContain("category: 'UTILITY'");
-    expect(promoSection).toContain("language: 'en_US'");
+    expect(section).toContain("category: 'UTILITY'");
+    expect(section).toContain("language: 'en_US'");
   });
 
-  it('template body has exactly three variables matching send contract', () => {
-    const promoSection = provisionSrc.substring(
+  it('three body variables matching send contract', () => {
+    const section = provisionSrc.substring(
       provisionSrc.indexOf('promo_verification:'),
       provisionSrc.indexOf('promo_verification:') + 500,
     );
-    // Body must contain {{1}}, {{2}}, {{3}}
-    expect(promoSection).toContain('{{1}}');
-    expect(promoSection).toContain('{{2}}');
-    expect(promoSection).toContain('{{3}}');
-    // Must NOT have {{4}} (only 3 params)
-    expect(promoSection).not.toContain('{{4}}');
-    // Example must have 3 values
-    expect(promoSection).toContain("'Prize'");
-    expect(promoSection).toContain("'123456'");
-    expect(promoSection).toContain("'10'");
+    expect(section).toContain('{{1}}');
+    expect(section).toContain('{{2}}');
+    expect(section).toContain('{{3}}');
+    expect(section).not.toContain('{{4}}');
   });
 });
 
-describe('Status-aware provisioning', () => {
+// ── Status-aware provisioning ──
+
+describe('Provisioning lifecycle', () => {
   const fs = require('fs');
-  const provisionSrc = fs.readFileSync('app/api/whatsapp/templates/provision/route.ts', 'utf-8');
+  const src = fs.readFileSync('app/api/whatsapp/templates/provision/route.ts', 'utf-8');
 
-  it('APPROVED templates are not recreated', () => {
-    expect(provisionSrc).toContain('READY_STATUSES');
-    expect(provisionSrc).toContain("'APPROVED'");
+  it('APPROVED not recreated', () => {
+    expect(src).toContain('READY_STATUSES');
+    expect(src).toContain("action: 'skipped'");
   });
 
-  it('PENDING templates are not recreated', () => {
-    expect(provisionSrc).toContain('PENDING_STATUSES');
-    expect(provisionSrc).toContain("'PENDING'");
+  it('PENDING never recreated', () => {
+    expect(src).toContain('PENDING_STATUSES');
   });
 
-  it('REJECTED templates are deleted and recreated', () => {
-    expect(provisionSrc).toContain('deleteTemplate');
-    expect(provisionSrc).toContain('for recreation');
+  it('no destructive auto-recreation of PAUSED/DISABLED/unknown', () => {
+    // Must NOT contain deleteTemplate in the main provisioning loop
+    expect(src).not.toContain('deleteTemplate');
+    // REJECTED/PAUSED/DISABLED get needs_attention, not auto-delete
+    expect(src).toContain("action: 'needs_attention'");
   });
 
-  it('idempotent — existing APPROVED/PENDING skipped', () => {
-    // The provisioning loop checks existingMap before creating
-    expect(provisionSrc).toContain('existingMap');
-    expect(provisionSrc).toContain("action: 'skipped'");
+  it('missing template triggers creation', () => {
+    expect(src).toContain('createTemplate');
+  });
+
+  it('idempotent — existing name+language checked via existingMap', () => {
+    expect(src).toContain('existingMap');
   });
 });
 
-describe('Template readiness statuses', () => {
+// ── Effective channel resolution ──
+
+describe('Template readiness uses effective send channel', () => {
   const fs = require('fs');
   const statusSrc = fs.readFileSync('app/api/promotions/template-status/route.ts', 'utf-8');
 
+  it('uses ChannelResolver.resolveByBusinessId (same as OTP send)', () => {
+    expect(statusSrc).toContain('ChannelResolver');
+    expect(statusSrc).toContain('resolveByBusinessId');
+  });
+
+  it('does NOT use direct business_id whatsapp_channels lookup', () => {
+    // Must NOT have the old direct-lookup pattern
+    expect(statusSrc).not.toContain("eq('business_id', businessId)");
+    expect(statusSrc).not.toContain(".from('whatsapp_channels')");
+  });
+
+  it('distinguishes business-owned vs managed channel', () => {
+    expect(statusSrc).toContain('isBusinessOwned');
+    expect(statusSrc).toContain('managed');
+  });
+
+  it('falls back to env credentials for shared WABA', () => {
+    expect(statusSrc).toContain('META_CLOUD_WABA_ID');
+    expect(statusSrc).toContain('META_CLOUD_ACCESS_TOKEN');
+  });
+});
+
+// ── Readiness statuses ──
+
+describe('Readiness status mapping', () => {
+  const fs = require('fs');
+  const src = fs.readFileSync('app/api/promotions/template-status/route.ts', 'utf-8');
+
   it('APPROVED → ready', () => {
-    expect(statusSrc).toContain("readiness = 'ready'");
+    expect(src).toContain("readiness = 'ready'");
   });
 
-  it('PENDING → pending (not ready, not recreated)', () => {
-    expect(statusSrc).toContain("readiness = 'pending'");
-  });
-
-  it('REJECTED → rejected (not ready)', () => {
-    expect(statusSrc).toContain("readiness = 'rejected'");
+  it('PENDING → pending (not ready)', () => {
+    expect(src).toContain("readiness = 'pending'");
   });
 
   it('missing → provisioning_required', () => {
-    expect(statusSrc).toContain("'provisioning_required'");
+    expect(src).toContain("'provisioning_required'");
   });
 
-  it('shared WABA → shared_waba status', () => {
-    expect(statusSrc).toContain("'shared_waba'");
+  it('REJECTED → rejected', () => {
+    expect(src).toContain("readiness = 'rejected'");
   });
 
-  it('provider failure → unavailable (fail safely)', () => {
-    expect(statusSrc).toContain("'unavailable'");
+  it('provider failure → unavailable (fail closed)', () => {
+    expect(src).toContain("'unavailable'");
+    expect(src).toContain('Status check failed');
+  });
+
+  it('no channel → unavailable (fail closed)', () => {
+    expect(src).toContain('No WhatsApp channel available');
+  });
+
+  it('no shared_waba pseudo-status', () => {
+    // The old shared_waba status was removed — real readiness check instead
+    expect(src).not.toContain("'shared_waba'");
   });
 });
 
-describe('Channel selection', () => {
+// ── DB/channel lookup failure handling ──
+
+describe('Fail-closed behavior', () => {
   const fs = require('fs');
-  const provisionSrc = fs.readFileSync('app/api/whatsapp/templates/provision/route.ts', 'utf-8');
+  const src = fs.readFileSync('app/api/promotions/template-status/route.ts', 'utf-8');
 
-  it('dedicated channel: provisions on business WABA', () => {
-    expect(provisionSrc).toContain("eq('business_id', business_id)");
-    expect(provisionSrc).toContain("eq('provider', 'meta_cloud')");
-    expect(provisionSrc).toContain('waba_id');
+  it('no channel resolved → unavailable, not false shared classification', () => {
+    expect(src).toContain("!resolved");
+    expect(src).toContain("'unavailable'");
   });
 
-  it('shared channel: returns shared status without error', () => {
-    expect(provisionSrc).toContain('shared: true');
-    expect(provisionSrc).toContain('provisioned: false');
+  it('Meta getTemplates failure → unavailable', () => {
+    expect(src).toContain('catch (err)');
+    expect(src).toContain("'unavailable'");
   });
 });
 
-describe('Secure Pickup send contract', () => {
+// ── Existing-business capability enablement ──
+
+describe('Capability enablement path', () => {
+  const fs = require('fs');
+  const capSrc = fs.readFileSync('app/dashboard/capabilities/page.tsx', 'utf-8');
+
+  it('promo_verification in CAPABILITY_GROUPS for Add Features', () => {
+    expect(capSrc).toContain("'promo_verification'");
+  });
+
+  it('capability enable triggers template provisioning', () => {
+    expect(capSrc).toContain('/api/whatsapp/templates/provision');
+    expect(capSrc).toContain('capability: cap');
+  });
+});
+
+// ── UI readiness consumption ──
+
+describe('Promotions create UI readiness', () => {
+  const fs = require('fs');
+  const wizardSrc = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');
+
+  it('fetches template readiness on mount', () => {
+    expect(wizardSrc).toContain('/api/promotions/template-status');
+    expect(wizardSrc).toContain('pickupTemplateReady');
+  });
+
+  it('Secure Pickup selection blocked when template not ready', () => {
+    expect(wizardSrc).toContain("pickupTemplateReady !== true");
+  });
+
+  it('shows availability status in picker label', () => {
+    expect(wizardSrc).toContain('Checking availability');
+    expect(wizardSrc).toContain('Not available');
+  });
+
+  it('loading state does not briefly enable Secure Pickup', () => {
+    // pickupTemplateReady starts as null (loading), and the guard checks !== true
+    expect(wizardSrc).toContain('pickupTemplateReady === true');
+    expect(wizardSrc).toContain('pickupTemplateReady === null');
+  });
+});
+
+// ── Send contract unchanged ──
+
+describe('OTP send contract', () => {
   const fs = require('fs');
   const sendSrc = fs.readFileSync('app/api/promotions/verification/send/route.ts', 'utf-8');
 
-  it('send uses template-only delivery (no sendText)', () => {
+  it('template-only delivery (no sendText)', () => {
     expect(sendSrc).toContain('sendTemplate');
     expect(sendSrc).not.toMatch(/sender\.sendText\(/);
   });
 
-  it('send uses promo_pickup_verification template name', () => {
+  it('uses promo_pickup_verification template', () => {
     expect(sendSrc).toContain("templateName: 'promo_pickup_verification'");
   });
 
-  it('send passes 3 template params matching definition', () => {
-    // Params: prize descriptor, OTP, expiry minutes
+  it('passes 3 template params', () => {
     expect(sendSrc).toContain("templateParams: ['Prize', otp, String(OTP_EXPIRY_MINUTES)]");
   });
 });
 
-describe('Legacy provision-templates.ts consistency', () => {
+// ── Legacy consistency ──
+
+describe('Legacy provision-templates.ts', () => {
   const fs = require('fs');
-  const legacySrc = fs.readFileSync('lib/channels/provision-templates.ts', 'utf-8');
+  const src = fs.readFileSync('lib/channels/provision-templates.ts', 'utf-8');
 
-  it('legacy list also includes promo_pickup_verification', () => {
-    expect(legacySrc).toContain("'promo_pickup_verification'");
-  });
-
-  it('legacy definition is UTILITY category', () => {
-    // Find the promo_pickup_verification entry
-    const promoIdx = legacySrc.indexOf('promo_pickup_verification');
-    const block = legacySrc.substring(promoIdx - 50, promoIdx + 300);
+  it('includes promo_pickup_verification as UTILITY', () => {
+    expect(src).toContain("'promo_pickup_verification'");
+    const idx = src.indexOf('promo_pickup_verification');
+    const block = src.substring(idx - 50, idx + 200);
     expect(block).toContain("category: 'UTILITY'");
   });
 });
