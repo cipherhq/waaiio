@@ -659,6 +659,17 @@ export default function PromotionDetailPage() {
     setSettingsSaving(true);
     setSettingsError('');
     setSettingsSuccess(false);
+
+    // Validate max_wins_per_participant — do NOT parseInt-truncate fractions
+    if (settingsForm.max_wins_per_participant !== null && settingsForm.max_wins_per_participant !== undefined) {
+      const mw = Number(settingsForm.max_wins_per_participant);
+      if (!Number.isFinite(mw) || !Number.isInteger(mw) || mw < 1) {
+        setSettingsError('Maximum wins per participant must be a positive integer or left empty for unlimited.');
+        setSettingsSaving(false);
+        return;
+      }
+    }
+
     try {
       const res = await fetch('/api/promotions/update', {
         method: 'PUT',
@@ -964,6 +975,9 @@ export default function PromotionDetailPage() {
                     <div>
                       <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{prize.name}</p>
                       <p className="text-xs text-gray-400 dark:text-gray-500 capitalize">{prize.prize_type}</p>
+                      <p className="text-xs text-gray-400 dark:text-gray-500">
+                        {(prize as unknown as { verification_mode?: string }).verification_mode === 'secure_pickup' ? 'Secure Pickup' : 'Standard'} verification
+                      </p>
                     </div>
                     <div className="text-right">
                       <p className="text-sm text-gray-700 dark:text-gray-300">
@@ -1649,7 +1663,7 @@ export default function PromotionDetailPage() {
                   type="number"
                   min={1}
                   value={settingsForm.max_wins_per_participant ?? campaign.max_wins_per_participant ?? ''}
-                  onChange={(e) => setSettingsForm((f) => ({ ...f, max_wins_per_participant: e.target.value === '' ? null : parseInt(e.target.value, 10) }))}
+                  onChange={(e) => setSettingsForm((f) => ({ ...f, max_wins_per_participant: e.target.value === '' ? null : Number(e.target.value) as unknown as number }))}
                   disabled={campaign.integrity_locked}
                   placeholder="Unlimited"
                   className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand disabled:opacity-50 disabled:cursor-not-allowed"

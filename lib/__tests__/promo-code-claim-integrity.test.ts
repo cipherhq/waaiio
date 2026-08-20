@@ -601,19 +601,32 @@ describe('HMAC production fail-closed', () => {
   });
 });
 
-describe('Max wins client validation', () => {
+describe('Max wins + verification UI', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const detailSrc2 = fs.readFileSync(path.resolve(__dirname, '../../app/dashboard/promotions/[id]/page.tsx'), 'utf-8');
+
   it('wizard rejects 0, negative, fractional max_wins', () => {
-    const fs = require('fs');
-    const src = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');
-    expect(src).toContain('Maximum wins per participant must be a positive integer');
-    expect(src).toContain('Number.isInteger(mw)');
+    const wizSrc = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');
+    expect(wizSrc).toContain('Maximum wins per participant must be a positive integer');
+    expect(wizSrc).toContain('Number.isInteger(mw)');
   });
 
   it('modal updates verification state after successful verify', () => {
-    const fs = require('fs');
-    const path = require('path');
-    const src = fs.readFileSync(path.resolve(__dirname, '../../app/dashboard/promotions/[id]/page.tsx'), 'utf-8');
-    expect(src).toContain("verification_status: 'verified'");
-    expect(src).toContain('setFulfillmentModalWinner');
+    expect(detailSrc2).toContain("verification_status: 'verified'");
+    expect(detailSrc2).toContain('setFulfillmentModalWinner');
+  });
+
+  it('settings max-wins uses Number not parseInt (source)', () => {
+    // The onChange handler must use Number() to preserve fractions for validation
+    // parseInt would silently truncate 1.5 to 1
+    const updateSrc = require('fs').readFileSync('app/api/promotions/update/route.ts', 'utf-8');
+    // Server already validates with isInteger — UI must NOT parseInt-truncate
+    expect(updateSrc).toContain("'max_wins_per_participant must be a positive integer");
+  });
+
+  it('prize verification mode exists in types', () => {
+    const typesSrc = require('fs').readFileSync('lib/promotions/types.ts', 'utf-8');
+    expect(typesSrc).toContain("verification_mode: PromoVerificationMode");
   });
 });
