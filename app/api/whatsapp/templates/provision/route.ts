@@ -204,7 +204,28 @@ const REQUIRED_TEMPLATES: Record<string, TemplateDef[]> = {
       ],
     },
   ],
+
+  // Promotions Secure Pickup — verification OTP delivery
+  promo_verification: [
+    {
+      name: 'promo_pickup_verification',
+      category: 'UTILITY',
+      language: 'en_US',
+      components: [
+        {
+          type: 'BODY',
+          text: 'Your {{1}} pickup verification code is {{2}}.\nIt expires in {{3}} minutes.\nOnly share this code with staff when collecting your prize.',
+          example: { body_text: [['Prize', '123456', '10']] },
+        },
+      ],
+    },
+  ],
 };
+
+/** Template statuses that indicate readiness for use. */
+const READY_STATUSES = new Set(['APPROVED']);
+/** Template statuses that should NOT be recreated (waiting for Meta review). */
+const PENDING_STATUSES = new Set(['PENDING']);
 
 export async function POST(request: NextRequest) {
   try {
@@ -306,19 +327,28 @@ export async function POST(request: NextRequest) {
       wabaId: channel.waba_id,
     });
 
-    // Fetch existing templates once
+    // Fetch existing templates once — track status for readiness awareness
     const existing = await meta.getTemplates();
-    const existingNames = new Set(
-      (existing.data || []).map((t) => `${t.name}:${t.language}`)
-    );
+    const existingMap = new Map<string, string>();
+    for (const t of (existing.data || [])) {
+      existingMap.set(`${t.name}:${t.language}`, t.status || 'UNKNOWN');
+    }
 
     const results: Array<{ name: string; status: string; action: string }> = [];
 
     for (const templateDef of templateDefs) {
       const key = `${templateDef.name}:${templateDef.language}`;
+      const existingStatus = existingMap.get(key);
 
-      if (existingNames.has(key)) {
-        results.push({ name: templateDef.name, status: 'exists', action: 'skipped' });
+      if (existingStatus) {
+        if (READY_STATUSES.has(existingStatus) || PENDING_STATUSES.has(existingStatus)) {
+          // APPROVED or PENDING — do not recreate
+          results.push({ name: templateDef.name, status: existingStatus, action: 'skipped' });
+          continue;
+        }
+        // REJECTED / PAUSED / DISABLED / unknown — report status, do not auto-delete
+        // Destructive recreation requires explicit operator action, not incidental side-effect
+        results.push({ name: templateDef.name, status: existingStatus, action: 'needs_attention' });
         continue;
       }
 

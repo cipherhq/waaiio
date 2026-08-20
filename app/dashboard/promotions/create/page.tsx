@@ -579,7 +579,7 @@ function Step2Codes({ state, update }: { state: WizardState; update: (p: Partial
 
 // ─── Step 3: Prizes ───────────────────────────────────────────────────────────
 
-function Step3Prizes({ state, update }: { state: WizardState; update: (p: Partial<WizardState>) => void }) {
+function Step3Prizes({ state, update, pickupTemplateReady, pickupTemplateMessage }: { state: WizardState; update: (p: Partial<WizardState>) => void; pickupTemplateReady?: boolean | null; pickupTemplateMessage?: string }) {
   const totalWinners = state.prizes.reduce((sum, p) => sum + (Number(p.quantity) || 0), 0);
   const totalCodes = state.code_source === 'generate' ? state.code_count : state.import_total;
   const tryAgain = Math.max(0, totalCodes - totalWinners);
@@ -716,10 +716,17 @@ function Step3Prizes({ state, update }: { state: WizardState; update: (p: Partia
                 <FieldLabel>Winner Verification</FieldLabel>
                 <Select
                   value={prize.verification_mode || 'standard'}
-                  onChange={(v) => updatePrize(prize._key, { verification_mode: v })}
+                  onChange={(v) => {
+                    if (v === 'secure_pickup' && pickupTemplateReady !== true) return;
+                    updatePrize(prize._key, { verification_mode: v });
+                  }}
                   options={[
                     { value: 'standard', label: 'Standard — Claim code + WhatsApp number' },
-                    { value: 'secure_pickup', label: 'Secure Pickup — One-time verification code before fulfillment' },
+                    { value: 'secure_pickup', label: pickupTemplateReady === true
+                      ? 'Secure Pickup — One-time verification code before fulfillment'
+                      : pickupTemplateReady === null
+                        ? 'Secure Pickup — Checking availability...'
+                        : `Secure Pickup — ${pickupTemplateMessage || 'Not available'}` },
                   ]}
                 />
                 <p className="mt-1 text-xs text-gray-400">
@@ -1355,7 +1362,32 @@ export default function CreatePromotionPage() {
   const [stepErrors, setStepErrors] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [pickupTemplateReady, setPickupTemplateReady] = useState<boolean | null>(null);
+  const [pickupTemplateMessage, setPickupTemplateMessage] = useState('');
   const isDirtyRef = useRef(false);
+
+  // Check Secure Pickup template readiness
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/promotions/template-status?businessId=${business.id}`);
+        if (!cancelled) {
+          if (res.ok) {
+            const data = await res.json();
+            setPickupTemplateReady(data.status === 'ready');
+            if (data.status !== 'ready') setPickupTemplateMessage(data.message || 'Secure Pickup not available');
+          } else {
+            setPickupTemplateReady(false);
+            setPickupTemplateMessage('Could not check Secure Pickup availability');
+          }
+        }
+      } catch {
+        if (!cancelled) { setPickupTemplateReady(false); setPickupTemplateMessage('Could not check template status'); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [business.id]);
 
   // Track dirty state for beforeunload warning
   useEffect(() => {
@@ -1522,7 +1554,7 @@ export default function CreatePromotionPage() {
       <div>
         {step === 1 && <Step1Basics state={state} update={update} />}
         {step === 2 && <Step2Codes state={state} update={update} />}
-        {step === 3 && <Step3Prizes state={state} update={update} />}
+        {step === 3 && <Step3Prizes state={state} update={update} pickupTemplateReady={pickupTemplateReady} pickupTemplateMessage={pickupTemplateMessage} />}
         {step === 4 && <Step4WhatsApp state={state} update={update} />}
         {step === 5 && <Step5Eligibility state={state} update={update} />}
         {step === 6 && (
