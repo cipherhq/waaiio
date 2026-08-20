@@ -195,6 +195,15 @@ export async function processSuccessfulPayment(
     }
   }
 
+  // Emit structured finalization outcome.
+  // NOTE: This function runs AFTER the payment provider has already confirmed success.
+  // The payment itself succeeded. A failure here means business finalization failed,
+  // NOT that the payment failed. Use distinct event names to avoid confusion.
+  try {
+    const eventName = criticalErrors.length === 0 ? 'payment.completed' : 'payment.finalization_failed';
+    logger.withContext({ op: eventName, paymentId: payment.id }).info(`[EVENT] ${eventName}`);
+  } catch { /* instrumentation must never fail payment processing */ }
+
   return {
     criticalSuccess: criticalErrors.length === 0,
     errors: criticalErrors.length > 0 ? criticalErrors : undefined,

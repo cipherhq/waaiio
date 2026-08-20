@@ -8,6 +8,7 @@ import { Tooltip } from '@/components/dashboard/Tooltip';
 import { FIELD_TOOLTIPS } from '@/lib/tooltips';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
+import { captureProductEvent } from '@/lib/observability/product-events';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
@@ -335,7 +336,10 @@ export default function ServicesPage() {
     };
 
     if (view === 'add') {
-      await supabase.from('services').insert(payload);
+      const { data: inserted } = await supabase.from('services').insert(payload).select('id').single();
+      if (inserted?.id) {
+        try { captureProductEvent('service.created', { business_id: business.id, entity_id: inserted.id, entity_type: 'service', status: 'created' }); } catch { /* never affect creation */ }
+      }
     } else {
       await supabase.from('services').update(payload).eq('id', form.id);
     }

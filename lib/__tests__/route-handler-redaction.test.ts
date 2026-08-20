@@ -143,6 +143,14 @@ describe('Embedded-signup route handler', () => {
       }));
     }
 
+    // Mock server-events to prevent PostHog fetch leakage across tests.
+    // When NEXT_PUBLIC_POSTHOG_KEY is set (CI), emitServerEvent's fire-and-forget
+    // posthog.capture() would consume fetch mock responses from the next test.
+    vi.doMock('@/lib/observability/server-events', () => ({
+      emitServerEvent: vi.fn(),
+      PRODUCT_EVENTS: {},
+    }));
+
     // Set up fetch mock
     const tokenResponse = overrides.tokenResponse || {
       access_token: 'short-lived-token-xyz',

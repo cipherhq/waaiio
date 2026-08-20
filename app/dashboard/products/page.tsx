@@ -5,6 +5,7 @@ import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardPr
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
+import { captureProductEvent } from '@/lib/observability/product-events';
 import type {
   Product,
   ProductVariant,
@@ -480,6 +481,9 @@ export default function ProductsPage() {
           delete payload.variant_options;
           const { data: retryData } = await supabase.from('products').insert(payload).select('id').single();
           productId = retryData?.id;
+          if (productId) {
+            try { captureProductEvent('product.created', { business_id: business.id, entity_id: productId, entity_type: 'product', status: 'created' }); } catch { /* never affect creation */ }
+          }
         } else {
           console.error('Product save error:', error);
           setSaving(false);
@@ -487,6 +491,9 @@ export default function ProductsPage() {
         }
       } else {
         productId = data?.id;
+        if (productId) {
+          try { captureProductEvent('product.created', { business_id: business.id, entity_id: productId, entity_type: 'product', status: 'created' }); } catch { /* never affect creation */ }
+        }
       }
     } else {
       const { error } = await supabase.from('products').update(payload).eq('id', form.id);

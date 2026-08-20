@@ -5,7 +5,36 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-20
+
+### fix(observability): release-gate fixes — CI regression, URL safety, allowlist, instrumentation
+
+- **CI regression root cause:** PostHog's `posthog.capture()` with `flushAt: 1, flushInterval: 0` from a previous test's `emitServerEvent` made a fire-and-forget `fetch()` that consumed the next test's fetch mock response #0, shifting all mock responses by 1. Only triggered when `NEXT_PUBLIC_POSTHOG_KEY` is set (CI, not local dev). Fixed by mocking `@/lib/observability/server-events` in `setupEmbeddedSignupMocks`.
+- **Canonical URL validation:** Replaced string-prefix same-origin check (`startsWith('/')`) with `new URL(url, window.location.href)` + `resolved.origin === window.location.origin`. Blocks `//evil.example/path`, `waaiio.com.evil.example`, and all third-party hosts.
+- **Live acceptance session:** Interceptor now installs unconditionally (regardless of test_run_id at mount). Reads `sessionStorage.waaiio_test_run_id` on each request — setting/clearing the ID after dashboard load begins/stops propagation without a page reload.
+- **Privacy allowlist:** Replaced 14-key denylist with 13-key explicit allowlist (`ALLOWED_KEYS`). Arbitrary property names (e.g., `customer_email`, `auth_token`, `card_details`) are now silently dropped. `message_id` is intentionally allowed; `message` and `message_body` are not.
+- **Product/service creation instrumentation:** `captureProductEvent('product.created')` / `captureProductEvent('service.created')` called after confirmed Supabase insert success with `business_id`, `entity_id`, `entity_type`, `status`. Services insert now returns ID via `.select('id').single()`.
+- **Capability matrix test:** Now validates all three of canonical ID + label + tier appear on the same markdown row, not just ID + tier independently.
+- **Existing observability documented:** Tests verify `observe('payment.init')` in `payment.ts`, `create_order_atomic` RPC in `ordering.flow.ts`, `book_slot_atomic` in `scheduling.flow.ts`, and `auto-payout` cron logging — these have existing structured logs sufficient for acceptance correlation.
+- **Files:** `lib/observability/product-events.ts`, `components/PostHogProvider.tsx`, `app/dashboard/products/page.tsx`, `app/dashboard/services/page.tsx`, `lib/__tests__/product-events.test.ts`, `lib/__tests__/route-handler-redaction.test.ts`
+- **Tests:** 158 suites pass (4043 tests, +20 new). 14 real interceptor behavioral tests, 6 privacy allowlist tests, 3 product/service instrumentation tests, 4 existing observability verification tests.
+- **Affects:** Fetch interceptor URL validation, privacy sanitizer behavior, product/service creation pages
+- **Could break:** Code that passed arbitrary extra properties to `sanitizeEventProps` will now see those properties dropped (allowlist is stricter than denylist). This is intentional — only the 13 allowed keys survive.
+
 ## 2026-08-19
+
+### fix(observability): correct telemetry semantics and activate test_run_id propagation
+
+- **Per-capability events:** `capabilities/configure` now emits individual `capability.enabled` / `capability.disabled` events per capability with `capability: cap` property, instead of a single generic event.
+- **Payment semantic fix:** `process-success.ts` uses `payment.finalization_failed` for post-charge failures (fee recording, confirmation, etc.), not `payment.failed` which implies the charge itself failed.
+- **Fulfillment gate:** `promotions/fulfillment` only emits `promo.winner_fulfilled` when `fulfillmentStatus === 'fulfilled'`, not for all status transitions.
+- **WhatsApp telemetry:** `embedded-signup/route.ts` emits `whatsapp.connect_completed` on success and `whatsapp.connect_failed` on catch.
+- **test_run_id activation:** PostHogProvider now calls `installTestRunFetchInterceptor()` on mount (idempotent, consent-independent). Interceptor has guard preventing duplicate installs across React remounts/HMR.
+- **Client bundle fix:** Moved `captureServerEvent` out of `product-events.ts` (client-safe) into `server-events.ts` (server-only). Fixes `posthog-node` leaking into webpack client chunk causing `node:async_hooks` build error.
+- **Files:** `app/api/capabilities/configure/route.ts`, `app/api/promotions/fulfillment/route.ts`, `app/api/whatsapp/embedded-signup/route.ts`, `components/PostHogProvider.tsx`, `lib/observability/product-events.ts`, `lib/observability/server-events.ts`, `lib/payments/process-success.ts`, `lib/__tests__/product-events.test.ts`
+- **Tests:** 158 suites pass (4023 tests), including new tests for per-capability events, payment semantics, fulfillment gating, WhatsApp wiring, fetch interceptor behavior
+- **Affects:** All server event emission, PostHog client initialization, acceptance test infrastructure
+- **Could break:** Nothing — all changes are additive telemetry or correctness fixes. No API contract changes.
 
 ### fix(ordering): payment-success invariant + hide unfinished service price request + real concurrency tests
 

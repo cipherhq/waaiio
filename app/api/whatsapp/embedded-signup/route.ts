@@ -204,6 +204,11 @@ export async function POST(request: NextRequest) {
 
     logger.debug('[EMBEDDED-SIGNUP] Success:', { businessId: business_id, wabaId, phoneNumberId, channelId: channel.id });
 
+    try {
+      const { emitServerEvent } = await import('@/lib/observability/server-events');
+      emitServerEvent(request, 'whatsapp.connect_completed', user.id, { business_id: business_id, entity_id: channel.id });
+    } catch { /* instrumentation must never fail signup */ }
+
     return NextResponse.json({
       success: true,
       channel_id: channel.id,
@@ -216,6 +221,12 @@ export async function POST(request: NextRequest) {
       businessId: business_id,
       ...safeLogErrorContext(error),
     }).error('[EMBEDDED-SIGNUP] Signup failed');
+
+    try {
+      const { emitServerEvent } = await import('@/lib/observability/server-events');
+      emitServerEvent(request, 'whatsapp.connect_failed', user?.id || 'unknown', { business_id: business_id });
+    } catch { /* non-critical */ }
+
     return NextResponse.json({ error: 'Signup failed. Please try again.' }, { status: 500 });
   }
 }

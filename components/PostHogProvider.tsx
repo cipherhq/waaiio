@@ -12,6 +12,15 @@ let posthogInitialized = false;
  * Listens for consent changes to start/stop tracking dynamically.
  */
 export function PostHogProvider({ children }: { children: React.ReactNode }) {
+  // Install test_run_id fetch interceptor once (independent of PostHog consent/key).
+  // The interceptor is idempotent internally and reads sessionStorage on each request,
+  // so setting/clearing waaiio_test_run_id after load works without a reload.
+  useEffect(() => {
+    import('@/lib/observability/product-events').then(({ installTestRunFetchInterceptor }) => {
+      installTestRunFetchInterceptor();
+    }).catch(() => { /* non-critical */ });
+  }, []);
+
   useEffect(() => {
     function initIfConsented() {
       const consent = getCookieConsent();
@@ -48,7 +57,7 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
         const supabase = createClient();
         supabase.auth.getUser().then(({ data: { user } }) => {
           if (user) {
-            posthog.identify(user.id, { email: user.email });
+            posthog.identify(user.id);
           }
         });
       });
