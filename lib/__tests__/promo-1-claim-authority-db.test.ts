@@ -1508,7 +1508,7 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
       const r = psqlJson(`SET ROLE service_role; SELECT verify_promo_pickup('${M331_BIZ}', '${rid}', 'wrong_hmac', '${USER_ID}'); RESET ROLE;`);
       expect(r.success).toBe(false);
       expect(r.reason).toBe('invalid_token');
-      expect(r.attempts_remaining).toBe(3); // 5 max - 1 attempt - 1 for this = 3
+      expect(r.attempts_remaining).toBe(4); // 5 max - 0 (pre-increment count) - 1 = 4
 
       const attempts = psql(`SELECT attempt_count FROM promo_pickup_verifications WHERE id = '${vid}';`);
       expect(parseInt(attempts)).toBe(1);
@@ -1535,6 +1535,22 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
     });
 
     // ── FULFILLMENT RACE ──
+
+    function psqlAsync(sql: string): Promise<{ stdout: string; stderr: string; code: number }> {
+      const { spawn: spawnProc } = require('child_process');
+      return new Promise((resolve) => {
+        const child = spawnProc('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+        child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+        child.on('close', (code: number) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 }));
+        child.stdin.write(sql);
+        child.stdin.end();
+      });
+    }
 
     it('M331-27. two-session fulfillment race: exactly one terminal transition wins', async () => {
       // Create a fresh winner for this test
