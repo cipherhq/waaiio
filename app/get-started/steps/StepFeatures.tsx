@@ -174,6 +174,13 @@ export function StepFeatures({
             tip: 'For businesses with multiple staff. Assign services to specific people, set work schedules, auto-balance bookings. Customers can pick their preferred staff.',
             example: 'e.g. "Book with James (Barber) or Sarah (Stylist)"',
           },
+          {
+            id: 'promo_verification' as CapabilityId,
+            title: 'Promotions',
+            desc: 'Run WhatsApp-based consumer promotions with unique codes.',
+            tip: 'For FMCG brands, retail, and any business running scratch-card or product-code promotions. Customers text a code, get instant verification and prize claiming.',
+            example: 'e.g. "Text PROMO ABC123 to verify your winning code"',
+          },
         ] as const).map(feat => {
           const isSelected = selectedCapabilities.includes(feat.id);
           const tier = CAPABILITY_TIER_REQUIREMENTS[feat.id] || 'free';
