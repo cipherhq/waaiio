@@ -5,6 +5,22 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-20
+
+### fix(observability): release-gate fixes — CI regression, URL safety, allowlist, instrumentation
+
+- **CI regression root cause:** PostHog's `posthog.capture()` with `flushAt: 1, flushInterval: 0` from a previous test's `emitServerEvent` made a fire-and-forget `fetch()` that consumed the next test's fetch mock response #0, shifting all mock responses by 1. Only triggered when `NEXT_PUBLIC_POSTHOG_KEY` is set (CI, not local dev). Fixed by mocking `@/lib/observability/server-events` in `setupEmbeddedSignupMocks`.
+- **Canonical URL validation:** Replaced string-prefix same-origin check (`startsWith('/')`) with `new URL(url, window.location.href)` + `resolved.origin === window.location.origin`. Blocks `//evil.example/path`, `waaiio.com.evil.example`, and all third-party hosts.
+- **Live acceptance session:** Interceptor now installs unconditionally (regardless of test_run_id at mount). Reads `sessionStorage.waaiio_test_run_id` on each request — setting/clearing the ID after dashboard load begins/stops propagation without a page reload.
+- **Privacy allowlist:** Replaced 14-key denylist with 13-key explicit allowlist (`ALLOWED_KEYS`). Arbitrary property names (e.g., `customer_email`, `auth_token`, `card_details`) are now silently dropped. `message_id` is intentionally allowed; `message` and `message_body` are not.
+- **Product/service creation instrumentation:** `captureProductEvent('product.created')` / `captureProductEvent('service.created')` called after confirmed Supabase insert success with `business_id`, `entity_id`, `entity_type`, `status`. Services insert now returns ID via `.select('id').single()`.
+- **Capability matrix test:** Now validates all three of canonical ID + label + tier appear on the same markdown row, not just ID + tier independently.
+- **Existing observability documented:** Tests verify `observe('payment.init')` in `payment.ts`, `create_order_atomic` RPC in `ordering.flow.ts`, `book_slot_atomic` in `scheduling.flow.ts`, and `auto-payout` cron logging — these have existing structured logs sufficient for acceptance correlation.
+- **Files:** `lib/observability/product-events.ts`, `components/PostHogProvider.tsx`, `app/dashboard/products/page.tsx`, `app/dashboard/services/page.tsx`, `lib/__tests__/product-events.test.ts`, `lib/__tests__/route-handler-redaction.test.ts`
+- **Tests:** 158 suites pass (4043 tests, +20 new). 14 real interceptor behavioral tests, 6 privacy allowlist tests, 3 product/service instrumentation tests, 4 existing observability verification tests.
+- **Affects:** Fetch interceptor URL validation, privacy sanitizer behavior, product/service creation pages
+- **Could break:** Code that passed arbitrary extra properties to `sanitizeEventProps` will now see those properties dropped (allowlist is stricter than denylist). This is intentional — only the 13 allowed keys survive.
+
 ## 2026-08-19
 
 ### fix(observability): correct telemetry semantics and activate test_run_id propagation
