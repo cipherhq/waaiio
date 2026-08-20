@@ -7,6 +7,19 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-19
 
+### fix(observability): correct telemetry semantics and activate test_run_id propagation
+
+- **Per-capability events:** `capabilities/configure` now emits individual `capability.enabled` / `capability.disabled` events per capability with `capability: cap` property, instead of a single generic event.
+- **Payment semantic fix:** `process-success.ts` uses `payment.finalization_failed` for post-charge failures (fee recording, confirmation, etc.), not `payment.failed` which implies the charge itself failed.
+- **Fulfillment gate:** `promotions/fulfillment` only emits `promo.winner_fulfilled` when `fulfillmentStatus === 'fulfilled'`, not for all status transitions.
+- **WhatsApp telemetry:** `embedded-signup/route.ts` emits `whatsapp.connect_completed` on success and `whatsapp.connect_failed` on catch.
+- **test_run_id activation:** PostHogProvider now calls `installTestRunFetchInterceptor()` on mount (idempotent, consent-independent). Interceptor has guard preventing duplicate installs across React remounts/HMR.
+- **Client bundle fix:** Moved `captureServerEvent` out of `product-events.ts` (client-safe) into `server-events.ts` (server-only). Fixes `posthog-node` leaking into webpack client chunk causing `node:async_hooks` build error.
+- **Files:** `app/api/capabilities/configure/route.ts`, `app/api/promotions/fulfillment/route.ts`, `app/api/whatsapp/embedded-signup/route.ts`, `components/PostHogProvider.tsx`, `lib/observability/product-events.ts`, `lib/observability/server-events.ts`, `lib/payments/process-success.ts`, `lib/__tests__/product-events.test.ts`
+- **Tests:** 158 suites pass (4023 tests), including new tests for per-capability events, payment semantics, fulfillment gating, WhatsApp wiring, fetch interceptor behavior
+- **Affects:** All server event emission, PostHog client initialization, acceptance test infrastructure
+- **Could break:** Nothing — all changes are additive telemetry or correctness fixes. No API contract changes.
+
 ### fix(ordering): payment-success invariant + hide unfinished service price request + real concurrency tests
 
 - **Payment-success invariant (migration 327):** `apply_order_stock_once` now requires `payment.status = 'success'` when `p_payment_id` is supplied, BEFORE any stock decrement or order confirmation. Previously a pending payment with valid order relationship could trigger stock mutation. `p_payment_id = NULL` remains supported for trusted pre-payment paths (quote acceptance, free orders).
