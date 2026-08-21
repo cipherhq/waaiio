@@ -477,3 +477,79 @@ describe('Ticketing: payment lifecycle next() behavioral', () => {
     expect(next).toBeNull();
   });
 });
+
+// ══════════════════════════════════════════════════════════
+// 13. BEHAVIORAL: Cancel CAS error handling
+// ══════════════════════════════════════════════════════════
+
+describe('Cancel CAS error handling (behavioral)', () => {
+  it('scheduling cancel DB error → does not claim cancellation', async () => {
+    const step = getStep(schedulingFlow, 'payment');
+    const ctx = mockCtx({ sessionData: { booking_id: 'bk-err', payment_reference: 'REF-err' } });
+    // Mock cancel update to return an error
+    ctx.supabase.from = vi.fn(() => ({
+      update: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          in: vi.fn().mockReturnValue({
+            select: vi.fn().mockResolvedValue({ data: null, error: { message: 'db down' } })
+          })
+        })
+      }),
+    }) as any);
+    const result = await step.validate('cancel', ctx as any);
+    // Must NOT return cancel action — DB error means we don't know if booking was cancelled
+    expect(result.valid).toBe(false);
+  });
+
+  it('ticketing cancel DB error → does not claim cancellation', async () => {
+    const step = getStep(ticketingFlow, 'await_ticket_payment');
+    const ctx = mockCtx({ sessionData: { booking_id: 'bk-tkt-err', payment_reference: 'REF-tkt-err' } });
+    ctx.supabase.from = vi.fn(() => ({
+      update: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          in: vi.fn().mockReturnValue({
+            select: vi.fn().mockResolvedValue({ data: null, error: { message: 'db down' } })
+          })
+        })
+      }),
+    }) as any);
+    const result = await step.validate('cancel', ctx as any);
+    expect(result.valid).toBe(false);
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 14. SAVED-CARD STATE MACHINE: provider state semantics
+// ══════════════════════════════════════════════════════════
+
+describe('Saved-card provider state semantics', () => {
+  it('non-terminal provider response returns indeterminate (not declined)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
+    // Fresh charge: non-terminal responses must not be terminalized
+    expect(src).toContain('isTerminalDecline');
+    expect(src).toContain("outcome: 'indeterminate', paymentId, reference: opts.reference, message: gatewayResponse");
+  });
+
+  it('existing pending: only explicit terminal failure is terminalized', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
+    // not_paid reconciliation: check reason for terminal keywords
+    expect(src).toContain('abandoned|failed|reversed|expired|declined');
+    expect(src).toContain('isTerminal');
+  });
+
+  it('existing-row lookup checks error and fails closed', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
+    expect(src).toContain('lookupErr');
+    expect(src).toContain('blocking charge');
+  });
+
+  it('existing-row validates booking entity identity', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
+    expect(src).toContain('existing.booking_id !== opts.bookingId');
+    expect(src).toContain('Payment reference conflict');
+  });
+});

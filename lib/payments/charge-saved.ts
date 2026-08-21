@@ -208,13 +208,24 @@ async function chargePaystackAuthorization(
 
   // ── Step 0: Check existing canonical payment for this reference ──
   // Prevents double-charge on repeated taps and handles recovery.
-  const { data: existing } = await supabase
+  // Fail closed on lookup error — never call provider without confirming no existing charge.
+  const { data: existing, error: lookupErr } = await supabase
     .from('payments')
-    .select('id, status')
+    .select('id, status, booking_id, business_id')
     .eq('gateway_reference', opts.reference)
     .maybeSingle();
 
+  if (lookupErr) {
+    logger.error('[SAVED-CARD] Existing payment lookup failed — blocking charge', lookupErr.message);
+    return { outcome: 'declined', reference: opts.reference, message: 'Payment verification failed — please try again' };
+  }
+
   if (existing) {
+    // Validate entity identity: existing row must belong to same booking
+    if (opts.bookingId && existing.booking_id && existing.booking_id !== opts.bookingId) {
+      logger.error('[SAVED-CARD] Existing payment reference belongs to different booking', { existing: existing.booking_id, expected: opts.bookingId });
+      return { outcome: 'declined', reference: opts.reference, message: 'Payment reference conflict — please try again' };
+    }
     if (existing.status === 'success') {
       return { outcome: 'already_charged', paymentId: existing.id, reference: opts.reference };
     }
@@ -228,17 +239,26 @@ async function chargePaystackAuthorization(
           return { outcome: 'already_charged', paymentId: existing.id, reference: opts.reference };
         }
         if (result.providerOutcome === 'not_paid') {
-          // Provider confirmed money was NOT collected — safe to terminalize
-          await supabase.from('payments')
-            .update({ status: 'failed', gateway_status: 'not_paid_verified' })
-            .eq('id', existing.id)
-            .eq('status', 'pending');
-          return { outcome: 'previously_declined', reference: opts.reference };
+          // not_paid can include non-terminal states (pending/ongoing at provider).
+          // Only terminalize if the provider reason indicates explicit terminal failure.
+          const reason = result.lifecycle?.reason || '';
+          const isTerminal = /abandoned|failed|reversed|expired|declined/i.test(reason);
+          if (isTerminal) {
+            const { error: termErr } = await supabase.from('payments')
+              .update({ status: 'failed', gateway_status: reason.slice(0, 50) })
+              .eq('id', existing.id)
+              .eq('status', 'pending');
+            if (!termErr) {
+              return { outcome: 'previously_declined', reference: opts.reference };
+            }
+            // Terminalization failed — stay indeterminate
+          }
+          // Non-terminal not_paid (pending/ongoing/unknown at provider) — stay recoverable
         }
       } catch (e) {
         logger.error('[SAVED-CARD] Reconciliation of existing pending payment failed:', e);
       }
-      // Retryable/config/ambiguous — stay pending/recoverable, no second charge
+      // Retryable/config/ambiguous/non-terminal — stay pending/recoverable, no second charge
       return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Previous charge attempt pending — reconciling' };
     }
     if (existing.status === 'failed') {
@@ -336,19 +356,29 @@ async function chargePaystackAuthorization(
       return { outcome: 'charged', paymentId, reference: opts.reference };
     }
 
+    // Determine if provider response is a definitive decline or non-terminal
+    const providerStatus = (data.data?.status || '').toLowerCase();
+    const gatewayResponse = data.data?.gateway_response || data.message || 'unknown';
+    const isTerminalDecline = ['failed', 'abandoned', 'reversed', 'expired'].includes(providerStatus)
+      || /declined|insufficient|invalid|expired|blocked/i.test(gatewayResponse);
+
+    if (!isTerminalDecline) {
+      // Non-terminal/unknown provider state — leave payment pending for reconciliation
+      logger.warn('[SAVED-CARD] Non-terminal provider response:', providerStatus, gatewayResponse);
+      return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: gatewayResponse };
+    }
+
     // Definitive provider decline — mark payment row terminal
     const { error: termErr } = await supabase.from('payments')
-      .update({ status: 'failed', gateway_status: data.data?.gateway_response || 'declined' })
+      .update({ status: 'failed', gateway_status: gatewayResponse.slice(0, 100) })
       .eq('id', paymentId);
 
     if (termErr) {
-      // Terminalization failed — row stays pending. Return indeterminate (not declined)
-      // to prevent the caller from offering a new charge while this one is stuck.
       logger.error('[SAVED-CARD] Decline terminalization failed:', termErr.message);
       return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: 'Card declined but could not record — verifying' };
     }
 
-    logger.error('[SAVED-CARD] Charge declined:', data.message || data.data?.gateway_response);
+    logger.error('[SAVED-CARD] Charge declined:', gatewayResponse);
     return {
       outcome: 'declined',
       reference: opts.reference,

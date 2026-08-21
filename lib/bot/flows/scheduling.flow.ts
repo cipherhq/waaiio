@@ -3391,18 +3391,27 @@ export const schedulingFlow: FlowDefinition = {
           const bookingId = d.booking_id as string;
           if (bookingId) {
             // CAS guard: only cancel if booking is still pending/unpaid.
-            // Prevents overwriting a booking that Payment Authority already confirmed.
-            const { data: cancelResult } = await ctx.supabase
+            const { data: cancelResult, error: cancelErr } = await ctx.supabase
               .from('bookings')
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'diner' })
               .eq('id', bookingId)
               .in('status', ['pending'])
               .select('id');
 
+            if (cancelErr) {
+              // DB error — do not claim cancellation or cancel transfers
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Something went wrong. Please try again.') });
+              return { valid: false, errorMessage: '' };
+            }
+
             if (!cancelResult?.length) {
               // Booking is no longer pending — payment may have confirmed it
-              const { data: bk } = await ctx.supabase.from('bookings')
+              const { data: bk, error: readErr } = await ctx.supabase.from('bookings')
                 .select('status, deposit_status').eq('id', bookingId).single();
+              if (readErr) {
+                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Something went wrong. Please try again.') });
+                return { valid: false, errorMessage: '' };
+              }
               if (bk?.deposit_status === 'paid' || bk?.status === 'confirmed') {
                 await ctx.sender.sendText({
                   to: ctx.from,

@@ -863,16 +863,25 @@ export const ticketingFlow: FlowDefinition = {
           if (bookingId) {
             // Cancel only if booking is still pending — CAS-style guard prevents
             // overwriting a booking that Payment Authority already confirmed.
-            const { data: cancelResult } = await ctx.supabase
+            const { data: cancelResult, error: cancelErr } = await ctx.supabase
               .from('bookings')
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
               .eq('id', bookingId)
               .in('status', ['pending'])
               .select('id');
 
+            if (cancelErr) {
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Something went wrong. Please try again.') });
+              return { valid: false, errorMessage: '' };
+            }
+
             if (!cancelResult?.length) {
-              const { data: bk } = await ctx.supabase.from('bookings')
+              const { data: bk, error: readErr } = await ctx.supabase.from('bookings')
                 .select('status, deposit_status').eq('id', bookingId).single();
+              if (readErr) {
+                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Something went wrong. Please try again.') });
+                return { valid: false, errorMessage: '' };
+              }
               if (bk?.deposit_status === 'paid' || bk?.status === 'confirmed') {
                 await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Your payment has been confirmed! Your tickets are ready.\n\n💡 Type *my tickets* to view them.') });
                 return { valid: true, data: { _action: 'already_confirmed' } };
