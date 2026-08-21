@@ -1475,14 +1475,14 @@ export const orderingFlow: FlowDefinition = {
         if (code.length >= 3) {
           const { data: promo } = await ctx.supabase
             .from('promo_codes')
-            .select('id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, valid_until, is_active')
+            .select('id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, reserved_uses, valid_until, is_active')
             .eq('business_id', ctx.business!.id)
             .eq('code', code)
             .eq('is_active', true)
             .maybeSingle();
 
           if (!promo) return { valid: false, errorMessage: 'Invalid promo code. Try again or tap *No, continue*.' };
-          if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has been fully redeemed.' };
+          if (promo.max_uses && (promo.current_uses + (promo.reserved_uses || 0)) >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has been fully redeemed.' };
           if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This promo code has expired.' };
 
           // Check if this customer already used this promo code
@@ -1538,7 +1538,7 @@ export const orderingFlow: FlowDefinition = {
         const code = input.trim().toUpperCase();
         const { data: promo } = await ctx.supabase
           .from('promo_codes')
-          .select('id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, valid_until, is_active')
+          .select('id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, reserved_uses, valid_until, is_active')
           .eq('business_id', ctx.business!.id)
           .eq('code', code)
           .eq('is_active', true)
@@ -2415,6 +2415,13 @@ export const orderingFlow: FlowDefinition = {
     // ── Process Order ──
     {
       id: 'process_order',
+      // ACC-008: Conditional post-prompt transition. Moves to await_order_payment
+      // only when payment was initialized (paid orders). Free orders stay on process_order.
+      nextAfterPrompt(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        if (d.payment_reference || d.bank_transfer_reference) return 'await_order_payment';
+        return undefined;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const cart = (d.cart as CartItem[]) || [];
@@ -2585,6 +2592,7 @@ export const orderingFlow: FlowDefinition = {
             p_package_description: (d.package_description as string) || null,
             p_package_photo_url: (d.package_photo_url as string) || null,
             p_items: itemsJson,
+            p_referral_id: (d.referral_id as string) || null,
           });
 
           if (rpcError || !rpcResult) {
@@ -2651,8 +2659,10 @@ export const orderingFlow: FlowDefinition = {
           }).catch(err => logger.error('[ORDERING] Owner notification error:', err));
         }
 
-        // Promo usage is incremented inside create_order_atomic RPC transaction.
-        // No separate app-level call needed — ensures atomicity with order creation.
+        // ACC-008: Promo usage is RESERVED (not finalized) inside create_order_atomic.
+        // reserved_uses incremented atomically with order creation.
+        // Finalized on payment success via finalize_promo_reservation().
+        // Released on cancellation via release_promo_reservation().
 
         // ACC-008: Customer profile upsert — for paid orders, defer p_booking_amount
         // to payment.completed so unpaid amounts don't inflate total_spent/LTV.
@@ -2709,8 +2719,7 @@ export const orderingFlow: FlowDefinition = {
               d.bank_transfer_offered = true;
               d.bank_transfer_amount = total;
 
-              // ACC-008: Transition via in-memory mutation — executor CAS persists
-              ctx.session.current_step = 'await_order_payment';
+              // ACC-008: Transition handled by nextAfterPrompt (reads payment_reference/bank_transfer_reference)
 
               const orderSummary = getOrderConfirmationMessage({
                 businessName: ctx.business?.name || 'Shop',
@@ -2750,8 +2759,7 @@ export const orderingFlow: FlowDefinition = {
               ];
             }
 
-            // ACC-008: Transition via in-memory mutation — executor CAS persists
-            ctx.session.current_step = 'await_order_payment';
+            // ACC-008: Transition handled by nextAfterPrompt (reads payment_reference/bank_transfer_reference)
 
             return [
               {
@@ -2798,8 +2806,7 @@ export const orderingFlow: FlowDefinition = {
             d.bank_transfer_offered = true;
             d.bank_transfer_amount = total;
 
-            // ACC-008: Transition via in-memory mutation — executor CAS persists
-            ctx.session.current_step = 'await_order_payment';
+            // ACC-008: Transition handled by nextAfterPrompt (reads payment_reference/bank_transfer_reference)
 
             const orderSummary = getOrderConfirmationMessage({
               businessName: ctx.business?.name || 'Shop',
@@ -2922,6 +2929,8 @@ export const orderingFlow: FlowDefinition = {
           const orderId = ctx.session.session_data.order_id as string;
           if (orderId) {
             await ctx.supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
+            // ACC-008: Release promo reservation on cancellation
+            try { await ctx.supabase.rpc('release_promo_reservation', { p_order_id: orderId }); } catch { /* non-critical */ }
           }
           await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Order cancelled. Send *Hi* to start over.') });
           return { valid: true, data: { _action: 'cancelled' } };
@@ -2947,12 +2956,12 @@ export const orderingFlow: FlowDefinition = {
           if (!chatCaps.includes('chat')) {
             return null; // chat not available — end flow normally
           }
-          // ACC-008: Transition via in-memory mutation — executor CAS persists
+          // In-memory mutation — executor's advanceToStep() will CAS-persist
           ctx.session.session_data = { ...d, active_capability: 'chat' };
           return 'chat_start';
         }
         if (d._track_my_order) {
-          // ACC-008: Transition via in-memory mutation — executor CAS persists
+          // In-memory mutation — executor's advanceToStep() will CAS-persist
           ctx.session.session_data.selected_order_id = d.order_id;
           return 'my_orders';
         }
@@ -2999,6 +3008,8 @@ export const orderingFlow: FlowDefinition = {
           const orderId = ctx.session.session_data.order_id as string;
           if (orderId) {
             await ctx.supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
+            // ACC-008: Release promo reservation on cancellation
+            try { await ctx.supabase.rpc('release_promo_reservation', { p_order_id: orderId }); } catch { /* non-critical */ }
           }
           if (d.bank_transfer_reference) {
             await ctx.supabase
@@ -3185,6 +3196,32 @@ export const orderingFlow: FlowDefinition = {
                 tier,
                 isInTrial,
               }).catch(err => logger.error('[ORDERING] Platform fee error:', err));
+            }
+
+            // ACC-008: Finalize promo + convert referral + update customer spend on payment success
+            if (ctx.business) {
+              try {
+                await ctx.supabase.rpc('finalize_promo_reservation', { p_order_id: sd.order_id as string });
+              } catch (e) { logger.error('[ORDERING] Promo finalization error:', e); }
+
+              if (sd.referral_id) {
+                try {
+                  await ctx.supabase.from('referrals')
+                    .update({ status: 'converted', referee_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`, updated_at: new Date().toISOString() })
+                    .eq('id', sd.referral_id as string)
+                    .eq('status', 'pending');
+                } catch (e) { logger.error('[ORDERING] Referral conversion error:', e); }
+              }
+
+              try {
+                await ctx.supabase.rpc('upsert_customer_profile', {
+                  p_business_id: ctx.business.id,
+                  p_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+                  p_name: null,
+                  p_booking_amount: totalAmount,
+                  p_is_order: false,
+                });
+              } catch (e) { logger.error('[ORDERING] Customer spend update error:', e); }
             }
 
             // Post-completion: loyalty, feedback, referral, auto-receipt

@@ -1,13 +1,9 @@
 /**
  * ACC-008: Order/Payment State-Machine Regression Tests
  *
- * Tests the proven defect and its fix: add_to_cart catch-all validate + null next
- * caused the post-completion menu to appear before any checkout/payment flow.
- *
- * Configuration matches production SnapaKit:
- * - Ordering enabled, one simple product at ₦120,000
- * - No payment gateway configured, no bank account
- * - Quick-add path (simple product, no variants, no required addons)
+ * Covers: CAS-owned transitions, fail-closed validates, payment-pending guard,
+ * promo reservation/finalization/release, referral deferred conversion,
+ * customer spend timing, owner notification, and cross-layer executor behavior.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { getStep } from './helpers';
@@ -17,8 +13,6 @@ import type { FlowContext, FlowStepConfig, ValidationResult } from '../types';
 function findStep(stepId: string): FlowStepConfig {
   return getStep(orderingFlow, stepId);
 }
-
-// ── Mock infrastructure ──
 
 function mockSupabase() {
   const chain = () => {
@@ -58,35 +52,21 @@ function mockSupabase() {
     });
     return c;
   };
-
   return { from: vi.fn(() => chain()), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) };
 }
 
-function buildCtx(overrides: Partial<{
-  currentStep: string;
-  sessionData: Record<string, unknown>;
-}>): FlowContext {
+function buildCtx(overrides?: Partial<{ currentStep: string; sessionData: Record<string, unknown> }>): FlowContext {
   const sb = mockSupabase();
   return {
     supabase: sb as any,
-    sender: {
-      sendText: vi.fn().mockResolvedValue({}),
-      sendButtons: vi.fn().mockResolvedValue({}),
-      sendList: vi.fn().mockResolvedValue({}),
-      sendDocument: vi.fn().mockResolvedValue({}),
-    } as any,
-    standalone: {} as any,
-    intelligence: {} as any,
+    sender: { sendText: vi.fn().mockResolvedValue({}), sendButtons: vi.fn().mockResolvedValue({}), sendList: vi.fn().mockResolvedValue({}), sendDocument: vi.fn().mockResolvedValue({}) } as any,
+    standalone: {} as any, intelligence: {} as any,
     t: vi.fn(async (text: string) => text),
     from: '+2341234567890',
     session: {
       id: 'session-acc008', user_id: 'user-acc008', business_id: 'biz-snapakit',
-      current_step: overrides.currentStep || 'add_to_cart',
-      session_data: {
-        capabilities: ['ordering', 'payment', 'chat', 'giving', 'appointment'],
-        active_capability: 'ordering',
-        ...overrides.sessionData,
-      },
+      current_step: overrides?.currentStep || 'add_to_cart',
+      session_data: { capabilities: ['ordering', 'payment', 'chat', 'giving', 'appointment'], active_capability: 'ordering', ...overrides?.sessionData },
       version: 1,
     },
     business: {
@@ -99,181 +79,288 @@ function buildCtx(overrides: Partial<{
   };
 }
 
-function cartSessionData() {
-  return {
-    current_product_id: 'prod-jersey',
-    current_product_name: 'Man United Jersey',
-    current_product_price: 120000,
-    current_quantity: 1,
-    current_addons: [],
-    _addon_action: 'skip',
-    cart: [],
-  };
-}
-
 // ══════════════════════════════════════════════════════════
-// REPRODUCTION: Exact SnapaKit quick-add → Checkout → post-completion bypass
+// 1. PROVEN REPRODUCTION: Quick-add → Checkout → NOT post-completion
 // ══════════════════════════════════════════════════════════
 
-describe('ACC-008: SnapaKit reproduction — quick-add checkout bypass', () => {
-  it('₦120,000 quick-add → Checkout reaches checkout flow, NOT post-completion', () => {
-    const addToCart = findStep('add_to_cart');
-    // After fix: add_to_cart.validate() rejects unknown input
-    // and next() routes to continue_or_checkout (not null)
-    // This means "Checkout" typed on add_to_cart step cannot trigger post-completion
-    expect(addToCart.next).toBeDefined();
-  });
-
-  it('add_to_cart.validate() rejects "checkout" input (fail closed)', async () => {
-    const ctx = buildCtx({ sessionData: cartSessionData() });
-    const addToCart = findStep('add_to_cart');
-    const result = await addToCart.validate('checkout', ctx);
+describe('ACC-008: SnapaKit reproduction', () => {
+  it('add_to_cart.validate() rejects "checkout" (fail closed)', async () => {
+    const ctx = buildCtx({ sessionData: { cart: [{ product_id: 'p1', name: 'Jersey', price: 120000, quantity: 1 }] } });
+    const result = await findStep('add_to_cart').validate('checkout', ctx);
     expect(result.valid).toBe(false);
   });
 
   it('add_to_cart.next() returns continue_or_checkout (not null)', async () => {
-    const ctx = buildCtx({ sessionData: cartSessionData() });
-    const addToCart = findStep('add_to_cart');
-    const next = await addToCart.next(ctx);
-    expect(next).toBe('continue_or_checkout');
+    const ctx = buildCtx();
+    expect(await findStep('add_to_cart').next(ctx)).toBe('continue_or_checkout');
   });
 
-  it('add_to_cart declares nextAfterPrompt for executor-owned transition', () => {
-    const addToCart = findStep('add_to_cart');
-    expect(addToCart.nextAfterPrompt).toBe('continue_or_checkout');
+  it('add_to_cart declares nextAfterPrompt: continue_or_checkout', () => {
+    expect(findStep('add_to_cart').nextAfterPrompt).toBe('continue_or_checkout');
   });
 
-  it('add_to_cart.prompt() does NOT write current_step to DB directly', async () => {
-    const ctx = buildCtx({ sessionData: cartSessionData() });
+  it('add_to_cart.prompt() does NOT write current_step to DB', async () => {
+    const ctx = buildCtx({ sessionData: { current_product_id: 'p1', current_product_name: 'Jersey', current_product_price: 120000, current_quantity: 1, current_addons: [], _addon_action: 'skip', cart: [] } });
     const dbWrites: string[] = [];
     const origFrom = (ctx.supabase as any).from;
     (ctx.supabase as any).from = vi.fn((table: string) => {
       const chain = origFrom(table);
       const origUpdate = chain.update;
-      chain.update = vi.fn((...args: any[]) => {
-        if (args[0]?.current_step) dbWrites.push(args[0].current_step);
-        return origUpdate(...args);
-      });
+      chain.update = vi.fn((...args: any[]) => { if (args[0]?.current_step) dbWrites.push(args[0].current_step); return origUpdate(...args); });
       return chain;
     });
-
     await findStep('add_to_cart').prompt(ctx);
     expect(dbWrites.filter(w => w === 'continue_or_checkout')).toHaveLength(0);
   });
 
-  it('"Checkout" from add_to_cart never produces post-completion (full sequence)', async () => {
-    const ctx = buildCtx({ sessionData: { ...cartSessionData(), cart: [{ product_id: 'p1', name: 'Jersey', price: 120000, quantity: 1 }] } });
-    const addToCart = findStep('add_to_cart');
-    const validateResult = await addToCart.validate('checkout', ctx);
-    const nextResult = validateResult.valid ? await addToCart.next(ctx) : 'rejected';
-
-    const isPostCompletion = validateResult.valid && nextResult === null;
+  it('"Checkout" from add_to_cart never produces post-completion', async () => {
+    const ctx = buildCtx({ sessionData: { cart: [{ product_id: 'p1', name: 'Jersey', price: 120000, quantity: 1 }] } });
+    const r = await findStep('add_to_cart').validate('checkout', ctx);
+    const isPostCompletion = r.valid && (await findStep('add_to_cart').next(ctx)) === null;
     expect(isPostCompletion).toBe(false);
   });
-});
 
-// ══════════════════════════════════════════════════════════
-// CHECKOUT FLOW CORRECTNESS
-// ══════════════════════════════════════════════════════════
-
-describe('ACC-008: Checkout flow reaches T&C for non-zero orders', () => {
   it('continue_or_checkout routes "checkout" to apply_promo', async () => {
-    const ctx = buildCtx({
-      currentStep: 'continue_or_checkout',
-      sessionData: { cart: [{ product_id: 'p1', name: 'Jersey', price: 120000, quantity: 1 }] },
-    });
-    const step = findStep('continue_or_checkout');
-    const result = await step.validate('checkout', ctx);
-    expect(result.valid).toBe(true);
-    expect(result.data?._action).toBe('checkout');
-
-    Object.assign(ctx.session.session_data, result.data!);
-    const next = await step.next(ctx);
-    expect(next).toBe('apply_promo');
+    const ctx = buildCtx({ currentStep: 'continue_or_checkout', sessionData: { cart: [{ product_id: 'p1', name: 'Jersey', price: 120000, quantity: 1 }] } });
+    const r = await findStep('continue_or_checkout').validate('checkout', ctx);
+    expect(r.valid).toBe(true);
+    Object.assign(ctx.session.session_data, r.data!);
+    expect(await findStep('continue_or_checkout').next(ctx)).toBe('apply_promo');
   });
 });
 
 // ══════════════════════════════════════════════════════════
-// PROCESS_ORDER FAIL-CLOSED
+// 2. PROCESS_ORDER FAIL-CLOSED
 // ══════════════════════════════════════════════════════════
 
-describe('ACC-008: process_order validate fails closed', () => {
-  it('unknown input is rejected (not silently accepted)', async () => {
-    const ctx = buildCtx({
-      currentStep: 'process_order',
-      sessionData: { cart: [{ product_id: 'p1', name: 'Jersey', price: 120000, quantity: 1 }] },
-    });
-    const step = findStep('process_order');
-    const result = await step.validate('random text', ctx);
-    expect(result.valid).toBe(false);
-    expect(result.errorMessage).toBeDefined();
-  });
-
-  it('accept_terms is still valid', async () => {
+describe('ACC-008: process_order fail-closed', () => {
+  it('unknown input rejected', async () => {
     const ctx = buildCtx({ currentStep: 'process_order' });
-    const result = await findStep('process_order').validate('accept_terms', ctx);
-    expect(result.valid).toBe(true);
-    expect(result.data?._terms_accepted).toBe(true);
+    const r = await findStep('process_order').validate('random text', ctx);
+    expect(r.valid).toBe(false);
   });
 
-  it('cancel_order is still valid', async () => {
-    const ctx = buildCtx({ currentStep: 'process_order', sessionData: { order_id: 'order-1' } });
-    const result = await findStep('process_order').validate('cancel_order', ctx);
-    expect(result.valid).toBe(true);
-    expect(result.data?._action).toBe('cancelled');
-  });
-});
-
-// ══════════════════════════════════════════════════════════
-// PAYMENT-PENDING NEVER TRIGGERS POST-COMPLETION
-// ══════════════════════════════════════════════════════════
-
-describe('ACC-008: payment-pending post-completion guard', () => {
-  it('session with payment_reference is detected as payment-pending', () => {
-    const sd: Record<string, unknown> = { payment_reference: 'ref-123', active_capability: 'ordering' };
-    const isPaymentPending = !!(sd.payment_reference || sd.bank_transfer_reference);
-    expect(isPaymentPending).toBe(true);
+  it('accept_terms still valid', async () => {
+    const ctx = buildCtx({ currentStep: 'process_order' });
+    const r = await findStep('process_order').validate('accept_terms', ctx);
+    expect(r.valid).toBe(true);
+    expect(r.data?._terms_accepted).toBe(true);
   });
 
-  it('session with bank_transfer_reference is detected as payment-pending', () => {
-    const sd: Record<string, unknown> = { bank_transfer_reference: 'bt-456', active_capability: 'ordering' };
-    const isPaymentPending = !!(sd.payment_reference || sd.bank_transfer_reference);
-    expect(isPaymentPending).toBe(true);
-  });
-
-  it('session without payment references is NOT payment-pending', () => {
-    const sd: Record<string, unknown> = { active_capability: 'ordering' };
-    const isPaymentPending = !!(sd.payment_reference || sd.bank_transfer_reference);
-    expect(isPaymentPending).toBe(false);
+  it('cancel_order still valid', async () => {
+    const ctx = buildCtx({ currentStep: 'process_order', sessionData: { order_id: 'o1' } });
+    const r = await findStep('process_order').validate('cancel_order', ctx);
+    expect(r.valid).toBe(true);
+    expect(r.data?._action).toBe('cancelled');
   });
 });
 
 // ══════════════════════════════════════════════════════════
-// SIDE-EFFECT CORRECTNESS
+// 3. nextAfterPrompt: EXPLICIT CONDITIONAL TRANSITION
 // ══════════════════════════════════════════════════════════
 
-describe('ACC-008: side-effect timing correctness', () => {
-  it('upsert_customer_profile defers p_booking_amount for paid orders', () => {
+describe('ACC-008: nextAfterPrompt', () => {
+  it('process_order.nextAfterPrompt is a function (conditional)', () => {
+    const step = findStep('process_order');
+    expect(typeof step.nextAfterPrompt).toBe('function');
+  });
+
+  it('returns await_order_payment when payment_reference is set', () => {
+    const ctx = buildCtx({ sessionData: { payment_reference: 'ref-123' } });
+    const nap = (findStep('process_order').nextAfterPrompt as Function)(ctx);
+    expect(nap).toBe('await_order_payment');
+  });
+
+  it('returns await_order_payment when bank_transfer_reference is set', () => {
+    const ctx = buildCtx({ sessionData: { bank_transfer_reference: 'bt-456' } });
+    const nap = (findStep('process_order').nextAfterPrompt as Function)(ctx);
+    expect(nap).toBe('await_order_payment');
+  });
+
+  it('returns undefined (no transition) for free orders', () => {
+    const ctx = buildCtx();
+    const nap = (findStep('process_order').nextAfterPrompt as Function)(ctx);
+    expect(nap).toBeUndefined();
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 4. PAYMENT-PENDING POST-COMPLETION GUARD
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: executor payment-pending guard', () => {
+  function checkGuard(sd: Record<string, unknown>) {
+    const isCancellation = sd._action === 'cancel' || sd._action === 'cancelled' || sd.cancelled === true || sd._action === 'cart_empty';
+    const hasPaymentRef = !!(sd.payment_reference || sd.bank_transfer_reference);
+    const isPaymentConfirmed = sd._action === 'payment_confirmed' || sd._action === 'already_confirmed';
+    const isPaymentPending = hasPaymentRef && !isPaymentConfirmed;
+    return { isCancellation, isPaymentPending, showPostCompletion: !isCancellation && !isPaymentPending };
+  }
+
+  it('payment_reference + no confirmation → suppresses post-completion', () => {
+    expect(checkGuard({ payment_reference: 'ref', active_capability: 'ordering' }).showPostCompletion).toBe(false);
+  });
+
+  it('bank_transfer_reference + no confirmation → suppresses', () => {
+    expect(checkGuard({ bank_transfer_reference: 'bt' }).showPostCompletion).toBe(false);
+  });
+
+  it('payment_reference + payment_confirmed → allows post-completion', () => {
+    expect(checkGuard({ payment_reference: 'ref', _action: 'payment_confirmed' }).showPostCompletion).toBe(true);
+  });
+
+  it('payment_reference + already_confirmed → allows post-completion', () => {
+    expect(checkGuard({ payment_reference: 'ref', _action: 'already_confirmed' }).showPostCompletion).toBe(true);
+  });
+
+  it('no payment reference → allows post-completion (free order)', () => {
+    expect(checkGuard({ active_capability: 'ordering' }).showPostCompletion).toBe(true);
+  });
+
+  it('cancellation always suppresses regardless of payment state', () => {
+    expect(checkGuard({ payment_reference: 'ref', _action: 'cancelled' }).showPostCompletion).toBe(false);
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 5. PROMO RESERVE / FINALIZE / RELEASE
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: promo reservation semantics', () => {
+  it('promo availability check accounts for reserved_uses', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-    // Must contain the conditional that passes 0 for paid orders
-    expect(src).toContain('p_booking_amount: total > 0 ? 0 : total');
+    expect(src).toContain('promo.current_uses + (promo.reserved_uses || 0)) >= promo.max_uses');
   });
 
-  it('referral conversion is deferred for paid orders', () => {
+  it('promo select includes reserved_uses field', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    expect(src).toContain('reserved_uses');
+    expect(src).toContain("'id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, reserved_uses, valid_until, is_active'");
+  });
+
+  it('create_order_atomic reserves (not finalizes) promo', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    expect(sql).toContain('reserved_uses = reserved_uses + 1');
+    expect(sql).not.toContain('current_uses = current_uses + 1\n    WHERE id = p_promo_code_id');
+  });
+
+  it('finalize_promo_reservation moves reserved → current', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION finalize_promo_reservation');
+    expect(sql).toContain('current_uses = current_uses + 1');
+    expect(sql).toContain('reserved_uses = GREATEST(reserved_uses - 1, 0)');
+  });
+
+  it('release_promo_reservation decrements reserved without incrementing current', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION release_promo_reservation');
+  });
+
+  it('cancel_stale_order_atomic releases promo reservation', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    expect(sql).toContain('PERFORM release_promo_reservation(p_order_id)');
+  });
+
+  it('manual cancel_order in process_order releases promo', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    expect(src).toContain("release_promo_reservation");
+  });
+
+  it('finalize_promo_reservation called on payment success (webhook)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    expect(src).toContain("finalize_promo_reservation");
+  });
+
+  it('finalize_promo_reservation called on payment success (bot I\'ve Paid)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    // Must appear in await_order_payment section, not just process_order
+    const awaitSection = src.substring(src.indexOf("id: 'await_order_payment'"));
+    expect(awaitSection).toContain('finalize_promo_reservation');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 6. REFERRAL CONVERSION DEFERRED TO PAYMENT SUCCESS
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: referral conversion', () => {
+  it('paid order referral is deferred (not converted at creation)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
     expect(src).toContain('freshlyCreated && total === 0');
   });
 
-  it('owner notification includes Awaiting Payment for non-zero orders', () => {
+  it('referral_id stored on order via create_order_atomic', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    expect(sql).toContain('p_referral_id uuid');
+    expect(sql).toContain('referral_id');
+  });
+
+  it('referral converted on webhook payment success', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    expect(src).toContain("status: 'converted'");
+    expect(src).toContain('referral_id');
+  });
+
+  it('referral converted on bot I\'ve Paid success', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    const awaitSection = src.substring(src.indexOf("id: 'await_order_payment'"));
+    expect(awaitSection).toContain("status: 'converted'");
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 7. CUSTOMER SPEND / LTV OWNED BY PAYMENT AUTHORITY
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: customer spend timing', () => {
+  it('pending order passes ₦0 booking_amount', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    expect(src).toContain('p_booking_amount: total > 0 ? 0 : total');
+  });
+
+  it('webhook payment success updates customer spend', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    expect(src).toContain('upsert_customer_profile');
+    expect(src).toContain('p_booking_amount: payment.amount');
+  });
+
+  it('bot I\'ve Paid path updates customer spend', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    const awaitSection = src.substring(src.indexOf("id: 'await_order_payment'"));
+    expect(awaitSection).toContain('upsert_customer_profile');
+    expect(awaitSection).toContain('p_booking_amount: totalAmount');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 8. OWNER NOTIFICATION + DASHBOARD
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: pending order visibility', () => {
+  it('owner notification shows Awaiting Payment for non-zero orders', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/shared/notify-owner.ts', 'utf-8');
     expect(src).toContain('Awaiting Payment');
     expect(src).toContain('paymentPending');
   });
 
-  it('dashboard orders page includes pending status', () => {
+  it('dashboard orders page includes pending status with yellow badge', () => {
     const fs = require('fs');
     const src = fs.readFileSync('app/dashboard/orders/page.tsx', 'utf-8');
     expect(src).toContain("'pending'");
@@ -282,38 +369,39 @@ describe('ACC-008: side-effect timing correctness', () => {
 });
 
 // ══════════════════════════════════════════════════════════
-// NO DIRECT DB current_step WRITES IN ORDERING FLOW
+// 9. NO DIRECT DB CURRENT_STEP WRITES
 // ══════════════════════════════════════════════════════════
 
-describe('ACC-008: ordering flow contains no direct DB current_step writes', () => {
-  it('ordering.flow.ts has zero current_step: direct writes', () => {
+describe('ACC-008: no direct DB writes', () => {
+  it('ordering.flow.ts has zero .update({ current_step: ... }) calls', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-    // Must not contain any direct current_step writes to bot_sessions
-    const matches = src.match(/current_step:/g) || [];
-    // The only allowed occurrence is in the ctx.session.current_step in-memory mutation
-    // which uses `ctx.session.current_step =` not `current_step:` in an object literal
     const dbWrites = src.match(/\.update\(\{[^}]*current_step:/g) || [];
     expect(dbWrites).toHaveLength(0);
+  });
+
+  it('ordering.flow.ts has zero ctx.session.current_step mutations', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    const mutations = src.match(/ctx\.session\.current_step\s*=/g) || [];
+    expect(mutations).toHaveLength(0);
   });
 });
 
 // ══════════════════════════════════════════════════════════
-// FREE ORDER BEHAVIOR PRESERVED
+// 10. FREE ORDER PRESERVED
 // ══════════════════════════════════════════════════════════
 
-describe('ACC-008: free order behavior', () => {
-  it('free order referral conversion is immediate (total === 0)', () => {
+describe('ACC-008: free order behavior preserved', () => {
+  it('free order referral conversion is immediate', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-    // For free orders, referral conversion should still happen at order creation
     expect(src).toContain('freshlyCreated && total === 0');
   });
 
-  it('free order customer profile gets full amount (0)', () => {
+  it('free order customer profile gets amount 0', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-    // total > 0 ? 0 : total — when total is 0, passes 0 (correct)
     expect(src).toContain('p_booking_amount: total > 0 ? 0 : total');
   });
 });

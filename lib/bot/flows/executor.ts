@@ -231,11 +231,12 @@ export class FlowExecutor {
         this.logPromptMessages(session, messages);
         // ACC-008: If step declares nextAfterPrompt, transition current_step before CAS persist.
         // This replaces unsafe direct bot_sessions.current_step DB writes from prompt().
-        // For conditional transitions (e.g., process_order → await_order_payment only when
-        // payment was initialized), prompt() may set ctx.session.current_step in memory.
-        const nextAfterPrompt = step.nextAfterPrompt;
-        if (nextAfterPrompt) {
-          session.current_step = nextAfterPrompt;
+        // String for unconditional; function for conditional (receives ctx after prompt ran).
+        const nap = typeof step.nextAfterPrompt === 'function'
+          ? step.nextAfterPrompt(ctx)
+          : step.nextAfterPrompt;
+        if (nap) {
+          session.current_step = nap;
         }
         // Persist session_data after prompt — flows may store state (e.g., item lists for validation)
         const promptSaved = await this.casUpdateSession(session, {
@@ -586,9 +587,12 @@ export class FlowExecutor {
       const isCancellation = sd._action === 'cancel' || sd._action === 'cancelled'
         || sd.cancelled === true || sd._action === 'cart_empty';
       // ACC-008: Payment-pending sessions must not trigger post-completion menu.
-      // A non-zero order/booking/donation with an initialized payment reference
+      // A session with an initialized payment reference that hasn't been confirmed
       // is still awaiting payment — it has not successfully completed.
-      const isPaymentPending = !!(sd.payment_reference || sd.bank_transfer_reference);
+      // Once payment is confirmed (_action === 'payment_confirmed'), post-completion is allowed.
+      const hasPaymentRef = !!(sd.payment_reference || sd.bank_transfer_reference);
+      const isPaymentConfirmed = sd._action === 'payment_confirmed' || sd._action === 'already_confirmed';
+      const isPaymentPending = hasPaymentRef && !isPaymentConfirmed;
 
       if (!isCancellation && !isPaymentPending && session.business_id) {
         await this.showPostCompletionMenu(from, session, ctx);
@@ -670,8 +674,9 @@ export class FlowExecutor {
       }
       this.logPromptMessages(session, messages);
       // ACC-008: Honor nextAfterPrompt in advanceToStep as well.
-      // Also allow prompt() to set ctx.session.current_step in memory for conditional transitions.
-      const advNap = nextStep.nextAfterPrompt;
+      const advNap = typeof nextStep.nextAfterPrompt === 'function'
+        ? nextStep.nextAfterPrompt(ctx)
+        : nextStep.nextAfterPrompt;
       if (advNap) {
         session.current_step = advNap;
       }

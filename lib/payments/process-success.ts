@@ -157,6 +157,46 @@ export async function processSuccessfulPayment(
       logger.withContext({ op: 'process-success.order-confirmation', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Order confirmation error');
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'order-confirmation' } });
     }
+
+    // ACC-008: Finalize promo reservation, referral conversion, customer spend
+    // on authoritative payment success. Each is idempotent and non-blocking.
+    try {
+      // Finalize promo reservation → moves reserved_uses to current_uses
+      await supabase.rpc('finalize_promo_reservation', { p_order_id: orderId });
+    } catch (promoErr) {
+      logger.withContext({ op: 'process-success.promo-finalize', ...safeLogErrorContext(promoErr) }).error('[PROCESS-SUCCESS] Promo finalization error');
+    }
+
+    try {
+      // Convert referral if order has one and it hasn't been converted yet
+      const { data: orderForRef } = await supabase
+        .from('orders').select('referral_id, delivery_phone').eq('id', orderId).single();
+      if (orderForRef?.referral_id) {
+        await supabase.from('referrals')
+          .update({ status: 'converted', referee_phone: orderForRef.delivery_phone, updated_at: new Date().toISOString() })
+          .eq('id', orderForRef.referral_id)
+          .eq('status', 'pending'); // idempotent: only converts if still pending
+      }
+    } catch (refErr) {
+      logger.withContext({ op: 'process-success.referral-convert', ...safeLogErrorContext(refErr) }).error('[PROCESS-SUCCESS] Referral conversion error');
+    }
+
+    try {
+      // Update customer spend with actual payment amount
+      const { data: orderForSpend } = await supabase
+        .from('orders').select('delivery_phone, user_id, business_id').eq('id', orderId).single();
+      if (orderForSpend?.delivery_phone && orderForSpend.business_id) {
+        await supabase.rpc('upsert_customer_profile', {
+          p_business_id: orderForSpend.business_id,
+          p_phone: orderForSpend.delivery_phone,
+          p_name: null,
+          p_booking_amount: payment.amount,
+          p_is_order: false, // Don't increment order count again — already done at creation
+        });
+      }
+    } catch (spendErr) {
+      logger.withContext({ op: 'process-success.customer-spend', ...safeLogErrorContext(spendErr) }).error('[PROCESS-SUCCESS] Customer spend update error');
+    }
   }
 
   // 5. Confirm reservation
