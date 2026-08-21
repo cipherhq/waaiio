@@ -240,25 +240,26 @@ describe('ACC-008: promo reservation semantics', () => {
     expect(src).toContain("'id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, reserved_uses, valid_until, is_active'");
   });
 
-  it('create_order_atomic reserves (not finalizes) promo', () => {
+  it('create_order_atomic inserts promo_reservations row (not reserved_uses column)', () => {
     const fs = require('fs');
     const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
-    expect(sql).toContain('reserved_uses = reserved_uses + 1');
-    expect(sql).not.toContain('current_uses = current_uses + 1\n    WHERE id = p_promo_code_id');
+    expect(sql).toContain("INSERT INTO promo_reservations (order_id, promo_code_id, state)");
+    expect(sql).toContain("'reserved'");
   });
 
-  it('finalize_promo_reservation moves reserved → current', () => {
+  it('finalize_promo_reservation transitions reserved → finalized via per-order state', () => {
     const fs = require('fs');
     const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
-    expect(sql).toContain('CREATE OR REPLACE FUNCTION finalize_promo_reservation');
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION public.finalize_promo_reservation');
+    expect(sql).toContain("SET state = 'finalized'");
     expect(sql).toContain('current_uses = current_uses + 1');
-    expect(sql).toContain('reserved_uses = GREATEST(reserved_uses - 1, 0)');
   });
 
-  it('release_promo_reservation decrements reserved without incrementing current', () => {
+  it('release_promo_reservation transitions reserved → released via per-order state', () => {
     const fs = require('fs');
     const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
-    expect(sql).toContain('CREATE OR REPLACE FUNCTION release_promo_reservation');
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION public.release_promo_reservation');
+    expect(sql).toContain("SET state = 'released'");
   });
 
   it('cancel_stale_order_atomic releases promo reservation', () => {
@@ -279,12 +280,13 @@ describe('ACC-008: promo reservation semantics', () => {
     expect(src).toContain("finalize_promo_reservation");
   });
 
-  it('finalize_promo_reservation called on payment success (bot I\'ve Paid)', () => {
+  it('I\'ve Paid converges through reconcilePayment (which calls processSuccessfulPayment → finalize)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-    // Must appear in await_order_payment section, not just process_order
     const awaitSection = src.substring(src.indexOf("id: 'await_order_payment'"));
-    expect(awaitSection).toContain('finalize_promo_reservation');
+    // Must use reconcilePayment, not manual finalize_promo_reservation
+    expect(awaitSection).toContain('reconcilePayment');
+    expect(awaitSection).not.toContain('finalize_promo_reservation');
   });
 });
 
@@ -313,11 +315,13 @@ describe('ACC-008: referral conversion', () => {
     expect(src).toContain('referral_id');
   });
 
-  it('referral converted on bot I\'ve Paid success', () => {
+  it('referral converted via reconcilePayment → processSuccessfulPayment (not manual I\'ve Paid)', () => {
+    // Referral conversion now happens inside processSuccessfulPayment (called by reconcilePayment).
+    // The "I've Paid" path no longer manually converts referrals.
     const fs = require('fs');
-    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-    const awaitSection = src.substring(src.indexOf("id: 'await_order_payment'"));
-    expect(awaitSection).toContain("status: 'converted'");
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    expect(src).toContain("status: 'converted'");
+    expect(src).toContain('referral_id');
   });
 });
 
@@ -332,19 +336,21 @@ describe('ACC-008: customer spend timing', () => {
     expect(src).toContain('p_booking_amount: total > 0 ? 0 : total');
   });
 
-  it('webhook payment success updates customer spend', () => {
+  it('webhook payment success uses apply_customer_spend_once (exactly-once)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
-    expect(src).toContain('upsert_customer_profile');
-    expect(src).toContain('p_booking_amount: payment.amount');
+    const orderSection = src.split('// 4. Confirm order')[1]?.split('// 5. Confirm reservation')[0] || '';
+    expect(orderSection).toContain('apply_customer_spend_once');
   });
 
-  it('bot I\'ve Paid path updates customer spend', () => {
+  it('bot I\'ve Paid path converges through reconcilePayment (spend via processSuccessfulPayment)', () => {
+    // Spend is now exclusively inside processSuccessfulPayment, called by reconcilePayment.
+    // The "I've Paid" path must NOT directly call upsert_customer_profile.
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
     const awaitSection = src.substring(src.indexOf("id: 'await_order_payment'"));
-    expect(awaitSection).toContain('upsert_customer_profile');
-    expect(awaitSection).toContain('p_booking_amount: totalAmount');
+    expect(awaitSection).toContain('reconcilePayment');
+    expect(awaitSection).not.toContain('upsert_customer_profile');
   });
 });
 
@@ -403,5 +409,193 @@ describe('ACC-008: free order behavior preserved', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
     expect(src).toContain('p_booking_amount: total > 0 ? 0 : total');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 11. I'VE PAID CONVERGENCE THROUGH PAYMENT AUTHORITY
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: I\'ve Paid converges through canonical Payment Authority', () => {
+  it('await_order_payment uses reconcilePayment instead of manual stock/fee/promo pipeline', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    // Must import and call reconcilePayment
+    expect(src).toContain("reconcilePayment(ctx.supabase, paymentRow.id, 'ive_paid')");
+    // Must NOT call manual stock/fee/promo/spend directly from I've Paid
+    const ivePaidSection = src.split("'i_paid' || text === 'i_paid_online'")[1]?.split("'payment_confirmed'")[0] || '';
+    expect(ivePaidSection).not.toContain('apply_order_stock_once');
+    expect(ivePaidSection).not.toContain('recordPlatformFee');
+    expect(ivePaidSection).not.toContain('finalize_promo_reservation');
+    expect(ivePaidSection).not.toContain('upsert_customer_profile');
+  });
+
+  it('handlePostCompletion passes amountPaid=0 to prevent double-counted spend', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    // In the await_order_payment section, after reconcilePayment call,
+    // handlePostCompletion must use amountPaid: 0
+    const awaitSection = src.substring(src.indexOf("id: 'await_order_payment'"));
+    const afterResult = awaitSection.split("providerOutcome === 'verified'")[1] || '';
+    expect(afterResult).toContain('amountPaid: 0');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 12. CUSTOMER SPEND EXACTLY-ONCE
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: customer spend exactly-once via durable marker', () => {
+  it('process-success.ts uses apply_customer_spend_once RPC (not raw upsert_customer_profile)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    const orderSection = src.split('// 4. Confirm order')[1]?.split('// 5. Confirm reservation')[0] || '';
+    expect(orderSection).toContain('apply_customer_spend_once');
+    // Must NOT call raw upsert_customer_profile for spend in order section
+    expect(orderSection).not.toContain("rpc('upsert_customer_profile'");
+  });
+
+  it('spend failure is critical (adds to criticalErrors)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    expect(src).toContain("'customer_spend_failed'");
+    expect(src).toContain("'customer_spend_threw'");
+  });
+
+  it('promo finalization failure is critical', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    expect(src).toContain("'promo_finalization_failed'");
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 13. PROMO RESERVATION STATE MACHINE
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: promo reservation per-order state', () => {
+  it('migration 333 creates promo_reservations table with order_id UNIQUE', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS promo_reservations');
+    expect(sql).toContain('order_id UUID NOT NULL UNIQUE');
+    expect(sql).toMatch(/state TEXT.*CHECK.*reserved.*finalized.*released/);
+  });
+
+  it('create_order_atomic enforces promo capacity under FOR UPDATE lock', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    expect(sql).toContain("FROM promo_codes WHERE id = p_promo_code_id FOR UPDATE");
+    expect(sql).toContain("FROM promo_reservations");
+    expect(sql).toContain("state IN ('reserved', 'finalized')");
+    expect(sql).toContain("v_active_count >= v_promo.max_uses");
+    expect(sql).toContain("'promo_exhausted'");
+  });
+
+  it('finalize_promo_reservation transitions reserved → finalized with state guard', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    const fnSection = sql.split('finalize_promo_reservation')[2] || '';
+    expect(fnSection).toContain("'already_finalized'");
+    expect(fnSection).toContain("'already_released'");
+    expect(fnSection).toContain("SET state = 'finalized'");
+    expect(fnSection).toContain("current_uses = current_uses + 1");
+  });
+
+  it('release_promo_reservation transitions reserved → released with state guard', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    const fnSection = sql.split('release_promo_reservation')[2] || '';
+    expect(fnSection).toContain("'already_released'");
+    expect(fnSection).toContain("'already_finalized'");
+    expect(fnSection).toContain("SET state = 'released'");
+  });
+
+  it('create_order_atomic drops old 304 signature before creating new one', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    // Must DROP old signature to avoid overload
+    expect(sql).toContain('DROP FUNCTION IF EXISTS public.create_order_atomic');
+    // New signature includes p_referral_id and p_notes
+    expect(sql).toContain('p_referral_id uuid DEFAULT NULL');
+    expect(sql).toContain('p_notes text DEFAULT NULL');
+  });
+
+  it('cancel_stale_order_atomic calls release_promo_reservation', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    const cancelSection = sql.split('cancel_stale_order_atomic')[1] || '';
+    expect(cancelSection).toContain('release_promo_reservation');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 14. CROSS-FLOW EXECUTOR GUARD REGRESSION
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: cross-flow payment-pending guard does NOT trap non-ordering flows', () => {
+  it('payment-pending guard only checks payment_reference/bank_transfer_reference', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/executor.ts', 'utf-8');
+    // Guard must check for payment_reference or bank_transfer_reference in session_data
+    expect(src).toContain('sd.payment_reference || sd.bank_transfer_reference');
+    // Must also check for payment confirmation actions
+    expect(src).toContain("sd._action === 'payment_confirmed'");
+    expect(src).toContain("sd._action === 'already_confirmed'");
+  });
+
+  it('scheduling flow uses payment_reference but also has payment_confirmed action', () => {
+    // Scheduling also uses payment_reference for paid bookings — the guard fires,
+    // but scheduling has a payment_confirmed action to pass through.
+    const fs = require('fs');
+    const schedulingSrc = fs.readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
+    expect(schedulingSrc).toContain('d.payment_reference = ');
+    expect(schedulingSrc).toContain("'payment_confirmed'");
+  });
+
+  it('ticketing flow has no payment_reference session key collision', () => {
+    const fs = require('fs');
+    const ticketingSrc = fs.readFileSync('lib/bot/flows/ticketing.flow.ts', 'utf-8');
+    // Ticketing uses payment_reference for ticket payment — but it also has its own
+    // completion path. The guard should allow ticketing completion.
+    const hasRef = ticketingSrc.includes('payment_reference');
+    if (hasRef) {
+      // If ticketing uses payment_reference, the guard fires — verify ticketing
+      // has payment_confirmed action to pass through
+      expect(ticketingSrc).toContain("'payment_confirmed'");
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 15. AUTOMATION LIFECYCLE DOCUMENTATION
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: automation lifecycle', () => {
+  it('evaluateRules(order_created) fires at pending order creation', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    expect(src).toContain("evaluateRules(ctx.supabase, ctx.business.id, 'order_created'");
+  });
+
+  it('triggerSequences(after_order) fires at pending order creation', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    expect(src).toContain("triggerSequences(ctx.supabase, ctx.business.id, 'after_order'");
+  });
+
+  it('evaluateRules(payment_received) fires on payment success', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    expect(src).toContain("evaluateRules(ctx.supabase, ctx.business.id, 'payment_received'");
+  });
+
+  it('handlePostCompletion fires on payment success with amountPaid=0', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    const awaitSection = src.substring(src.indexOf("id: 'await_order_payment'"));
+    const afterResult = awaitSection.split("providerOutcome === 'verified'")[1] || '';
+    expect(afterResult).toContain('handlePostCompletion');
+    expect(afterResult).toContain('amountPaid: 0');
   });
 });

@@ -158,44 +158,53 @@ export async function processSuccessfulPayment(
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'order-confirmation' } });
     }
 
-    // ACC-008: Finalize promo reservation, referral conversion, customer spend
-    // on authoritative payment success. Each is idempotent and non-blocking.
+    // ACC-008: Finalize promo reservation on authoritative payment success.
+    // Per-order state (reserved → finalized) via promo_reservations table.
+    // CRITICAL: promo capacity accuracy depends on this transition.
     try {
-      // Finalize promo reservation → moves reserved_uses to current_uses
-      await supabase.rpc('finalize_promo_reservation', { p_order_id: orderId });
-    } catch (promoErr) {
-      logger.withContext({ op: 'process-success.promo-finalize', ...safeLogErrorContext(promoErr) }).error('[PROCESS-SUCCESS] Promo finalization error');
+      const { data: promoResult, error: promoErr } = await supabase.rpc('finalize_promo_reservation', { p_order_id: orderId });
+      if (promoErr) {
+        criticalErrors.push('promo_finalization_failed');
+        logger.withContext({ op: 'process-success.promo-finalize', ...safeLogErrorContext(promoErr) }).error('[PROCESS-SUCCESS] Promo finalization RPC error');
+      }
+      // Semantic failure (e.g., already_released) is not critical — reservation may have been
+      // released by cancellation before payment completed, which is a valid race outcome.
+    } catch (promoThrow) {
+      criticalErrors.push('promo_finalization_threw');
+      logger.withContext({ op: 'process-success.promo-finalize', ...safeLogErrorContext(promoThrow) }).error('[PROCESS-SUCCESS] Promo finalization threw');
     }
 
+    // Referral conversion: pending → converted. Non-critical — can be reconciled
+    // manually. Idempotent via status='pending' guard.
     try {
-      // Convert referral if order has one and it hasn't been converted yet
       const { data: orderForRef } = await supabase
         .from('orders').select('referral_id, delivery_phone').eq('id', orderId).single();
       if (orderForRef?.referral_id) {
         await supabase.from('referrals')
           .update({ status: 'converted', referee_phone: orderForRef.delivery_phone, updated_at: new Date().toISOString() })
           .eq('id', orderForRef.referral_id)
-          .eq('status', 'pending'); // idempotent: only converts if still pending
+          .eq('status', 'pending');
       }
     } catch (refErr) {
-      logger.withContext({ op: 'process-success.referral-convert', ...safeLogErrorContext(refErr) }).error('[PROCESS-SUCCESS] Referral conversion error');
+      logger.withContext({ op: 'process-success.referral-convert', ...safeLogErrorContext(refErr) }).error('[PROCESS-SUCCESS] Referral conversion error (non-critical)');
     }
 
+    // Customer spend: exactly-once via apply_customer_spend_once RPC.
+    // Uses order_spend_applications(order_id UNIQUE) as durable marker.
+    // CRITICAL: financial accuracy of customer spend tracking.
     try {
-      // Update customer spend with actual payment amount
-      const { data: orderForSpend } = await supabase
-        .from('orders').select('delivery_phone, user_id, business_id').eq('id', orderId).single();
-      if (orderForSpend?.delivery_phone && orderForSpend.business_id) {
-        await supabase.rpc('upsert_customer_profile', {
-          p_business_id: orderForSpend.business_id,
-          p_phone: orderForSpend.delivery_phone,
-          p_name: null,
-          p_booking_amount: payment.amount,
-          p_is_order: false, // Don't increment order count again — already done at creation
-        });
+      const { data: spendResult, error: spendErr } = await supabase.rpc('apply_customer_spend_once', {
+        p_order_id: orderId,
+        p_payment_id: payment.id,
+        p_amount: payment.amount,
+      });
+      if (spendErr) {
+        criticalErrors.push('customer_spend_failed');
+        logger.withContext({ op: 'process-success.customer-spend', ...safeLogErrorContext(spendErr) }).error('[PROCESS-SUCCESS] Customer spend RPC error');
       }
-    } catch (spendErr) {
-      logger.withContext({ op: 'process-success.customer-spend', ...safeLogErrorContext(spendErr) }).error('[PROCESS-SUCCESS] Customer spend update error');
+    } catch (spendThrow) {
+      criticalErrors.push('customer_spend_threw');
+      logger.withContext({ op: 'process-success.customer-spend', ...safeLogErrorContext(spendThrow) }).error('[PROCESS-SUCCESS] Customer spend threw');
     }
   }
 

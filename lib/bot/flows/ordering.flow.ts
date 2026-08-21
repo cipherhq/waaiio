@@ -1,6 +1,6 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
-import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
+import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
 import { getOrderConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
@@ -9,7 +9,7 @@ import { notifyOwnerNewOrder, notifyOwnerNewQuoteRequest } from './shared/notify
 import { createNotification } from './shared/notifications';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
-import { formatCurrency, getCurrencyCode, type CountryCode, type SubscriptionTier } from '@/lib/constants';
+import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
 import { checkTierLimit } from '@/lib/tier-limits';
@@ -3107,58 +3107,67 @@ export const orderingFlow: FlowDefinition = {
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
-          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-          const verified = await verifyPayment(ctx.supabase, ref, cc);
-          if (verified) {
-            const sd = ctx.session.session_data;
+          // ACC-008: Find payment ID from gateway reference and converge through
+          // canonical Payment Authority. This replaces the manual stock/fee/promo/
+          // referral/spend pipeline with the same authority used by webhooks.
+          const { data: paymentRow } = await ctx.supabase
+            .from('payments')
+            .select('id, status')
+            .eq('gateway_reference', ref)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
 
-            // Check if webhook already confirmed this order (avoid double-processing)
-            const { data: currentOrder } = await ctx.supabase
-              .from('orders')
-              .select('status')
-              .eq('id', sd.order_id as string)
-              .single();
+          if (!paymentRow) {
+            return { valid: false, errorMessage: "Payment not found. Tap *Get New Link* for a fresh payment link." };
+          }
 
-            if (currentOrder?.status === 'confirmed') {
-              const dedupCart = (sd.cart as CartItem[]) || [];
-              const dedupTotal = (sd.total_amount as number) || 0;
-              const dedupZoneName = sd.delivery_zone_name as string | undefined;
-              const dedupZonePrice = (sd.delivery_zone_price as number) || 0;
-              const dedupAddonsTotal = (sd._calc_addons_total as number) || 0;
-              const dedupVolumeDiscount = (sd._calc_volume_discount as number) || 0;
-              const dedupShipping = (sd.shipping_cost as number) || 0;
-              await ctx.sender.sendText({
-                to: ctx.from,
-                text: await ctx.t(`✅ *Payment Confirmed!*\n\n` + getOrderConfirmationMessage({
-                  businessName: ctx.business?.name || 'Shop',
-                  items: dedupCart,
-                  totalAmount: dedupTotal,
-                  referenceCode: sd.reference_code as string,
-                  deliveryAddress: sd.delivery_address as string | undefined,
-                  shippingCost: dedupZoneName ? undefined : (dedupShipping || undefined),
-                  deliveryZoneName: dedupZoneName,
-                  deliveryZonePrice: dedupZoneName ? dedupZonePrice : undefined,
-                  addonsTotal: dedupAddonsTotal || undefined,
-                  volumeDiscountAmount: dedupVolumeDiscount || undefined,
-                  countryCode: cc,
-                  subscriptionTier: ctx.business?.subscription_tier,
-                }) + `\n\n💡 *What you can do:*\n• Type *my orders* to track your order\n• Type *receipt* to get your receipt\n• Type *Hi* to order again`),
-              });
-              return { valid: true, data: { _action: 'already_confirmed' } };
-            }
+          // If order is already confirmed, show confirmation without re-processing
+          const sd = ctx.session.session_data;
+          const { data: currentOrder } = await ctx.supabase
+            .from('orders')
+            .select('status')
+            .eq('id', sd.order_id as string)
+            .single();
 
-            const cart = (sd.cart as CartItem[]) || [];
-
-            // Decrement stock atomically via canonical RPC (idempotent — safe if webhook already applied)
-            const { data: paidStockResult, error: paidStockErr } = await ctx.supabase.rpc('apply_order_stock_once', {
-              p_order_id: sd.order_id as string,
+          if (currentOrder?.status === 'confirmed') {
+            const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+            const dedupCart = (sd.cart as CartItem[]) || [];
+            const dedupTotal = (sd.total_amount as number) || 0;
+            const dedupZoneName = sd.delivery_zone_name as string | undefined;
+            const dedupZonePrice = (sd.delivery_zone_price as number) || 0;
+            const dedupAddonsTotal = (sd._calc_addons_total as number) || 0;
+            const dedupVolumeDiscount = (sd._calc_volume_discount as number) || 0;
+            const dedupShipping = (sd.shipping_cost as number) || 0;
+            await ctx.sender.sendText({
+              to: ctx.from,
+              text: await ctx.t(`✅ *Payment Confirmed!*\n\n` + getOrderConfirmationMessage({
+                businessName: ctx.business?.name || 'Shop',
+                items: dedupCart,
+                totalAmount: dedupTotal,
+                referenceCode: sd.reference_code as string,
+                deliveryAddress: sd.delivery_address as string | undefined,
+                shippingCost: dedupZoneName ? undefined : (dedupShipping || undefined),
+                deliveryZoneName: dedupZoneName,
+                deliveryZonePrice: dedupZoneName ? dedupZonePrice : undefined,
+                addonsTotal: dedupAddonsTotal || undefined,
+                volumeDiscountAmount: dedupVolumeDiscount || undefined,
+                countryCode: cc,
+                subscriptionTier: ctx.business?.subscription_tier,
+              }) + `\n\n💡 *What you can do:*\n• Type *my orders* to track your order\n• Type *receipt* to get your receipt\n• Type *Hi* to order again`),
             });
-            if (paidStockErr) {
-              logger.error('[ORDERING] apply_order_stock_once error (paid order):', paidStockErr.message);
-            } else if (paidStockResult?.already_applied) {
-              logger.info('[ORDERING] Stock already applied for order', sd.order_id);
-            }
+            return { valid: true, data: { _action: 'already_confirmed' } };
+          }
 
+          // Converge through canonical Payment Authority — same path as webhooks.
+          // This handles: provider verification, stock, order confirmation, platform
+          // fee, promo finalization, referral conversion, customer spend, confirmation.
+          const { reconcilePayment } = await import('@/lib/payments/reconcile');
+          const reconcileResult = await reconcilePayment(ctx.supabase, paymentRow.id, 'ive_paid');
+
+          if (reconcileResult.providerOutcome === 'verified') {
+            const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+            const cart = (sd.cart as CartItem[]) || [];
             const totalAmount = (sd.total_amount as number) || 0;
             const zoneName = sd.delivery_zone_name as string | undefined;
             const zonePrice = (sd.delivery_zone_price as number) || 0;
@@ -3184,47 +3193,8 @@ export const orderingFlow: FlowDefinition = {
               })),
             });
 
-            // Record platform fee now that payment is verified
-            if (ctx.business) {
-              const orderId = sd.order_id as string;
-              const tier = ctx.business.subscription_tier as SubscriptionTier;
-              const isInTrial = (ctx.business.subscription_tier === 'free') && new Date(ctx.business.trial_ends_at) > new Date();
-              recordPlatformFee(ctx.supabase, {
-                orderId,
-                businessId: ctx.business.id,
-                transactionAmount: totalAmount,
-                tier,
-                isInTrial,
-              }).catch(err => logger.error('[ORDERING] Platform fee error:', err));
-            }
-
-            // ACC-008: Finalize promo + convert referral + update customer spend on payment success
-            if (ctx.business) {
-              try {
-                await ctx.supabase.rpc('finalize_promo_reservation', { p_order_id: sd.order_id as string });
-              } catch (e) { logger.error('[ORDERING] Promo finalization error:', e); }
-
-              if (sd.referral_id) {
-                try {
-                  await ctx.supabase.from('referrals')
-                    .update({ status: 'converted', referee_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`, updated_at: new Date().toISOString() })
-                    .eq('id', sd.referral_id as string)
-                    .eq('status', 'pending');
-                } catch (e) { logger.error('[ORDERING] Referral conversion error:', e); }
-              }
-
-              try {
-                await ctx.supabase.rpc('upsert_customer_profile', {
-                  p_business_id: ctx.business.id,
-                  p_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-                  p_name: null,
-                  p_booking_amount: totalAmount,
-                  p_is_order: false,
-                });
-              } catch (e) { logger.error('[ORDERING] Customer spend update error:', e); }
-            }
-
-            // Post-completion: loyalty, feedback, referral, auto-receipt
+            // Post-completion: loyalty, feedback, auto-receipt (NO amountPaid — spend
+            // is handled exactly-once inside processSuccessfulPayment via apply_customer_spend_once)
             if (ctx.business) {
               const customerName = `${sd.first_name || ''} ${sd.last_name || ''}`.trim() || null;
               handlePostCompletion({
@@ -3235,7 +3205,7 @@ export const orderingFlow: FlowDefinition = {
                 serviceType: 'order',
                 referenceId: sd.order_id as string,
                 sender: ctx.sender,
-                amountPaid: totalAmount,
+                amountPaid: 0, // Spend tracked via apply_customer_spend_once — pass 0 to prevent double-count
                 serviceName: cart.map(i => i.variant_label ? `${i.name} (${i.variant_label})` : i.name).join(', '),
                 referenceCode: sd.reference_code as string,
               }).catch(err => logger.error('[ORDERING] Post-completion error:', err));
