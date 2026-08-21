@@ -211,7 +211,7 @@ async function chargePaystackAuthorization(
   // Fail closed on lookup error — never call provider without confirming no existing charge.
   const { data: existing, error: lookupErr } = await supabase
     .from('payments')
-    .select('id, status, booking_id, business_id')
+    .select('id, status, booking_id, business_id, metadata')
     .eq('gateway_reference', opts.reference)
     .maybeSingle();
 
@@ -229,8 +229,17 @@ async function chargePaystackAuthorization(
       logger.error('[SAVED-CARD] Existing payment booking mismatch', { existing: existing.booking_id, expected: opts.bookingId });
       return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
     }
-    if (existing.business_id && existing.business_id !== opts.businessId) {
-      logger.error('[SAVED-CARD] Existing payment business mismatch', { existing: existing.business_id, expected: opts.businessId });
+    // Business ownership: check top-level business_id first; fall back to legacy metadata.
+    // Pre-PR saved-card rows stored business_id only in metadata, not the top-level column.
+    const meta = (existing.metadata || {}) as Record<string, unknown>;
+    const existingBizId = existing.business_id || (meta.business_id as string | undefined);
+    if (!existingBizId) {
+      // Cannot prove ownership — stay indeterminate, do not call provider
+      logger.error('[SAVED-CARD] Existing payment has no business identity', { paymentId: existing.id });
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment ownership unverifiable' };
+    }
+    if (existingBizId !== opts.businessId) {
+      logger.error('[SAVED-CARD] Existing payment business mismatch', { existing: existingBizId, expected: opts.businessId });
       return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
     }
     if (existing.status === 'success') {
@@ -252,14 +261,29 @@ async function chargePaystackAuthorization(
           const reason = result.providerReason || '';
           const isTerminal = /abandoned|failed|reversed|expired|declined/i.test(reason);
           if (isTerminal) {
-            const { error: termErr } = await supabase.from('payments')
+            const { data: termRow, error: termErr } = await supabase.from('payments')
               .update({ status: 'failed', gateway_status: reason.slice(0, 50) })
               .eq('id', existing.id)
-              .eq('status', 'pending');
-            if (!termErr) {
+              .eq('status', 'pending')
+              .select('id')
+              .maybeSingle();
+            if (termErr) {
+              // DB error — stay indeterminate
+            } else if (termRow) {
+              // Row was actually updated — safe to report as declined
               return { outcome: 'previously_declined', reference: opts.reference };
+            } else {
+              // Zero rows affected — status changed concurrently. Re-read.
+              const { data: reread } = await supabase.from('payments')
+                .select('status').eq('id', existing.id).single();
+              if (reread?.status === 'success') {
+                return { outcome: 'already_charged', paymentId: existing.id, reference: opts.reference };
+              }
+              if (reread?.status === 'failed') {
+                return { outcome: 'previously_declined', reference: opts.reference };
+              }
+              // Otherwise stay indeterminate
             }
-            // Terminalization failed — stay indeterminate
           }
           // Non-terminal not_paid (pending/ongoing/unknown at provider) — stay recoverable
         }
@@ -376,13 +400,16 @@ async function chargePaystackAuthorization(
       return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: gatewayResponse };
     }
 
-    // Definitive provider decline — mark payment row terminal
-    const { error: termErr } = await supabase.from('payments')
+    // Definitive provider decline — mark payment row terminal and prove the write occurred.
+    const { data: termRow, error: termErr } = await supabase.from('payments')
       .update({ status: 'failed', gateway_status: gatewayResponse.slice(0, 100) })
-      .eq('id', paymentId);
+      .eq('id', paymentId)
+      .eq('status', 'pending')
+      .select('id')
+      .maybeSingle();
 
-    if (termErr) {
-      logger.error('[SAVED-CARD] Decline terminalization failed:', termErr.message);
+    if (termErr || !termRow) {
+      logger.error('[SAVED-CARD] Decline terminalization failed or no row affected:', termErr?.message);
       return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: 'Card declined but could not record — verifying' };
     }
 

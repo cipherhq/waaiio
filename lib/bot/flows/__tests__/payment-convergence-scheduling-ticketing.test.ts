@@ -564,9 +564,107 @@ describe('Saved-card provider state semantics', () => {
     expect(src).not.toContain('existing.booking_id && existing.booking_id !==');
   });
 
-  it('existing-row validates business_id', () => {
+  it('existing-row validates business_id with legacy metadata fallback', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
-    expect(src).toContain('existing.business_id !== opts.businessId');
+    // Must check top-level first, then fall back to metadata
+    expect(src).toContain('existing.business_id || (meta.business_id');
+    expect(src).toContain('existingBizId !== opts.businessId');
+    // Null business identity → indeterminate
+    expect(src).toContain('Payment ownership unverifiable');
+  });
+
+  it('terminalization proves affected row before reporting declined', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
+    // Existing pending terminalization: find the block between isTerminal check and the indeterminate fallback
+    const termIdx = src.indexOf('if (isTerminal)');
+    const fallbackIdx = src.indexOf('stay pending/recoverable', termIdx);
+    const termBlock = src.substring(termIdx, fallbackIdx);
+    expect(termBlock).toContain(".select('id')");
+    expect(termBlock).toContain('.maybeSingle()');
+    expect(termBlock).toContain("reread?.status === 'success'");
+    expect(termBlock).toContain("reread?.status === 'failed'");
+  });
+
+  it('fresh-charge terminalization also proves affected row', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
+    // Fresh charge decline terminalization must check termRow
+    const freshSection = src.split('Definitive provider decline')[1]?.split("outcome: 'declined'")[0] || '';
+    expect(freshSection).toContain('termRow');
+    expect(freshSection).toContain("eq('status', 'pending')");
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 15. BEHAVIORAL: chargeSavedCard state machine
+// ══════════════════════════════════════════════════════════
+
+describe('chargeSavedCard behavioral state machine', () => {
+  it('existing pending with null business_id and no metadata → indeterminate (ownership unverifiable)', async () => {
+    vi.resetModules();
+    process.env.PAYSTACK_SECRET_KEY = 'test_key_for_unit_test';
+    vi.doMock('@/lib/logger', () => { const l: Record<string, unknown> = { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), info: vi.fn() }; l.withContext = () => l; return { logger: l }; });
+    vi.doMock('@/lib/observability', () => ({ observeProvider: vi.fn((_o: unknown, fn: () => Promise<unknown>) => fn()), logSplitResolved: vi.fn(), logSplitMissing: vi.fn() }));
+    vi.doMock('@/lib/errors', () => ({ normalizeError: (e: unknown) => ({ message: String(e) }) }));
+    vi.doMock('@/lib/getPlatformFees', () => ({ getPlatformFees: vi.fn() }));
+
+    const { chargeSavedCard } = await import('@/lib/payments/charge-saved');
+    const mockSb = {
+      from: vi.fn((table: string) => {
+        if (table === 'payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: 'pay-legacy', status: 'pending', booking_id: 'bk-1', business_id: null, metadata: {} },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        return {};
+      }),
+    };
+
+    const result = await chargeSavedCard(mockSb as never, {
+      savedMethod: { id: 'sm-1', gateway: 'paystack', authorization_code: 'AUTH_x', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '1234', card_brand: 'visa' },
+      amount: 1000, currency: 'NGN', email: 'test@test.com',
+      reference: 'ref-legacy', businessId: 'biz-1', bookingId: 'bk-1',
+    });
+
+    expect(result.outcome).toBe('indeterminate');
+    expect('message' in result && result.message).toContain('ownership');
+  });
+
+  it('lookup DB error → indeterminate (not declined)', async () => {
+    vi.resetModules();
+    process.env.PAYSTACK_SECRET_KEY = 'test_key_for_unit_test';
+    vi.doMock('@/lib/logger', () => { const l: Record<string, unknown> = { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), info: vi.fn() }; l.withContext = () => l; return { logger: l }; });
+    vi.doMock('@/lib/observability', () => ({ observeProvider: vi.fn((_o: unknown, fn: () => Promise<unknown>) => fn()), logSplitResolved: vi.fn(), logSplitMissing: vi.fn() }));
+    vi.doMock('@/lib/errors', () => ({ normalizeError: (e: unknown) => ({ message: String(e) }) }));
+    vi.doMock('@/lib/getPlatformFees', () => ({ getPlatformFees: vi.fn() }));
+
+    const { chargeSavedCard } = await import('@/lib/payments/charge-saved');
+    const mockSb = {
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: { message: 'connection timeout' } }),
+          }),
+        }),
+      })),
+    };
+
+    const result = await chargeSavedCard(mockSb as never, {
+      savedMethod: { id: 'sm-1', gateway: 'paystack', authorization_code: 'AUTH_x', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '1234', card_brand: 'visa' },
+      amount: 1000, currency: 'NGN', email: 'test@test.com',
+      reference: 'ref-err', businessId: 'biz-1', bookingId: 'bk-1',
+    });
+
+    expect(result.outcome).toBe('indeterminate');
+    expect(result.outcome).not.toBe('declined');
   });
 });
