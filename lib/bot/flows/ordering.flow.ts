@@ -1475,14 +1475,14 @@ export const orderingFlow: FlowDefinition = {
         if (code.length >= 3) {
           const { data: promo } = await ctx.supabase
             .from('promo_codes')
-            .select('id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, reserved_uses, valid_until, is_active')
+            .select('id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, valid_until, is_active')
             .eq('business_id', ctx.business!.id)
             .eq('code', code)
             .eq('is_active', true)
             .maybeSingle();
 
           if (!promo) return { valid: false, errorMessage: 'Invalid promo code. Try again or tap *No, continue*.' };
-          if (promo.max_uses && (promo.current_uses + (promo.reserved_uses || 0)) >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has been fully redeemed.' };
+          if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has been fully redeemed.' };
           if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This promo code has expired.' };
 
           // Check if this customer already used this promo code
@@ -1538,7 +1538,7 @@ export const orderingFlow: FlowDefinition = {
         const code = input.trim().toUpperCase();
         const { data: promo } = await ctx.supabase
           .from('promo_codes')
-          .select('id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, reserved_uses, valid_until, is_active')
+          .select('id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, valid_until, is_active')
           .eq('business_id', ctx.business!.id)
           .eq('code', code)
           .eq('is_active', true)
@@ -2599,6 +2599,31 @@ export const orderingFlow: FlowDefinition = {
             return [{ type: 'text', text: 'Something went wrong on our end creating your order. Send *Hi* to start over.' }];
           }
 
+          // Handle semantic errors from create_order_atomic
+          if (rpcResult.error) {
+            if (rpcResult.error === 'promo_exhausted') {
+              // Promo became exhausted during checkout — clear promo and let customer retry
+              delete d.promo_code_id;
+              delete d.discount_amount;
+              delete d.discount_type;
+              delete d.discount_value;
+              delete d.promo_code;
+              return [{
+                type: 'buttons' as const,
+                body: '😔 Sorry, that promo code was just fully redeemed by another customer. Your order total has been updated.\n\nWould you like to continue without the promo?',
+                buttons: [
+                  { id: 'checkout', title: 'Continue Without Promo' },
+                  { id: 'cancel_order', title: 'Cancel' },
+                ],
+              }];
+            }
+            if (rpcResult.error === 'promo_not_found') {
+              delete d.promo_code_id;
+              return [{ type: 'text', text: 'The promo code is no longer valid. Send *Hi* to start over.' }];
+            }
+            return [{ type: 'text', text: 'Something went wrong creating your order. Send *Hi* to start over.' }];
+          }
+
           order = { id: rpcResult.order_id, reference_code: rpcResult.reference_code };
           freshlyCreated = rpcResult.created === true;
           d.order_id = order.id;
@@ -2660,7 +2685,7 @@ export const orderingFlow: FlowDefinition = {
         }
 
         // ACC-008: Promo usage is RESERVED (not finalized) inside create_order_atomic.
-        // reserved_uses incremented atomically with order creation.
+        // promo_reservations row inserted atomically with order creation.
         // Finalized on payment success via finalize_promo_reservation().
         // Released on cancellation via release_promo_reservation().
 
@@ -2864,6 +2889,14 @@ export const orderingFlow: FlowDefinition = {
           p_order_id: order.id,
         });
         if (freeStockErr) logger.error('[ORDERING] apply_order_stock_once error (free order):', freeStockErr.message);
+
+        // Free order promo finalization — order is already 'confirmed', so finalize immediately.
+        // No payment authority involved for free orders; this is the exactly-once completion path.
+        if (d.promo_code_id) {
+          try {
+            await ctx.supabase.rpc('finalize_promo_reservation', { p_order_id: order.id });
+          } catch (e) { logger.error('[ORDERING] Free order promo finalization error:', e); }
+        }
 
         // Post-completion: loyalty, feedback, referral
         if (ctx.business) {
@@ -3107,9 +3140,10 @@ export const orderingFlow: FlowDefinition = {
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
-          // ACC-008: Find payment ID from gateway reference and converge through
-          // canonical Payment Authority. This replaces the manual stock/fee/promo/
-          // referral/spend pipeline with the same authority used by webhooks.
+          // ACC-008: Find payment by gateway reference and ALWAYS converge through
+          // canonical Payment Authority. No order-status bypass — reconcilePayment
+          // is idempotent and will resume incomplete stages even if the order is
+          // already confirmed (e.g., Stage-2 effect failure after stock application).
           const { data: paymentRow } = await ctx.supabase
             .from('payments')
             .select('id, status')
@@ -3122,95 +3156,30 @@ export const orderingFlow: FlowDefinition = {
             return { valid: false, errorMessage: "Payment not found. Tap *Get New Link* for a fresh payment link." };
           }
 
-          // If order is already confirmed, show confirmation without re-processing
           const sd = ctx.session.session_data;
-          const { data: currentOrder } = await ctx.supabase
-            .from('orders')
-            .select('status')
-            .eq('id', sd.order_id as string)
-            .single();
-
-          if (currentOrder?.status === 'confirmed') {
-            const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-            const dedupCart = (sd.cart as CartItem[]) || [];
-            const dedupTotal = (sd.total_amount as number) || 0;
-            const dedupZoneName = sd.delivery_zone_name as string | undefined;
-            const dedupZonePrice = (sd.delivery_zone_price as number) || 0;
-            const dedupAddonsTotal = (sd._calc_addons_total as number) || 0;
-            const dedupVolumeDiscount = (sd._calc_volume_discount as number) || 0;
-            const dedupShipping = (sd.shipping_cost as number) || 0;
-            await ctx.sender.sendText({
-              to: ctx.from,
-              text: await ctx.t(`✅ *Payment Confirmed!*\n\n` + getOrderConfirmationMessage({
-                businessName: ctx.business?.name || 'Shop',
-                items: dedupCart,
-                totalAmount: dedupTotal,
-                referenceCode: sd.reference_code as string,
-                deliveryAddress: sd.delivery_address as string | undefined,
-                shippingCost: dedupZoneName ? undefined : (dedupShipping || undefined),
-                deliveryZoneName: dedupZoneName,
-                deliveryZonePrice: dedupZoneName ? dedupZonePrice : undefined,
-                addonsTotal: dedupAddonsTotal || undefined,
-                volumeDiscountAmount: dedupVolumeDiscount || undefined,
-                countryCode: cc,
-                subscriptionTier: ctx.business?.subscription_tier,
-              }) + `\n\n💡 *What you can do:*\n• Type *my orders* to track your order\n• Type *receipt* to get your receipt\n• Type *Hi* to order again`),
-            });
-            return { valid: true, data: { _action: 'already_confirmed' } };
-          }
-
-          // Converge through canonical Payment Authority — same path as webhooks.
-          // This handles: provider verification, stock, order confirmation, platform
-          // fee, promo finalization, referral conversion, customer spend, confirmation.
           const { reconcilePayment } = await import('@/lib/payments/reconcile');
           const reconcileResult = await reconcilePayment(ctx.supabase, paymentRow.id, 'ive_paid');
 
-          if (reconcileResult.providerOutcome === 'verified') {
-            const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-            const cart = (sd.cart as CartItem[]) || [];
-            const totalAmount = (sd.total_amount as number) || 0;
-            const zoneName = sd.delivery_zone_name as string | undefined;
-            const zonePrice = (sd.delivery_zone_price as number) || 0;
-            const addonsTotal = (sd._calc_addons_total as number) || 0;
-            const volumeDiscountTotal = (sd._calc_volume_discount as number) || 0;
-            const shippingCost = (sd.shipping_cost as number) || 0;
+          // Interpret the LIFECYCLE result, not just providerOutcome.
+          // authorizeAndFinalize owns Stage 2 (business finalization) and Stage 3
+          // (customer confirmation + post-completion). Ordering must NOT duplicate
+          // those effects — only provide a contextual UX message.
+          const lifecycle = reconcileResult.lifecycle;
+          const isComplete = lifecycle?.status === 'completed' || lifecycle?.status === 'already_completed' || lifecycle?.status === 'not_deliverable';
+          const isProcessing = lifecycle?.status === 'processing';
 
+          if (reconcileResult.providerOutcome === 'verified' && isComplete) {
+            // Payment Authority fully completed (Stage 2+3). Confirmation/post-completion
+            // already handled by sendProactiveConfirmation in Stage 3 — don't duplicate.
+            const cc = (ctx.business?.country_code || 'NG') as CountryCode;
             await ctx.sender.sendText({
               to: ctx.from,
-              text: await ctx.t(`✅ *Payment Confirmed!*\n\n` + getOrderConfirmationMessage({
-                businessName: ctx.business?.name || 'Shop',
-                items: cart,
-                totalAmount,
-                referenceCode: sd.reference_code as string,
-                deliveryAddress: sd.delivery_address as string | undefined,
-                shippingCost: zoneName ? undefined : (shippingCost || undefined),
-                deliveryZoneName: zoneName,
-                deliveryZonePrice: zoneName ? zonePrice : undefined,
-                addonsTotal: addonsTotal || undefined,
-                volumeDiscountAmount: volumeDiscountTotal || undefined,
-                countryCode: cc,
-                subscriptionTier: ctx.business?.subscription_tier,
-              })),
+              text: await ctx.t(`✅ *Payment Confirmed!*\n\nOrder *${sd.reference_code as string}* is being processed.\n\n💡 Type *my orders* to track, *receipt* for your receipt, or *Hi* to order again.`),
             });
 
-            // Post-completion: loyalty, feedback, auto-receipt (NO amountPaid — spend
-            // is handled exactly-once inside processSuccessfulPayment via apply_customer_spend_once)
+            // Fire payment_received rule (non-blocking, ordering-specific).
+            // This fires on BOTH webhook and I've Paid to maintain equivalent semantics.
             if (ctx.business) {
-              const customerName = `${sd.first_name || ''} ${sd.last_name || ''}`.trim() || null;
-              handlePostCompletion({
-                supabase: ctx.supabase,
-                businessId: ctx.business.id,
-                customerPhone: ctx.from,
-                customerName,
-                serviceType: 'order',
-                referenceId: sd.order_id as string,
-                sender: ctx.sender,
-                amountPaid: 0, // Spend tracked via apply_customer_spend_once — pass 0 to prevent double-count
-                serviceName: cart.map(i => i.variant_label ? `${i.name} (${i.variant_label})` : i.name).join(', '),
-                referenceCode: sd.reference_code as string,
-              }).catch(err => logger.error('[ORDERING] Post-completion error:', err));
-
-              // Fire payment_received rule (non-blocking)
               const pmtSendMsg = async (to: string, txt: string) => {
                 await ctx.sender.sendText({ to, text: txt });
               };
@@ -3225,6 +3194,16 @@ export const orderingFlow: FlowDefinition = {
               }, pmtSendMsg).catch(err => logger.error('[ORDERING] payment_received rule error:', err));
             }
 
+            return { valid: true, data: { _action: 'payment_confirmed' } };
+          }
+
+          if (reconcileResult.providerOutcome === 'verified' && (isProcessing || lifecycle?.status === 'retryable_failed')) {
+            // Money verified by gateway but Waaiio Stage 2/3 not yet complete.
+            // Safe pending UX — don't say "confirmed" when finalization is incomplete.
+            await ctx.sender.sendText({
+              to: ctx.from,
+              text: await ctx.t('✅ Payment received! Your order is being processed.\n\nYou\'ll get a confirmation shortly. If not, tap *I\'ve Paid* again.'),
+            });
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
 

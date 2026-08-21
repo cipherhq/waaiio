@@ -142,8 +142,12 @@ BEGIN
   END IF;
 
   -- ── Promo capacity enforcement (under lock) ──
+  -- Invariant: effective_usage = current_uses + count(reservations WHERE state='reserved')
+  -- current_uses includes historical pre-migration-333 uses AND finalized new reservations.
+  -- 'reserved' rows are pending orders that haven't paid yet.
+  -- 'finalized' rows are NOT counted separately because finalize increments current_uses.
   IF p_promo_code_id IS NOT NULL THEN
-    SELECT id, max_uses INTO v_promo
+    SELECT id, max_uses, current_uses INTO v_promo
     FROM promo_codes WHERE id = p_promo_code_id FOR UPDATE;
 
     IF NOT FOUND THEN
@@ -154,9 +158,9 @@ BEGIN
       SELECT count(*) INTO v_active_count
       FROM promo_reservations
       WHERE promo_code_id = p_promo_code_id
-        AND state IN ('reserved', 'finalized');
+        AND state = 'reserved';
 
-      IF v_active_count >= v_promo.max_uses THEN
+      IF (v_promo.current_uses + v_active_count) >= v_promo.max_uses THEN
         RETURN jsonb_build_object('error', 'promo_exhausted');
       END IF;
     END IF;
@@ -252,10 +256,15 @@ DECLARE
   v_res RECORD;
   v_order_status text;
 BEGIN
-  -- Check order exists and is confirmed (Payment Authority completed)
+  -- Check order exists and is in authoritative completion state.
+  -- 'confirmed' = Payment Authority completed (paid orders) or free-order confirmed at creation.
+  -- Reject pending/cancelled/draft orders — finalization requires authoritative completion.
   SELECT status INTO v_order_status FROM orders WHERE id = p_order_id;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('finalized', false, 'reason', 'order_not_found');
+  END IF;
+  IF v_order_status != 'confirmed' THEN
+    RETURN jsonb_build_object('finalized', false, 'reason', 'order_not_confirmed', 'order_status', v_order_status);
   END IF;
 
   -- Lock the reservation row
@@ -263,7 +272,7 @@ BEGIN
   FROM promo_reservations WHERE order_id = p_order_id FOR UPDATE;
 
   IF NOT FOUND THEN
-    -- No reservation for this order (order had no promo)
+    -- No reservation for this order (order had no promo) — valid no-op
     RETURN jsonb_build_object('finalized', false, 'reason', 'no_reservation');
   END IF;
 
@@ -272,6 +281,8 @@ BEGIN
     RETURN jsonb_build_object('finalized', true, 'already_finalized', true);
   END IF;
   IF v_res.state = 'released' THEN
+    -- Order used a promo but reservation was released (cancellation raced payment).
+    -- This is a critical inconsistency for orders with promo — flag it.
     RETURN jsonb_build_object('finalized', false, 'reason', 'already_released');
   END IF;
 

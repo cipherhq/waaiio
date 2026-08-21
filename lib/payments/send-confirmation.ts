@@ -506,12 +506,17 @@ export async function sendProactiveConfirmation(
       try {
         const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
         const customerName = await getCustomerName(supabase, customerPhone);
+        // For ORDER payments, spend is tracked exactly-once via apply_customer_spend_once
+        // in processSuccessfulPayment (Stage 2). Pass amountPaid=0 to prevent double-counting
+        // through handlePostCompletion's additive customer-profile spend logic.
+        // For BOOKING/RESERVATION payments, the existing amount path is preserved.
+        const isOrderPayment = !!payment.order_id;
         await handlePostCompletion({
           supabase, businessId, customerPhone, customerName,
           serviceType: payment.booking_id ? 'booking' : 'order',
           referenceId: payment.booking_id || undefined,
           sender: resolved?.sender,
-          amountPaid: payment.amount,
+          amountPaid: isOrderPayment ? 0 : payment.amount,
           serviceName, referenceCode,
         });
       } catch (pcErr) {

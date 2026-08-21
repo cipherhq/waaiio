@@ -166,9 +166,21 @@ export async function processSuccessfulPayment(
       if (promoErr) {
         criticalErrors.push('promo_finalization_failed');
         logger.withContext({ op: 'process-success.promo-finalize', ...safeLogErrorContext(promoErr) }).error('[PROCESS-SUCCESS] Promo finalization RPC error');
+      } else if (promoResult) {
+        // Inspect semantic result for promo-using orders
+        const reason = promoResult.reason as string | undefined;
+        if (reason === 'no_reservation') {
+          // Order had no promo — valid no-op, not an error
+        } else if (reason === 'order_not_confirmed') {
+          // Order not yet confirmed — should not happen in Stage 2, flag as critical
+          criticalErrors.push('promo_finalization_order_not_confirmed');
+          logger.error('[PROCESS-SUCCESS] Promo finalization rejected: order not confirmed for', orderId);
+        } else if (reason === 'already_released') {
+          // Reservation was released (cancellation raced payment) — critical for promo-using orders
+          criticalErrors.push('promo_reservation_already_released');
+          logger.error('[PROCESS-SUCCESS] Promo reservation already released for', orderId);
+        }
       }
-      // Semantic failure (e.g., already_released) is not critical — reservation may have been
-      // released by cancellation before payment completed, which is a valid race outcome.
     } catch (promoThrow) {
       criticalErrors.push('promo_finalization_threw');
       logger.withContext({ op: 'process-success.promo-finalize', ...safeLogErrorContext(promoThrow) }).error('[PROCESS-SUCCESS] Promo finalization threw');

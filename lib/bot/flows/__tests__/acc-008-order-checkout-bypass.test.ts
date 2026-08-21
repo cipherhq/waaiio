@@ -227,17 +227,19 @@ describe('ACC-008: executor payment-pending guard', () => {
 // ══════════════════════════════════════════════════════════
 
 describe('ACC-008: promo reservation semantics', () => {
-  it('promo availability check accounts for reserved_uses', () => {
+  it('promo availability check uses current_uses only (advisory — DB enforces capacity)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-    expect(src).toContain('promo.current_uses + (promo.reserved_uses || 0)) >= promo.max_uses');
+    // App-layer check uses current_uses for fast rejection
+    expect(src).toContain('promo.current_uses >= promo.max_uses');
+    // Must NOT reference reserved_uses (column no longer exists in new schema)
+    expect(src).not.toContain('reserved_uses');
   });
 
-  it('promo select includes reserved_uses field', () => {
+  it('promo select does NOT include reserved_uses field', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-    expect(src).toContain('reserved_uses');
-    expect(src).toContain("'id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, reserved_uses, valid_until, is_active'");
+    expect(src).not.toContain('reserved_uses');
   });
 
   it('create_order_atomic inserts promo_reservations row (not reserved_uses column)', () => {
@@ -420,9 +422,7 @@ describe('ACC-008: I\'ve Paid converges through canonical Payment Authority', ()
   it('await_order_payment uses reconcilePayment instead of manual stock/fee/promo pipeline', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-    // Must import and call reconcilePayment
     expect(src).toContain("reconcilePayment(ctx.supabase, paymentRow.id, 'ive_paid')");
-    // Must NOT call manual stock/fee/promo/spend directly from I've Paid
     const ivePaidSection = src.split("'i_paid' || text === 'i_paid_online'")[1]?.split("'payment_confirmed'")[0] || '';
     expect(ivePaidSection).not.toContain('apply_order_stock_once');
     expect(ivePaidSection).not.toContain('recordPlatformFee');
@@ -430,14 +430,31 @@ describe('ACC-008: I\'ve Paid converges through canonical Payment Authority', ()
     expect(ivePaidSection).not.toContain('upsert_customer_profile');
   });
 
-  it('handlePostCompletion passes amountPaid=0 to prevent double-counted spend', () => {
+  it('interprets lifecycle result, not just providerOutcome', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-    // In the await_order_payment section, after reconcilePayment call,
-    // handlePostCompletion must use amountPaid: 0
     const awaitSection = src.substring(src.indexOf("id: 'await_order_payment'"));
-    const afterResult = awaitSection.split("providerOutcome === 'verified'")[1] || '';
-    expect(afterResult).toContain('amountPaid: 0');
+    expect(awaitSection).toContain("lifecycle?.status === 'completed'");
+    expect(awaitSection).toContain("lifecycle?.status === 'already_completed'");
+    expect(awaitSection).toContain("lifecycle?.status === 'processing'");
+    expect(awaitSection).toContain("lifecycle?.status === 'retryable_failed'");
+  });
+
+  it('no order.status bypass before reconciliation', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    // The I've Paid section must NOT check order.status === 'confirmed' before calling reconcilePayment
+    const ivePaidSection = src.split("'i_paid' || text === 'i_paid_online'")[1]?.split('reconcilePayment')[0] || '';
+    expect(ivePaidSection).not.toContain("currentOrder?.status === 'confirmed'");
+  });
+
+  it('does not independently call handlePostCompletion after reconciliation', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    // After reconcilePayment, the I've Paid path must NOT call handlePostCompletion
+    // (Stage 3 sendProactiveConfirmation already handles post-completion)
+    const afterReconcile = src.split("reconcilePayment(ctx.supabase, paymentRow.id, 'ive_paid')")[1]?.split("'payment_confirmed'")[0] || '';
+    expect(afterReconcile).not.toContain('handlePostCompletion');
   });
 });
 
@@ -482,13 +499,15 @@ describe('ACC-008: promo reservation per-order state', () => {
     expect(sql).toMatch(/state TEXT.*CHECK.*reserved.*finalized.*released/);
   });
 
-  it('create_order_atomic enforces promo capacity under FOR UPDATE lock', () => {
+  it('create_order_atomic enforces promo capacity: current_uses + reserved count', () => {
     const fs = require('fs');
     const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
     expect(sql).toContain("FROM promo_codes WHERE id = p_promo_code_id FOR UPDATE");
     expect(sql).toContain("FROM promo_reservations");
-    expect(sql).toContain("state IN ('reserved', 'finalized')");
-    expect(sql).toContain("v_active_count >= v_promo.max_uses");
+    // Only count 'reserved' rows (not 'finalized' — those are in current_uses)
+    expect(sql).toContain("state = 'reserved'");
+    // Capacity = current_uses + pending_reserved
+    expect(sql).toContain("v_promo.current_uses + v_active_count");
     expect(sql).toContain("'promo_exhausted'");
   });
 
@@ -590,12 +609,107 @@ describe('ACC-008: automation lifecycle', () => {
     expect(src).toContain("evaluateRules(ctx.supabase, ctx.business.id, 'payment_received'");
   });
 
-  it('handlePostCompletion fires on payment success with amountPaid=0', () => {
+  it('I\'ve Paid does NOT call handlePostCompletion (Stage 3 owns it)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-    const awaitSection = src.substring(src.indexOf("id: 'await_order_payment'"));
-    const afterResult = awaitSection.split("providerOutcome === 'verified'")[1] || '';
-    expect(afterResult).toContain('handlePostCompletion');
-    expect(afterResult).toContain('amountPaid: 0');
+    // After reconcilePayment, the I've Paid path must NOT call handlePostCompletion
+    const afterReconcile = src.split("reconcilePayment(ctx.supabase, paymentRow.id, 'ive_paid')")[1]?.split("'payment_confirmed'")[0] || '';
+    expect(afterReconcile).not.toContain('handlePostCompletion');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 16. DUPLICATE SPEND PREVENTION
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: order spend exactly-once across all paths', () => {
+  it('sendProactiveConfirmation passes amountPaid=0 for order payments', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/send-confirmation.ts', 'utf-8');
+    expect(src).toContain('isOrderPayment ? 0 : payment.amount');
+  });
+
+  it('free order handlePostCompletion gets the order total (which is 0)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    // Free order path calls handlePostCompletion with amountPaid: total (which is 0)
+    expect(src).toContain('amountPaid: total,');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 17. CREATE_ORDER_ATOMIC SEMANTIC ERROR HANDLING
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: create_order_atomic semantic errors', () => {
+  it('ordering flow handles promo_exhausted result', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    expect(src).toContain("rpcResult.error === 'promo_exhausted'");
+    expect(src).toContain('fully redeemed by another customer');
+  });
+
+  it('ordering flow handles promo_not_found result', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    expect(src).toContain("rpcResult.error === 'promo_not_found'");
+  });
+
+  it('promo_exhausted clears promo session data for recovery', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    const exhaustedSection = src.split('promo_exhausted')[1]?.split('promo_not_found')[0] || '';
+    expect(exhaustedSection).toContain('delete d.promo_code_id');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 18. PROMO FINALIZATION AUTHORITY
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: promo finalization enforces order confirmation', () => {
+  it('finalize_promo_reservation requires order status = confirmed', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    expect(sql).toContain("v_order_status != 'confirmed'");
+    expect(sql).toContain("'order_not_confirmed'");
+  });
+
+  it('processSuccessfulPayment inspects promo semantic result for critical failures', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    expect(src).toContain("'promo_finalization_order_not_confirmed'");
+    expect(src).toContain("'promo_reservation_already_released'");
+    expect(src).toContain("'no_reservation'");
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 19. FREE ORDER PROMO FINALIZATION
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: free order promo finalization', () => {
+  it('free order path finalizes promo reservation immediately', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    const freeSection = src.split('Free order')[1]?.split('Post-completion')[0] || '';
+    expect(freeSection).toContain('finalize_promo_reservation');
+    expect(freeSection).toContain('d.promo_code_id');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 20. LEGACY PROMO CAPACITY RECONCILIATION
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: legacy current_uses reconciliation', () => {
+  it('capacity check uses current_uses + reserved count (not finalized count)', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    // Within create_order_atomic: must include current_uses in capacity calculation
+    const capacitySection = sql.split('Promo capacity enforcement')[1]?.split('Create new order')[0] || '';
+    expect(capacitySection).toContain('v_promo.current_uses + v_active_count');
+    // Must only count 'reserved' state (not 'finalized' — already in current_uses)
+    expect(capacitySection).toContain("state = 'reserved'");
   });
 });
