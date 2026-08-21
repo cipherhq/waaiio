@@ -200,10 +200,21 @@ BEGIN
     );
   END LOOP;
 
-  -- Insert per-order promo reservation (atomically with order)
+  -- Insert per-order promo reservation (atomically with order).
+  -- For free orders (status='confirmed'), finalize immediately in the same transaction.
+  -- For paid orders (status='pending'), leave as 'reserved' until payment success.
   IF p_promo_code_id IS NOT NULL THEN
-    INSERT INTO promo_reservations (order_id, promo_code_id, state)
-    VALUES (v_order_id, p_promo_code_id, 'reserved');
+    IF p_status = 'confirmed' THEN
+      -- Free/zero-total order: finalize atomically (order is already complete)
+      INSERT INTO promo_reservations (order_id, promo_code_id, state)
+      VALUES (v_order_id, p_promo_code_id, 'finalized');
+      UPDATE promo_codes SET current_uses = current_uses + 1
+      WHERE id = p_promo_code_id;
+    ELSE
+      -- Paid order: reserve only (finalized on payment success)
+      INSERT INTO promo_reservations (order_id, promo_code_id, state)
+      VALUES (v_order_id, p_promo_code_id, 'reserved');
+    END IF;
   END IF;
 
   RETURN jsonb_build_object(

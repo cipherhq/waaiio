@@ -255,18 +255,28 @@ describe.skipIf(!canRun)('Migration 333: Promo reservation state machine', () =>
     expect(state).toBe('reserved');
   });
 
-  it('8. free-order promo finalization (order created as confirmed)', () => {
+  it('8. free-order promo finalized ATOMICALLY inside create_order_atomic', () => {
     psql(`INSERT INTO promo_codes (id, business_id, code, max_uses, current_uses) VALUES ('${PROMO}', '${BIZ}', 'FREE', 5, 0);`);
-    // Free order is created with status='confirmed'
+    // Free order is created with status='confirmed' → promo finalized inside same transaction
     const rF = psqlJson(`SET ROLE service_role; SELECT create_order_atomic('${SESSION_F}', '${BIZ}', '${USER}', 'confirmed', NULL, '+234', 0, 0, 0, '${PROMO}', 'whatsapp', NULL, NULL, NULL, 0, 0, NULL, NULL, NULL, NULL, '[]'::jsonb, NULL);`);
     expect(rF.order_id).toBeTruthy();
 
-    // Can finalize immediately (order is already confirmed)
-    const fr = psqlJson(`SET ROLE service_role; SELECT finalize_promo_reservation('${rF.order_id}');`);
-    expect(fr.finalized).toBe(true);
+    // Reservation already finalized (not just reserved)
+    const state = psql(`SELECT state FROM promo_reservations WHERE order_id = '${rF.order_id}';`);
+    expect(state).toBe('finalized');
 
+    // current_uses already incremented
     const uses = psql(`SELECT current_uses FROM promo_codes WHERE id = '${PROMO}';`);
     expect(parseInt(uses)).toBe(1);
+
+    // Replay finalize is idempotent
+    const fr = psqlJson(`SET ROLE service_role; SELECT finalize_promo_reservation('${rF.order_id}');`);
+    expect(fr.finalized).toBe(true);
+    expect(fr.already_finalized).toBe(true);
+
+    // current_uses still 1
+    const uses2 = psql(`SELECT current_uses FROM promo_codes WHERE id = '${PROMO}';`);
+    expect(parseInt(uses2)).toBe(1);
   });
 
   it('9. finalize after release → rejected (already_released)', () => {
@@ -311,4 +321,108 @@ describe.skipIf(!canRun)('Migration 333: Promo reservation state machine', () =>
     expect(r.error).toBe('promo_exhausted');
     expect(r.order_id).toBeUndefined();
   });
+
+  // ══════════════════════════════════════════════════════════
+  // REAL TWO-SESSION CONCURRENCY (parallel psql processes)
+  // ══════════════════════════════════════════════════════════
+
+  function psqlAsync(sql: string): Promise<{ stdout: string; stderr: string; code: number }> {
+    return new Promise((resolve) => {
+      const child = spawn('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+      child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+      child.on('close', (code: number) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 }));
+      child.stdin.write(sql);
+      child.stdin.end();
+    });
+  }
+
+  it('12. REAL concurrency: two-session max_uses=1 → exactly one reservation', async () => {
+    psql(`INSERT INTO promo_codes (id, business_id, code, max_uses, current_uses) VALUES ('${PROMO}', '${BIZ}', 'RACE1', 1, 0);`);
+
+    // Session A: hold advisory lock as transaction barrier, then create order with promo
+    const sessionA = psqlAsync(`
+      BEGIN;
+      SELECT pg_advisory_lock(333001);
+      SET ROLE service_role;
+      SELECT create_order_atomic('${SESSION_A}', '${BIZ}', '${USER}', 'pending', NULL, '+234', 1000, 0, 0, '${PROMO}', 'whatsapp', NULL, NULL, NULL, 0, 0, NULL, NULL, NULL, NULL, '[]'::jsonb, NULL);
+      SELECT pg_sleep(2);
+      COMMIT;
+      SELECT pg_advisory_unlock(333001);
+    `);
+
+    // Wait for A to start
+    await new Promise(r => setTimeout(r, 300));
+
+    // Session B: try to create order with same promo — advisory lock on promo row will block
+    const bStart = Date.now();
+    const sessionB = psqlAsync(`
+      SELECT pg_advisory_lock(333001);
+      SELECT pg_advisory_unlock(333001);
+      SET ROLE service_role;
+      SELECT create_order_atomic('${SESSION_B}', '${BIZ}', '${USER}', 'pending', NULL, '+234', 1000, 0, 0, '${PROMO}', 'whatsapp', NULL, NULL, NULL, 0, 0, NULL, NULL, NULL, NULL, '[]'::jsonb, NULL);
+    `);
+
+    const [rA, rB] = await Promise.all([sessionA, sessionB]);
+    const bDuration = Date.now() - bStart;
+
+    // Prove contention: B waited >1s
+    expect(bDuration).toBeGreaterThan(1000);
+
+    // Session A succeeds
+    expect(rA.stdout).toContain('"created":');
+
+    // Session B gets promo_exhausted
+    expect(rB.stdout).toContain('promo_exhausted');
+
+    // Exactly one reservation
+    const count = psql(`SELECT count(*) FROM promo_reservations WHERE promo_code_id = '${PROMO}';`);
+    expect(parseInt(count)).toBe(1);
+
+    // effective usage = current_uses(0) + reserved(1) = 1 = max_uses
+    const promo = psql(`SELECT current_uses FROM promo_codes WHERE id = '${PROMO}';`);
+    expect(parseInt(promo)).toBe(0); // current_uses unchanged (still reserved, not finalized)
+  }, 15000);
+
+  it('13. REAL concurrency: finalize vs release race — one wins', async () => {
+    psql(`INSERT INTO promo_codes (id, business_id, code, max_uses, current_uses) VALUES ('${PROMO}', '${BIZ}', 'FVSR', 5, 0);`);
+    const rA = psqlJson(`SET ROLE service_role; SELECT create_order_atomic('${SESSION_A}', '${BIZ}', '${USER}', 'pending', NULL, '+234', 1000, 0, 0, '${PROMO}', 'whatsapp', NULL, NULL, NULL, 0, 0, NULL, NULL, NULL, NULL, '[]'::jsonb, NULL);`);
+    const orderId = rA.order_id;
+    psql(`UPDATE orders SET status = 'confirmed' WHERE id = '${orderId}';`);
+
+    // Session A: finalize, hold lock with pg_sleep
+    const sessionA = psqlAsync(`
+      BEGIN;
+      SET ROLE service_role;
+      SELECT finalize_promo_reservation('${orderId}');
+      SELECT pg_sleep(2);
+      COMMIT;
+    `);
+
+    await new Promise(r => setTimeout(r, 300));
+
+    // Session B: try to release — blocked by A's FOR UPDATE on promo_reservations
+    const bStart = Date.now();
+    const sessionB = psqlAsync(`
+      SET ROLE service_role;
+      SELECT release_promo_reservation('${orderId}');
+    `);
+
+    const [, rBResult] = await Promise.all([sessionA, sessionB]);
+    const bDuration = Date.now() - bStart;
+
+    // B waited for A
+    expect(bDuration).toBeGreaterThan(1000);
+
+    // After A finalized, B's release sees already_finalized
+    expect(rBResult.stdout).toContain('already_finalized');
+
+    // State is finalized
+    const state = psql(`SELECT state FROM promo_reservations WHERE order_id = '${orderId}';`);
+    expect(state).toBe('finalized');
+  }, 15000);
 });

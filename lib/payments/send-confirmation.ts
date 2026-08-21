@@ -517,6 +517,9 @@ export async function sendProactiveConfirmation(
           referenceId: payment.booking_id || undefined,
           sender: resolved?.sender,
           amountPaid: isOrderPayment ? 0 : payment.amount,
+          // For orders: skip automation (order_created/after_order already fired at creation).
+          // For bookings: let automation fire as normal.
+          skipAutomation: isOrderPayment,
           serviceName, referenceCode,
         });
       } catch (pcErr) {

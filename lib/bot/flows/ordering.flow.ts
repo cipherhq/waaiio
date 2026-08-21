@@ -2890,13 +2890,8 @@ export const orderingFlow: FlowDefinition = {
         });
         if (freeStockErr) logger.error('[ORDERING] apply_order_stock_once error (free order):', freeStockErr.message);
 
-        // Free order promo finalization — order is already 'confirmed', so finalize immediately.
-        // No payment authority involved for free orders; this is the exactly-once completion path.
-        if (d.promo_code_id) {
-          try {
-            await ctx.supabase.rpc('finalize_promo_reservation', { p_order_id: order.id });
-          } catch (e) { logger.error('[ORDERING] Free order promo finalization error:', e); }
-        }
+        // Free-order promo finalization is handled atomically inside create_order_atomic
+        // (same transaction as order creation — no crash gap possible).
 
         // Post-completion: loyalty, feedback, referral
         if (ctx.business) {
@@ -3177,34 +3172,21 @@ export const orderingFlow: FlowDefinition = {
               text: await ctx.t(`✅ *Payment Confirmed!*\n\nOrder *${sd.reference_code as string}* is being processed.\n\n💡 Type *my orders* to track, *receipt* for your receipt, or *Hi* to order again.`),
             });
 
-            // Fire payment_received rule (non-blocking, ordering-specific).
-            // This fires on BOTH webhook and I've Paid to maintain equivalent semantics.
-            if (ctx.business) {
-              const pmtSendMsg = async (to: string, txt: string) => {
-                await ctx.sender.sendText({ to, text: txt });
-              };
-              evaluateRules(ctx.supabase, ctx.business.id, 'payment_received', {
-                customer_phone: ctx.from,
-                customer_name: `${sd.first_name || ''} ${sd.last_name || ''}`.trim() || undefined,
-                business_name: ctx.business.name,
-                reference_code: sd.reference_code as string,
-                reference_id: sd.order_id as string,
-                total_amount: sd.total_amount as number || 0,
-                service_type: 'order',
-              }, pmtSendMsg).catch(err => logger.error('[ORDERING] payment_received rule error:', err));
-            }
+            // payment_received automation fires from canonical processSuccessfulPayment
+            // (Stage 2) — fires identically for webhook and "I've Paid".
 
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
 
           if (reconcileResult.providerOutcome === 'verified' && (isProcessing || lifecycle?.status === 'retryable_failed')) {
             // Money verified by gateway but Waaiio Stage 2/3 not yet complete.
-            // Safe pending UX — don't say "confirmed" when finalization is incomplete.
+            // Keep session at await_order_payment — customer can retry "I've Paid".
+            // Do NOT return payment_confirmed — executor would show post-completion menu.
             await ctx.sender.sendText({
               to: ctx.from,
               text: await ctx.t('✅ Payment received! Your order is being processed.\n\nYou\'ll get a confirmation shortly. If not, tap *I\'ve Paid* again.'),
             });
-            return { valid: true, data: { _action: 'payment_confirmed' } };
+            return { valid: true, data: { _action: 'payment_processing' } };
           }
 
           return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };

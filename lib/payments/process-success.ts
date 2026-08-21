@@ -186,19 +186,27 @@ export async function processSuccessfulPayment(
       logger.withContext({ op: 'process-success.promo-finalize', ...safeLogErrorContext(promoThrow) }).error('[PROCESS-SUCCESS] Promo finalization threw');
     }
 
-    // Referral conversion: pending → converted. Non-critical — can be reconciled
-    // manually. Idempotent via status='pending' guard.
+    // Referral conversion: pending → converted. Critical — conversion is a required
+    // payment-success consequence. Idempotent via status='pending' guard (replay-safe).
     try {
-      const { data: orderForRef } = await supabase
+      const { data: orderForRef, error: refLoadErr } = await supabase
         .from('orders').select('referral_id, delivery_phone').eq('id', orderId).single();
-      if (orderForRef?.referral_id) {
-        await supabase.from('referrals')
+      if (refLoadErr) {
+        criticalErrors.push('referral_order_load_failed');
+        logger.withContext({ op: 'process-success.referral-load', ...safeLogErrorContext(refLoadErr) }).error('[PROCESS-SUCCESS] Referral order load failed');
+      } else if (orderForRef?.referral_id) {
+        const { error: refUpdateErr } = await supabase.from('referrals')
           .update({ status: 'converted', referee_phone: orderForRef.delivery_phone, updated_at: new Date().toISOString() })
           .eq('id', orderForRef.referral_id)
           .eq('status', 'pending');
+        if (refUpdateErr) {
+          criticalErrors.push('referral_conversion_failed');
+          logger.withContext({ op: 'process-success.referral-convert', ...safeLogErrorContext(refUpdateErr) }).error('[PROCESS-SUCCESS] Referral conversion update failed');
+        }
       }
     } catch (refErr) {
-      logger.withContext({ op: 'process-success.referral-convert', ...safeLogErrorContext(refErr) }).error('[PROCESS-SUCCESS] Referral conversion error (non-critical)');
+      criticalErrors.push('referral_conversion_threw');
+      logger.withContext({ op: 'process-success.referral-convert', ...safeLogErrorContext(refErr) }).error('[PROCESS-SUCCESS] Referral conversion threw');
     }
 
     // Customer spend: exactly-once via apply_customer_spend_once RPC.
@@ -217,6 +225,28 @@ export async function processSuccessfulPayment(
     } catch (spendThrow) {
       criticalErrors.push('customer_spend_threw');
       logger.withContext({ op: 'process-success.customer-spend', ...safeLogErrorContext(spendThrow) }).error('[PROCESS-SUCCESS] Customer spend threw');
+    }
+
+    // ACC-008: Fire payment_received automation from canonical Stage 2.
+    // This is the single authority — fires identically for webhook and "I've Paid".
+    // Non-critical: automation failure should not block payment finalization.
+    try {
+      const { data: orderForAutomation } = await supabase
+        .from('orders').select('business_id, delivery_phone, reference_code, total_amount').eq('id', orderId).single();
+      if (orderForAutomation?.business_id) {
+        const { evaluateRules } = await import('@/lib/bot/automation/rules-engine');
+        const noopSend = async () => {}; // No sender context in webhook path
+        await evaluateRules(supabase, orderForAutomation.business_id, 'payment_received', {
+          customer_phone: orderForAutomation.delivery_phone,
+          reference_code: orderForAutomation.reference_code,
+          reference_id: orderId,
+          total_amount: orderForAutomation.total_amount || 0,
+          service_type: 'order',
+        }, noopSend);
+      }
+    } catch (autoErr) {
+      logger.withContext({ op: 'process-success.payment-received-automation', ...safeLogErrorContext(autoErr) })
+        .error('[PROCESS-SUCCESS] payment_received automation error (non-critical)');
     }
   }
 

@@ -26,6 +26,8 @@ interface PostCompletionParams {
   referenceCode?: string;
   /** If true, skip loyalty points (e.g. giving/donation transactions) */
   skipLoyalty?: boolean;
+  /** If true, skip automation triggers (order_created/after_order already fired at creation) */
+  skipAutomation?: boolean;
   /** Optional translation function for customer-facing messages (from ctx.t) */
   translate?: (text: string) => Promise<string>;
 }
@@ -44,7 +46,7 @@ function generateReferralCode(): string {
  * Checks enabled capabilities and triggers loyalty, feedback, and referral actions.
  */
 export async function handlePostCompletion(params: PostCompletionParams): Promise<void> {
-  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, amountPaid, serviceName, referenceCode, skipLoyalty, translate } = params;
+  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, amountPaid, serviceName, referenceCode, skipLoyalty, skipAutomation, translate } = params;
   const t = translate ?? ((text: string) => Promise.resolve(text));
 
   // Parallel: load capabilities + business data in one round-trip
@@ -322,7 +324,11 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   }
 
   // 2.5. Sequences & Rules — trigger automation after completion
-  try {
+  // Skip for orders when automation already fired at creation (order_created + after_order).
+  // For paid orders, sendProactiveConfirmation sets skipAutomation=true to prevent duplicates.
+  if (skipAutomation) {
+    // Automation already fired at order creation — skip to avoid duplicate events
+  } else try {
     const triggerEvent = serviceType === 'order' ? 'after_order' : 'after_booking';
     const ruleEvent = serviceType === 'order' ? 'order_created' : 'booking_completed';
 

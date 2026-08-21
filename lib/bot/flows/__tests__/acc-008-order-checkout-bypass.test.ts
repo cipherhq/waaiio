@@ -603,10 +603,14 @@ describe('ACC-008: automation lifecycle', () => {
     expect(src).toContain("triggerSequences(ctx.supabase, ctx.business.id, 'after_order'");
   });
 
-  it('evaluateRules(payment_received) fires on payment success', () => {
+  it('payment_received fires from canonical processSuccessfulPayment (not I\'ve Paid)', () => {
     const fs = require('fs');
-    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-    expect(src).toContain("evaluateRules(ctx.supabase, ctx.business.id, 'payment_received'");
+    const psSrc = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    expect(psSrc).toContain("evaluateRules(supabase, orderForAutomation.business_id, 'payment_received'");
+    // Must NOT fire manually from ordering flow I've Paid section
+    const orderSrc = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    const ivePaidSection = orderSrc.split("'i_paid' || text === 'i_paid_online'")[1]?.split("'payment_confirmed'")[0] || '';
+    expect(ivePaidSection).not.toContain("'payment_received'");
   });
 
   it('I\'ve Paid does NOT call handlePostCompletion (Stage 3 owns it)', () => {
@@ -711,5 +715,84 @@ describe('ACC-008: legacy current_uses reconciliation', () => {
     expect(capacitySection).toContain('v_promo.current_uses + v_active_count');
     // Must only count 'reserved' state (not 'finalized' — already in current_uses)
     expect(capacitySection).toContain("state = 'reserved'");
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 21. PROCESSING/RETRYABLE STATE HANDLING
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: processing/retryable lifecycle keeps session at await_order_payment', () => {
+  it('processing lifecycle returns payment_processing, NOT payment_confirmed', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    const processingSection = src.split("isProcessing || lifecycle?.status === 'retryable_failed'")[1]?.split('return {')[0] || '';
+    expect(processingSection).not.toContain("'payment_confirmed'");
+  });
+
+  it('payment_processing action is returned for incomplete lifecycle', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    expect(src).toContain("_action: 'payment_processing'");
+  });
+
+  it('executor does NOT treat payment_processing as confirmed (no post-completion)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/executor.ts', 'utf-8');
+    // payment_processing is NOT in the isPaymentConfirmed check
+    expect(src).not.toContain("'payment_processing'");
+    // Only payment_confirmed and already_confirmed are treated as confirmed
+    expect(src).toContain("_action === 'payment_confirmed'");
+    expect(src).toContain("_action === 'already_confirmed'");
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 22. AUTOMATION ONCE-ONLY
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: automation fires exactly once', () => {
+  it('order_created fires only at order creation (not in handlePostCompletion for orders)', () => {
+    const fs = require('fs');
+    const pcSrc = fs.readFileSync('lib/bot/flows/shared/post-completion.ts', 'utf-8');
+    // handlePostCompletion has skipAutomation parameter
+    expect(pcSrc).toContain('skipAutomation');
+    // When skipAutomation is true, automation is skipped
+    expect(pcSrc).toContain('if (skipAutomation)');
+  });
+
+  it('sendProactiveConfirmation passes skipAutomation=true for order payments', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/send-confirmation.ts', 'utf-8');
+    expect(src).toContain('skipAutomation: isOrderPayment');
+  });
+
+  it('referral conversion is critical (adds to criticalErrors on failure)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    expect(src).toContain("'referral_conversion_failed'");
+    expect(src).toContain("'referral_conversion_threw'");
+    expect(src).toContain("'referral_order_load_failed'");
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 23. FREE-ORDER PROMO ATOMICITY
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-008: free-order promo finalized atomically in create_order_atomic', () => {
+  it('create_order_atomic finalizes promo for confirmed (free) orders inside transaction', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/333_promo_reservation_and_order_referral.sql', 'utf-8');
+    // The INSERT INTO promo_reservations section must check p_status
+    expect(sql).toContain("p_status = 'confirmed'");
+    expect(sql).toMatch(/p_status = 'confirmed'[\s\S]*?'finalized'/);
+    expect(sql).toContain("current_uses = current_uses + 1");
+  });
+
+  it('ordering.flow.ts notes free-order promo is handled atomically', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    expect(src).toContain('handled atomically inside create_order_atomic');
   });
 });
