@@ -59,6 +59,9 @@ function buildSupabase(opts: {
       if (opts.stockRpcError) return Promise.resolve({ data: null, error: opts.stockRpcError });
       return Promise.resolve({ data: null, error: null });
     }
+    if (name === 'apply_payment_spend_once') {
+      return Promise.resolve({ data: { applied: true, already_applied: false, amount: 5000 }, error: null });
+    }
     return Promise.resolve({ data: null, error: null });
   });
 
