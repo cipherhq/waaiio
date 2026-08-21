@@ -148,10 +148,9 @@ const selectCapabilityStep: FlowStepConfig = {
     const { userFacing } = await prepareCapabilityMenu(ctx);
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
 
-    // If 0 or 1 capability with data, auto-select and skip the menu
-    if (userFacing.length <= 1) {
-      const cap = userFacing[0] || capabilities[0] || 'scheduling';
-      ctx.session.session_data.active_capability = cap;
+    // Exactly one renderable capability → auto-select and skip the menu
+    if (userFacing.length === 1) {
+      ctx.session.session_data.active_capability = userFacing[0];
       // Send greeting as standalone text since capability menu is skipped
       const greeting = ctx.session.session_data._greeting as string | undefined;
       if (greeting) {
@@ -160,6 +159,10 @@ const selectCapabilityStep: FlowStepConfig = {
       }
       return true;
     }
+
+    // Zero renderable capabilities → let prompt() decide between
+    // My Account (returning customer) or safe fallback text (new customer).
+    // Do NOT fall back to capabilities[0] — that cap may lack backing data.
     return false;
   },
 

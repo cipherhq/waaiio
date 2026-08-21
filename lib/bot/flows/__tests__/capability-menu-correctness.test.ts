@@ -388,3 +388,63 @@ describe('canonical filter', () => {
     expect(postbacks).not.toContain('cap_invoice');
   });
 });
+
+// ── Integration: skipIf → prompt sequence ──
+
+describe('skipIf → prompt integration', () => {
+  it('ordering + zero products + no history → skipIf=false, then safe fallback text', async () => {
+    const ctx = buildCtx({
+      capabilities: ['ordering'],
+      tableCounts: { products: 0 },
+    });
+
+    const skip = await step.skipIf!(ctx);
+    expect(skip).toBe(false);
+    expect(ctx.session.session_data.active_capability).toBeUndefined();
+
+    const result = await step.prompt!(ctx);
+    expect(result![0].type).toBe('text');
+    expect((result![0] as any).text).toContain('still setting up');
+  });
+
+  it('ordering + zero products + returning history → skipIf=false, then My Account', async () => {
+    const ctx = buildCtx({
+      capabilities: ['ordering'],
+      tableCounts: { products: 0 },
+      profileId: 'profile-1',
+      hasHistory: true,
+    });
+
+    const skip = await step.skipIf!(ctx);
+    expect(skip).toBe(false);
+    expect(ctx.session.session_data.active_capability).toBeUndefined();
+
+    const result = await step.prompt!(ctx);
+    const msg = result![0];
+    expect(msg.type).toBe('buttons');
+    const postbacks = getPostbacks(msg);
+    expect(postbacks).toContain('cap_my_account');
+    expect(postbacks).not.toContain('cap_ordering');
+  });
+
+  it('exactly one genuinely renderable capability → skipIf=true and that capability is selected', async () => {
+    const ctx = buildCtx({
+      capabilities: ['ordering', 'chat'],
+      tableCounts: { products: 0 }, // ordering removed by backing check, only chat remains
+    });
+
+    const skip = await step.skipIf!(ctx);
+    expect(skip).toBe(true);
+    expect(ctx.session.session_data.active_capability).toBe('chat');
+  });
+
+  it('zero renderable capabilities never sets active_capability', async () => {
+    const ctx = buildCtx({
+      capabilities: ['ordering'],
+      tableCounts: { products: 0 },
+    });
+
+    await step.skipIf!(ctx);
+    expect(ctx.session.session_data.active_capability).toBeUndefined();
+  });
+});
