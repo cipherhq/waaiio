@@ -11,7 +11,7 @@ vi.mock('@/lib/logger', () => ({
 import { processSuccessfulPayment, recordPlatformFee, processInvoicePayment, processCampaignDonation } from '../process-success';
 
 function mockSupabase(overrides: Record<string, unknown> = {}) {
-  const updateResult = { eq: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(), select: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null }) }), ...overrides };
+  const updateResult = { eq: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(), select: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null }), single: vi.fn().mockResolvedValue({ data: { status: 'confirmed', deposit_status: 'paid' }, error: null }) }), ...overrides };
   const insertFn = vi.fn().mockResolvedValue({ data: null, error: null });
 
   return {
@@ -22,7 +22,7 @@ function mockSupabase(overrides: Record<string, unknown> = {}) {
         eq: vi.fn().mockReturnValue({
           single: vi.fn().mockResolvedValue({
             data: table === 'bookings'
-              ? { business_id: 'biz1', total_amount: 5000 }
+              ? { business_id: 'biz1', total_amount: 5000, status: 'confirmed', deposit_status: 'paid' }
               : table === 'businesses'
               ? { subscription_tier: 'free', trial_ends_at: '2025-01-01', payout_mode: 'platform_managed' }
               : table === 'invoices'

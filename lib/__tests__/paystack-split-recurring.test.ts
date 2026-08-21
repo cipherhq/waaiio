@@ -55,15 +55,14 @@ describe('charge-saved.ts split support', () => {
     expect(chargeSavedCode).toContain("transaction_charge: splitResult.transactionChargeKobo");
   });
 
-  it('does not pass split params for BYO charges', () => {
-    expect(chargeSavedCode).toContain('if (!opts.byoSecretKey)');
+  it('BYO saved-card charges fail closed', () => {
+    expect(chargeSavedCode).toContain('BYO saved-card charging not supported');
   });
 
   it('blocks charge when direct_split config is missing (fail-closed)', () => {
     expect(chargeSavedCode).toContain("splitResult.mode === 'split_required_but_missing'");
     expect(chargeSavedCode).toContain('blocking charge');
-    expect(chargeSavedCode).toContain('success: false');
-    expect(chargeSavedCode).toContain('charge blocked for retry');
+    expect(chargeSavedCode).toContain("outcome: 'declined'");
   });
 
   it('exports SplitResult type with three modes', () => {
@@ -76,7 +75,7 @@ describe('charge-saved.ts split support', () => {
     // The opts interface for chargeSavedCard has no subaccount/split fields
     const fnSection = chargeSavedCode.substring(
       chargeSavedCode.indexOf('export async function chargeSavedCard'),
-      chargeSavedCode.indexOf('): Promise<{ success'),
+      chargeSavedCode.indexOf('): Promise<SavedCardOutcome>'),
     );
     expect(fnSection).not.toContain('subaccount');
     expect(fnSection).not.toContain('split');
@@ -306,15 +305,14 @@ describe('fail-closed: no payment record and no Paystack charge when direct_spli
     expect(fetchIdx).toBeGreaterThan(insertIdx);
   });
 
-  it('returns failure before creating payment record when split is required but missing', () => {
+  it('returns declined before creating payment record when split is required but missing', () => {
     const splitCheckIdx = chargeSavedCode.indexOf("splitResult.mode === 'split_required_but_missing'");
     const insertIdx = chargeSavedCode.indexOf("from('payments').insert");
     expect(splitCheckIdx).toBeGreaterThan(-1);
     expect(insertIdx).toBeGreaterThan(splitCheckIdx);
-    // The return { success: false } is between the check and the insert
     const betweenSection = chargeSavedCode.substring(splitCheckIdx, insertIdx);
     expect(betweenSection).toContain('return {');
-    expect(betweenSection).toContain('success: false');
+    expect(betweenSection).toContain("outcome: 'declined'");
   });
 
   it('cron skips the charge entirely with continue when split is required but missing', () => {
@@ -327,7 +325,7 @@ describe('fail-closed: no payment record and no Paystack charge when direct_spli
   });
 
   it('saved card failure message is suitable for retry', () => {
-    expect(chargeSavedCode).toContain('charge blocked for retry');
+    expect(chargeSavedCode).toContain('Payment split configuration incomplete');
   });
 
   it('logs businessId but not credentials or bank details', () => {
@@ -385,7 +383,10 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
           };
         }
         if (table === 'payments') {
-          return { insert: insertFn };
+          return {
+            select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
+            insert: vi.fn((...args: unknown[]) => { insertFn(...args); return { select: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { id: 'pay-mock' }, error: null }) }) }; }),
+          };
         }
         return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis() };
       }),
@@ -400,8 +401,8 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
       businessId: 'biz-split-missing',
     });
 
-    expect(result.success).toBe(false);
-    expect(result.message).toContain('charge blocked for retry');
+    expect(result.outcome).not.toBe('charged');
+    expect('message' in result && result.message).toBeTruthy();
     // The payments insert must NOT have been called
     expect(insertFn).not.toHaveBeenCalled();
   });
@@ -429,7 +430,10 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
           };
         }
         if (table === 'payments') {
-          return { insert: insertFn };
+          return {
+            select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
+            insert: vi.fn((...args: unknown[]) => { insertFn(...args); return { select: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { id: 'pay-mock' }, error: null }) }) }; }),
+          };
         }
         return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis() };
       }),
@@ -444,7 +448,7 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
       businessId: 'biz-db-err',
     });
 
-    expect(result.success).toBe(false);
+    expect(result.outcome).not.toBe('charged');
     expect(insertFn).not.toHaveBeenCalled();
   });
 
@@ -483,7 +487,10 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
           };
         }
         if (table === 'payments') {
-          return { insert: insertFn };
+          return {
+            select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
+            insert: vi.fn((...args: unknown[]) => { insertFn(...args); return { select: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { id: 'pay-mock' }, error: null }) }) }; }),
+          };
         }
         if (table === 'saved_payment_methods') {
           return { update: updateFn };
@@ -506,7 +513,7 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
       businessId: 'biz-valid-split',
     });
 
-    expect(result.success).toBe(true);
+    expect(result.outcome).toBe('charged');
     expect(insertFn).toHaveBeenCalledTimes(1);
 
     vi.unstubAllGlobals();
@@ -536,7 +543,10 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
           };
         }
         if (table === 'payments') {
-          return { insert: insertFn };
+          return {
+            select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
+            insert: vi.fn((...args: unknown[]) => { insertFn(...args); return { select: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { id: 'pay-mock' }, error: null }) }) }; }),
+          };
         }
         if (table === 'saved_payment_methods') {
           return { update: updateFn };
@@ -558,7 +568,7 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
       businessId: 'biz-platform',
     });
 
-    expect(result.success).toBe(true);
+    expect(result.outcome).toBe('charged');
     expect(insertFn).toHaveBeenCalledTimes(1);
 
     vi.unstubAllGlobals();
