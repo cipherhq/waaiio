@@ -1100,6 +1100,7 @@ export const orderingFlow: FlowDefinition = {
     // ── Add to Cart (processing step) ──
     {
       id: 'add_to_cart',
+      nextAfterPrompt: 'continue_or_checkout',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const cart = (d.cart as CartItem[]) || [];
@@ -1151,10 +1152,8 @@ export const orderingFlow: FlowDefinition = {
 
         // Browse-by-category mode: single buttons message to keep the category flow
         if (browseByCategory) {
-          await ctx.supabase
-            .from('bot_sessions')
-            .update({ session_data: d, current_step: 'continue_or_checkout' })
-            .eq('id', ctx.session.id);
+          // ACC-008: session_data mutated in-memory; executor persists via CAS
+          // Step transition to 'continue_or_checkout' handled by nextAfterPrompt
 
           return [{
             type: 'buttons' as const,
@@ -1182,10 +1181,8 @@ export const orderingFlow: FlowDefinition = {
 
         const checkoutItem = { title: 'Checkout ✅', description: `Total: ${formatCurrency(total, cc)}`.slice(0, 72), postbackText: 'checkout' };
 
-        await ctx.supabase
-          .from('bot_sessions')
-          .update({ session_data: d, current_step: 'continue_or_checkout' })
-          .eq('id', ctx.session.id);
+        // ACC-008: session_data mutated in-memory; executor persists via CAS
+        // Step transition to 'continue_or_checkout' handled by nextAfterPrompt
 
         // Group by category into sections
         const catMap = new Map<string, typeof products>();
@@ -1241,8 +1238,15 @@ export const orderingFlow: FlowDefinition = {
           },
         ];
       },
-      async validate(): Promise<ValidationResult> { return { valid: true }; },
-      async next() { return null; },
+      async validate(): Promise<ValidationResult> {
+        // ACC-008: add_to_cart should never receive customer input — nextAfterPrompt
+        // transitions to continue_or_checkout. Reject as safety net.
+        return { valid: false, errorMessage: 'Please select an option from the menu above.' };
+      },
+      async next() {
+        // Safety net: route to continue_or_checkout if reached
+        return 'continue_or_checkout';
+      },
     },
 
     // ── Continue or Checkout (handles product selection + checkout) ──
@@ -2595,8 +2599,9 @@ export const orderingFlow: FlowDefinition = {
         d.total_amount = total;
         d.shipping_cost = shippingCost;
 
-        // Convert referral if applied — only on fresh order (idempotent: update is safe)
-        if (d.referral_id && freshlyCreated) {
+        // ACC-008: Convert referral only for free orders at creation time.
+        // Paid orders defer conversion to payment.completed (referral reward tied to revenue).
+        if (d.referral_id && freshlyCreated && total === 0) {
           const refPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
           await ctx.supabase
             .from('referrals')
@@ -2642,18 +2647,21 @@ export const orderingFlow: FlowDefinition = {
             items: cart,
             totalAmount: total,
             deliveryAddress: (d.delivery_address as string) || undefined,
+            paymentPending: total > 0,
           }).catch(err => logger.error('[ORDERING] Owner notification error:', err));
         }
 
         // Promo usage is incremented inside create_order_atomic RPC transaction.
         // No separate app-level call needed — ensures atomicity with order creation.
 
-        // Upsert customer profile
+        // ACC-008: Customer profile upsert — for paid orders, defer p_booking_amount
+        // to payment.completed so unpaid amounts don't inflate total_spent/LTV.
+        // Create the profile (for visit tracking) but without the order amount.
         await ctx.supabase.rpc('upsert_customer_profile', {
           p_business_id: ctx.business!.id,
           p_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
           p_name: `${d.first_name || ''} ${d.last_name || ''}`.trim() || null,
-          p_booking_amount: total,
+          p_booking_amount: total > 0 ? 0 : total, // Defer amount to payment.completed
           p_is_order: true,
         });
 
@@ -2701,10 +2709,8 @@ export const orderingFlow: FlowDefinition = {
               d.bank_transfer_offered = true;
               d.bank_transfer_amount = total;
 
-              await ctx.supabase
-                .from('bot_sessions')
-                .update({ session_data: d, current_step: 'await_order_payment' })
-                .eq('id', ctx.session.id);
+              // ACC-008: Transition via in-memory mutation — executor CAS persists
+              ctx.session.current_step = 'await_order_payment';
 
               const orderSummary = getOrderConfirmationMessage({
                 businessName: ctx.business?.name || 'Shop',
@@ -2744,11 +2750,8 @@ export const orderingFlow: FlowDefinition = {
               ];
             }
 
-            // Standard payment flow (no bank transfer option)
-            await ctx.supabase
-              .from('bot_sessions')
-              .update({ session_data: d, current_step: 'await_order_payment' })
-              .eq('id', ctx.session.id);
+            // ACC-008: Transition via in-memory mutation — executor CAS persists
+            ctx.session.current_step = 'await_order_payment';
 
             return [
               {
@@ -2795,10 +2798,8 @@ export const orderingFlow: FlowDefinition = {
             d.bank_transfer_offered = true;
             d.bank_transfer_amount = total;
 
-            await ctx.supabase
-              .from('bot_sessions')
-              .update({ session_data: d, current_step: 'await_order_payment' })
-              .eq('id', ctx.session.id);
+            // ACC-008: Transition via in-memory mutation — executor CAS persists
+            ctx.session.current_step = 'await_order_payment';
 
             const orderSummary = getOrderConfirmationMessage({
               businessName: ctx.business?.name || 'Shop',
@@ -2925,7 +2926,8 @@ export const orderingFlow: FlowDefinition = {
           await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Order cancelled. Send *Hi* to start over.') });
           return { valid: true, data: { _action: 'cancelled' } };
         }
-        return { valid: true };
+        // ACC-008: Fail closed — do not accept unrecognized input
+        return { valid: false, errorMessage: 'Please select one of the options above, or type *cancel* to start over.' };
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
@@ -2945,16 +2947,13 @@ export const orderingFlow: FlowDefinition = {
           if (!chatCaps.includes('chat')) {
             return null; // chat not available — end flow normally
           }
-          await ctx.supabase.from('bot_sessions')
-            .update({ current_step: 'chat_start', session_data: { ...d, active_capability: 'chat' } })
-            .eq('id', ctx.session.id);
+          // ACC-008: Transition via in-memory mutation — executor CAS persists
+          ctx.session.session_data = { ...d, active_capability: 'chat' };
           return 'chat_start';
         }
         if (d._track_my_order) {
-          // Route to my_orders built-in step
-          await ctx.supabase.from('bot_sessions')
-            .update({ current_step: 'my_orders', session_data: { selected_order_id: d.order_id } })
-            .eq('id', ctx.session.id);
+          // ACC-008: Transition via in-memory mutation — executor CAS persists
+          ctx.session.session_data.selected_order_id = d.order_id;
           return 'my_orders';
         }
         return null;

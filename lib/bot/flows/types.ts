@@ -119,6 +119,13 @@ export interface FlowStepConfig {
   skipIf?(ctx: FlowContext): Promise<boolean>;
   /** If true, media messages (images, documents) are passed through to validate() instead of being rejected */
   acceptsMedia?: boolean;
+  /**
+   * After prompt() runs, the executor sets current_step to this value before CAS-persisting.
+   * This is the safe replacement for direct bot_sessions.current_step DB writes from prompt().
+   * The executor owns the transition via CAS — no direct DB mutation needed.
+   * Backwards-compatible: if omitted, current_step stays unchanged (existing behavior).
+   */
+  nextAfterPrompt?: string;
 }
 
 // ── Flow definition ──

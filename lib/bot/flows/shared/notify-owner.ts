@@ -130,6 +130,7 @@ interface NotifyOwnerOpts {
   items: CartItem[];
   totalAmount: number;
   deliveryAddress?: string;
+  paymentPending?: boolean;
 }
 
 export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> {
@@ -178,6 +179,10 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
       '',
       `💰 Total: *${formattedTotal}*`,
     ];
+
+    if (opts.paymentPending) {
+      lines.push(`⏳ *Awaiting Payment*`);
+    }
 
     if (deliveryAddress) {
       lines.push(`📍 Delivery: ${deliveryAddress}`);

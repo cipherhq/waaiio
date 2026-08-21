@@ -229,6 +229,14 @@ export class FlowExecutor {
           this.trackStepHistory(session, stepId);
         }
         this.logPromptMessages(session, messages);
+        // ACC-008: If step declares nextAfterPrompt, transition current_step before CAS persist.
+        // This replaces unsafe direct bot_sessions.current_step DB writes from prompt().
+        // For conditional transitions (e.g., process_order → await_order_payment only when
+        // payment was initialized), prompt() may set ctx.session.current_step in memory.
+        const nextAfterPrompt = step.nextAfterPrompt;
+        if (nextAfterPrompt) {
+          session.current_step = nextAfterPrompt;
+        }
         // Persist session_data after prompt — flows may store state (e.g., item lists for validation)
         const promptSaved = await this.casUpdateSession(session, {
           current_step: session.current_step,
@@ -577,8 +585,12 @@ export class FlowExecutor {
       const sd = session.session_data;
       const isCancellation = sd._action === 'cancel' || sd._action === 'cancelled'
         || sd.cancelled === true || sd._action === 'cart_empty';
+      // ACC-008: Payment-pending sessions must not trigger post-completion menu.
+      // A non-zero order/booking/donation with an initialized payment reference
+      // is still awaiting payment — it has not successfully completed.
+      const isPaymentPending = !!(sd.payment_reference || sd.bank_transfer_reference);
 
-      if (!isCancellation && session.business_id) {
+      if (!isCancellation && !isPaymentPending && session.business_id) {
         await this.showPostCompletionMenu(from, session, ctx);
         logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'completed', capability: sd.active_capability as string });
       } else {
@@ -657,6 +669,12 @@ export class FlowExecutor {
         this.trackStepHistory(session, nextStepId);
       }
       this.logPromptMessages(session, messages);
+      // ACC-008: Honor nextAfterPrompt in advanceToStep as well.
+      // Also allow prompt() to set ctx.session.current_step in memory for conditional transitions.
+      const advNap = nextStep.nextAfterPrompt;
+      if (advNap) {
+        session.current_step = advNap;
+      }
       if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
       await this.sendMessages(from, messages);
     }

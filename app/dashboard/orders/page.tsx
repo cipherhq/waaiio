@@ -47,9 +47,10 @@ interface Order {
   items: OrderItem[];
 }
 
-const ORDER_STATUSES = ['confirmed', 'processing', 'shipped', 'ready', 'delivered', 'cancelled'] as const;
+const ORDER_STATUSES = ['pending', 'confirmed', 'processing', 'shipped', 'ready', 'delivered', 'cancelled'] as const;
 
 const statusColors: Record<string, string> = {
+  pending: 'bg-yellow-100 text-yellow-700',
   draft: 'bg-gray-100 text-gray-600',
   confirmed: 'bg-blue-100 text-blue-700',
   processing: 'bg-amber-100 text-amber-700',
