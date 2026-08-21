@@ -363,7 +363,7 @@ import { ticketingFlow } from '../ticketing.flow';
 
 function mockCtx(overrides?: { sessionData?: Record<string, unknown> }) {
   const chain = () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line
     const c: Record<string, any> = {};
     ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'or', 'is', 'not', 'in', 'gte', 'lte', 'like', 'order', 'limit'].forEach(
       m => c[m] = vi.fn().mockReturnValue(c),
