@@ -99,6 +99,39 @@ Claude then posts a proposed implementation plan with confirmed defects only.
 
 Claude stops after the audit for high-risk work unless the task Issue explicitly says the architecture checkpoint may be skipped.
 
+## Mandatory Change-Impact / Blast-Radius Gate
+
+Waaiio must not fix one path by accidentally breaking another. Before implementation is approved, Claude and ChatGPT must identify what the proposed change can affect outside the immediate file.
+
+For every non-trivial change, record a compact impact matrix in the task Issue or Draft PR:
+
+| Changed thing | Direct callers/users | Downstream state/effects | Shared dependencies | Regression tests required |
+|---|---|---|---|---|
+
+The impact review must cover, where applicable:
+
+- every caller/importer of a changed function, type, helper, component, or RPC
+- every flow or API route that reaches the changed lifecycle
+- database reads/writes, constraints, triggers, RLS, migrations, and semantic RPC results
+- webhook, retry, replay, cron, callback, manual, and background entry points
+- customer, provider, admin, finance, and bot surfaces that consume the same state
+- notifications, automations, receipts, analytics, fees, spend, inventory, capacity, and other downstream effects
+- shared helpers with multiple implementations or call sites
+- existing regression tests that prove behavior expected by neighboring features
+
+Required questions before coding:
+
+1. What else calls or depends on this?
+2. What state does this change read or write?
+3. Who else reads that state afterward?
+4. Can retries, races, or duplicate entry points reach it?
+5. Which existing behavior must remain unchanged?
+6. Which tests prove neighboring behavior did not regress?
+
+A proposed fix is not architecture-ready if its blast radius is unknown. If impact cannot be determined confidently, stop and investigate rather than code.
+
+During independent review, ChatGPT must compare the actual changed files against the pre-code impact matrix and inspect any newly affected dependency not accounted for in the agreed plan.
+
 ## Checkpoint B — Architecture Agreement
 
 ChatGPT reviews the Issue and responds with exactly one state:
@@ -151,6 +184,8 @@ Permanent execution rules:
 
 For payment/state-machine work, exercise failure, retry, replay, race, and incomplete-lifecycle states where applicable.
 
+Regression evidence must include both the changed behavior and the neighboring behaviors identified in the blast-radius matrix. A focused test proving the fix is not sufficient if shared callers or downstream state were also affected.
+
 ## Environment Safety
 
 When debugging `.env.local` or other local env files:
@@ -170,8 +205,9 @@ The PR description should contain:
 - exact base SHA
 - exact changed files
 - old lifecycle vs new lifecycle
+- change-impact / blast-radius matrix
 - idempotency/authorization guards relied upon
-- focused test evidence
+- focused and neighboring regression-test evidence
 - known deferred risks
 
 Claude may push fixes to the same PR. Do not create replacement PRs for ordinary review corrections.
@@ -185,7 +221,10 @@ Review includes:
 - exact head SHA
 - changed files/diff
 - whether implementation matches the agreed architecture
+- whether actual blast radius matches the pre-code impact matrix
+- callers/downstream dependencies affected by the final diff
 - direct regressions introduced by the change
+- regression evidence for neighboring behavior
 - exact-head CI
 
 The reviewer should not reopen unrelated architecture that was explicitly deferred unless it becomes a direct correctness blocker because of the new change.
@@ -210,28 +249,30 @@ After merge:
 Claude implements → local tests → PR → ChatGPT review → CI → merge authorization
 ```
 
+Even in low-risk mode, shared helpers/types/database state require a quick blast-radius check before changing them.
+
 ### High-risk task
 
 ```text
 Claude audit
     ↓
-GitHub Issue
+GitHub Issue + blast-radius matrix
     ↓
-ChatGPT architecture review
+ChatGPT architecture/impact review
     ↓
 ARCHITECTURE: AGREED
     ↓
 Claude implementation
     ↓
-local evidence
+local fix + neighboring regression evidence
     ↓
 Draft PR
     ↓
-ChatGPT exact-head review
+ChatGPT exact-head + blast-radius review
     ↓
 CI
     ↓
 merge authorization
 ```
 
-The purpose of paired mode is not to add ceremony. It exists to catch incorrect assumptions before expensive implementation and to reduce repeated review/fix loops.
+The purpose of paired mode is not to add ceremony. It exists to catch incorrect assumptions and unintended impact before expensive implementation, reduce repeated review/fix loops, and prevent a fix in one area from silently breaking another.
