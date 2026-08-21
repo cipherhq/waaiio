@@ -103,18 +103,31 @@ BEGIN
     RETURN jsonb_build_object('applied', false, 'reason', 'no_customer_phone');
   END IF;
 
-  -- 6. Insert marker + apply spend atomically
+  -- 6. Insert marker atomically (ON CONFLICT handles concurrent loser)
   INSERT INTO payment_spend_applications (payment_id, source_type, source_id, business_id, customer_phone, amount)
-  VALUES (p_payment_id, v_source_type, v_source_id, v_source.business_id, v_source.guest_phone, v_payment.amount);
+  VALUES (p_payment_id, v_source_type, v_source_id, v_source.business_id, v_source.guest_phone, v_payment.amount)
+  ON CONFLICT (payment_id) DO NOTHING;
 
-  PERFORM upsert_customer_profile(
-    v_source.business_id,
-    v_source.guest_phone,
-    NULL,
-    v_payment.amount,
-    false,
-    false
-  );
+  IF NOT FOUND THEN
+    -- Concurrent loser: marker was just inserted by another transaction
+    RETURN jsonb_build_object('applied', true, 'already_applied', true);
+  END IF;
+
+  -- 7. Apply monetary spend ONLY (no visit/profile lifecycle — Stage 3 owns that)
+  UPDATE customer_profiles
+  SET total_spent = total_spent + v_payment.amount,
+      updated_at = NOW()
+  WHERE business_id = v_source.business_id
+    AND phone = v_source.guest_phone;
+
+  -- If no existing profile, create with spend only (profile lifecycle deferred to Stage 3)
+  IF NOT FOUND THEN
+    INSERT INTO customer_profiles (business_id, phone, total_spent, total_visits, last_seen_at, first_seen_at)
+    VALUES (v_source.business_id, v_source.guest_phone, v_payment.amount, 0, NOW(), NOW())
+    ON CONFLICT (business_id, phone) DO UPDATE SET
+      total_spent = customer_profiles.total_spent + v_payment.amount,
+      updated_at = NOW();
+  END IF;
 
   RETURN jsonb_build_object('applied', true, 'already_applied', false, 'amount', v_payment.amount);
 END;

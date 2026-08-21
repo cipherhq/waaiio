@@ -207,7 +207,7 @@ describe.skipIf(!canRun)('Migration 334: Payment spend marker', () => {
     expect(r.reason).toBe('payment_not_found');
   });
 
-  it('12. REAL concurrency — two simultaneous attempts → one increment', async () => {
+  it('12. REAL concurrency — both callers succeed, exactly one applied, one already_applied', async () => {
     psql(`INSERT INTO payments (id, amount, status, booking_id) VALUES ('${PAY_1}', 5000, 'success', '${BOOKING}');`);
 
     function psqlAsync(sql: string): Promise<{ stdout: string; code: number }> {
@@ -235,15 +235,53 @@ describe.skipIf(!canRun)('Migration 334: Payment spend marker', () => {
     `);
 
     const [rA, rB] = await Promise.all([sessionA, sessionB]);
+
+    // Both callers must succeed (no DB error)
     expect(rA.code).toBe(0);
+    expect(rB.code).toBe(0);
 
-    // One applied, one already_applied
-    const allApplied = [rA.stdout, rB.stdout].filter(s => s.includes('"already_applied": false') || s.includes('"already_applied":false'));
-    expect(allApplied.length).toBe(1);
+    // Exactly one fresh applied (already_applied=false), one replay (already_applied=true)
+    const freshApplied = [rA.stdout, rB.stdout].filter(s =>
+      (s.includes('"already_applied": false') || s.includes('"already_applied":false'))
+      && (s.includes('"applied": true') || s.includes('"applied":true'))
+    );
+    const alreadyApplied = [rA.stdout, rB.stdout].filter(s =>
+      (s.includes('"already_applied": true') || s.includes('"already_applied":true'))
+    );
+    expect(freshApplied.length).toBe(1);
+    expect(alreadyApplied.length).toBe(1);
 
+    // One spend increment
     const spent = psql(`SELECT total_spent FROM customer_profiles WHERE business_id = '${BIZ}' AND phone = '+2341234567890';`);
     expect(parseInt(spent)).toBe(5000);
+
+    // One marker
+    const markers = psql(`SELECT count(*) FROM payment_spend_applications WHERE payment_id = '${PAY_1}';`);
+    expect(parseInt(markers)).toBe(1);
   }, 15000);
+
+  it('15. Stage-2 RPC is spend-only (no visit/booking counter increment)', () => {
+    // The RPC should UPDATE customer_profiles.total_spent directly,
+    // NOT call upsert_customer_profile which would also increment visits/bookings
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/334_payment_spend_marker.sql', 'utf-8');
+    // Must NOT contain PERFORM upsert_customer_profile
+    expect(sql).not.toContain('PERFORM upsert_customer_profile');
+    // Must contain direct total_spent update
+    expect(sql).toContain('total_spent = total_spent + v_payment.amount');
+  });
+
+  it('16. Order amountPaid=0 behavior unchanged by #161', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/send-confirmation.ts', 'utf-8');
+    // Orders must still pass amountPaid: 0
+    expect(src).toContain('isOrderPayment ? 0 : payment.amount');
+    // Orders must NOT have skipCustomerSpend set
+    expect(src).toContain('skipCustomerSpend: isBookingPayment || isReservationPayment');
+    // The skipCustomerSpend must NOT include isOrderPayment
+    expect(src).not.toContain('skipCustomerSpend: isOrderPayment ||');
+    expect(src).not.toContain('spendOwnedByStage2');
+  });
 
   it('13. privilege: anon cannot execute', () => {
     const r = psql(`SELECT has_function_privilege('anon', 'apply_payment_spend_once(uuid)', 'EXECUTE');`);

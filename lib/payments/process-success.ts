@@ -144,6 +144,7 @@ export async function processSuccessfulPayment(
 
     // CRITICAL: Exactly-once customer spend via durable payment-scoped marker.
     // Amount derived from payment row inside the RPC, not caller-supplied.
+    // Only applied=true (fresh or already_applied replay) is acceptable.
     try {
       const { data: spendResult, error: spendErr } = await supabase.rpc('apply_payment_spend_once', {
         p_payment_id: payment.id,
@@ -151,14 +152,14 @@ export async function processSuccessfulPayment(
       if (spendErr) {
         criticalErrors.push('booking_spend_failed');
         logger.withContext({ op: 'process-success.booking-spend', ...safeLogErrorContext(spendErr) }).error('[PROCESS-SUCCESS] Booking spend RPC error');
-      } else if (spendResult && !spendResult.applied) {
-        const reason = spendResult.reason || 'unknown';
-        if (reason !== 'no_supported_source') {
-          // no_supported_source means this payment has no booking/reservation — valid for other entity types
-          criticalErrors.push(`booking_spend_semantic_failure:${reason}`);
-          logger.error('[PROCESS-SUCCESS] Booking spend semantic failure:', reason);
-        }
+      } else if (!spendResult || typeof spendResult.applied !== 'boolean') {
+        criticalErrors.push('booking_spend_invalid_result');
+        logger.error('[PROCESS-SUCCESS] Booking spend returned missing/malformed result');
+      } else if (!spendResult.applied) {
+        criticalErrors.push(`booking_spend_rejected:${spendResult.reason || 'unknown'}`);
+        logger.error('[PROCESS-SUCCESS] Booking spend rejected:', spendResult.reason);
       }
+      // applied=true (fresh or already_applied) is the only acceptable outcome
     } catch (spendThrow) {
       criticalErrors.push('booking_spend_threw');
       logger.withContext({ op: 'process-success.booking-spend', ...safeLogErrorContext(spendThrow) }).error('[PROCESS-SUCCESS] Booking spend threw');
@@ -359,12 +360,12 @@ export async function processSuccessfulPayment(
       if (spendErr) {
         criticalErrors.push('reservation_spend_failed');
         logger.withContext({ op: 'process-success.reservation-spend', ...safeLogErrorContext(spendErr) }).error('[PROCESS-SUCCESS] Reservation spend RPC error');
-      } else if (spendResult && !spendResult.applied) {
-        const reason = spendResult.reason || 'unknown';
-        if (reason !== 'no_supported_source') {
-          criticalErrors.push(`reservation_spend_semantic_failure:${reason}`);
-          logger.error('[PROCESS-SUCCESS] Reservation spend semantic failure:', reason);
-        }
+      } else if (!spendResult || typeof spendResult.applied !== 'boolean') {
+        criticalErrors.push('reservation_spend_invalid_result');
+        logger.error('[PROCESS-SUCCESS] Reservation spend returned missing/malformed result');
+      } else if (!spendResult.applied) {
+        criticalErrors.push(`reservation_spend_rejected:${spendResult.reason || 'unknown'}`);
+        logger.error('[PROCESS-SUCCESS] Reservation spend rejected:', spendResult.reason);
       }
     } catch (spendThrow) {
       criticalErrors.push('reservation_spend_threw');

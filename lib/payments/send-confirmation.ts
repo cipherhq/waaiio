@@ -506,21 +506,22 @@ export async function sendProactiveConfirmation(
       try {
         const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
         const customerName = await getCustomerName(supabase, customerPhone);
-        // Stage 2 owns exactly-once customer spend for orders, bookings, and reservations.
-        // Pass real payment.amount for receipts/loyalty/feedback, but suppress the legacy
-        // additive spend mutation via skipCustomerSpend.
+        // Orders: amountPaid=0 (existing ACC-008 behavior, unchanged by #161).
+        // Bookings/Reservations: real payment.amount for receipts/loyalty + skipCustomerSpend
+        // because Stage 2 owns durable spend via apply_payment_spend_once.
         const isOrderPayment = !!payment.order_id;
         const isBookingPayment = !!payment.booking_id;
         const isReservationPayment = !!payment.reservation_id;
-        const spendOwnedByStage2 = isOrderPayment || isBookingPayment || isReservationPayment;
         await handlePostCompletion({
           supabase, businessId, customerPhone, customerName,
           serviceType: payment.booking_id ? 'booking' : 'order',
           referenceId: payment.booking_id || undefined,
           sender: resolved?.sender,
-          amountPaid: isOrderPayment ? 0 : payment.amount, // Orders: 0 (receipt via ordering flow). Bookings: real amount for receipt.
+          amountPaid: isOrderPayment ? 0 : payment.amount,
           skipAutomation: isOrderPayment,
-          skipCustomerSpend: spendOwnedByStage2,
+          // Only booking/reservation: suppress legacy additive spend (Stage 2 owns it).
+          // Orders: do NOT set skipCustomerSpend — existing amountPaid=0 behavior is unchanged.
+          skipCustomerSpend: isBookingPayment || isReservationPayment,
           serviceName, referenceCode,
         });
       } catch (pcErr) {
