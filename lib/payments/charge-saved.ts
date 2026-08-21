@@ -132,15 +132,34 @@ export async function getSavedPaymentMethod(
   return data || null;
 }
 
+/** Explicit saved-card charge outcomes for safe canonical convergence. */
+export type SavedCardOutcome =
+  | { outcome: 'charged'; paymentId: string; reference: string }
+  | { outcome: 'already_charged'; paymentId: string; reference: string }
+  | { outcome: 'declined'; reference: string; message: string }
+  | { outcome: 'previously_declined'; reference: string }
+  | { outcome: 'indeterminate'; paymentId: string; reference: string; message: string };
+
 /**
- * Charge a saved payment method (Paystack authorization).
- * Returns the transaction reference on success, or null on failure.
+ * Charge a saved payment method with explicit durable state machine.
+ *
+ * Before any provider call:
+ * 1. Query existing canonical payment by reference
+ * 2. Existing success → never charge again (already_charged)
+ * 3. Existing pending → never charge again (indeterminate — reconcile same ref)
+ * 4. Existing failed → don't reuse reference (previously_declined)
+ * 5. No existing row → INSERT canonical row first, fail closed if error
+ * 6. Call provider → charged / declined / indeterminate
+ *
+ * BYO saved-card charging is NOT supported in this implementation. If byoSecretKey
+ * is supplied, fail closed — the payment_origin cannot be verified without a durable
+ * provider connection identity.
  */
 export async function chargeSavedCard(
   supabase: SupabaseClient,
   opts: {
     savedMethod: SavedMethod;
-    amount: number; // in main currency unit (e.g., Naira, not kobo)
+    amount: number;
     currency: string;
     email: string;
     reference: string;
@@ -153,15 +172,17 @@ export async function chargeSavedCard(
     userId?: string;
     byoSecretKey?: string;
   },
-): Promise<{ success: boolean; reference: string; message?: string }> {
+): Promise<SavedCardOutcome> {
+  // BYO saved-card not supported — fail closed without durable provider identity
+  if (opts.byoSecretKey) {
+    return { outcome: 'declined', reference: opts.reference, message: 'BYO saved-card charging not supported' };
+  }
+
   if (opts.savedMethod.gateway === 'paystack' && opts.savedMethod.authorization_code) {
     return chargePaystackAuthorization(supabase, opts);
   }
 
-  // Stripe saved cards would go here
-  // if (opts.savedMethod.gateway === 'stripe' && opts.savedMethod.stripe_payment_method_id) { ... }
-
-  return { success: false, reference: opts.reference, message: 'Unsupported payment method' };
+  return { outcome: 'declined', reference: opts.reference, message: 'Unsupported payment method' };
 }
 
 async function chargePaystackAuthorization(
@@ -179,62 +200,83 @@ async function chargePaystackAuthorization(
     orderId?: string;
     campaignId?: string;
     userId?: string;
-    byoSecretKey?: string;
   },
-): Promise<{ success: boolean; reference: string; message?: string }> {
-  const secretKey = opts.byoSecretKey || paystackSecretKey;
-  if (!secretKey) {
-    return { success: false, reference: opts.reference, message: 'Payment gateway not configured' };
+): Promise<SavedCardOutcome> {
+  if (!paystackSecretKey) {
+    return { outcome: 'declined', reference: opts.reference, message: 'Payment gateway not configured' };
   }
 
-  const amountInKobo = Math.round(opts.amount * 100);
+  // ── Step 0: Check existing canonical payment for this reference ──
+  // Prevents double-charge on repeated taps and handles recovery.
+  const { data: existing } = await supabase
+    .from('payments')
+    .select('id, status')
+    .eq('gateway_reference', opts.reference)
+    .maybeSingle();
+
+  if (existing) {
+    if (existing.status === 'success') {
+      return { outcome: 'already_charged', paymentId: existing.id, reference: opts.reference };
+    }
+    if (existing.status === 'pending') {
+      // Previous attempt may have charged the provider — don't charge again.
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Previous charge attempt pending — reconcile this reference' };
+    }
+    if (existing.status === 'failed') {
+      return { outcome: 'previously_declined', reference: opts.reference };
+    }
+  }
 
   // ── Step 1: Resolve split BEFORE creating any records ──
-  // Fail-closed: if direct_split config is broken, return immediately
-  // without creating a payment row or calling Paystack.
   let splitParams: Record<string, unknown> = {};
-  if (!opts.byoSecretKey) {
-    const splitResult = await resolvePaystackSplit(supabase, opts.businessId, opts.amount);
-    if (splitResult.mode === 'split') {
-      splitParams = {
-        subaccount: splitResult.subaccount,
-        transaction_charge: splitResult.transactionChargeKobo,
-      };
-    } else if (splitResult.mode === 'split_required_but_missing') {
-      logger.error('[SAVED-CARD] Direct split config missing, blocking charge', {
-        businessId: opts.businessId,
-        reason: splitResult.reason,
-      });
-      return {
-        success: false,
-        reference: opts.reference,
-        message: 'Payment split configuration incomplete — charge blocked for retry',
-      };
-    }
-    // mode === 'no_split': proceed without split params (platform_managed)
+  const splitResult = await resolvePaystackSplit(supabase, opts.businessId, opts.amount);
+  if (splitResult.mode === 'split') {
+    splitParams = {
+      subaccount: splitResult.subaccount,
+      transaction_charge: splitResult.transactionChargeKobo,
+    };
+  } else if (splitResult.mode === 'split_required_but_missing') {
+    logger.error('[SAVED-CARD] Direct split config missing, blocking charge', {
+      businessId: opts.businessId,
+      reason: splitResult.reason,
+    });
+    return { outcome: 'declined', reference: opts.reference, message: 'Payment split configuration incomplete' };
   }
 
-  try {
-    // ── Step 2: Create payment record (only after split validation passes) ──
-    await supabase.from('payments').insert({
-      booking_id: opts.bookingId || null,
-      invoice_id: opts.invoiceId || null,
-      campaign_id: opts.campaignId || null,
-      reservation_id: opts.reservationId || null,
-      order_id: opts.orderId || null,
-      user_id: opts.userId || null,
-      amount: opts.amount,
-      currency: opts.currency,
-      gateway: 'paystack',
-      gateway_reference: opts.reference,
-      status: 'pending',
-      payment_method: 'saved_card',
-      card_last_four: opts.savedMethod.card_last4,
-      card_brand: opts.savedMethod.card_brand,
-      metadata: { business_id: opts.businessId, saved_method: true },
-    });
+  // ── Step 2: Create canonical payment row FIRST — fail closed ──
+  const { data: payRow, error: insertErr } = await supabase.from('payments').insert({
+    booking_id: opts.bookingId || null,
+    invoice_id: opts.invoiceId || null,
+    campaign_id: opts.campaignId || null,
+    reservation_id: opts.reservationId || null,
+    order_id: opts.orderId || null,
+    user_id: opts.userId || null,
+    amount: opts.amount,
+    currency: opts.currency,
+    gateway: 'paystack',
+    gateway_reference: opts.reference,
+    status: 'pending',
+    payment_method: 'saved_card',
+    card_last_four: opts.savedMethod.card_last4,
+    card_brand: opts.savedMethod.card_brand,
+    payment_authority_version: 1,
+    metadata: {
+      business_id: opts.businessId,
+      saved_method: true,
+      payment_origin: 'platform',
+    },
+  }).select('id').single();
 
-    // ── Step 3: Charge the authorization ──
+  if (insertErr || !payRow) {
+    logger.error('[SAVED-CARD] Payment row creation failed — NOT calling provider', insertErr);
+    return { outcome: 'declined', reference: opts.reference, message: 'Payment record creation failed' };
+  }
+
+  const paymentId = payRow.id;
+  const amountInKobo = Math.round(opts.amount * 100);
+
+  // ── Step 3: Charge the authorization ──
+  try {
     const data = await observeProvider({
       gateway: 'paystack',
       businessId: opts.businessId, amount: opts.amount, currency: opts.currency,
@@ -243,7 +285,7 @@ async function chargePaystackAuthorization(
       const res = await fetch('https://api.paystack.co/transaction/charge_authorization', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${secretKey}`,
+          Authorization: `Bearer ${paystackSecretKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -266,23 +308,33 @@ async function chargePaystackAuthorization(
     });
 
     if (data.status && data.data?.status === 'success') {
-      // Update last used
       await supabase.from('saved_payment_methods')
         .update({ last_used_at: new Date().toISOString() })
         .eq('id', opts.savedMethod.id);
 
       logger.debug('[SAVED-CARD] Charge successful:', opts.reference);
-      return { success: true, reference: opts.reference };
+      return { outcome: 'charged', paymentId, reference: opts.reference };
     }
 
-    logger.error('[SAVED-CARD] Charge failed:', data.message || data.data?.gateway_response);
+    // Definitive provider decline — mark payment row terminal
+    await supabase.from('payments')
+      .update({ status: 'failed', gateway_status: data.data?.gateway_response || 'declined' })
+      .eq('id', paymentId);
+
+    logger.error('[SAVED-CARD] Charge declined:', data.message || data.data?.gateway_response);
     return {
-      success: false,
+      outcome: 'declined',
       reference: opts.reference,
       message: data.data?.gateway_response || data.message || 'Card charge failed',
     };
   } catch (error) {
-    logger.error('[SAVED-CARD] Charge error:', normalizeError(error).message);
-    return { success: false, reference: opts.reference, message: 'Payment processing error' };
+    // Network/timeout/ambiguous — leave payment pending for reconciliation
+    logger.error('[SAVED-CARD] Charge indeterminate:', normalizeError(error).message);
+    return {
+      outcome: 'indeterminate',
+      paymentId,
+      reference: opts.reference,
+      message: 'Payment processing timed out — verifying automatically',
+    };
   }
 }

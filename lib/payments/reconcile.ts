@@ -15,7 +15,7 @@ import { authorizeAndFinalize, type PaymentLifecycleResult, type FinalizationRes
 import { processSuccessfulPayment } from './process-success';
 import { sendProactiveConfirmation, type ConfirmationResult } from './send-confirmation';
 
-export type ReconciliationSource = 'webhook' | 'payment_success' | 'ive_paid' | 'cron';
+export type ReconciliationSource = 'webhook' | 'payment_success' | 'ive_paid' | 'saved_card' | 'cron';
 
 export interface ReconciliationResult {
   /** Provider verification outcome */

@@ -36,6 +36,8 @@ export async function processSuccessfulPayment(
 
   // 1. Confirm booking (only if still pending — idempotent)
   if (payment.booking_id) {
+    // Confirm booking: pending → confirmed + deposit_status='paid'
+    // For already-confirmed/in_progress/completed: ensure deposit_status='paid' only
     const { error: bookingErr } = await supabase
       .from('bookings')
       .update({
@@ -49,6 +51,33 @@ export async function processSuccessfulPayment(
     if (bookingErr) {
       criticalErrors.push('booking_confirmation_failed');
       logger.withContext({ op: 'process-success.booking', ...safeLogErrorContext(bookingErr) }).error('[PROCESS-SUCCESS] Booking confirmation DB error');
+    }
+
+    // Stage-2 postcondition: verify booking is in a legitimate paid state
+    // before proceeding to fee/ticket consequences.
+    const { data: bookingPost, error: postErr } = await supabase
+      .from('bookings')
+      .select('status, deposit_status')
+      .eq('id', payment.booking_id)
+      .single();
+
+    if (postErr || !bookingPost) {
+      criticalErrors.push('booking_postcondition_missing');
+      logger.error('[PROCESS-SUCCESS] Booking postcondition read failed for', payment.booking_id);
+    } else if (bookingPost.status === 'cancelled') {
+      criticalErrors.push('booking_cancelled_at_payment');
+      logger.error('[PROCESS-SUCCESS] Booking cancelled before payment finalization', payment.booking_id);
+      // Do NOT proceed to fee/ticket — return early within booking block
+      return { criticalSuccess: false, errors: criticalErrors };
+    } else if (bookingPost.status === 'no_show') {
+      criticalErrors.push('booking_no_show_at_payment');
+      logger.error('[PROCESS-SUCCESS] Booking marked no-show at payment time', payment.booking_id);
+      return { criticalSuccess: false, errors: criticalErrors };
+    } else if (bookingPost.deposit_status !== 'paid') {
+      // Ensure deposit_status is set for non-pending bookings (in_progress/completed)
+      await supabase.from('bookings')
+        .update({ deposit_status: 'paid' })
+        .eq('id', payment.booking_id);
     }
 
     try {

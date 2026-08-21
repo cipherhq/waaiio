@@ -1,6 +1,6 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
-import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
+import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
@@ -9,7 +9,7 @@ import { getTermsPrompt } from './shared/terms';
 import { sendTicketsAfterPurchase } from './shared/send-tickets';
 import { notifyOwnerNewTicketSale } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
-import { handlePostCompletion } from './shared/post-completion';
+
 import { formatCurrency, getLocale, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import type { SubscriptionTier } from '@/lib/constants';
 import { checkTierLimit } from '@/lib/tier-limits';
@@ -861,10 +861,23 @@ export const ticketingFlow: FlowDefinition = {
         if ((text === 'cancel' || text === 'go_back')) {
           const bookingId = d.booking_id as string;
           if (bookingId) {
-            await ctx.supabase
+            // Cancel only if booking is still pending — CAS-style guard prevents
+            // overwriting a booking that Payment Authority already confirmed.
+            const { data: cancelResult } = await ctx.supabase
               .from('bookings')
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-              .eq('id', bookingId);
+              .eq('id', bookingId)
+              .in('status', ['pending'])
+              .select('id');
+
+            if (!cancelResult?.length) {
+              const { data: bk } = await ctx.supabase.from('bookings')
+                .select('status, deposit_status').eq('id', bookingId).single();
+              if (bk?.deposit_status === 'paid' || bk?.status === 'confirmed') {
+                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Your payment has been confirmed! Your tickets are ready.\n\n💡 Type *my tickets* to view them.') });
+                return { valid: true, data: { _action: 'already_confirmed' } };
+              }
+            }
           }
           if (d.bank_transfer_reference) {
             await ctx.supabase
@@ -962,172 +975,31 @@ export const ticketingFlow: FlowDefinition = {
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
+          // Converge through canonical Payment Authority — same path as webhooks.
+          // Authority handles: provider verification, booking confirmation, ticket
+          // inventory finalization, ticket delivery, platform fee, Stage 3 confirmation.
           const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
-          const verified = await verifyAndReconcilePayment(ctx.supabase, ref);
-          if (verified) {
+          const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
+
+          if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
+            // Payment Authority fully completed Stage 2+3. Ticket delivery and
+            // confirmation already handled by sendProactiveConfirmation.
+            // Bot provides brief acknowledgment — no duplicate delivery.
             const d = ctx.session.session_data;
-
-            // Check if webhook already confirmed this booking (avoid double-processing)
-            const { data: currentBooking, error: bookingCheckErr } = await ctx.supabase
-              .from('bookings')
-              .select('status, deposit_status')
-              .eq('id', d.booking_id as string)
-              .single();
-
-            if (bookingCheckErr || !currentBooking) {
-              logger.withContext({ op: 'ticketing.booking-status-check', ...safeLogErrorContext(bookingCheckErr) }).error('[TICKETING] Failed to check booking status');
-              return { valid: false, errorMessage: 'Something went wrong on our end. Try again.' };
-            }
-
-            if (currentBooking.deposit_status === 'paid') {
-              const dedupDateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
-                weekday: 'long', day: 'numeric', month: 'long',
-              });
-              await ctx.sender.sendText({
-                to: ctx.from,
-                text: await ctx.t(getTicketConfirmationMessage({
-                  eventName: d.event_name as string,
-                  dateLabel: dedupDateLabel,
-                  venue: (d.event_venue as string) || '',
-                  quantity: d.ticket_quantity as number,
-                  totalAmount: d.total_amount as number,
-                  referenceCode: d.reference_code as string,
-                  countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
-                  subscriptionTier: ctx.business?.subscription_tier,
-                })),
-              });
-
-              // Dedup path: webhook confirmed payment; ensure canonical ticket rows exist.
-              const dedupQty = (d.ticket_quantity as number) || 1;
-              const dedupResult = await sendTicketsAfterPurchase({
-                supabase: ctx.supabase,
-                sender: ctx.sender,
-                businessId: ctx.business!.id,
-                bookingId: d.booking_id as string,
-                eventId: d.event_id as string,
-                eventName: d.event_name as string,
-                eventDate: dedupDateLabel,
-                eventTime: d.event_time as string | undefined,
-                venue: (d.event_venue as string) || '',
-                guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-                guestPhone: ctx.from,
-                referenceCode: d.reference_code as string,
-                quantity: dedupQty,
-              });
-              if (!dedupResult.success) {
-                logger.withContext({ op: 'ticketing.dedup-send-tickets' }).error('[TICKETING] Dedup ticket creation failed:', dedupResult.error);
-                // Payment is confirmed but tickets are NOT ready — keep retryable
-                return { valid: false, errorMessage: 'Your payment is confirmed! Ticket generation is still being completed. Please try again in a moment.' };
-              }
-
-              return { valid: true, data: { _action: 'already_confirmed' } };
-            }
-
-            // Finalize ticket counters idempotently (shared with webhook path)
-            const qty = (d.ticket_quantity as number) || 1;
-            const { data: finResult, error: finError } = await ctx.supabase.rpc('finalize_free_ticket_booking', {
-              p_booking_id: d.booking_id as string,
-              p_event_id: d.event_id as string,
-              p_ticket_type_id: (d.ticket_type_id as string) || null,
-              p_quantity: qty,
-            });
-            if (finError) {
-              logger.withContext({ op: 'ticketing.finalize-counter', ...safeLogErrorContext(finError) })
-                .error('[TICKETING] finalize_free_ticket_booking RPC error — blocking ticket delivery');
-              return { valid: false, errorMessage: 'Something went wrong confirming your ticket inventory. Please try again.' };
-            }
-            if (finResult?.already_finalized) {
-              logger.info('[TICKETING] Ticket counters already finalized for booking ' + (d.booking_id as string));
-            }
-
-            const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
-              weekday: 'long', day: 'numeric', month: 'long',
-            });
             await ctx.sender.sendText({
               to: ctx.from,
-              text: await ctx.t(getTicketConfirmationMessage({
-                eventName: d.event_name as string,
-                dateLabel,
-                venue: (d.event_venue as string) || '',
-                quantity: d.ticket_quantity as number,
-                totalAmount: d.total_amount as number,
-                referenceCode: d.reference_code as string,
-                subscriptionTier: ctx.business?.subscription_tier,
-              })),
+              text: await ctx.t(`✅ *Payment Confirmed!*\n\nYour tickets for *${d.event_name as string}* are ready.\n\n💡 Type *my tickets* to view them, or *receipt* for your payment receipt.`),
             });
-
-            // Canonical ticket row creation (MUST await — Vercel kills process after response)
-            const paidTicketResult = await sendTicketsAfterPurchase({
-              supabase: ctx.supabase,
-              sender: ctx.sender,
-              businessId: ctx.business!.id,
-              bookingId: d.booking_id as string,
-              eventId: d.event_id as string,
-              eventName: d.event_name as string,
-              eventDate: dateLabel,
-              eventTime: d.event_time as string | undefined,
-              venue: (d.event_venue as string) || '',
-              guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-              guestPhone: ctx.from,
-              referenceCode: d.reference_code as string,
-              quantity: d.ticket_quantity as number,
-            });
-            if (!paidTicketResult.success) {
-              logger.error('[TICKETING] Paid ticket creation failed:', paidTicketResult.error);
-              return { valid: false, errorMessage: 'Ticket creation failed. Your payment is confirmed — please try again to receive your tickets.' };
-            }
-
-            // Notify owner: email + WhatsApp
-            notifyOwnerNewTicketSale({
-              supabase: ctx.supabase,
-              sender: ctx.sender,
-              businessId: ctx.business!.id,
-              businessName: ctx.business!.name,
-              countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
-              referenceCode: d.reference_code as string,
-              customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-              eventName: d.event_name as string,
-              quantity: d.ticket_quantity as number,
-              ticketTypeName: d.ticket_type_name as string | undefined,
-              totalAmount: d.total_amount as number,
-            }).catch(err => logger.withContext({ op: 'ticketing.paid-notify', ...safeLogErrorContext(err) }).error('[TICKETING] Notify error'));
-
-            // In-app notification
-            createNotification(ctx.supabase, {
-              businessId: ctx.business!.id,
-              bookingId: d.booking_id as string,
-              type: 'ticket_sale',
-              channel: 'whatsapp',
-              body: `New ticket sale: ${d.ticket_quantity} ticket${(d.ticket_quantity as number) > 1 ? 's' : ''} for ${d.event_name}. Amount: ${formatCurrency(d.total_amount as number, (ctx.business?.country_code || 'NG') as CountryCode)}. Ref: ${d.reference_code}`,
-            }).catch(err => logger.withContext({ op: 'ticketing.paid-notification', ...safeLogErrorContext(err) }).error('[TICKETING] Notification error'));
-
-            // Record platform fee only after payment is verified
-            if (ctx.business) {
-              const isInTrial = (ctx.business.subscription_tier === 'free') && new Date(ctx.business.trial_ends_at) > new Date();
-              recordPlatformFee(ctx.supabase, {
-                businessId: ctx.business.id,
-                bookingId: d.booking_id as string,
-                transactionAmount: d.total_amount as number,
-                tier: ctx.business.subscription_tier as SubscriptionTier,
-                isInTrial,
-              }).catch(err => logger.withContext({ op: 'ticketing.platform-fee', ...safeLogErrorContext(err) }).error('[TICKETING] recordPlatformFee error'));
-
-              // Post-completion: loyalty points, feedback request, referral tracking
-              handlePostCompletion({
-                supabase: ctx.supabase,
-                businessId: ctx.business.id,
-                customerPhone: ctx.from,
-                customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim() || null,
-                serviceType: 'ticketing',
-                referenceId: d.booking_id as string,
-                sender: ctx.sender,
-                amountPaid: d.total_amount as number,
-                serviceName: d.event_name as string,
-                referenceCode: d.reference_code as string,
-              }).catch(err => logger.withContext({ op: 'ticketing.post-completion', ...safeLogErrorContext(err) }).error('[TICKETING] Post-completion error'));
-            }
-
             return { valid: true, data: { _action: 'payment_confirmed' } };
+          }
+
+          if (recovery.outcome === 'processing' || recovery.outcome === 'retryable') {
+            // Money verified but Stage 2/3 not yet complete.
+            await ctx.sender.sendText({
+              to: ctx.from,
+              text: await ctx.t('✅ Payment received! Your tickets are being processed.\n\nYou\'ll get them shortly. If not, tap *I\'ve Paid* again.'),
+            });
+            return { valid: true, data: { _action: 'payment_processing' } };
           }
 
           return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
@@ -1140,6 +1012,10 @@ export const ticketingFlow: FlowDefinition = {
         if (d._retry_payment) {
           delete d._retry_payment;
           return 'process_tickets';
+        }
+        // Keep session active for processing/retryable lifecycle
+        if (d._action === 'payment_processing') {
+          return 'await_ticket_payment';
         }
         return null;
       },

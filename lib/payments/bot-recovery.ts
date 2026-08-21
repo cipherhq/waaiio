@@ -1,7 +1,7 @@
 /**
  * Bot "I've Paid" recovery adapter.
  *
- * Provides a boolean-compatible interface for bot flows while routing
+ * Provides a rich lifecycle result for bot flows while routing
  * through the canonical Payment Authority via reconcilePayment.
  *
  * This replaces direct verifyPayment calls in bot "I've Paid" paths.
@@ -10,17 +10,22 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { reconcilePayment } from './reconcile';
 
+export type RecoveryOutcome = 'completed' | 'processing' | 'retryable' | 'not_verified' | 'not_deliverable';
+
+export interface RecoveryResult {
+  outcome: RecoveryOutcome;
+  paymentId?: string;
+}
+
 /**
  * Verify and reconcile a payment through the canonical authority.
- * Returns true if the payment is now confirmed (completed/already_completed).
- *
- * The bot flow can use this as a drop-in replacement for verifyPayment
- * while ensuring all business mutation goes through the authority.
+ * Returns a rich result distinguishing completed, processing, retryable,
+ * and not-verified outcomes so bot flows can provide accurate UX.
  */
 export async function verifyAndReconcilePayment(
   supabase: SupabaseClient,
   paymentReference: string,
-): Promise<boolean> {
+): Promise<RecoveryResult> {
   // Find the payment by gateway reference
   const { data: payment, error } = await supabase
     .from('payments')
@@ -30,19 +35,29 @@ export async function verifyAndReconcilePayment(
 
   if (error || !payment) {
     logger.warn('[BOT-RECOVERY] Payment not found for reference:', paymentReference);
-    return false;
+    return { outcome: 'not_verified' };
   }
 
   // Reconcile through canonical authority
   const result = await reconcilePayment(supabase, payment.id, 'ive_paid');
 
-  // Return true only if payment is now confirmed
-  if (result.lifecycle) {
-    return result.lifecycle.status === 'completed'
-      || result.lifecycle.status === 'already_completed'
-      || result.lifecycle.status === 'not_deliverable';
+  if (!result.lifecycle) {
+    // Provider not verified or other non-success outcome
+    return { outcome: 'not_verified', paymentId: payment.id };
   }
 
-  // Provider not verified or other non-success outcome
-  return false;
+  switch (result.lifecycle.status) {
+    case 'completed':
+    case 'already_completed':
+      return { outcome: 'completed', paymentId: payment.id };
+    case 'not_deliverable':
+      return { outcome: 'not_deliverable', paymentId: payment.id };
+    case 'processing':
+      return { outcome: 'processing', paymentId: payment.id };
+    case 'retryable_failed':
+      return { outcome: 'retryable', paymentId: payment.id };
+    case 'rejected':
+    default:
+      return { outcome: 'not_verified', paymentId: payment.id };
+  }
 }

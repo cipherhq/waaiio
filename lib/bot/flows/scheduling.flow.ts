@@ -4,7 +4,7 @@ import { getCategoryLabels } from '@/lib/categoryConfig';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
-import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
+import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
 import { getSavedPaymentMethod, chargeSavedCard } from '@/lib/payments/charge-saved';
 import { createNotification } from './shared/notifications';
@@ -3115,10 +3115,26 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: true, data: { _chat_with_biz: true } };
         }
         if (input === 'cancel_booking' || input === 'go_back') {
-          // Cancel the pending booking if one was created
+          // Cancel only if booking is still pending/unpaid — CAS-style guard
+          // prevents overwriting a booking that Payment Authority already confirmed.
           const d = ctx.session.session_data;
           if (d.booking_id) {
-            await ctx.supabase.from('bookings').update({ status: 'cancelled' }).eq('id', d.booking_id as string);
+            const { data: cancelResult } = await ctx.supabase
+              .from('bookings')
+              .update({ status: 'cancelled' })
+              .eq('id', d.booking_id as string)
+              .in('status', ['pending'])
+              .select('id');
+
+            if (!cancelResult?.length) {
+              // Booking is no longer pending — payment may have confirmed it
+              const { data: bk } = await ctx.supabase.from('bookings')
+                .select('status, deposit_status').eq('id', d.booking_id as string).single();
+              if (bk?.deposit_status === 'paid' || bk?.status === 'confirmed') {
+                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Your payment has been confirmed! Your booking is active.\n\n💡 Type *my bookings* to view details.') });
+                return { valid: true, data: { _action: 'already_confirmed' } };
+              }
+            }
           }
           await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Booking cancelled. Send *Hi* to start over.') });
           return { valid: true, data: { _action: 'cancel' } };
@@ -3207,10 +3223,13 @@ export const schedulingFlow: FlowDefinition = {
             bookingId,
           });
 
-          if (result.success) {
-            return { valid: true, data: { _saved_card_paid: true, _action: 'payment_confirmed' } };
+          if (result.outcome === 'charged' || result.outcome === 'already_charged') {
+            return { valid: true, data: { _saved_card_paid: true, _saved_card_payment_id: result.paymentId, _action: 'payment_confirmed' } };
           }
-          return { valid: true, data: { _skip_saved_card: true, _saved_card_error: result.message } };
+          if (result.outcome === 'indeterminate') {
+            return { valid: true, data: { _saved_card_indeterminate: true, _saved_card_payment_id: result.paymentId } };
+          }
+          return { valid: true, data: { _skip_saved_card: true, _saved_card_error: 'message' in result ? result.message : 'Card charge failed' } };
         }
 
         // Handle PIN verification for saved card
@@ -3259,10 +3278,13 @@ export const schedulingFlow: FlowDefinition = {
             businessId: ctx.business!.id, bookingId,
           });
 
-          if (result.success) {
-            return { valid: true, data: { _saved_card_paid: true, _action: 'payment_confirmed', _awaiting_card_pin: false } };
+          if (result.outcome === 'charged' || result.outcome === 'already_charged') {
+            return { valid: true, data: { _saved_card_paid: true, _saved_card_payment_id: result.paymentId, _action: 'payment_confirmed', _awaiting_card_pin: false } };
           }
-          return { valid: true, data: { _skip_saved_card: true, _saved_card_error: result.message, _awaiting_card_pin: false } };
+          if (result.outcome === 'indeterminate') {
+            return { valid: true, data: { _saved_card_indeterminate: true, _saved_card_payment_id: result.paymentId, _awaiting_card_pin: false } };
+          }
+          return { valid: true, data: { _skip_saved_card: true, _saved_card_error: 'message' in result ? result.message : 'Card charge failed', _awaiting_card_pin: false } };
         }
 
         // If awaiting PIN but input isn't 4 digits
@@ -3288,71 +3310,25 @@ export const schedulingFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         if (d._action === 'cancel') return 'select_capability';
         if (d._saved_card_paid) {
-          // Update booking status to confirmed
-          if (d.booking_id) {
-            await ctx.supabase
-              .from('bookings')
-              .update({ status: 'confirmed', deposit_status: 'paid' })
-              .eq('id', d.booking_id as string);
+          // Route saved-card success through canonical Payment Authority.
+          // chargeSavedCard created the payment row; now reconcile it.
+          const paymentId = d._saved_card_payment_id as string;
+          if (paymentId) {
+            const { reconcilePayment } = await import('@/lib/payments/reconcile');
+            await reconcilePayment(ctx.supabase, paymentId, 'saved_card');
           }
-
-          // Record platform fee now that payment is confirmed (fee on full service total, not deposit)
-          if (ctx.business && d.total_amount) {
-            const feeAmount = (d.total_amount as number) || 0;
-            if (feeAmount > 0) {
-              const isInTrial = (ctx.business.subscription_tier === 'free') && new Date(ctx.business.trial_ends_at) > new Date();
-              recordPlatformFee(ctx.supabase, {
-                businessId: ctx.business.id,
-                bookingId: d.booking_id as string,
-                transactionAmount: feeAmount,
-                tier: ctx.business.subscription_tier as SubscriptionTier,
-                isInTrial,
-              }).catch(err => logger.withContext({ op: 'scheduling.saved-card-platform-fee', ...safeLogErrorContext(err) }).error('[SCHEDULING] saved card recordPlatformFee error'));
-            }
-          }
-
-          // Notify owner and run post-completion
-          if (ctx.business) {
-            const labels = getCategoryLabels(ctx.business.category || 'restaurant');
-            const paidCC = (ctx.business.country_code || 'NG') as CountryCode;
-            const dateLabel = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale(paidCC), {
-              weekday: 'long', day: 'numeric', month: 'long',
-            });
-            const custName = d.book_for_other
-              ? (d.other_name as string)
-              : `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Customer';
-            const paidAmount = (d.deposit_amount as number) || 0;
-
-            notifyOwnerNewBooking({
-              supabase: ctx.supabase,
-              sender: ctx.sender,
-              businessId: ctx.business.id,
-              businessName: ctx.business.name,
-              countryCode: paidCC,
-              referenceCode: d.reference_code as string,
-              customerName: custName,
-              date: dateLabel,
-              time: (d.time as string) || '',
-              quantity: (d.party_size as number) || 1,
-              quantityLabel: labels.quantityLabel,
-              amount: paidAmount || undefined,
-            }).catch(err => logger.withContext({ op: 'scheduling.saved-card-owner-notify', ...safeLogErrorContext(err) }).error('[SCHEDULING] saved card owner notification error'));
-
-            handlePostCompletion({
-              supabase: ctx.supabase,
-              businessId: ctx.business.id,
-              customerPhone: ctx.from,
-              customerName: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim() || null,
-              serviceType: 'booking',
-              referenceId: d.booking_id as string,
-              sender: ctx.sender,
-              amountPaid: paidAmount,
-              serviceName: d.service_name as string,
-              referenceCode: d.reference_code as string,
-            }).catch(err => logger.withContext({ op: 'scheduling.saved-card-post-completion', ...safeLogErrorContext(err) }).error('[SCHEDULING] saved card post-completion error'));
-          }
+          // Authority handles booking confirmation + fee + Stage 3.
 
           return null; // Payment complete, end flow
+        }
+        if (d._saved_card_indeterminate) {
+          // Provider may have charged — keep session at payment step for reconciliation.
+          // Customer can tap "I've Paid" to reconcile the same reference.
+          await ctx.sender.sendText({
+            to: ctx.from,
+            text: '⏳ Payment is being verified. You\'ll get a confirmation shortly.\n\nIf not, tap *I\'ve Paid* to check again.',
+          });
+          return 'await_booking_payment';
         }
         // Saved card failed or user chose new card — go to regular payment
         return 'create_booking'; // Re-enter create_booking which will skip saved card this time
@@ -3523,182 +3499,32 @@ export const schedulingFlow: FlowDefinition = {
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
+          // Converge through canonical Payment Authority — same path as webhooks.
+          // Authority handles: provider verification, booking confirmation, platform
+          // fee, ticket state, customer confirmation (Stage 3).
           const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
-          const verified = await verifyAndReconcilePayment(ctx.supabase, ref);
-          if (verified) {
+          const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
+
+          if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
+            // Payment Authority fully completed. Stage 3 (sendProactiveConfirmation)
+            // already sent customer confirmation, owner notification, and post-completion.
+            // Bot provides only a brief acknowledgment — no duplicate full confirmation.
             const d = ctx.session.session_data;
-
-            // Check if webhook already confirmed this booking (avoid double-processing)
-            const { data: currentBooking } = await ctx.supabase
-              .from('bookings')
-              .select('status, deposit_status')
-              .eq('id', d.booking_id as string)
-              .single();
-
-            if (currentBooking?.deposit_status === 'paid') {
-              // Webhook already handled DB + post-completion — just show full confirmation to user
-              const labels2 = getCategoryLabels(ctx.business?.category || 'restaurant');
-              const dateLabel2 = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'long', day: 'numeric', month: 'long' });
-              const paidCC2 = (ctx.business?.country_code || 'NG') as CountryCode;
-              const calLinks2 = (d.date && d.time) ? getCalendarLinksText({
-                businessName: ctx.business?.name || 'Business',
-                businessAddress: undefined,
-                serviceName: (d.service_name as string) || undefined,
-                referenceCode: d.reference_code as string,
-                date: d.date as string,
-                time: d.time as string,
-                durationMinutes: (d.service_duration as number) || 60,
-              }) : '';
-              const confirmLines2 = [
-                `✅ *Payment Confirmed!*`,
-                '',
-                `Your ${labels2.entityName} at *${ctx.business?.name}* is fully confirmed.`,
-                d.service_name ? `📋 ${d.service_name as string}` : null,
-                `📅 ${dateLabel2} at ${d.time as string}`,
-                `👥 ${d.party_size as number} ${labels2.quantityLabel}`,
-                (d.deposit_amount as number) > 0 ? `💰 ${formatCurrency(d.deposit_amount as number, paidCC2)}` : null,
-                `🔑 Ref: *${d.reference_code as string}*`,
-                '',
-                'See you there!',
-                calLinks2 ? calLinks2 : null,
-                '',
-                '💡 *What you can do:*',
-                '• Type *my bookings* to view your appointments',
-                '• Type *reschedule* to change the date/time',
-                '• Type *receipt* to get your payment receipt',
-              ].filter(Boolean);
-              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(confirmLines2.join('\n')) });
-              return { valid: true, data: { _action: 'already_confirmed' } };
-            }
-
-            // Update booking status to confirmed
-            await ctx.supabase
-              .from('bookings')
-              .update({ status: 'confirmed', deposit_status: 'paid' })
-              .eq('id', d.booking_id as string);
-
-            // Record platform fee now that payment is confirmed (fee on full service total, not deposit)
-            if (ctx.business) {
-              const feeAmount = (d.total_amount as number) || 0;
-              if (feeAmount > 0) {
-                const isInTrial = (ctx.business.subscription_tier === 'free') && new Date(ctx.business.trial_ends_at) > new Date();
-                recordPlatformFee(ctx.supabase, {
-                  businessId: ctx.business.id,
-                  bookingId: d.booking_id as string,
-                  transactionAmount: feeAmount,
-                  tier: ctx.business.subscription_tier as SubscriptionTier,
-                  isInTrial,
-                }).catch(err => logger.withContext({ op: 'scheduling.platform-fee', ...safeLogErrorContext(err) }).error('[SCHEDULING] recordPlatformFee error'));
-              }
-            }
-
-            const labels = getCategoryLabels(ctx.business?.category || 'restaurant');
-            const dateLabel = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
-              weekday: 'long', day: 'numeric', month: 'long',
-            });
-
-            const paidAmount = (d.deposit_amount as number) || 0;
-            const paidCC = (ctx.business?.country_code || 'NG') as CountryCode;
-            const calLinksPayment = (d.date && d.time) ? getCalendarLinksText({
-              businessName: ctx.business?.name || 'Business',
-              businessAddress: undefined,
-              serviceName: (d.service_name as string) || undefined,
-              referenceCode: d.reference_code as string,
-              date: d.date as string,
-              time: d.time as string,
-              durationMinutes: (d.service_duration as number) || 60,
-            }) : '';
-            const confirmLines = [
-              `✅ *Payment Confirmed!*`,
-              '',
-              `Your ${labels.entityName} at *${ctx.business?.name}* is fully confirmed.`,
-              d.service_name ? `📋 ${d.service_name as string}` : null,
-              `📅 ${dateLabel} at ${d.time as string}`,
-              `👥 ${d.party_size as number} ${labels.quantityLabel}`,
-              paidAmount > 0 ? `💰 ${formatCurrency(paidAmount, paidCC)}` : null,
-              `🔑 Ref: *${d.reference_code as string}*`,
-              '',
-              'See you there!',
-              calLinksPayment ? calLinksPayment : null,
-            ].filter(Boolean);
-
-            const payTips = '\n\n💡 *What you can do:*\n• Type *my bookings* to view your appointments\n• Type *reschedule* to change the date/time\n• Type *cancel* to cancel\n• Type *receipt* to get your payment receipt';
-
             await ctx.sender.sendText({
               to: ctx.from,
-              text: await ctx.t(confirmLines.join('\n') + payTips),
+              text: await ctx.t(`✅ *Payment Confirmed!*\n\nYour booking *${d.reference_code as string}* is confirmed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.`),
             });
-
-            // Notify business owner (email always, WhatsApp for dedicated numbers)
-            if (ctx.business) {
-              const custName = d.book_for_other
-                ? (d.other_name as string)
-                : `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Customer';
-              notifyOwnerNewBooking({
-                supabase: ctx.supabase,
-                sender: ctx.sender,
-                businessId: ctx.business.id,
-                businessName: ctx.business.name,
-                countryCode: paidCC,
-                referenceCode: d.reference_code as string,
-                customerName: custName,
-                date: dateLabel,
-                time: (d.time as string) || '',
-                quantity: d.party_size as number,
-                quantityLabel: labels.quantityLabel,
-                amount: paidAmount || undefined,
-              }).catch(err => logger.withContext({ op: 'scheduling.payment-owner-notify', ...safeLogErrorContext(err) }).error('[SCHEDULING] Owner notification error'));
-
-              // Notify assigned staff member
-              if (d.staff_id) {
-                import('./shared/notify-staff').then(({ notifyStaffNewBooking }) => {
-                  notifyStaffNewBooking({
-                    supabase: ctx.supabase,
-                    sender: ctx.sender,
-                    businessId: ctx.business!.id,
-                    businessName: ctx.business!.name,
-                    staffId: d.staff_id as string,
-                    customerName: custName,
-                    serviceName: (d.service_name as string) || '',
-                    date: dateLabel,
-                    time: (d.time as string) || '',
-                    referenceCode: d.reference_code as string,
-                    countryCode: (ctx.business!.country_code || 'NG') as CountryCode,
-                    amount: paidAmount || undefined,
-                  }).catch(err => logger.withContext({ op: 'scheduling.payment-staff-notify', ...safeLogErrorContext(err) }).error('[SCHEDULING] Staff notify error'));
-                }).catch(err => logger.withContext({ op: 'scheduling.payment-staff-notify-import', ...safeLogErrorContext(err) }).error('[SCHEDULING] Staff notify import error'));
-              }
-
-              // Post-completion: loyalty, feedback, referral, auto-receipt
-              handlePostCompletion({
-                supabase: ctx.supabase,
-                businessId: ctx.business.id,
-                customerPhone: ctx.from,
-                customerName: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim() || null,
-                serviceType: 'booking',
-                referenceId: d.booking_id as string,
-                sender: ctx.sender,
-                amountPaid: paidAmount,
-                serviceName: d.service_name as string,
-                referenceCode: d.reference_code as string,
-              }).catch(err => logger.withContext({ op: 'scheduling.payment-post-completion', ...safeLogErrorContext(err) }).error('[SCHEDULING] Post-completion error'));
-
-              // Fire payment_received rule (non-blocking)
-              const pmtSendMsg = async (to: string, txt: string) => {
-                await ctx.sender.sendText({ to, text: txt });
-              };
-              evaluateRules(ctx.supabase, ctx.business.id, 'payment_received', {
-                customer_phone: ctx.from,
-                customer_name: custName,
-                business_name: ctx.business.name,
-                reference_code: d.reference_code as string,
-                reference_id: d.booking_id as string,
-                total_amount: d.deposit_amount as number || 0,
-                service_type: 'booking',
-              }, pmtSendMsg).catch(err => logger.withContext({ op: 'scheduling.payment-received-rule', ...safeLogErrorContext(err) }).error('[SCHEDULING] payment_received rule error'));
-            }
-
             return { valid: true, data: { _action: 'payment_confirmed' } };
+          }
+
+          if (recovery.outcome === 'processing' || recovery.outcome === 'retryable') {
+            // Money verified by provider but Stage 2/3 not yet complete.
+            // Keep session active — customer can retry "I've Paid" to resume.
+            await ctx.sender.sendText({
+              to: ctx.from,
+              text: await ctx.t('✅ Payment received! Your booking is being processed.\n\nYou\'ll get a confirmation shortly. If not, tap *I\'ve Paid* again.'),
+            });
+            return { valid: true, data: { _action: 'payment_processing' } };
           }
 
           return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
@@ -3712,7 +3538,11 @@ export const schedulingFlow: FlowDefinition = {
           delete d._retry_payment;
           return 'create_booking';
         }
-        return null; // All paths end the flow
+        // Keep session active for processing/retryable lifecycle
+        if (d._action === 'payment_processing') {
+          return 'await_booking_payment';
+        }
+        return null;
       },
     },
   ],
