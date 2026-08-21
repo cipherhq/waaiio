@@ -7,6 +7,7 @@ import { truncTitle } from '../utils/truncate';
 import { getCapabilityCustomLabels } from '@/lib/capabilities/service';
 import { getCapabilityLabel } from '@/lib/capabilities/labels';
 import { getCategoryLabels } from '@/lib/categoryConfig';
+import { getUserFacingCapabilities } from '@/lib/bot/handlers/flow-routing';
 
 export { getCapabilityLabel };
 
@@ -14,34 +15,25 @@ export { getCapabilityLabel };
  * Prepare the renderable capability list for the WhatsApp menu.
  *
  * Single authoritative path: starts from effective enabled capabilities,
- * filters non-user-facing, checks required backing data, loads custom labels.
- * Both skipIf() and prompt() rely on this — prompt() is never dependent on
- * skipIf() having previously populated _filtered_capabilities.
+ * uses the canonical getUserFacingCapabilities() filter, checks required
+ * backing data, loads custom labels.
  *
- * Results are cached in session_data._filtered_capabilities and
- * _capability_custom_labels so the DB queries run at most once per step entry.
+ * Always recomputes from current session_data.capabilities — never trusts
+ * a previously cached _filtered_capabilities, because BotService refreshes
+ * the effective capability set during active sessions (capability enable/disable,
+ * backing-data changes, custom-label changes would all be missed by a stale cache).
+ *
+ * Writes results to session_data for downstream validation/diagnostics only.
  */
 async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
   userFacing: CapabilityId[];
   customLabels: Record<string, string>;
 }> {
-  // Return cached result if already computed this step entry
-  const cached = ctx.session.session_data._filtered_capabilities as CapabilityId[] | undefined;
-  const cachedLabels = ctx.session.session_data._capability_custom_labels as Record<string, string> | undefined;
-  if (cached && cachedLabels !== undefined) {
-    return { userFacing: cached, customLabels: cachedLabels || {} };
-  }
-
   const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
   const businessId = ctx.business?.id;
 
-  // Filter out non-user-facing capabilities (canonical filter from flow-routing)
-  const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'multi_location']);
-  if (capabilities.includes('scheduling') || capabilities.includes('table_reservation')) {
-    nonUserFacing.add('payment');
-    nonUserFacing.add('invoice');
-  }
-  let userFacing = capabilities.filter(c => !nonUserFacing.has(c));
+  // Canonical user-facing filter — single source of truth
+  let userFacing = getUserFacingCapabilities(capabilities);
 
   // Check backing data — only keep capabilities with actual content
   if (businessId) {
@@ -112,7 +104,7 @@ async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
     ? await getCapabilityCustomLabels(ctx.supabase, businessId)
     : {};
 
-  // Cache for this step entry
+  // Write to session_data for downstream validation/diagnostics (not treated as authoritative cache)
   ctx.session.session_data._filtered_capabilities = userFacing;
   ctx.session.session_data._capability_custom_labels = customLabels;
 
@@ -222,8 +214,9 @@ const selectCapabilityStep: FlowStepConfig = {
       postbackText: `cap_${cap}`,
     }));
 
-    // Add "My Account" for returning customers (only if there are business capabilities)
-    if (hasHistory && capItems.length > 0) {
+    // Add "My Account" for returning customers — MANAGE_EXISTING functionality
+    // Must remain available even when zero CREATE_NEW capabilities exist
+    if (hasHistory) {
       capItems.push({ id: 'cap_my_account', title: 'My Account', postbackText: 'cap_my_account' });
     }
 

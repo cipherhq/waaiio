@@ -2,8 +2,9 @@
  * Capability menu correctness tests.
  *
  * Proves that prompt() always renders the correct capability menu
- * regardless of whether skipIf() ran, and that zero-capability
- * edge cases never produce an empty WhatsApp interactive payload.
+ * regardless of whether skipIf() ran, that stale cached data cannot
+ * override fresh capabilities, and that zero-capability edge cases
+ * never produce an empty WhatsApp interactive payload.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { getStep } from './helpers';
@@ -19,7 +20,6 @@ function mockSupabase(tableCounts: Record<string, number> = {}, profileId?: stri
   const from = vi.fn((table: string) => {
     const count = tableCounts[table] ?? 0;
     const chain: Record<string, any> = {};
-    const self = () => chain;
     chain.select = vi.fn().mockReturnValue(chain);
     chain.insert = vi.fn().mockReturnValue(chain);
     chain.update = vi.fn().mockReturnValue(chain);
@@ -35,34 +35,26 @@ function mockSupabase(tableCounts: Record<string, number> = {}, profileId?: stri
     chain.limit = vi.fn().mockReturnValue(chain);
     chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
 
-    // profiles.maybeSingle returns the profile for returning customer checks
     if (table === 'profiles') {
       chain.maybeSingle = vi.fn().mockResolvedValue({
-        data: profileId ? { id: profileId } : null,
-        error: null,
+        data: profileId ? { id: profileId } : null, error: null,
       });
     } else {
       chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
     }
 
     // For count queries (select with { count: 'exact', head: true })
-    // The mock's select() needs to eventually resolve to { count }
-    // Override the terminal chain resolution to return count
     const originalSelect = chain.select;
     chain.select = vi.fn((...args: any[]) => {
       if (args[1]?.count === 'exact') {
-        // Return a chain where terminal methods resolve with { count }
         const countChain: Record<string, any> = {};
-        const countSelf = () => countChain;
         countChain.eq = vi.fn().mockReturnValue(countChain);
         countChain.neq = vi.fn().mockReturnValue(countChain);
         countChain.or = vi.fn().mockReturnValue(countChain);
         countChain.is = vi.fn().mockReturnValue(countChain);
         countChain.not = vi.fn().mockReturnValue(countChain);
         countChain.limit = vi.fn().mockReturnValue(countChain);
-        // resolve to { count } for any terminal access
         countChain.then = (fn: any) => fn({ count, data: [], error: null });
-        // Make it thenable so await works
         Object.defineProperty(countChain, Symbol.toStringTag, { value: 'Promise' });
         return countChain;
       }
@@ -82,21 +74,21 @@ function buildCtx(opts: {
   profileId?: string;
   hasHistory?: boolean;
   forceMenu?: boolean;
-  filteredCapabilities?: string[]; // pre-set to test cache behavior
+  staleCachedCaps?: string[];
+  staleCachedLabels?: Record<string, string>;
 }): FlowContext {
-  // Merge history table counts if returning customer
   const counts = { ...(opts.tableCounts || {}) };
   if (opts.hasHistory) {
     counts['bookings'] = (counts['bookings'] || 0) + 1;
   }
-
   const supabase = mockSupabase(counts, opts.profileId);
 
   const session_data: Record<string, unknown> = {
     capabilities: opts.capabilities,
   };
   if (opts.forceMenu) session_data._force_capability_menu = true;
-  if (opts.filteredCapabilities) session_data._filtered_capabilities = opts.filteredCapabilities;
+  if (opts.staleCachedCaps) session_data._filtered_capabilities = opts.staleCachedCaps;
+  if (opts.staleCachedLabels) session_data._capability_custom_labels = opts.staleCachedLabels;
 
   return {
     supabase: supabase as any,
@@ -124,7 +116,17 @@ function buildCtx(opts: {
   };
 }
 
-// ── Tests ──
+function getItems(msg: any): any[] {
+  return msg.items || msg.buttons || [];
+}
+
+function getPostbacks(msg: any): string[] {
+  const items = msg.items || [];
+  const buttons = msg.buttons || [];
+  return [...items.map((i: any) => i.postbackText), ...buttons.map((b: any) => b.id)];
+}
+
+// ── Core menu rendering ──
 
 describe('capability menu correctness', () => {
   const FIVE_CAPS = ['payment', 'ordering', 'chat', 'giving', 'appointment'];
@@ -143,89 +145,59 @@ describe('capability menu correctness', () => {
     });
 
     const result = await step.prompt!(ctx);
-    expect(result).toBeDefined();
-    expect(result!.length).toBe(1);
     const msg = result![0];
-
-    // 5 capabilities + My Account = 6 items → WhatsApp list (not buttons)
     expect(msg.type).toBe('list');
-    const items = (msg as any).items;
-    expect(items.length).toBe(6);
-
-    // All 5 business capabilities present
-    const titles = items.map((i: any) => i.postbackText || i.id);
-    expect(titles).toContain('cap_payment');
-    expect(titles).toContain('cap_ordering');
-    expect(titles).toContain('cap_chat');
-    expect(titles).toContain('cap_giving');
-    expect(titles).toContain('cap_appointment');
-    expect(titles).toContain('cap_my_account');
+    const postbacks = getPostbacks(msg);
+    expect(postbacks.length).toBe(6);
+    expect(postbacks).toContain('cap_payment');
+    expect(postbacks).toContain('cap_ordering');
+    expect(postbacks).toContain('cap_chat');
+    expect(postbacks).toContain('cap_giving');
+    expect(postbacks).toContain('cap_appointment');
+    expect(postbacks).toContain('cap_my_account');
   });
 
   it('five backed capabilities + new customer → five business actions, no My Account', async () => {
     const ctx = buildCtx({
       capabilities: FIVE_CAPS,
       tableCounts: FIVE_CAPS_BACKING,
-      // No profileId → not a returning customer
     });
 
     const result = await step.prompt!(ctx);
     const msg = result![0];
-    expect(msg.type).toBe('list'); // 5 items → list
-    const items = (msg as any).items;
-    expect(items.length).toBe(5);
-
-    // No My Account
-    const titles = items.map((i: any) => i.postbackText || i.id);
-    expect(titles).not.toContain('cap_my_account');
-    expect(titles).toContain('cap_payment');
-    expect(titles).toContain('cap_ordering');
-    expect(titles).toContain('cap_chat');
-    expect(titles).toContain('cap_giving');
-    expect(titles).toContain('cap_appointment');
+    expect(msg.type).toBe('list');
+    const postbacks = getPostbacks(msg);
+    expect(postbacks.length).toBe(5);
+    expect(postbacks).not.toContain('cap_my_account');
   });
 
   it('action=require override → capabilities still render correctly (prompt independent of skipIf)', async () => {
-    // Simulate: skipIf() was NOT called (override action=require bypasses it)
-    // _filtered_capabilities is NOT in session_data
     const ctx = buildCtx({
       capabilities: FIVE_CAPS,
       tableCounts: FIVE_CAPS_BACKING,
     });
-    // Explicitly ensure NO cached _filtered_capabilities
+    // Simulate: skipIf() was NOT called (override bypassed it)
     delete ctx.session.session_data._filtered_capabilities;
     delete ctx.session.session_data._capability_custom_labels;
 
     const result = await step.prompt!(ctx);
     const msg = result![0];
-
-    // prompt() should have called prepareCapabilityMenu() internally
     expect(msg.type).toBe('list');
-    const items = (msg as any).items;
-    expect(items.length).toBe(5); // 5 capabilities, no history
-    expect(items.map((i: any) => i.postbackText)).toContain('cap_chat');
+    expect(getItems(msg).length).toBe(5);
+    expect(getPostbacks(msg)).toContain('cap_chat');
   });
 
   it('missing backing data removes only the affected capability', async () => {
     const ctx = buildCtx({
       capabilities: ['ordering', 'chat', 'appointment'],
-      tableCounts: {
-        // ordering has no products → should be removed
-        products: 0,
-        // appointment has no appointments → should be removed
-        appointments: 0,
-      },
+      tableCounts: { products: 0, appointments: 0 },
     });
 
     const result = await step.prompt!(ctx);
     const msg = result![0];
-
-    // Only chat remains (always available, no backing data required)
-    // With 1 item → buttons
     expect(msg.type).toBe('buttons');
-    const buttons = (msg as any).buttons;
-    expect(buttons.length).toBe(1);
-    expect(buttons[0].id).toBe('cap_chat');
+    const postbacks = getPostbacks(msg);
+    expect(postbacks).toEqual(['cap_chat']);
   });
 
   it('4+ options use WhatsApp list path', async () => {
@@ -235,44 +207,31 @@ describe('capability menu correctness', () => {
     });
 
     const result = await step.prompt!(ctx);
-    const msg = result![0];
-    expect(msg.type).toBe('list');
-    expect((msg as any).items.length).toBe(4);
-    expect((msg as any).buttonLabel).toBe('View Options');
+    expect(result![0].type).toBe('list');
+    expect(getItems(result![0]).length).toBe(4);
   });
 
   it('2-3 options use buttons', async () => {
-    const ctx = buildCtx({
-      capabilities: ['payment', 'chat'],
-      tableCounts: {},
-    });
+    const ctx = buildCtx({ capabilities: ['payment', 'chat'] });
 
     const result = await step.prompt!(ctx);
-    const msg = result![0];
-    expect(msg.type).toBe('buttons');
-    expect((msg as any).buttons.length).toBe(2);
+    expect(result![0].type).toBe('buttons');
+    expect(getItems(result![0]).length).toBe(2);
   });
 
-  it('zero valid options never produces empty buttons/list — sends safe fallback text', async () => {
+  it('zero valid options + no history → safe fallback text (never empty payload)', async () => {
     const ctx = buildCtx({
       capabilities: ['ordering'],
-      tableCounts: { products: 0 }, // no backing data
+      tableCounts: { products: 0 },
     });
-    // Ensure no cached data
-    delete ctx.session.session_data._filtered_capabilities;
 
     const result = await step.prompt!(ctx);
-    const msg = result![0];
-    // Must be plain text, not buttons/list with zero items
-    expect(msg.type).toBe('text');
-    expect((msg as any).text).toContain('still setting up');
+    expect(result![0].type).toBe('text');
+    expect((result![0] as any).text).toContain('still setting up');
   });
 
   it('single valid capability auto-skips via skipIf', async () => {
-    const ctx = buildCtx({
-      capabilities: ['chat'],
-      tableCounts: {},
-    });
+    const ctx = buildCtx({ capabilities: ['chat'] });
 
     const shouldSkip = await step.skipIf!(ctx);
     expect(shouldSkip).toBe(true);
@@ -288,8 +247,144 @@ describe('capability menu correctness', () => {
 
     const shouldSkip = await step.skipIf!(ctx);
     expect(shouldSkip).toBe(false);
-    // _filtered_capabilities should be populated even though menu is forced
     expect(ctx.session.session_data._filtered_capabilities).toBeDefined();
     expect((ctx.session.session_data._filtered_capabilities as string[]).length).toBeGreaterThan(0);
+  });
+});
+
+// ── My Account behavior ──
+
+describe('My Account behavior', () => {
+  it('returning customer + zero create-new capabilities → My Account still available', async () => {
+    const ctx = buildCtx({
+      capabilities: ['ordering'],
+      tableCounts: { products: 0 }, // no backing → zero create-new
+      profileId: 'profile-1',
+      hasHistory: true,
+    });
+
+    const result = await step.prompt!(ctx);
+    const msg = result![0];
+    // My Account should be present even with zero business capabilities
+    expect(msg.type).toBe('buttons');
+    const postbacks = getPostbacks(msg);
+    expect(postbacks).toContain('cap_my_account');
+    expect(postbacks.length).toBe(1);
+  });
+
+  it('brand-new customer + zero capabilities → safe fallback text (no My Account)', async () => {
+    const ctx = buildCtx({
+      capabilities: ['ordering'],
+      tableCounts: { products: 0 },
+      // No profileId, no history
+    });
+
+    const result = await step.prompt!(ctx);
+    expect(result![0].type).toBe('text');
+    expect((result![0] as any).text).toContain('still setting up');
+  });
+});
+
+// ── Stale cache rejection ──
+
+describe('stale cache rejection', () => {
+  it('stale _filtered_capabilities cannot override a newly refreshed capability set', async () => {
+    // Session has stale cache from a previous turn showing only ['chat']
+    // But capabilities were refreshed to include 3 caps with backing data
+    const ctx = buildCtx({
+      capabilities: ['payment', 'ordering', 'chat'],
+      tableCounts: { products: 5 },
+      staleCachedCaps: ['chat'], // stale: only had chat before
+      staleCachedLabels: {},
+    });
+
+    const result = await step.prompt!(ctx);
+    const msg = result![0];
+    // Must show all 3 current capabilities, not the stale ['chat']
+    const postbacks = getPostbacks(msg);
+    expect(postbacks.length).toBe(3);
+    expect(postbacks).toContain('cap_payment');
+    expect(postbacks).toContain('cap_ordering');
+    expect(postbacks).toContain('cap_chat');
+  });
+
+  it('disabled capability cached from earlier turn is not rendered', async () => {
+    // Stale cache includes 'giving' but current capabilities no longer include it
+    const ctx = buildCtx({
+      capabilities: ['payment', 'chat'], // giving was disabled
+      staleCachedCaps: ['payment', 'chat', 'giving'], // stale cache still has it
+      staleCachedLabels: {},
+    });
+
+    const result = await step.prompt!(ctx);
+    const postbacks = getPostbacks(result![0]);
+    expect(postbacks).not.toContain('cap_giving');
+    expect(postbacks).toContain('cap_payment');
+    expect(postbacks).toContain('cap_chat');
+  });
+
+  it('newly enabled capability appears even if older cached list lacks it', async () => {
+    // Stale cache has ['chat'] but owner just enabled ordering with products
+    const ctx = buildCtx({
+      capabilities: ['chat', 'ordering'],
+      tableCounts: { products: 10 },
+      staleCachedCaps: ['chat'], // stale: ordering wasn't there before
+      staleCachedLabels: {},
+    });
+
+    const result = await step.prompt!(ctx);
+    const postbacks = getPostbacks(result![0]);
+    expect(postbacks).toContain('cap_ordering');
+    expect(postbacks).toContain('cap_chat');
+  });
+
+  it('changed backing data is respected on menu reconstruction', async () => {
+    // Stale cache had ordering (products existed), but now products are deleted
+    const ctx = buildCtx({
+      capabilities: ['ordering', 'chat'],
+      tableCounts: { products: 0 }, // products deleted since last turn
+      staleCachedCaps: ['ordering', 'chat'], // stale: ordering was valid before
+      staleCachedLabels: {},
+    });
+
+    const result = await step.prompt!(ctx);
+    const postbacks = getPostbacks(result![0]);
+    expect(postbacks).not.toContain('cap_ordering'); // no backing data
+    expect(postbacks).toContain('cap_chat');
+  });
+});
+
+// ── Canonical filter ──
+
+describe('canonical filter', () => {
+  it('uses getUserFacingCapabilities as the filter for menu preparation', async () => {
+    // Non-user-facing capabilities must never appear in the menu
+    const ctx = buildCtx({
+      capabilities: ['chat', 'reminders', 'feedback', 'staff', 'broadcast', 'auto_reply'],
+    });
+
+    const result = await step.prompt!(ctx);
+    const postbacks = getPostbacks(result![0]);
+    // Only chat is user-facing
+    expect(postbacks).toContain('cap_chat');
+    expect(postbacks).not.toContain('cap_reminders');
+    expect(postbacks).not.toContain('cap_feedback');
+    expect(postbacks).not.toContain('cap_staff');
+    expect(postbacks).not.toContain('cap_broadcast');
+    expect(postbacks).not.toContain('cap_auto_reply');
+  });
+
+  it('scheduling presence hides payment and invoice from menu', async () => {
+    const ctx = buildCtx({
+      capabilities: ['scheduling', 'payment', 'invoice', 'chat'],
+      tableCounts: { services: 3 },
+    });
+
+    const result = await step.prompt!(ctx);
+    const postbacks = getPostbacks(result![0]);
+    expect(postbacks).toContain('cap_scheduling');
+    expect(postbacks).toContain('cap_chat');
+    expect(postbacks).not.toContain('cap_payment');
+    expect(postbacks).not.toContain('cap_invoice');
   });
 });
