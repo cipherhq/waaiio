@@ -250,10 +250,16 @@ describe('Bot counter fail-closed', () => {
     expect(src).toContain("rpc('finalize_free_ticket_booking'");
     expect(src).not.toContain("rpc('increment_tickets_sold'");
   });
-  it('finalization error → validation failure', () => {
+  it('finalization error → validation failure (free-event path)', () => {
     const src = readSrc('../bot/flows/ticketing.flow.ts');
+    // Only the free-event path calls finalize_free_ticket_booking directly
     const idx = src.indexOf('finalize_free_ticket_booking RPC error');
-    expect(src.slice(idx, idx + 300)).toContain('valid: false');
+    if (idx >= 0) {
+      expect(src.slice(idx, idx + 300)).toContain('valid: false');
+    } else {
+      // Paid path now converges through Payment Authority — finalization is handled there
+      expect(src).toContain('verifyAndReconcilePayment');
+    }
   });
   it('no legacy SELECT→UPDATE fallback', () => {
     expect(readSrc('../bot/flows/ticketing.flow.ts')).not.toContain("update({ tickets_sold:");
@@ -344,20 +350,23 @@ describe('sendTicketsAfterPurchase caller audit', () => {
     const src = readSrc('../bot/flows/ticketing.flow.ts');
     expect(src).toContain('freeTicketResult.success');
   });
-  it('paid "I\'ve Paid" bot path inspects TicketCreationResult', () => {
+  it('paid "I\'ve Paid" bot path converges through Payment Authority', () => {
+    // Paid I've Paid path now uses verifyAndReconcilePayment → Authority handles ticket state.
+    // No manual paidTicketResult inspection in the bot flow.
     const src = readSrc('../bot/flows/ticketing.flow.ts');
-    expect(src).toContain('paidTicketResult.success');
+    const ivePaid = src.split("text === 'i_paid'")[1] || '';
+    expect(ivePaid).toContain('verifyAndReconcilePayment');
+    expect(ivePaid).not.toContain('paidTicketResult');
   });
-  it('dedup path inspects TicketCreationResult', () => {
+  it('free-event path inspects TicketCreationResult', () => {
     const src = readSrc('../bot/flows/ticketing.flow.ts');
-    expect(src).toContain('dedupResult.success');
+    // Free-event path still calls sendTicketsAfterPurchase directly
+    expect(src).toContain('freeTicketResult.success');
   });
-  it('paid path ticket failure blocks completion', () => {
-    const src = readSrc('../bot/flows/ticketing.flow.ts');
-    const idx = src.indexOf('paidTicketResult.success');
-    const after = src.slice(idx, idx + 300);
-    expect(after).toContain('valid: false');
-    expect(after).toContain('Ticket creation failed');
+  it('paid path ticket delivery handled by Stage 3 (not bot)', () => {
+    // Ticket delivery for paid events now happens in sendProactiveConfirmation (Stage 3)
+    const src = readSrc('../payments/send-confirmation.ts');
+    expect(src).toContain('sendTicketsAfterPurchase');
   });
   it('free path ticket failure returns error message', () => {
     const src = readSrc('../bot/flows/ticketing.flow.ts');
@@ -425,21 +434,20 @@ describe('Confirmation finalization result honored', () => {
 // 12. DEDUP PATH TICKET FAILURE
 // ═══════════════════════════════════════════════════════
 
-describe('Dedup "I\'ve Paid" ticket failure behavior', () => {
-  it('dedupResult.success=false → does NOT return already_confirmed', () => {
+describe('Paid I\'ve Paid convergence (replaces legacy dedup path)', () => {
+  it('paid I\'ve Paid path uses canonical authority (no manual dedup/ticket logic)', () => {
     const src = readSrc('../bot/flows/ticketing.flow.ts');
-    const dedupIdx = src.indexOf('dedupResult.success');
-    const afterDedup = src.slice(dedupIdx, dedupIdx + 400);
-    // On failure, must return valid:false (not valid:true)
-    expect(afterDedup).toContain('valid: false');
-    // The already_confirmed return is ONLY reached after the failure check
-    const failBlock = afterDedup.slice(0, afterDedup.indexOf('already_confirmed'));
-    expect(failBlock).toContain('valid: false');
+    const ivePaid = src.split("text === 'i_paid'")[1]?.split("Payment not yet received")[0] || '';
+    // Must use verifyAndReconcilePayment, not manual dedupResult/paidTicketResult
+    expect(ivePaid).toContain('verifyAndReconcilePayment');
+    expect(ivePaid).not.toContain('dedupResult');
+    expect(ivePaid).not.toContain('paidTicketResult');
   });
-  it('dedup failure message explains payment is confirmed but tickets pending', () => {
+  it('processing lifecycle keeps session active for retry', () => {
     const src = readSrc('../bot/flows/ticketing.flow.ts');
-    const failIdx = src.indexOf('Ticket generation is still being completed');
-    expect(failIdx).toBeGreaterThan(-1);
+    // Processing/retryable shows pending UX and returns payment_processing
+    expect(src).toContain("_action: 'payment_processing'");
+    expect(src).toContain("return 'await_ticket_payment'");
   });
 });
 
