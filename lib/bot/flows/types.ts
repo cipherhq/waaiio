@@ -119,6 +119,17 @@ export interface FlowStepConfig {
   skipIf?(ctx: FlowContext): Promise<boolean>;
   /** If true, media messages (images, documents) are passed through to validate() instead of being rejected */
   acceptsMedia?: boolean;
+  /**
+   * After prompt() runs, the executor sets current_step to this value before CAS-persisting.
+   * This is the safe replacement for direct bot_sessions.current_step DB writes from prompt().
+   * The executor owns the transition via CAS — no direct DB mutation needed.
+   * Backwards-compatible: if omitted or returns undefined, current_step stays unchanged.
+   *
+   * String for unconditional transitions (e.g., add_to_cart → continue_or_checkout).
+   * Function for conditional transitions (e.g., process_order → await_order_payment only
+   * when payment was initialized). Receives FlowContext after prompt() has run.
+   */
+  nextAfterPrompt?: string | ((ctx: FlowContext) => string | undefined);
 }
 
 // ── Flow definition ──
