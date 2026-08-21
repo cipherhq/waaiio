@@ -216,15 +216,22 @@ async function chargePaystackAuthorization(
     .maybeSingle();
 
   if (lookupErr) {
+    // Unknown prior-payment state — must NOT enable another charge or payment route.
+    // Return indeterminate so the caller keeps the session recoverable without offering alternatives.
     logger.error('[SAVED-CARD] Existing payment lookup failed — blocking charge', lookupErr.message);
-    return { outcome: 'declined', reference: opts.reference, message: 'Payment verification failed — please try again' };
+    return { outcome: 'indeterminate', paymentId: '', reference: opts.reference, message: 'Payment verification failed — please try again' };
   }
 
   if (existing) {
-    // Validate entity identity: existing row must belong to same booking
-    if (opts.bookingId && existing.booking_id && existing.booking_id !== opts.bookingId) {
-      logger.error('[SAVED-CARD] Existing payment reference belongs to different booking', { existing: existing.booking_id, expected: opts.bookingId });
-      return { outcome: 'declined', reference: opts.reference, message: 'Payment reference conflict — please try again' };
+    // Validate entity + business identity: existing row must belong to same booking and business.
+    // If opts.bookingId is supplied, existing must match (null existing.booking_id = mismatch).
+    if (opts.bookingId && existing.booking_id !== opts.bookingId) {
+      logger.error('[SAVED-CARD] Existing payment booking mismatch', { existing: existing.booking_id, expected: opts.bookingId });
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
+    }
+    if (existing.business_id && existing.business_id !== opts.businessId) {
+      logger.error('[SAVED-CARD] Existing payment business mismatch', { existing: existing.business_id, expected: opts.businessId });
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
     }
     if (existing.status === 'success') {
       return { outcome: 'already_charged', paymentId: existing.id, reference: opts.reference };
@@ -241,7 +248,8 @@ async function chargePaystackAuthorization(
         if (result.providerOutcome === 'not_paid') {
           // not_paid can include non-terminal states (pending/ongoing at provider).
           // Only terminalize if the provider reason indicates explicit terminal failure.
-          const reason = result.lifecycle?.reason || '';
+          // providerReason comes from the actual provider response (e.g., 'paystack_status: abandoned').
+          const reason = result.providerReason || '';
           const isTerminal = /abandoned|failed|reversed|expired|declined/i.test(reason);
           if (isTerminal) {
             const { error: termErr } = await supabase.from('payments')

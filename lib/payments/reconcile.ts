@@ -24,6 +24,8 @@ export interface ReconciliationResult {
   lifecycle: PaymentLifecycleResult | null;
   /** Whether the caller should acknowledge success to the provider */
   acknowledgeSuccess: boolean;
+  /** Provider-specific reason string when not verified (e.g., 'paystack_status: abandoned') */
+  providerReason?: string;
 }
 
 /**
@@ -74,12 +76,13 @@ export async function reconcilePayment(
 
   // 3. Map provider outcome
   if (providerResult.status !== 'verified') {
-    logger.info(`${logPrefix} Provider outcome: ${providerResult.status} — ${'reason' in providerResult ? providerResult.reason : ''}`);
+    const providerReason = 'reason' in providerResult ? providerResult.reason : undefined;
+    logger.info(`${logPrefix} Provider outcome: ${providerResult.status} — ${providerReason || ''}`);
     return {
       providerOutcome: providerResult.status,
       lifecycle: null,
-      // Acknowledge webhooks to prevent retry storms (except retryable errors)
       acknowledgeSuccess: providerResult.status !== 'retryable_error',
+      providerReason,
     };
   }
 

@@ -526,30 +526,47 @@ describe('Saved-card provider state semantics', () => {
   it('non-terminal provider response returns indeterminate (not declined)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
-    // Fresh charge: non-terminal responses must not be terminalized
     expect(src).toContain('isTerminalDecline');
     expect(src).toContain("outcome: 'indeterminate', paymentId, reference: opts.reference, message: gatewayResponse");
   });
 
-  it('existing pending: only explicit terminal failure is terminalized', () => {
+  it('existing pending: terminal detection uses providerReason (not lifecycle.reason)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
-    // not_paid reconciliation: check reason for terminal keywords
+    expect(src).toContain('result.providerReason');
     expect(src).toContain('abandoned|failed|reversed|expired|declined');
-    expect(src).toContain('isTerminal');
   });
 
-  it('existing-row lookup checks error and fails closed', () => {
+  it('ReconciliationResult carries providerReason for non-verified outcomes', () => {
     const fs = require('fs');
-    const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
-    expect(src).toContain('lookupErr');
-    expect(src).toContain('blocking charge');
+    const src = fs.readFileSync('lib/payments/reconcile.ts', 'utf-8');
+    expect(src).toContain('providerReason?: string');
+    expect(src).toContain("providerReason,");
   });
 
-  it('existing-row validates booking entity identity', () => {
+  it('lookup error returns indeterminate (not declined) to prevent alternative charge', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
+    // The lookupErr handler must return indeterminate
+    // Find the error handling block between lookupErr check and the existing check
+    const errIdx = src.indexOf('if (lookupErr)');
+    const existIdx = src.indexOf('if (existing)', errIdx);
+    const errBlock = src.substring(errIdx, existIdx);
+    expect(errBlock).toContain("outcome: 'indeterminate'");
+    expect(errBlock).not.toContain("outcome: 'declined'");
+  });
+
+  it('existing-row validates exact booking_id match (null = mismatch)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
+    // Must compare without the && existing.booking_id guard that accepts null
     expect(src).toContain('existing.booking_id !== opts.bookingId');
-    expect(src).toContain('Payment reference conflict');
+    expect(src).not.toContain('existing.booking_id && existing.booking_id !==');
+  });
+
+  it('existing-row validates business_id', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
+    expect(src).toContain('existing.business_id !== opts.businessId');
   });
 });
