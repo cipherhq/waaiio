@@ -44,7 +44,7 @@ describe('Scheduling: I\'ve Paid converges through Payment Authority', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
     expect(src).toContain("d._action === 'payment_processing'");
-    expect(src).toContain("return 'await_booking_payment'");
+    expect(src).toContain("return 'payment'");
   });
 });
 
@@ -139,7 +139,7 @@ describe('Saved-card convergence through Payment Authority', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
     expect(src).toContain('_saved_card_indeterminate');
-    expect(src).toContain("return 'await_booking_payment'");
+    expect(src).toContain("return 'payment'");
   });
 
   it('BYO saved-card fails closed', () => {
@@ -291,5 +291,138 @@ describe('ReconciliationSource includes saved_card', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/payments/reconcile.ts', 'utf-8');
     expect(src).toContain("'saved_card'");
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 10. BEHAVIORAL: Saved-card indeterminate recovery preserves reference
+// ══════════════════════════════════════════════════════════
+
+describe('Saved-card indeterminate recovery (behavioral)', () => {
+  it('indeterminate sets payment_reference to saved-card reference before routing to payment step', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
+    // The next() indeterminate handler is the SECOND occurrence of _saved_card_indeterminate
+    // (first is in validate). Split to get the next() block.
+    const parts = src.split('_saved_card_indeterminate');
+    const nextBlock = parts[2] || ''; // third part = after second occurrence
+    const beforeReturn = nextBlock.split("return 'payment'")[0] || '';
+    expect(beforeReturn).toContain('d.payment_reference');
+    expect(beforeReturn).toContain('-saved');
+  });
+
+  it('saved-card success interprets reconciliation lifecycle', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
+    // The next() handler for saved_card_paid is in saved_card_prompt.next()
+    // It's the LAST occurrence of _saved_card_paid (the third part after splitting)
+    const parts = src.split('_saved_card_paid');
+    const nextBlock = parts[3] || parts[2] || ''; // third or fourth part
+    expect(nextBlock).toContain('reconcilePayment');
+    expect(nextBlock).toContain('isComplete');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 11. BEHAVIORAL: Stage-2 postcondition fails before consequences
+// ══════════════════════════════════════════════════════════
+
+describe('Booking Stage-2 postcondition (behavioral)', () => {
+  it('postcondition read failure returns criticalSuccess:false BEFORE fee', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    const missingSection = src.split('booking_postcondition_missing')[1]?.split('recordPlatformFee')[0] || '';
+    // Must return before reaching fee
+    expect(missingSection).toContain('return { criticalSuccess: false');
+  });
+
+  it('deposit_status repair checks update error', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    expect(src).toContain('booking_deposit_repair_failed');
+    // Repair failure returns before fee
+    const repairSection = src.split('booking_deposit_repair_failed')[1]?.split('recordPlatformFee')[0] || '';
+    expect(repairSection).toContain('return { criticalSuccess: false');
+  });
+
+  it('cancelled booking returns before fee (not just pushes error)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    const cancelSection = src.split('booking_cancelled_at_payment')[1]?.split('recordPlatformFee')[0] || '';
+    expect(cancelSection).toContain('return { criticalSuccess: false');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 12. BEHAVIORAL: Scheduling step next() for saved-card lifecycle
+// ══════════════════════════════════════════════════════════
+
+import { getStep } from './helpers';
+import { schedulingFlow } from '../scheduling.flow';
+import { ticketingFlow } from '../ticketing.flow';
+
+function mockCtx(overrides?: { sessionData?: Record<string, unknown> }) {
+  const chain = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c: Record<string, any> = {};
+    ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'or', 'is', 'not', 'in', 'gte', 'lte', 'like', 'order', 'limit'].forEach(
+      m => c[m] = vi.fn().mockReturnValue(c),
+    );
+    c.single = vi.fn().mockResolvedValue({ data: null, error: null });
+    c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    return c;
+  };
+  return {
+    supabase: { from: vi.fn(() => chain()), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) } as any,
+    sender: { sendText: vi.fn().mockResolvedValue({}), sendButtons: vi.fn().mockResolvedValue({}), sendList: vi.fn().mockResolvedValue({}) } as any,
+    standalone: {} as any, intelligence: {} as any,
+    t: vi.fn(async (text: string) => text),
+    from: '+2341234567890',
+    session: {
+      id: 'sess-test', user_id: 'user-test', business_id: 'biz-test',
+      current_step: 'await_booking_payment',
+      session_data: { capabilities: ['scheduling', 'payment'], active_capability: 'scheduling', ...overrides?.sessionData },
+      version: 1,
+    },
+    business: {
+      id: 'biz-test', name: 'Test Biz', slug: 'test-biz',
+      category: 'restaurant' as any, flow_type: 'scheduling' as any,
+      subscription_tier: 'free', trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
+      metadata: {}, country_code: 'NG', payment_gateway: null,
+    },
+  };
+}
+
+describe('Scheduling: payment step lifecycle next() behavioral', () => {
+  it('payment_processing keeps session at payment step', async () => {
+    // Scheduling payment wait step is 'payment'
+    const step = getStep(schedulingFlow, 'payment');
+    const ctx = mockCtx({ sessionData: { _action: 'payment_processing', payment_reference: 'REF-123' } });
+    const next = await step.next(ctx as any);
+    // Must return the same step name (not null) to keep session active
+    expect(next).not.toBeNull();
+  });
+
+  it('payment_confirmed ends flow (returns null)', async () => {
+    const step = getStep(schedulingFlow, 'payment');
+    const ctx = mockCtx({ sessionData: { _action: 'payment_confirmed', payment_reference: 'REF-123' } });
+    const next = await step.next(ctx as any);
+    expect(next).toBeNull();
+  });
+});
+
+describe('Ticketing: payment lifecycle next() behavioral', () => {
+  it('payment_processing keeps session at await_ticket_payment', async () => {
+    const step = getStep(ticketingFlow, 'await_ticket_payment');
+    const ctx = mockCtx({ sessionData: { _action: 'payment_processing', payment_reference: 'REF-456' } });
+    const next = await step.next(ctx as any);
+    expect(next).toBe('await_ticket_payment');
+  });
+
+  it('payment_confirmed ends flow (returns null)', async () => {
+    const step = getStep(ticketingFlow, 'await_ticket_payment');
+    const ctx = mockCtx({ sessionData: { _action: 'payment_confirmed', payment_reference: 'REF-456' } });
+    const next = await step.next(ctx as any);
+    expect(next).toBeNull();
   });
 });

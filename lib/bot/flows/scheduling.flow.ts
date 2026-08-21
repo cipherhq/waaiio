@@ -3311,24 +3311,42 @@ export const schedulingFlow: FlowDefinition = {
         if (d._action === 'cancel') return 'select_capability';
         if (d._saved_card_paid) {
           // Route saved-card success through canonical Payment Authority.
-          // chargeSavedCard created the payment row; now reconcile it.
           const paymentId = d._saved_card_payment_id as string;
           if (paymentId) {
             const { reconcilePayment } = await import('@/lib/payments/reconcile');
-            await reconcilePayment(ctx.supabase, paymentId, 'saved_card');
-          }
-          // Authority handles booking confirmation + fee + Stage 3.
+            const result = await reconcilePayment(ctx.supabase, paymentId, 'saved_card');
 
-          return null; // Payment complete, end flow
+            // Interpret lifecycle — do NOT end flow if Stage 2/3 incomplete
+            const lifecycle = result.lifecycle;
+            const isComplete = lifecycle?.status === 'completed'
+              || lifecycle?.status === 'already_completed'
+              || lifecycle?.status === 'not_deliverable';
+
+            if (!isComplete) {
+              // Stage 2/3 processing/retryable — keep session recoverable.
+              // Preserve saved-card reference for I've Paid reconciliation.
+              const savedRef = `${d.reference_code as string}-saved`;
+              d.payment_reference = savedRef;
+              await ctx.sender.sendText({
+                to: ctx.from,
+                text: '✅ Card charged! Your booking is being processed.\n\nYou\'ll get a confirmation shortly. If not, tap *I\'ve Paid* to check.',
+              });
+              return 'payment';
+            }
+          }
+          // Authority completed Stage 2+3 — end flow.
+          return null;
         }
         if (d._saved_card_indeterminate) {
-          // Provider may have charged — keep session at payment step for reconciliation.
-          // Customer can tap "I've Paid" to reconcile the same reference.
+          // Provider may have charged — preserve the saved-card reference so
+          // "I've Paid" in await_booking_payment can reconcile the SAME payment.
+          const savedRef = `${d.reference_code as string}-saved`;
+          d.payment_reference = savedRef;
           await ctx.sender.sendText({
             to: ctx.from,
             text: '⏳ Payment is being verified. You\'ll get a confirmation shortly.\n\nIf not, tap *I\'ve Paid* to check again.',
           });
-          return 'await_booking_payment';
+          return 'payment';
         }
         // Saved card failed or user chose new card — go to regular payment
         return 'create_booking'; // Re-enter create_booking which will skip saved card this time
@@ -3540,7 +3558,7 @@ export const schedulingFlow: FlowDefinition = {
         }
         // Keep session active for processing/retryable lifecycle
         if (d._action === 'payment_processing') {
-          return 'await_booking_payment';
+          return 'payment';
         }
         return null;
       },

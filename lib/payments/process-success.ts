@@ -64,10 +64,11 @@ export async function processSuccessfulPayment(
     if (postErr || !bookingPost) {
       criticalErrors.push('booking_postcondition_missing');
       logger.error('[PROCESS-SUCCESS] Booking postcondition read failed for', payment.booking_id);
+      // Cannot prove booking is in valid paid state — fail before fee/ticket
+      return { criticalSuccess: false, errors: criticalErrors };
     } else if (bookingPost.status === 'cancelled') {
       criticalErrors.push('booking_cancelled_at_payment');
       logger.error('[PROCESS-SUCCESS] Booking cancelled before payment finalization', payment.booking_id);
-      // Do NOT proceed to fee/ticket — return early within booking block
       return { criticalSuccess: false, errors: criticalErrors };
     } else if (bookingPost.status === 'no_show') {
       criticalErrors.push('booking_no_show_at_payment');
@@ -75,9 +76,14 @@ export async function processSuccessfulPayment(
       return { criticalSuccess: false, errors: criticalErrors };
     } else if (bookingPost.deposit_status !== 'paid') {
       // Ensure deposit_status is set for non-pending bookings (in_progress/completed)
-      await supabase.from('bookings')
+      const { error: repairErr } = await supabase.from('bookings')
         .update({ deposit_status: 'paid' })
         .eq('id', payment.booking_id);
+      if (repairErr) {
+        criticalErrors.push('booking_deposit_repair_failed');
+        logger.error('[PROCESS-SUCCESS] Booking deposit_status repair failed', payment.booking_id);
+        return { criticalSuccess: false, errors: criticalErrors };
+      }
     }
 
     try {
