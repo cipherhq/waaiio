@@ -745,6 +745,38 @@ describe('ACC-008: processing/retryable lifecycle keeps session at await_order_p
     expect(src).toContain("_action === 'payment_confirmed'");
     expect(src).toContain("_action === 'already_confirmed'");
   });
+
+  it('await_order_payment.next() returns await_order_payment for payment_processing (session stays active)', async () => {
+    // BEHAVIORAL test: exercise the actual next() function, not source strings.
+    // When _action is payment_processing, next() must return 'await_order_payment'
+    // so the executor advances to the same step (keeps session alive) instead of
+    // returning null (which would deactivate the session).
+    const ctx = buildCtx({
+      currentStep: 'await_order_payment',
+      sessionData: {
+        payment_reference: 'REF-123',
+        order_id: 'order-processing',
+        reference_code: 'WA-OR-0001',
+        _action: 'payment_processing',
+      },
+    });
+    const nextStep = await findStep('await_order_payment').next(ctx);
+    expect(nextStep).toBe('await_order_payment');
+  });
+
+  it('await_order_payment.next() returns null for payment_confirmed (flow completes normally)', async () => {
+    const ctx = buildCtx({
+      currentStep: 'await_order_payment',
+      sessionData: {
+        payment_reference: 'REF-123',
+        order_id: 'order-done',
+        reference_code: 'WA-OR-0002',
+        _action: 'payment_confirmed',
+      },
+    });
+    const nextStep = await findStep('await_order_payment').next(ctx);
+    expect(nextStep).toBeNull();
+  });
 });
 
 // ══════════════════════════════════════════════════════════

@@ -3200,6 +3200,12 @@ export const orderingFlow: FlowDefinition = {
           delete d._retry_payment;
           return 'process_order';
         }
+        // ACC-008: payment_processing means provider verified money but Stage 2/3
+        // incomplete. Keep session active at await_order_payment so customer can
+        // retry "I've Paid" and resume canonical reconciliation.
+        if (d._action === 'payment_processing') {
+          return 'await_order_payment';
+        }
         return null;
       },
     },
