@@ -38,11 +38,11 @@ describe.skipIf(!canRun)('Migration 334: Payment spend marker', () => {
 
       CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY, name TEXT DEFAULT 'Test');
       CREATE TABLE IF NOT EXISTS bookings (
-        id UUID PRIMARY KEY, business_id UUID, guest_phone TEXT,
+        id UUID PRIMARY KEY, business_id UUID, guest_phone TEXT, guest_name TEXT,
         status booking_status DEFAULT 'confirmed', deposit_status TEXT DEFAULT 'paid'
       );
       CREATE TABLE IF NOT EXISTS reservations (
-        id UUID PRIMARY KEY, business_id UUID, guest_phone TEXT,
+        id UUID PRIMARY KEY, business_id UUID, guest_phone TEXT, guest_name TEXT,
         status booking_status DEFAULT 'confirmed', deposit_status TEXT DEFAULT 'paid'
       );
       CREATE TABLE IF NOT EXISTS payments (
@@ -260,27 +260,58 @@ describe.skipIf(!canRun)('Migration 334: Payment spend marker', () => {
     expect(parseInt(markers)).toBe(1);
   }, 15000);
 
-  it('15. Stage-2 RPC is spend-only (no visit/booking counter increment)', () => {
-    // The RPC should UPDATE customer_profiles.total_spent directly,
-    // NOT call upsert_customer_profile which would also increment visits/bookings
-    const fs = require('fs');
-    const sql = fs.readFileSync('supabase/migrations/334_payment_spend_marker.sql', 'utf-8');
-    // Must NOT contain PERFORM upsert_customer_profile
-    expect(sql).not.toContain('PERFORM upsert_customer_profile');
-    // Must contain direct total_spent update
-    expect(sql).toContain('total_spent = total_spent + v_payment.amount');
+  it('15. existing profile: spend-only — visits/bookings NOT incremented by Stage 2', () => {
+    // Create profile FIRST, then apply spend. Verify only total_spent changes.
+    psql(`
+      INSERT INTO customer_profiles (business_id, phone, name, total_spent, total_visits, total_bookings, last_seen_at, first_seen_at)
+        VALUES ('${BIZ}', '+2341234567890', 'Test User', 0, 5, 3, '2026-01-01', '2025-06-01');
+      INSERT INTO payments (id, amount, status, booking_id) VALUES ('${PAY_1}', 8000, 'success', '${BOOKING}');
+    `);
+
+    psqlJson(`SET ROLE service_role; SELECT apply_payment_spend_once('${PAY_1}');`);
+
+    const profile = psql(`SELECT total_spent, total_visits, total_bookings, name FROM customer_profiles WHERE business_id = '${BIZ}' AND phone = '+2341234567890';`);
+    const [spent, visits, bookings, name] = profile.split('|');
+    expect(parseInt(spent)).toBe(8000); // Spend incremented
+    expect(parseInt(visits)).toBe(5);   // NOT incremented by Stage 2
+    expect(parseInt(bookings)).toBe(3); // NOT incremented by Stage 2
+    expect(name).toBe('Test User');     // Name preserved
   });
 
-  it('16. Order amountPaid=0 behavior unchanged by #161', () => {
+  it('16. missing profile: Stage 2 creates spend-holder with customer name', () => {
+    // No profile exists. Stage 2 creates one with spend + name, visits/bookings = 0.
+    psql(`INSERT INTO payments (id, amount, status, booking_id) VALUES ('${PAY_1}', 6000, 'success', '${BOOKING}');`);
+    // Booking has guest_name set (from beforeAll: guest_phone='+2341234567890')
+    // Update booking to have a name
+    psql(`UPDATE bookings SET guest_name = 'Jane Doe' WHERE id = '${BOOKING}';`);
+
+    psqlJson(`SET ROLE service_role; SELECT apply_payment_spend_once('${PAY_1}');`);
+
+    const profile = psql(`SELECT total_spent, total_visits, total_bookings, name FROM customer_profiles WHERE business_id = '${BIZ}' AND phone = '+2341234567890';`);
+    const [spent, visits, bookings, name] = profile.split('|');
+    expect(parseInt(spent)).toBe(6000);
+    expect(parseInt(visits)).toBe(0);   // Stage 3 owns visit lifecycle
+    expect(parseInt(bookings)).toBe(0); // Stage 3 owns booking lifecycle
+    expect(name).toBe('Jane Doe');      // Customer name preserved from booking
+
+    // Reset guest_name for other tests
+    psql(`UPDATE bookings SET guest_name = NULL WHERE id = '${BOOKING}';`);
+  });
+
+  it('17. Order amountPaid=0 behavior unchanged (source + send-confirmation)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/payments/send-confirmation.ts', 'utf-8');
-    // Orders must still pass amountPaid: 0
     expect(src).toContain('isOrderPayment ? 0 : payment.amount');
-    // Orders must NOT have skipCustomerSpend set
     expect(src).toContain('skipCustomerSpend: isBookingPayment || isReservationPayment');
-    // The skipCustomerSpend must NOT include isOrderPayment
-    expect(src).not.toContain('skipCustomerSpend: isOrderPayment ||');
-    expect(src).not.toContain('spendOwnedByStage2');
+    expect(src).not.toContain('skipCustomerSpend: isOrderPayment');
+  });
+
+  it('18. skipCustomerSpend passes 0 to increment_customer_visit (not skip call)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/shared/post-completion.ts', 'utf-8');
+    expect(src).toContain('skipCustomerSpend ? 0 : (amountPaid || 0)');
+    // Must NOT skip the increment_customer_visit call entirely
+    expect(src).toContain("supabase.rpc('increment_customer_visit'");
   });
 
   it('13. privilege: anon cannot execute', () => {

@@ -82,12 +82,12 @@ BEGIN
     RETURN jsonb_build_object('applied', true, 'already_applied', true);
   END IF;
 
-  -- 5. Load source row — derive customer + business identity
+  -- 5. Load source row — derive customer + business identity + name
   IF v_source_type = 'booking' THEN
-    SELECT business_id, guest_phone, status
+    SELECT business_id, guest_phone, guest_name, status
     INTO v_source FROM bookings WHERE id = v_source_id;
   ELSE
-    SELECT business_id, guest_phone, status
+    SELECT business_id, guest_phone, guest_name, status
     INTO v_source FROM reservations WHERE id = v_source_id;
   END IF;
 
@@ -120,12 +120,14 @@ BEGIN
   WHERE business_id = v_source.business_id
     AND phone = v_source.guest_phone;
 
-  -- If no existing profile, create with spend only (profile lifecycle deferred to Stage 3)
+  -- If no existing profile, create spend-holder with customer name from source row.
+  -- Visits/bookings = 0 (Stage 3 owns lifecycle counters via increment_customer_visit).
   IF NOT FOUND THEN
-    INSERT INTO customer_profiles (business_id, phone, total_spent, total_visits, last_seen_at, first_seen_at)
-    VALUES (v_source.business_id, v_source.guest_phone, v_payment.amount, 0, NOW(), NOW())
+    INSERT INTO customer_profiles (business_id, phone, name, total_spent, total_visits, total_bookings, last_seen_at, first_seen_at)
+    VALUES (v_source.business_id, v_source.guest_phone, v_source.guest_name, v_payment.amount, 0, 0, NOW(), NOW())
     ON CONFLICT (business_id, phone) DO UPDATE SET
       total_spent = customer_profiles.total_spent + v_payment.amount,
+      name = COALESCE(customer_profiles.name, EXCLUDED.name),
       updated_at = NOW();
   END IF;
 
