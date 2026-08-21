@@ -181,30 +181,81 @@ describe('Booking Stage-2 postcondition check', () => {
 // 5. CANCEL-VS-PAYMENT RACE SAFETY
 // ══════════════════════════════════════════════════════════
 
-describe('Payment-wait cancellation race safety', () => {
-  it('scheduling cancellation uses conditional update with .in(pending)', () => {
+describe('Payment-wait cancellation race safety (behavioral)', () => {
+  it('scheduling payment step cancel uses CAS guard (behavioral next)', async () => {
+    // Execute the actual payment step's validate() with cancel input
+    // and a mocked supabase that returns 0 affected rows + confirmed booking
+    const step = getStep(schedulingFlow, 'payment');
+    const ctx = mockCtx({ sessionData: { booking_id: 'bk-race', payment_reference: 'REF-race' } });
+    // Mock the booking cancel to return 0 rows (payment already won)
+    const chainMock = {
+      update: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          in: vi.fn().mockReturnValue({
+            select: vi.fn().mockResolvedValue({ data: [] })
+          })
+        })
+      }),
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: { status: 'confirmed', deposit_status: 'paid' } })
+        })
+      }),
+    };
+    ctx.supabase.from = vi.fn(() => chainMock as any);
+    const result = await step.validate('cancel', ctx as any);
+    // Must return already_confirmed, not cancel
+    expect(result.valid).toBe(true);
+    expect(result.data?._action).toBe('already_confirmed');
+  });
+
+  it('scheduling payment step cancel succeeds when booking is still pending', async () => {
+    const step = getStep(schedulingFlow, 'payment');
+    const ctx = mockCtx({ sessionData: { booking_id: 'bk-pending', payment_reference: 'REF-pend' } });
+    const chainMock = {
+      update: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          in: vi.fn().mockReturnValue({
+            select: vi.fn().mockResolvedValue({ data: [{ id: 'bk-pending' }] })
+          })
+        })
+      }),
+    };
+    ctx.supabase.from = vi.fn(() => chainMock as any);
+    const result = await step.validate('cancel', ctx as any);
+    expect(result.valid).toBe(true);
+    expect(result.data?._action).toBe('cancel');
+  });
+
+  it('scheduling payment step cancel never says "No payment was taken"', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
-    // The cancel handler uses .in('status', ['pending']) guard
-    expect(src).toContain(".in('status', ['pending'])\n              .select('id')");
+    // The payment step should NOT contain "No payment was taken"
+    const paymentSection = src.split("id: 'payment'")[1]?.split("id:")[0] || '';
+    expect(paymentSection).not.toContain('No payment was taken');
   });
 
-  it('scheduling detects confirmed booking and shows recovery UX', () => {
-    const fs = require('fs');
-    const src = fs.readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
-    expect(src).toContain('Your payment has been confirmed! Your booking is active');
-  });
-
-  it('ticketing cancellation uses conditional update with .in(pending)', () => {
-    const fs = require('fs');
-    const src = fs.readFileSync('lib/bot/flows/ticketing.flow.ts', 'utf-8');
-    expect(src).toContain(".in('status', ['pending'])\n              .select('id')");
-  });
-
-  it('ticketing detects confirmed booking and shows recovery UX', () => {
-    const fs = require('fs');
-    const src = fs.readFileSync('lib/bot/flows/ticketing.flow.ts', 'utf-8');
-    expect(src).toContain('Your payment has been confirmed! Your tickets are ready');
+  it('ticketing cancel uses CAS guard (behavioral)', async () => {
+    const step = getStep(ticketingFlow, 'await_ticket_payment');
+    const ctx = mockCtx({ sessionData: { booking_id: 'bk-tkt-race', payment_reference: 'REF-tkt' } });
+    const chainMock = {
+      update: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          in: vi.fn().mockReturnValue({
+            select: vi.fn().mockResolvedValue({ data: [] })
+          })
+        })
+      }),
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: { status: 'confirmed', deposit_status: 'paid' } })
+        })
+      }),
+    };
+    ctx.supabase.from = vi.fn(() => chainMock as any);
+    const result = await step.validate('cancel', ctx as any);
+    expect(result.valid).toBe(true);
+    expect(result.data?._action).toBe('already_confirmed');
   });
 });
 

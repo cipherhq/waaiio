@@ -75,13 +75,22 @@ export async function processSuccessfulPayment(
       logger.error('[PROCESS-SUCCESS] Booking marked no-show at payment time', payment.booking_id);
       return { criticalSuccess: false, errors: criticalErrors };
     } else if (bookingPost.deposit_status !== 'paid') {
-      // Ensure deposit_status is set for non-pending bookings (in_progress/completed)
-      const { error: repairErr } = await supabase.from('bookings')
+      // Ensure deposit_status is set for non-pending legitimate states only.
+      // Guard: only repair confirmed/in_progress/completed (not cancelled/no_show).
+      const { data: repairResult, error: repairErr } = await supabase.from('bookings')
         .update({ deposit_status: 'paid' })
-        .eq('id', payment.booking_id);
-      if (repairErr) {
+        .eq('id', payment.booking_id)
+        .in('status', ['confirmed', 'in_progress', 'completed'])
+        .select('status, deposit_status')
+        .single();
+      if (repairErr || !repairResult) {
         criticalErrors.push('booking_deposit_repair_failed');
-        logger.error('[PROCESS-SUCCESS] Booking deposit_status repair failed', payment.booking_id);
+        logger.error('[PROCESS-SUCCESS] Booking deposit_status repair failed or no eligible row', payment.booking_id);
+        return { criticalSuccess: false, errors: criticalErrors };
+      }
+      if (repairResult.deposit_status !== 'paid') {
+        criticalErrors.push('booking_deposit_still_unpaid');
+        logger.error('[PROCESS-SUCCESS] Booking deposit_status still not paid after repair', payment.booking_id);
         return { criticalSuccess: false, errors: criticalErrors };
       }
     }

@@ -3390,10 +3390,27 @@ export const schedulingFlow: FlowDefinition = {
         if ((text === 'cancel' || text === 'go_back')) {
           const bookingId = d.booking_id as string;
           if (bookingId) {
-            await ctx.supabase
+            // CAS guard: only cancel if booking is still pending/unpaid.
+            // Prevents overwriting a booking that Payment Authority already confirmed.
+            const { data: cancelResult } = await ctx.supabase
               .from('bookings')
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'diner' })
-              .eq('id', bookingId);
+              .eq('id', bookingId)
+              .in('status', ['pending'])
+              .select('id');
+
+            if (!cancelResult?.length) {
+              // Booking is no longer pending — payment may have confirmed it
+              const { data: bk } = await ctx.supabase.from('bookings')
+                .select('status, deposit_status').eq('id', bookingId).single();
+              if (bk?.deposit_status === 'paid' || bk?.status === 'confirmed') {
+                await ctx.sender.sendText({
+                  to: ctx.from,
+                  text: await ctx.t('Your payment has been confirmed! Your booking is active.\n\n💡 Type *my bookings* to view details.'),
+                });
+                return { valid: true, data: { _action: 'already_confirmed' } };
+              }
+            }
           }
           // Also cancel the pending_transfer if one exists
           if (d.bank_transfer_reference) {
@@ -3404,7 +3421,7 @@ export const schedulingFlow: FlowDefinition = {
           }
           await ctx.sender.sendText({
             to: ctx.from,
-            text: await ctx.t(`Booking at *${ctx.business?.name || 'business'}* has been cancelled. No payment was taken.\n\nSend *Hi* to start over.`),
+            text: await ctx.t(`Booking at *${ctx.business?.name || 'business'}* has been cancelled.\n\nSend *Hi* to start over.`),
           });
           return { valid: true, data: { _action: 'cancel' } };
         }

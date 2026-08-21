@@ -219,8 +219,27 @@ async function chargePaystackAuthorization(
       return { outcome: 'already_charged', paymentId: existing.id, reference: opts.reference };
     }
     if (existing.status === 'pending') {
-      // Previous attempt may have charged the provider — don't charge again.
-      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Previous charge attempt pending — reconcile this reference' };
+      // Previous attempt may have charged the provider — do NOT charge again.
+      // Actively reconcile to determine provider state.
+      try {
+        const { reconcilePayment } = await import('./reconcile');
+        const result = await reconcilePayment(supabase, existing.id, 'saved_card');
+        if (result.lifecycle?.status === 'completed' || result.lifecycle?.status === 'already_completed') {
+          return { outcome: 'already_charged', paymentId: existing.id, reference: opts.reference };
+        }
+        if (result.providerOutcome === 'not_paid') {
+          // Provider confirmed money was NOT collected — safe to terminalize
+          await supabase.from('payments')
+            .update({ status: 'failed', gateway_status: 'not_paid_verified' })
+            .eq('id', existing.id)
+            .eq('status', 'pending');
+          return { outcome: 'previously_declined', reference: opts.reference };
+        }
+      } catch (e) {
+        logger.error('[SAVED-CARD] Reconciliation of existing pending payment failed:', e);
+      }
+      // Retryable/config/ambiguous — stay pending/recoverable, no second charge
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Previous charge attempt pending — reconciling' };
     }
     if (existing.status === 'failed') {
       return { outcome: 'previously_declined', reference: opts.reference };
@@ -245,6 +264,7 @@ async function chargePaystackAuthorization(
 
   // ── Step 2: Create canonical payment row FIRST — fail closed ──
   const { data: payRow, error: insertErr } = await supabase.from('payments').insert({
+    business_id: opts.businessId,
     booking_id: opts.bookingId || null,
     invoice_id: opts.invoiceId || null,
     campaign_id: opts.campaignId || null,
@@ -317,9 +337,16 @@ async function chargePaystackAuthorization(
     }
 
     // Definitive provider decline — mark payment row terminal
-    await supabase.from('payments')
+    const { error: termErr } = await supabase.from('payments')
       .update({ status: 'failed', gateway_status: data.data?.gateway_response || 'declined' })
       .eq('id', paymentId);
+
+    if (termErr) {
+      // Terminalization failed — row stays pending. Return indeterminate (not declined)
+      // to prevent the caller from offering a new charge while this one is stuck.
+      logger.error('[SAVED-CARD] Decline terminalization failed:', termErr.message);
+      return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: 'Card declined but could not record — verifying' };
+    }
 
     logger.error('[SAVED-CARD] Charge declined:', data.message || data.data?.gateway_response);
     return {
