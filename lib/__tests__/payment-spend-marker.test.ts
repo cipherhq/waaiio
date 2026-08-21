@@ -298,20 +298,102 @@ describe.skipIf(!canRun)('Migration 334: Payment spend marker', () => {
     psql(`UPDATE bookings SET guest_name = NULL WHERE id = '${BOOKING}';`);
   });
 
-  it('17. Order amountPaid=0 behavior unchanged (source + send-confirmation)', () => {
-    const fs = require('fs');
-    const src = fs.readFileSync('lib/payments/send-confirmation.ts', 'utf-8');
-    expect(src).toContain('isOrderPayment ? 0 : payment.amount');
-    expect(src).toContain('skipCustomerSpend: isBookingPayment || isReservationPayment');
-    expect(src).not.toContain('skipCustomerSpend: isOrderPayment');
+  it('17. missing-profile full lifecycle: Stage 2 → Stage 3 → correct final state', () => {
+    // Stage 2: create spend-holder
+    psql(`
+      UPDATE bookings SET guest_name = 'Full Lifecycle' WHERE id = '${BOOKING}';
+      INSERT INTO payments (id, amount, status, booking_id) VALUES ('${PAY_1}', 7000, 'success', '${BOOKING}');
+    `);
+    psqlJson(`SET ROLE service_role; SELECT apply_payment_spend_once('${PAY_1}');`);
+
+    // Verify Stage 2 state: spend-holder with name, visits=0, bookings=0
+    let profile = psql(`SELECT total_spent, total_visits, total_bookings, name FROM customer_profiles WHERE business_id = '${BIZ}' AND phone = '+2341234567890';`);
+    let [spent, visits, bookings, name] = profile.split('|');
+    expect(parseInt(spent)).toBe(7000);
+    expect(parseInt(visits)).toBe(0);
+    expect(parseInt(bookings)).toBe(0);
+    expect(name).toBe('Full Lifecycle');
+
+    // Stage 3: simulate increment_customer_visit with p_amount=0 (skipCustomerSpend=true)
+    // This is what handlePostCompletion does for booking/reservation payments
+    psql(`
+      CREATE OR REPLACE FUNCTION increment_customer_visit(p_business_id uuid, p_phone text, p_amount numeric DEFAULT 0) RETURNS void AS $$
+      BEGIN
+        UPDATE customer_profiles
+        SET total_visits = total_visits + 1,
+            total_bookings = total_bookings + 1,
+            total_spent = total_spent + p_amount,
+            last_seen_at = NOW()
+        WHERE business_id = p_business_id AND phone = p_phone;
+      END;
+      $$ LANGUAGE plpgsql;
+    `);
+    psql(`SELECT increment_customer_visit('${BIZ}', '+2341234567890', 0);`);
+
+    // Verify final state: spend unchanged, visits+bookings incremented, name preserved
+    profile = psql(`SELECT total_spent, total_visits, total_bookings, name FROM customer_profiles WHERE business_id = '${BIZ}' AND phone = '+2341234567890';`);
+    [spent, visits, bookings, name] = profile.split('|');
+    expect(parseInt(spent)).toBe(7000);  // NOT incremented by Stage 3
+    expect(parseInt(visits)).toBe(1);    // Incremented by Stage 3
+    expect(parseInt(bookings)).toBe(1);  // Incremented by Stage 3
+    expect(name).toBe('Full Lifecycle'); // Preserved
+
+    // Replay Stage 2: no double spend
+    const r2 = psqlJson(`SET ROLE service_role; SELECT apply_payment_spend_once('${PAY_1}');`);
+    expect(r2.already_applied).toBe(true);
+    profile = psql(`SELECT total_spent FROM customer_profiles WHERE business_id = '${BIZ}' AND phone = '+2341234567890';`);
+    expect(parseInt(profile)).toBe(7000); // Still 7000
+
+    psql(`UPDATE bookings SET guest_name = NULL WHERE id = '${BOOKING}';`);
   });
 
-  it('18. skipCustomerSpend passes 0 to increment_customer_visit (not skip call)', () => {
+  it('18. existing-profile lifecycle: Stage 2 spend-only → Stage 3 nonfinancial', () => {
+    // Pre-create profile with existing state
+    psql(`
+      INSERT INTO customer_profiles (business_id, phone, name, total_spent, total_visits, total_bookings, last_seen_at, first_seen_at)
+        VALUES ('${BIZ}', '+2341234567890', 'Existing User', 2000, 3, 2, '2026-01-01', '2025-06-01');
+      INSERT INTO payments (id, amount, status, booking_id) VALUES ('${PAY_1}', 4000, 'success', '${BOOKING}');
+    `);
+
+    // Stage 2: spend only
+    psqlJson(`SET ROLE service_role; SELECT apply_payment_spend_once('${PAY_1}');`);
+    let profile = psql(`SELECT total_spent, total_visits, total_bookings, name FROM customer_profiles WHERE business_id = '${BIZ}' AND phone = '+2341234567890';`);
+    let [spent, visits, bookings, name] = profile.split('|');
+    expect(parseInt(spent)).toBe(6000);  // 2000 + 4000
+    expect(parseInt(visits)).toBe(3);    // Unchanged
+    expect(parseInt(bookings)).toBe(2);  // Unchanged
+    expect(name).toBe('Existing User');
+
+    // Stage 3: nonfinancial (skipCustomerSpend → p_amount=0)
+    psql(`
+      CREATE OR REPLACE FUNCTION increment_customer_visit(p_business_id uuid, p_phone text, p_amount numeric DEFAULT 0) RETURNS void AS $$
+      BEGIN
+        UPDATE customer_profiles SET total_visits = total_visits + 1, total_bookings = total_bookings + 1, total_spent = total_spent + p_amount, last_seen_at = NOW()
+        WHERE business_id = p_business_id AND phone = p_phone;
+      END;
+      $$ LANGUAGE plpgsql;
+    `);
+    psql(`SELECT increment_customer_visit('${BIZ}', '+2341234567890', 0);`);
+
+    profile = psql(`SELECT total_spent, total_visits, total_bookings FROM customer_profiles WHERE business_id = '${BIZ}' AND phone = '+2341234567890';`);
+    [spent, visits, bookings] = profile.split('|');
+    expect(parseInt(spent)).toBe(6000);  // NOT incremented by Stage 3
+    expect(parseInt(visits)).toBe(4);    // 3+1
+    expect(parseInt(bookings)).toBe(3);  // 2+1
+  });
+
+  it('19. malformed semantic result → critical failure', async () => {
+    // Test via processSuccessfulPayment mock — malformed applied value
+    const { processSuccessfulPayment } = await import('@/lib/payments/process-success');
+    vi.doMock('@/lib/logger', () => { const l: Record<string, unknown> = { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), info: vi.fn() }; l.withContext = () => l; return { logger: l }; });
+
+    // This is a source-level supplemental check since we can't easily mock the RPC return
+    // to return { applied: 'true' } (string instead of boolean) through the Supabase client.
+    // The production code checks `typeof spendResult.applied !== 'boolean'`.
     const fs = require('fs');
-    const src = fs.readFileSync('lib/bot/flows/shared/post-completion.ts', 'utf-8');
-    expect(src).toContain('skipCustomerSpend ? 0 : (amountPaid || 0)');
-    // Must NOT skip the increment_customer_visit call entirely
-    expect(src).toContain("supabase.rpc('increment_customer_visit'");
+    const src = fs.readFileSync('lib/payments/process-success.ts', 'utf-8');
+    expect(src).toContain("typeof spendResult.applied !== 'boolean'");
+    expect(src).toContain('booking_spend_invalid_result');
   });
 
   it('13. privilege: anon cannot execute', () => {

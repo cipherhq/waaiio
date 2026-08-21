@@ -258,6 +258,20 @@ describe('processSuccessfulPayment — FinalizationResult', () => {
     expect(r.errors?.some(e => e.includes('booking_spend_rejected'))).toBe(true);
   });
 
+  it('booking spend malformed result (non-boolean applied) → criticalSuccess false', async () => {
+    const { processSuccessfulPayment } = await import('../process-success');
+    const supabase = buildSupabase();
+    (supabase.rpc as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+      if (name === 'apply_payment_spend_once') {
+        return Promise.resolve({ data: { applied: 'true' }, error: null }); // string, not boolean
+      }
+      return Promise.resolve({ data: { applied: true }, error: null });
+    });
+    const r = await processSuccessfulPayment(supabase, { id: 'p1', amount: 5000, booking_id: 'bk1', invoice_id: null, campaign_id: null });
+    expect(r.criticalSuccess).toBe(false);
+    expect(r.errors).toContain('booking_spend_invalid_result');
+  });
+
   it('booking spend already_applied replay → criticalSuccess true', async () => {
     const { processSuccessfulPayment } = await import('../process-success');
     const supabase = buildSupabase();
