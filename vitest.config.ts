@@ -10,6 +10,7 @@ export default defineConfig({
       '**/e2e/**',
       '**/__shortest__/**',
       '**/admin/__shortest__/**',
+      '**/.claude/worktrees/**',
     ],
     coverage: {
       provider: 'v8',
