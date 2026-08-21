@@ -7,49 +7,36 @@ import { truncTitle } from '../utils/truncate';
 import { getCapabilityCustomLabels } from '@/lib/capabilities/service';
 import { getCapabilityLabel } from '@/lib/capabilities/labels';
 import { getCategoryLabels } from '@/lib/categoryConfig';
+import { getUserFacingCapabilities } from '@/lib/bot/handlers/flow-routing';
 
 export { getCapabilityLabel };
 
-/** Map capability to the first step of its corresponding flow */
-function getFirstStepForCapability(cap: CapabilityId): string {
-  switch (cap) {
-    case 'appointment': return 'select_appointment';
-    case 'scheduling': return 'select_service';
-    case 'giving': return 'select_category'; // giving uses the payment flow
-    case 'payment': return 'select_category';
-    case 'ordering': return 'browse_catalog';
-    case 'ticketing': return 'select_event';
-    case 'reservation': return 'select_apartment';
-    case 'crowdfunding': return 'select_campaign';
-    case 'chat': return 'chat_start';
-    case 'waitlist': return 'waitlist_join';
-    case 'queue': return 'queue_start';
-    case 'loyalty': return 'loyalty_menu';
-    case 'invoice': return 'invoice_list';
-    case 'class_booking': return 'select_service';
-    default: return 'select_service';
-  }
-}
+/**
+ * Prepare the renderable capability list for the WhatsApp menu.
+ *
+ * Single authoritative path: starts from effective enabled capabilities,
+ * uses the canonical getUserFacingCapabilities() filter, checks required
+ * backing data, loads custom labels.
+ *
+ * Always recomputes from current session_data.capabilities — never trusts
+ * a previously cached _filtered_capabilities, because BotService refreshes
+ * the effective capability set during active sessions (capability enable/disable,
+ * backing-data changes, custom-label changes would all be missed by a stale cache).
+ *
+ * Writes results to session_data for downstream validation/diagnostics only.
+ */
+async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
+  userFacing: CapabilityId[];
+  customLabels: Record<string, string>;
+}> {
+  const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
+  const businessId = ctx.business?.id;
 
-const selectCapabilityStep: FlowStepConfig = {
-  id: 'select_capability',
+  // Canonical user-facing filter — single source of truth
+  let userFacing = getUserFacingCapabilities(capabilities);
 
-  async skipIf(ctx: FlowContext) {
-    if (!ctx.business) return false;
-    // CAS-004: If semantic mismatch forced the menu, do NOT auto-skip
-    if (ctx.session.session_data._force_capability_menu) {
-      delete ctx.session.session_data._force_capability_menu;
-      return false;
-    }
-    const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
-    const businessId = ctx.business.id;
-
-    // Filter out non-user-facing capabilities
-    const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'multi_location']);
-    if (capabilities.includes('scheduling')) { nonUserFacing.add('payment'); nonUserFacing.add('invoice'); }
-    let userFacing = capabilities.filter(c => !nonUserFacing.has(c));
-
-    // Only keep capabilities that have backing data
+  // Check backing data — only keep capabilities with actual content
+  if (businessId) {
     const checks = await Promise.all(userFacing.map(async (cap): Promise<[CapabilityId, boolean]> => {
       switch (cap) {
         case 'ordering': {
@@ -110,18 +97,60 @@ const selectCapabilityStep: FlowStepConfig = {
       }
     }));
     userFacing = checks.filter(([, hasData]) => hasData).map(([cap]) => cap);
+  }
 
-    // Fetch custom labels for bot menu
-    const customLabels = await getCapabilityCustomLabels(ctx.supabase, businessId);
-    ctx.session.session_data._capability_custom_labels = customLabels;
+  // Load custom labels
+  const customLabels = businessId
+    ? await getCapabilityCustomLabels(ctx.supabase, businessId)
+    : {};
 
-    // Store filtered list for prompt to use
-    ctx.session.session_data._filtered_capabilities = userFacing;
+  // Write to session_data for downstream validation/diagnostics (not treated as authoritative cache)
+  ctx.session.session_data._filtered_capabilities = userFacing;
+  ctx.session.session_data._capability_custom_labels = customLabels;
 
-    // If 0 or 1 capability with data, auto-select and skip the menu
-    if (userFacing.length <= 1) {
-      const cap = userFacing[0] || capabilities[0] || 'scheduling';
-      ctx.session.session_data.active_capability = cap;
+  return { userFacing, customLabels };
+}
+
+/** Map capability to the first step of its corresponding flow */
+function getFirstStepForCapability(cap: CapabilityId): string {
+  switch (cap) {
+    case 'appointment': return 'select_appointment';
+    case 'scheduling': return 'select_service';
+    case 'giving': return 'select_category'; // giving uses the payment flow
+    case 'payment': return 'select_category';
+    case 'ordering': return 'browse_catalog';
+    case 'ticketing': return 'select_event';
+    case 'reservation': return 'select_apartment';
+    case 'crowdfunding': return 'select_campaign';
+    case 'chat': return 'chat_start';
+    case 'waitlist': return 'waitlist_join';
+    case 'queue': return 'queue_start';
+    case 'loyalty': return 'loyalty_menu';
+    case 'invoice': return 'invoice_list';
+    case 'class_booking': return 'select_service';
+    default: return 'select_service';
+  }
+}
+
+const selectCapabilityStep: FlowStepConfig = {
+  id: 'select_capability',
+
+  async skipIf(ctx: FlowContext) {
+    if (!ctx.business) return false;
+    // CAS-004: If semantic mismatch forced the menu, do NOT auto-skip
+    if (ctx.session.session_data._force_capability_menu) {
+      delete ctx.session.session_data._force_capability_menu;
+      // Still prepare capabilities so prompt() has data
+      await prepareCapabilityMenu(ctx);
+      return false;
+    }
+
+    const { userFacing } = await prepareCapabilityMenu(ctx);
+    const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
+
+    // Exactly one renderable capability → auto-select and skip the menu
+    if (userFacing.length === 1) {
+      ctx.session.session_data.active_capability = userFacing[0];
       // Send greeting as standalone text since capability menu is skipped
       const greeting = ctx.session.session_data._greeting as string | undefined;
       if (greeting) {
@@ -130,11 +159,16 @@ const selectCapabilityStep: FlowStepConfig = {
       }
       return true;
     }
+
+    // Zero renderable capabilities → let prompt() decide between
+    // My Account (returning customer) or safe fallback text (new customer).
+    // Do NOT fall back to capabilities[0] — that cap may lack backing data.
     return false;
   },
 
   async prompt(ctx: FlowContext) {
-    const userFacing = (ctx.session.session_data._filtered_capabilities as CapabilityId[]) || [];
+    // Always prepare capabilities authoritatively — never depend on skipIf() cache
+    const { userFacing, customLabels } = await prepareCapabilityMenu(ctx);
     const category = ctx.business?.category || 'other';
 
     // Check if returning customer has past bookings/orders — show "My Account" option
@@ -176,15 +210,15 @@ const selectCapabilityStep: FlowStepConfig = {
       }
     }
 
-    // Build capability items (use custom labels if set)
-    const customLabels = (ctx.session.session_data._capability_custom_labels as Record<string, string>) || {};
+    // Build capability items
     const capItems = userFacing.map(cap => ({
       id: `cap_${cap}`,
       title: getCapabilityLabel(cap, category, customLabels[cap]),
       postbackText: `cap_${cap}`,
     }));
 
-    // Add "My Account" for returning customers
+    // Add "My Account" for returning customers — MANAGE_EXISTING functionality
+    // Must remain available even when zero CREATE_NEW capabilities exist
     if (hasHistory) {
       capItems.push({ id: 'cap_my_account', title: 'My Account', postbackText: 'cap_my_account' });
     }
@@ -195,6 +229,15 @@ const selectCapabilityStep: FlowStepConfig = {
       ? `${greeting}\n\nWhat would you like to do? 👇`
       : 'What would you like to do? 👇';
     if (greeting) delete ctx.session.session_data._greeting;
+
+    // SAFETY: never send an empty buttons/list payload to WhatsApp
+    if (capItems.length === 0) {
+      logger.warn('[CAPABILITY-MENU] Zero renderable capabilities', { businessId: ctx.business?.id });
+      return [{
+        type: 'text' as const,
+        text: `${bodyText}\n\nThis business is still setting up. Please try again later.`,
+      }];
+    }
 
     // WhatsApp buttons max 3 — use a list for more options
     if (capItems.length <= 3) {

@@ -1956,8 +1956,11 @@ describe('P1-CLASS-UX: class vs service separation', () => {
 
   // ── WhatsApp: "Book a Class" menu option ──
 
-  it('UX-1: class_booking is NOT in nonUserFacing (capability-selection)', () => {
-    const nonUserFacingLine = capSelection.match(/const nonUserFacing = new Set\(\[([^\]]+)\]\)/);
+  it('UX-1: class_booking is NOT in nonUserFacing (capability-selection uses canonical getUserFacingCapabilities)', () => {
+    // capability-selection.flow.ts delegates to getUserFacingCapabilities from flow-routing
+    expect(capSelection).toContain('getUserFacingCapabilities');
+    // The canonical filter in flow-routing must not exclude class_booking
+    const nonUserFacingLine = flowRouting.match(/const nonUserFacing = new Set\(\[([^\]]+)\]\)/);
     expect(nonUserFacingLine).toBeTruthy();
     expect(nonUserFacingLine![1]).not.toContain('class_booking');
   });
