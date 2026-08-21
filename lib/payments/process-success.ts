@@ -141,6 +141,28 @@ export async function processSuccessfulPayment(
       criticalErrors.push('ticket_business_state_threw');
       logger.withContext({ op: 'process-success.ticket-state', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Ticket business state error');
     }
+
+    // CRITICAL: Exactly-once customer spend via durable payment-scoped marker.
+    // Amount derived from payment row inside the RPC, not caller-supplied.
+    try {
+      const { data: spendResult, error: spendErr } = await supabase.rpc('apply_payment_spend_once', {
+        p_payment_id: payment.id,
+      });
+      if (spendErr) {
+        criticalErrors.push('booking_spend_failed');
+        logger.withContext({ op: 'process-success.booking-spend', ...safeLogErrorContext(spendErr) }).error('[PROCESS-SUCCESS] Booking spend RPC error');
+      } else if (spendResult && !spendResult.applied) {
+        const reason = spendResult.reason || 'unknown';
+        if (reason !== 'no_supported_source') {
+          // no_supported_source means this payment has no booking/reservation — valid for other entity types
+          criticalErrors.push(`booking_spend_semantic_failure:${reason}`);
+          logger.error('[PROCESS-SUCCESS] Booking spend semantic failure:', reason);
+        }
+      }
+    } catch (spendThrow) {
+      criticalErrors.push('booking_spend_threw');
+      logger.withContext({ op: 'process-success.booking-spend', ...safeLogErrorContext(spendThrow) }).error('[PROCESS-SUCCESS] Booking spend threw');
+    }
   }
 
   // 2. Process invoice payment
@@ -327,6 +349,26 @@ export async function processSuccessfulPayment(
       criticalErrors.push('reservation_finalization_threw');
       logger.withContext({ op: 'process-success.reservation-confirmation', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Reservation confirmation error');
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'reservation-confirmation' } });
+    }
+
+    // CRITICAL: Exactly-once customer spend for reservation (same RPC, derives source from payment)
+    try {
+      const { data: spendResult, error: spendErr } = await supabase.rpc('apply_payment_spend_once', {
+        p_payment_id: payment.id,
+      });
+      if (spendErr) {
+        criticalErrors.push('reservation_spend_failed');
+        logger.withContext({ op: 'process-success.reservation-spend', ...safeLogErrorContext(spendErr) }).error('[PROCESS-SUCCESS] Reservation spend RPC error');
+      } else if (spendResult && !spendResult.applied) {
+        const reason = spendResult.reason || 'unknown';
+        if (reason !== 'no_supported_source') {
+          criticalErrors.push(`reservation_spend_semantic_failure:${reason}`);
+          logger.error('[PROCESS-SUCCESS] Reservation spend semantic failure:', reason);
+        }
+      }
+    } catch (spendThrow) {
+      criticalErrors.push('reservation_spend_threw');
+      logger.withContext({ op: 'process-success.reservation-spend', ...safeLogErrorContext(spendThrow) }).error('[PROCESS-SUCCESS] Reservation spend threw');
     }
   }
 

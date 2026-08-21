@@ -506,20 +506,21 @@ export async function sendProactiveConfirmation(
       try {
         const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
         const customerName = await getCustomerName(supabase, customerPhone);
-        // For ORDER payments, spend is tracked exactly-once via apply_customer_spend_once
-        // in processSuccessfulPayment (Stage 2). Pass amountPaid=0 to prevent double-counting
-        // through handlePostCompletion's additive customer-profile spend logic.
-        // For BOOKING/RESERVATION payments, the existing amount path is preserved.
+        // Stage 2 owns exactly-once customer spend for orders, bookings, and reservations.
+        // Pass real payment.amount for receipts/loyalty/feedback, but suppress the legacy
+        // additive spend mutation via skipCustomerSpend.
         const isOrderPayment = !!payment.order_id;
+        const isBookingPayment = !!payment.booking_id;
+        const isReservationPayment = !!payment.reservation_id;
+        const spendOwnedByStage2 = isOrderPayment || isBookingPayment || isReservationPayment;
         await handlePostCompletion({
           supabase, businessId, customerPhone, customerName,
           serviceType: payment.booking_id ? 'booking' : 'order',
           referenceId: payment.booking_id || undefined,
           sender: resolved?.sender,
-          amountPaid: isOrderPayment ? 0 : payment.amount,
-          // For orders: skip automation (order_created/after_order already fired at creation).
-          // For bookings: let automation fire as normal.
+          amountPaid: isOrderPayment ? 0 : payment.amount, // Orders: 0 (receipt via ordering flow). Bookings: real amount for receipt.
           skipAutomation: isOrderPayment,
+          skipCustomerSpend: spendOwnedByStage2,
           serviceName, referenceCode,
         });
       } catch (pcErr) {
