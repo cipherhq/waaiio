@@ -169,13 +169,14 @@ For high-risk changes (payment, capability, session state, shared helpers, cross
 ### Exact-Head Review
 
 12. ChatGPT performs independent exact-head PR review against the agreed architecture, prior invariants, regression contracts, and CI evidence.
-13. Green CI is necessary but not sufficient for approval. Cross-layer reasoning and dependency reconciliation are required.
-14. The user (CTO) retains merge authorization. Neither Claude nor ChatGPT may merge.
+13. ChatGPT Phase B APPROVE/BLOCK must be synchronized to **both the PR and the tracking Issue**.
+14. Green CI is necessary but not sufficient for approval. Cross-layer reasoning and dependency reconciliation are required.
+15. The user (CTO) retains merge authorization. After explicit user authorization, ChatGPT may execute a guarded merge through connected GitHub tooling.
 
 ### Post-Merge Verification
 
-15. After merge, the exact merge commit SHA and main CI run are verified.
-16. The tracking issue is closed only after post-merge CI is green.
+16. After merge, the exact merge commit SHA and main CI run are verified.
+17. The tracking issue is closed only after post-merge exact-commit CI is green. Do not use auto-close keywords (`Closes #NNN`) in the PR body if a post-merge verification gate is required.
 
 ### Standing Rules
 

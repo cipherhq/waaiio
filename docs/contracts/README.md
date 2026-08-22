@@ -20,10 +20,11 @@ Contracts follow `waaiio-capability-contract-v1`. See any `.contract.json` for t
 ## Validation
 
 The governance CI script (`scripts/verify-engineering-governance.mjs`) validates:
-- All Tier-1 capabilities have detailed contracts
-- No duplicate capability IDs
-- Referenced test files exist
-- All capability IDs match `shared/capabilities.ts`
+- All Tier-1 capabilities have detailed contracts with valid JSON and matching IDs
+- No duplicate capability IDs in the index
+- Index total matches array length
+- Index IDs match canonical `shared/capabilities.ts` CapabilityId values
+- All `requiredTestsOnChange` paths in contracts reference existing test files
 
 ## Usage
 

@@ -19,7 +19,7 @@ One canonical authority per critical truth domain. Where multiple writers exist,
 | Loyalty award | `handlePostCompletion` loyalty section | `lib/bot/flows/shared/post-completion.ts` | None | ⚠️ No per-payment marker (DEBT-002) |
 | Platform fee | `recordPlatformFee` | `lib/payments/process-success.ts` | `platform_fees` UNIQUE on payment_id | ✅ Idempotent |
 | Capability entitlement | `getEffectiveCapabilities` / `getEnabledCapabilities` | `lib/capabilities/policy.ts`, `service.ts` | DB `business_capabilities` | ✅ Centralized |
-| Bot session transition | `FlowExecutor` via `update_session_cas` RPC | `lib/bot/flows/executor.ts` | CAS version column | ✅ Serialized |
+| Bot session transition | `FlowExecutor` via `update_session_cas` RPC | `lib/bot/flows/executor.ts` | CAS version column | ⚠️ Primarily serialized. Exception: payment-capable flow steps use direct `.update()` for payment step session advance, bypassing CAS version checks. Stage 3 `sendProactiveConfirmation` also deactivates sessions via direct update. |
 | Notification delivery | `notifyOwner*` functions | `lib/bot/flows/shared/notify-owner.ts` | None | ⚠️ Multiple types per entity (#166) |
 | Payout eligibility | `platform_fees` + `payout_mode` | `lib/payments/process-success.ts` | `platform_fees` table | ✅ Single writer |
 

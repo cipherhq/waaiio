@@ -19,10 +19,11 @@
       "capabilities": ["payment", "giving"],
       "contracts": ["payment", "giving"],
       "authorityChain": ["verifyAndReconcilePayment", "reconcilePayment", "authorizeAndFinalize", "processSuccessfulPayment", "sendProactiveConfirmation"],
-      "terminalState": "booking confirmed, spend applied, flow ends (no recurring continuation)",
+      "terminalState": "booking confirmed, spend applied, bot flow terminates with brief ack",
       "sideEffects": ["apply_payment_spend_once", "recordPlatformFee", "handlePostCompletion(skipCustomerSpend=true)"],
       "testPaths": ["lib/bot/flows/__tests__/payment-convergence-giving.test.ts"],
-      "status": "PROTECTED"
+      "status": "PROTECTED",
+      "notes": "Flow terminates after authority completion. Recurring continuation after Stage 3 is a separate known gap (#165), not this journey's contract."
     },
     {
       "id": "JOURNEY-003",
@@ -64,7 +65,8 @@
       "authorityChain": ["webhook → authorizeAndFinalize → completed", "I've Paid → authorizeAndFinalize → already_completed"],
       "terminalState": "Idempotent: same result regardless of order",
       "testPaths": ["lib/payments/__tests__/authority.test.ts"],
-      "status": "PROTECTED"
+      "status": "PARTIAL",
+      "notes": "authority.test.ts proves Payment Authority stage idempotency with mocks but does not execute a webhook entry point followed by bot I've Paid path end-to-end. The authority-level proof is real but the full cross-entry-point journey is not yet exercised."
     },
     {
       "id": "JOURNEY-007",

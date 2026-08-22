@@ -50,9 +50,17 @@
   ],
 
   "sessionKeys": {
-    "domain": ["booking_id", "reference_code", "service_id", "service_name", "service_billing_type", "service_recurring_interval", "service_price", "amount"],
-    "shared": ["payment_reference", "_payment_retry_blocked", "_action", "active_capability", "first_name", "last_name", "bank_transfer_reference", "bank_transfer_offered", "_terms_accepted", "_terms_cancelled"],
-    "persistence": "CAS via update_session_cas. Direct update for payment step advance.",
+    "keys": {
+      "booking_id": { "owner": "payment", "producers": ["process_payment"], "consumers": ["cancel", "post-completion"], "classification": "domain" },
+      "reference_code": { "owner": "payment", "producers": ["process_payment"], "consumers": ["UX messages"], "classification": "domain" },
+      "amount": { "owner": "payment", "producers": ["enter_amount/confirm_amount"], "consumers": ["process_payment", "UX"], "classification": "domain" },
+      "service_billing_type": { "owner": "payment", "producers": ["select_category"], "consumers": ["recurring routing (dead — #165)"], "classification": "domain" },
+      "payment_reference": { "owner": "shared-payment", "producers": ["process_payment/initializePayment"], "consumers": ["I've Paid", "retry_payment", "bot-recovery"], "classification": "shared", "stalePostback": "Recovery-gated" },
+      "_payment_retry_blocked": { "owner": "shared-payment", "producers": ["I've Paid/retry_payment validate"], "consumers": ["prompt gating", "retry_payment guard"], "classification": "shared", "persistence": "persistSessionDataOnFailure", "cleanup": "Cleared on not_paid" },
+      "_action": { "owner": "shared-flow", "producers": ["validate()"], "consumers": ["next()"], "classification": "shared" },
+      "active_capability": { "owner": "executor", "producers": ["capability-selection"], "consumers": ["giving vs payment UX distinction"], "classification": "shared" }
+    },
+    "persistence": "CAS via update_session_cas. Direct .update() for payment step advance (bypasses CAS — known debt).",
     "cleanup": "Session deactivated by Stage 3. _payment_retry_blocked persisted via persistSessionDataOnFailure."
   },
 

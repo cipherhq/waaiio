@@ -51,28 +51,25 @@
       "title": "Order/payment state machine fix",
       "status": "RESOLVED",
       "resolvedBy": "PR #156",
-      "evidence": "lib/bot/flows/__tests__/acc-008-order-checkout-bypass.test.ts, docs/acc-008-implementation-handoff.md"
+      "evidence": "lib/bot/flows/__tests__/acc-008-order-checkout-bypass.test.ts"
     },
     {
       "id": "ACC-009",
-      "title": "Deferred ordering work (referenced in ACC-008 handoff)",
-      "status": "DEFERRED",
-      "notes": "Mentioned in docs/acc-008-implementation-handoff.md as future work. Not yet scoped.",
-      "source": "docs/acc-008-implementation-handoff.md"
+      "title": "Product images disappear on quick-add ordering path",
+      "status": "OPEN",
+      "notes": "UX / conversion defect. Defined in Issue #155 comment 5364066960."
     },
     {
       "id": "ACC-010",
-      "title": "Deferred sidebar/billing work (referenced in ACC-008 handoff)",
-      "status": "DEFERRED",
-      "notes": "Mentioned in docs/acc-008-implementation-handoff.md as future work. Not yet scoped.",
-      "source": "docs/acc-008-implementation-handoff.md"
+      "title": "Make a Payment shown without any payment categories",
+      "status": "OPEN",
+      "notes": "P1 UX/flow correctness. Defined in Issue #155 comment 5364066960."
     },
     {
       "id": "ACC-011",
-      "title": "Deferred promotions schema work (referenced in ACC-008 handoff)",
-      "status": "DEFERRED",
-      "notes": "Mentioned in docs/acc-008-implementation-handoff.md as future work. Not yet scoped.",
-      "source": "docs/acc-008-implementation-handoff.md"
+      "title": "Dead-end/error recovery copy must be actionable",
+      "status": "OPEN",
+      "notes": "UX consistency. Defined in Issue #155 comment 5364066960."
     }
   ],
   "knownAuthorityDebt": [

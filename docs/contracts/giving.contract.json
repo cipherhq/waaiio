@@ -27,9 +27,13 @@
   ],
 
   "sessionKeys": {
-    "domain": ["Same as payment contract"],
-    "shared": ["Same as payment contract"],
-    "notes": "active_capability='giving' distinguishes from generic payment at runtime."
+    "keys": {
+      "active_capability": { "owner": "executor", "value": "giving", "notes": "Distinguishes from generic payment at runtime" },
+      "_note": "All other session keys are identical to the payment contract — same flow file."
+    },
+    "inheritsFrom": "payment",
+    "persistence": "Same as payment contract.",
+    "cleanup": "Same as payment contract."
   },
 
   "dashboardSurfaces": ["/dashboard/payments"],

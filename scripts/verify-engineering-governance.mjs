@@ -276,7 +276,30 @@ try {
       if (dupes.length) fail('capability-index.json: duplicate IDs: ' + dupes.join(', '));
       else pass(`capability-index.json: ${indexIds.length} capabilities, no duplicates`);
 
-      // Validate Tier-1 contracts exist
+      // Validate index total matches array length
+      if (capIndex.total !== indexIds.length) {
+        fail(`capability-index.json: total (${capIndex.total}) does not match array length (${indexIds.length})`);
+      }
+
+      // Validate index IDs against canonical shared/capabilities.ts
+      try {
+        const capSrc = readFileSync('shared/capabilities.ts', 'utf-8');
+        const canonicalMatch = capSrc.match(/export type CapabilityId\s*=\s*([\s\S]*?);/);
+        if (canonicalMatch) {
+          const canonicalIds = canonicalMatch[1].match(/'([^']+)'/g).map(s => s.replace(/'/g, ''));
+          const missing = canonicalIds.filter(id => !indexIds.includes(id));
+          const extra = indexIds.filter(id => !canonicalIds.includes(id));
+          if (missing.length) fail('capability-index.json: missing canonical IDs: ' + missing.join(', '));
+          if (extra.length) fail('capability-index.json: extra IDs not in shared/capabilities.ts: ' + extra.join(', '));
+          if (!missing.length && !extra.length) pass('capability-index.json: matches shared/capabilities.ts');
+        } else {
+          warn('Could not parse CapabilityId from shared/capabilities.ts');
+        }
+      } catch (e) {
+        warn('Could not read shared/capabilities.ts: ' + e.message);
+      }
+
+      // Validate Tier-1 contracts exist and have requiredTestsOnChange with real files
       for (const cap of TIER1_CAPABILITIES) {
         const contractPath = `docs/contracts/${cap}.contract.json`;
         if (!existsSync(contractPath)) {
@@ -286,6 +309,14 @@ try {
             const contract = JSON.parse(readFileSync(contractPath, 'utf-8'));
             if (contract.id !== cap) fail(`${contractPath}: id mismatch (expected '${cap}', got '${contract.id}')`);
             else pass(`${contractPath}: valid`);
+            // Validate requiredTestsOnChange paths exist
+            if (contract.requiredTestsOnChange && Array.isArray(contract.requiredTestsOnChange)) {
+              for (const tp of contract.requiredTestsOnChange) {
+                if (!existsSync(tp)) {
+                  fail(`${contractPath}: requiredTestsOnChange path not found: ${tp}`);
+                }
+              }
+            }
           } catch (e) {
             fail(`${contractPath}: invalid JSON — ${e.message}`);
           }
@@ -314,20 +345,26 @@ try {
       if (dupes.length) fail('journey-registry.json: duplicate IDs: ' + dupes.join(', '));
       else pass(`journey-registry.json: ${journeyIds.length} journeys, no duplicates`);
 
-      // Validate PROTECTED journeys have existing test files
+      const validStatuses = ['PROTECTED', 'PARTIAL', 'KNOWN_GAP'];
       for (const j of registry.journeys) {
-        if (j.status === 'PROTECTED' && j.testPaths) {
+        if (!validStatuses.includes(j.status)) {
+          fail(`Journey ${j.id}: invalid status '${j.status}'`);
+        }
+        if ((j.status === 'PROTECTED' || j.status === 'PARTIAL') && j.testPaths) {
+          if (!j.testPaths.length) {
+            fail(`Journey ${j.id} (${j.status}): testPaths must be non-empty`);
+          }
           for (const tp of j.testPaths) {
             if (!existsSync(tp)) {
-              fail(`Journey ${j.id} (PROTECTED): test file not found: ${tp}`);
+              fail(`Journey ${j.id} (${j.status}): test file not found: ${tp}`);
             }
           }
         }
         if (j.status === 'KNOWN_GAP' && !j.linkedIssue) {
-          warn(`Journey ${j.id} (KNOWN_GAP): no linkedIssue`);
+          fail(`Journey ${j.id} (KNOWN_GAP): must have a linkedIssue`);
         }
       }
-      pass('Journey test file references validated');
+      pass('Journey entries validated');
     }
   }
 } catch (e) {

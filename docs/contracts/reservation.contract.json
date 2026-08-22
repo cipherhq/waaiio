@@ -12,7 +12,7 @@
   },
 
   "authorities": {
-    "reservationCreation": { "authority": "reservation.flow.ts create step", "notes": "Creates reservation with status='pending' for paid, 'confirmed' for free." },
+    "initialCreation": { "authority": "reservation.flow.ts create step", "notes": "Free/no-deposit: created directly as status='confirmed'. Paid: created as status='pending'. Free confirmed-write is legitimate." },
     "paidConfirmation": { "authority": "processSuccessfulPayment (via Payment Authority)", "notes": "pending→confirmed with CAS guard." },
     "customerSpend": { "authority": "apply_payment_spend_once (migration 334)", "notes": "Durable per-payment marker." },
     "postCompletion": { "authority": "handlePostCompletion via Stage 3", "notes": "skipCustomerSpend=true for reservations." },
@@ -21,12 +21,20 @@
 
   "forbiddenWrites": [
     "customer_profiles.total_spent — use apply_payment_spend_once",
-    "reservations.status outside processSuccessfulPayment and cancel CAS"
+    "reservations.status paid-confirmation outside processSuccessfulPayment"
   ],
 
   "sessionKeys": {
-    "domain": ["reservation_id", "check_in", "check_out", "guest_count", "room_type"],
-    "shared": ["payment_reference", "_payment_retry_blocked", "_action", "active_capability"]
+    "keys": {
+      "reservation_id": { "owner": "reservation", "producers": ["create step"], "consumers": ["cancel", "post-completion"], "classification": "domain" },
+      "check_in": { "owner": "reservation", "classification": "domain" },
+      "check_out": { "owner": "reservation", "classification": "domain" },
+      "payment_reference": { "owner": "shared-payment", "classification": "shared", "stalePostback": "Recovery-gated" },
+      "_payment_retry_blocked": { "owner": "shared-payment", "classification": "shared", "persistence": "persistSessionDataOnFailure" },
+      "_action": { "owner": "shared-flow", "classification": "shared" }
+    },
+    "persistence": "CAS via update_session_cas. Direct .update() for payment step advance.",
+    "cleanup": "Session deactivated by Stage 3 or executor terminal."
   },
 
   "dashboardSurfaces": ["/dashboard/reservations"],

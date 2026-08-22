@@ -12,14 +12,14 @@
   },
 
   "authorities": {
-    "bookingCreation": {
+    "initialCreation": {
       "authority": "scheduling.flow.ts create_booking step",
-      "notes": "Free/no-deposit bookings created directly as 'confirmed'. Paid bookings created as 'pending'."
+      "notes": "Free/no-deposit: created directly as status='confirmed'. Paid: created as status='pending'. This is a legitimate confirmed-write outside processSuccessfulPayment."
     },
     "paidConfirmation": {
       "authority": "processSuccessfulPayment (via Payment Authority)",
       "file": "lib/payments/process-success.ts",
-      "notes": "pending→confirmed with CAS guard .in('status', ['pending'])"
+      "notes": "pending→confirmed with CAS guard .in('status', ['pending']). Only authority for paid booking state transition."
     },
     "cancellation": {
       "authority": "CAS-guarded cancel in bot flow + cancel_stale_order_atomic cron",
@@ -43,14 +43,27 @@
 
   "forbiddenWrites": [
     "customer_profiles.total_spent — use apply_payment_spend_once",
-    "bookings.status outside processSuccessfulPayment and cancel-CAS",
+    "bookings.status paid-confirmation outside processSuccessfulPayment",
     "bookings.deposit_status outside processSuccessfulPayment"
   ],
 
   "sessionKeys": {
-    "domain": ["booking_id", "reference_code", "service_id", "service_name", "service_deposit", "date", "time", "party_size", "event_name", "event_id", "ticket_quantity"],
-    "shared": ["payment_reference", "_payment_retry_blocked", "_action", "_retry_payment", "active_capability", "first_name", "last_name", "bank_transfer_reference", "bank_transfer_offered", "_terms_accepted", "_terms_cancelled"],
-    "persistence": "CAS via update_session_cas RPC. Direct update for payment step session advance.",
+    "keys": {
+      "booking_id": { "owner": "scheduling", "producers": ["create_booking"], "consumers": ["payment", "cancel", "post-completion"], "classification": "domain" },
+      "reference_code": { "owner": "scheduling", "producers": ["create_booking"], "consumers": ["payment", "cancel", "UX messages"], "classification": "domain" },
+      "service_id": { "owner": "scheduling", "producers": ["select_service"], "consumers": ["create_booking", "recurring-manage"], "classification": "domain" },
+      "service_name": { "owner": "scheduling", "producers": ["select_service"], "consumers": ["UX messages", "post-completion"], "classification": "domain" },
+      "date": { "owner": "scheduling", "producers": ["select_date"], "consumers": ["create_booking", "executor entity extraction"], "classification": "domain" },
+      "time": { "owner": "scheduling", "producers": ["select_time"], "consumers": ["create_booking", "executor entity extraction"], "classification": "domain" },
+      "party_size": { "owner": "scheduling", "producers": ["select_quantity"], "consumers": ["create_booking", "executor entity extraction"], "classification": "domain" },
+      "payment_reference": { "owner": "shared-payment", "producers": ["create_booking/initializePayment"], "consumers": ["I've Paid", "retry_payment", "bot-recovery"], "classification": "shared", "stalePostback": "Recovery-gated: retry_payment runs verifyAndReconcilePayment before acting" },
+      "_payment_retry_blocked": { "owner": "shared-payment", "producers": ["I've Paid validate", "retry_payment validate"], "consumers": ["payment prompt", "retry_payment guard"], "classification": "shared", "persistence": "persistSessionDataOnFailure", "cleanup": "Cleared on definitive not_paid" },
+      "_action": { "owner": "shared-flow", "producers": ["validate()"], "consumers": ["next()"], "classification": "shared", "values": ["cancel", "payment_confirmed", "already_confirmed", "payment_processing", "transfer_proof_sent", "retry_payment"] },
+      "_retry_payment": { "owner": "shared-payment", "producers": ["retry_payment validate"], "consumers": ["next()"], "classification": "shared" },
+      "active_capability": { "owner": "executor", "producers": ["capability-selection"], "consumers": ["executor CAS-007 auth", "flow step UX"], "classification": "shared" },
+      "bank_transfer_reference": { "owner": "shared-payment", "producers": ["create_booking bank-transfer"], "consumers": ["transfer proof handling", "cancel guard", "executor"], "classification": "shared" }
+    },
+    "persistence": "Primarily CAS via update_session_cas RPC. Direct .update() for payment step session advance (bypasses CAS version — known debt).",
     "cleanup": "Session deactivated by Stage 3 sendProactiveConfirmation or executor terminal step."
   },
 

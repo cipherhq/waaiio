@@ -34,6 +34,8 @@
 - **DB/RPC impact:** <!-- Migrations, RPCs, or "none" -->
 - **Payment/finance impact:** <!-- Spend, fees, payouts, or "N/A" -->
 - **Session-state impact:** <!-- New/modified session_data keys, or "N/A" -->
+- **Observability impact:** <!-- Logging, Sentry, PostHog, or "N/A" -->
+- **Production/manual acceptance required:** <!-- Yes (describe) or "No" — high-risk N/A must be explained -->
 
 ### Dependency / Regression Reconciliation
 

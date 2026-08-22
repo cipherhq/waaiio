@@ -44,7 +44,7 @@
   "supportedCombinations": ["loyalty + scheduling", "loyalty + payment", "loyalty + ordering", "loyalty + ticketing", "loyalty + membership (tier multiplier)"],
 
   "requiredTestsOnChange": [
-    "lib/bot/flows/__tests__/subscription-loyalty.test.ts",
+    "lib/bot/__tests__/subscription-loyalty.test.ts",
     "lib/__tests__/spend-marker-application-boundary.test.ts"
   ],
 
