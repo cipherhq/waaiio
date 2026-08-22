@@ -849,7 +849,7 @@ export const reservationFlow: FlowDefinition = {
           p_business_id: ctx.business!.id,
           p_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
           p_name: insertPayload.guest_name as string || null,
-          p_booking_amount: payableAmount,
+          p_booking_amount: payableAmount > 0 ? 0 : payableAmount, // Defer monetary spend to Stage 2 for paid reservations
           p_is_booking: true,
         });
 

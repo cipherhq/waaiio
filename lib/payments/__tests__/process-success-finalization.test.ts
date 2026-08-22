@@ -59,6 +59,9 @@ function buildSupabase(opts: {
       if (opts.stockRpcError) return Promise.resolve({ data: null, error: opts.stockRpcError });
       return Promise.resolve({ data: null, error: null });
     }
+    if (name === 'apply_payment_spend_once') {
+      return Promise.resolve({ data: { applied: true, already_applied: false, amount: 5000 }, error: null });
+    }
     return Promise.resolve({ data: null, error: null });
   });
 
@@ -207,6 +210,78 @@ describe('processSuccessfulPayment — FinalizationResult', () => {
     const { processSuccessfulPayment } = await import('../process-success');
     const supabase = buildSupabase();
     const r = await processSuccessfulPayment(supabase, { id: 'p1', amount: 5000, booking_id: null, invoice_id: null, campaign_id: null });
+    expect(r.criticalSuccess).toBe(true);
+  });
+
+  // ── Booking spend RPC semantic result tests ──
+
+  it('booking spend RPC error → criticalSuccess false', async () => {
+    const { processSuccessfulPayment } = await import('../process-success');
+    const supabase = buildSupabase();
+    // Override RPC to return error for apply_payment_spend_once
+    (supabase.rpc as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+      if (name === 'apply_payment_spend_once') {
+        return Promise.resolve({ data: null, error: { message: 'db timeout' } });
+      }
+      return Promise.resolve({ data: { applied: true, already_applied: false, amount: 5000 }, error: null });
+    });
+    const r = await processSuccessfulPayment(supabase, { id: 'p1', amount: 5000, booking_id: 'bk1', invoice_id: null, campaign_id: null });
+    expect(r.criticalSuccess).toBe(false);
+    expect(r.errors).toContain('booking_spend_failed');
+  });
+
+  it('booking spend null result → criticalSuccess false', async () => {
+    const { processSuccessfulPayment } = await import('../process-success');
+    const supabase = buildSupabase();
+    (supabase.rpc as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+      if (name === 'apply_payment_spend_once') {
+        return Promise.resolve({ data: null, error: null });
+      }
+      return Promise.resolve({ data: { applied: true }, error: null });
+    });
+    const r = await processSuccessfulPayment(supabase, { id: 'p1', amount: 5000, booking_id: 'bk1', invoice_id: null, campaign_id: null });
+    expect(r.criticalSuccess).toBe(false);
+    expect(r.errors).toContain('booking_spend_invalid_result');
+  });
+
+  it('booking spend applied:false with reason → criticalSuccess false', async () => {
+    const { processSuccessfulPayment } = await import('../process-success');
+    const supabase = buildSupabase();
+    (supabase.rpc as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+      if (name === 'apply_payment_spend_once') {
+        return Promise.resolve({ data: { applied: false, reason: 'no_supported_source' }, error: null });
+      }
+      return Promise.resolve({ data: { applied: true }, error: null });
+    });
+    const r = await processSuccessfulPayment(supabase, { id: 'p1', amount: 5000, booking_id: 'bk1', invoice_id: null, campaign_id: null });
+    expect(r.criticalSuccess).toBe(false);
+    expect(r.errors?.some(e => e.includes('booking_spend_rejected'))).toBe(true);
+  });
+
+  it('booking spend malformed result (non-boolean applied) → criticalSuccess false', async () => {
+    const { processSuccessfulPayment } = await import('../process-success');
+    const supabase = buildSupabase();
+    (supabase.rpc as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+      if (name === 'apply_payment_spend_once') {
+        return Promise.resolve({ data: { applied: 'true' }, error: null }); // string, not boolean
+      }
+      return Promise.resolve({ data: { applied: true }, error: null });
+    });
+    const r = await processSuccessfulPayment(supabase, { id: 'p1', amount: 5000, booking_id: 'bk1', invoice_id: null, campaign_id: null });
+    expect(r.criticalSuccess).toBe(false);
+    expect(r.errors).toContain('booking_spend_invalid_result');
+  });
+
+  it('booking spend already_applied replay → criticalSuccess true', async () => {
+    const { processSuccessfulPayment } = await import('../process-success');
+    const supabase = buildSupabase();
+    (supabase.rpc as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+      if (name === 'apply_payment_spend_once') {
+        return Promise.resolve({ data: { applied: true, already_applied: true }, error: null });
+      }
+      return Promise.resolve({ data: { applied: true }, error: null });
+    });
+    const r = await processSuccessfulPayment(supabase, { id: 'p1', amount: 5000, booking_id: 'bk1', invoice_id: null, campaign_id: null });
     expect(r.criticalSuccess).toBe(true);
   });
 });

@@ -28,6 +28,9 @@ interface PostCompletionParams {
   skipLoyalty?: boolean;
   /** If true, skip automation triggers (order_created/after_order already fired at creation) */
   skipAutomation?: boolean;
+  /** If true, suppress only the monetary customer-spend mutation (Stage 2 owns spend).
+   *  Visit counters, last_seen, booking counts, and receipts still use real amountPaid. */
+  skipCustomerSpend?: boolean;
   /** Optional translation function for customer-facing messages (from ctx.t) */
   translate?: (text: string) => Promise<string>;
 }
@@ -46,7 +49,7 @@ function generateReferralCode(): string {
  * Checks enabled capabilities and triggers loyalty, feedback, and referral actions.
  */
 export async function handlePostCompletion(params: PostCompletionParams): Promise<void> {
-  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, amountPaid, serviceName, referenceCode, skipLoyalty, skipAutomation, translate } = params;
+  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, amountPaid, serviceName, referenceCode, skipLoyalty, skipAutomation, skipCustomerSpend, translate } = params;
   const t = translate ?? ((text: string) => Promise.resolve(text));
 
   // Parallel: load capabilities + business data in one round-trip
@@ -84,10 +87,13 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
 
     if (existing) {
       // Update existing — increment counters
+      // When skipCustomerSpend=true, pass 0 monetary amount but still increment visits/bookings/last_seen.
+      // Stage 2 owns the durable spend mutation for paid bookings/reservations.
+      const spendAmount = skipCustomerSpend ? 0 : (amountPaid || 0);
       const { error: rpcErr } = await supabase.rpc('increment_customer_visit', {
         p_business_id: businessId,
         p_phone: phoneWithPlus,
-        p_amount: amountPaid || 0,
+        p_amount: spendAmount,
       });
       if (rpcErr) {
         // Fallback if RPC doesn't exist — just update last_seen
@@ -106,7 +112,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       }
     } else {
       // Create new
-      const newTotalSpent = amountPaid || 0;
+      const newTotalSpent = skipCustomerSpend ? 0 : (amountPaid || 0);
       const newLtvTier = calculateLtvTier(newTotalSpent, 1);
       await supabase.from('customer_profiles').insert({
         business_id: businessId,
