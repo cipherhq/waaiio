@@ -1,0 +1,50 @@
+{
+  "_schema": "waaiio-capability-contract-v1",
+  "id": "reservation",
+  "subscriptionTier": "growth",
+  "riskTier": "tier-1",
+  "flowType": "reservation",
+  "flowFile": "lib/bot/flows/reservation.flow.ts",
+
+  "stateOwned": {
+    "write": ["reservations", "bot_sessions.session_data"],
+    "read": ["services", "businesses", "customer_profiles"]
+  },
+
+  "authorities": {
+    "initialCreation": { "authority": "reservation.flow.ts create step", "notes": "Free/no-deposit: created directly as status='confirmed'. Paid: created as status='pending'. Free confirmed-write is legitimate." },
+    "paidConfirmation": { "authority": "processSuccessfulPayment (via Payment Authority)", "notes": "pending→confirmed with CAS guard." },
+    "customerSpend": { "authority": "apply_payment_spend_once (migration 334)", "notes": "Durable per-payment marker." },
+    "postCompletion": { "authority": "handlePostCompletion via Stage 3", "notes": "skipCustomerSpend=true for reservations." },
+    "providerVerification": { "authority": "verifyAndReconcilePayment" }
+  },
+
+  "forbiddenWrites": [
+    "customer_profiles.total_spent — use apply_payment_spend_once",
+    "reservations.status paid-confirmation outside processSuccessfulPayment"
+  ],
+
+  "sessionKeys": {
+    "keys": {
+      "reservation_id": { "owner": "reservation", "producers": ["create step"], "consumers": ["cancel", "post-completion"], "classification": "domain" },
+      "check_in": { "owner": "reservation", "classification": "domain" },
+      "check_out": { "owner": "reservation", "classification": "domain" },
+      "payment_reference": { "owner": "shared-payment", "classification": "shared", "stalePostback": "Recovery-gated" },
+      "_payment_retry_blocked": { "owner": "shared-payment", "classification": "shared", "persistence": "persistSessionDataOnFailure" },
+      "_action": { "owner": "shared-flow", "classification": "shared" }
+    },
+    "persistence": "CAS via update_session_cas. Direct .update() for payment step advance.",
+    "cleanup": "Session deactivated by Stage 3 or executor terminal."
+  },
+
+  "dashboardSurfaces": ["/dashboard/reservations"],
+  "webhookDependencies": ["payment webhooks (all 5 gateways)"],
+  "supportedCombinations": ["reservation alone (free)", "reservation + payment (deposit/full)"],
+
+  "requiredTestsOnChange": [
+    "lib/payments/__tests__/process-success-finalization.test.ts",
+    "lib/__tests__/spend-marker-application-boundary.test.ts"
+  ],
+
+  "knownDebt": []
+}

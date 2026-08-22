@@ -133,3 +133,54 @@ Every new conversation must begin by reading:
 6. `CHANGELOG.md`
 
 Then confirm current `origin/main` SHA before proposing or changing anything.
+
+## Paired Architecture Review Process (Claude ↔ ChatGPT)
+
+For high-risk changes (payment, capability, session state, shared helpers, cross-flow behavior), the following process is binding.
+
+### Phase A — Architecture Audit
+
+1. Claude independently audits the repository against the issue's assumptions.
+2. Claude explicitly states **AGREE** or **PUSHBACK** on each material assumption, with exact file/function/line evidence from current `main`.
+3. Claude traces forward blast radius, backward dependencies, prior fixes/invariants, and supported capability combinations using the contracts in `docs/contracts/` and journeys in `docs/journeys/`.
+4. Claude proposes the narrowest architecture and defines the executable regression contract.
+5. Claude **STOPS before writing any code.** Posts the complete audit to the GitHub Issue.
+
+### Architecture Gate
+
+6. ChatGPT independently re-reads the GitHub Issue and current repository.
+7. ChatGPT posts exactly one architecture decision:
+   - `ARCHITECTURE: AGREED` — implementation may proceed
+   - `ARCHITECTURE: REVISE` — Claude must address the findings and re-submit
+   - `ARCHITECTURE: NO CHANGE NEEDED` — issue does not require a code change
+8. **No implementation begins until both sides align on architecture.**
+
+### Phase B — Implementation
+
+9. Claude implements on a dedicated branch from the agreed base SHA.
+10. Claude must self-review the diff and explicitly flag any deviations from the agreed architecture. Mechanical compliance without reasoning is not acceptable.
+11. Claude posts the implementation report to both the Issue and the Draft PR, including:
+    - Exact base/head SHA
+    - Files changed with rationale
+    - Dependency / Regression Reconciliation (CHANGED INTENTIONALLY / INDIRECTLY AFFECTED / PROVEN UNAFFECTED)
+    - Local test evidence
+    - Exact-head CI run/jobs
+
+### Exact-Head Review
+
+12. ChatGPT performs independent exact-head PR review against the agreed architecture, prior invariants, regression contracts, and CI evidence.
+13. ChatGPT Phase B APPROVE/BLOCK must be synchronized to **both the PR and the tracking Issue**.
+14. Green CI is necessary but not sufficient for approval. Cross-layer reasoning and dependency reconciliation are required.
+15. The user (CTO) retains merge authorization. After explicit user authorization, ChatGPT may execute a guarded merge through connected GitHub tooling.
+
+### Post-Merge Verification
+
+16. After merge, the exact merge commit SHA and main CI run are verified.
+17. The tracking issue is closed only after post-merge exact-commit CI is green. Do not use auto-close keywords (`Closes #NNN`) in the PR body if a post-merge verification gate is required.
+
+### Standing Rules
+
+- **GitHub is the source of truth.** Chat summaries are context, not the system of record.
+- **Fix the defect without moving the defect somewhere else.** A local test pass is insufficient if a dependent contract can regress.
+- **No silent scope expansion.** Adjacent findings get separate GitHub issues.
+- **Exact-head review applies only to the exact reviewed commit SHA.** Any subsequent push requires re-review.

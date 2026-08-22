@@ -24,6 +24,23 @@
 - [ ] Checked `docs/MIGRATION_REGISTRY.md` for version reservations
 - [ ] Checked `CHANGELOG.md` for prior entries
 
+## Impact Assessment
+
+- **Domain(s) changed:** <!-- e.g., payment, bot-flow, capability, finance, session-state, shared-helper -->
+- **Blast radius:** <!-- low / medium / high -->
+- **Upstream dependencies:** <!-- What callers/consumers rely on the changed code -->
+- **Downstream surfaces checked:** <!-- Dashboard / WhatsApp / webhooks / cron / reporting -->
+- **Contracts affected:** <!-- List capability contracts from docs/contracts/ or "none" -->
+- **DB/RPC impact:** <!-- Migrations, RPCs, or "none" -->
+- **Payment/finance impact:** <!-- Spend, fees, payouts, or "N/A" -->
+- **Session-state impact:** <!-- New/modified session_data keys, or "N/A" -->
+- **Observability impact:** <!-- Logging, Sentry, PostHog, or "N/A" -->
+- **Production/manual acceptance required:** <!-- Yes (describe) or "No" — high-risk N/A must be explained -->
+
+### Dependency / Regression Reconciliation
+
+<!-- For high-risk changes: classify each relevant dependency as CHANGED INTENTIONALLY / INDIRECTLY AFFECTED / PROVEN UNAFFECTED -->
+
 ## Implementation
 
 - [ ] Changed files listed below
