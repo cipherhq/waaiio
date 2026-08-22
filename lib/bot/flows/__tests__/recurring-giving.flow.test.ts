@@ -122,44 +122,38 @@ describe('A. select_category — giving service with recurring metadata', () => 
 // B. POST-PAYMENT ROUTING
 // ═══════════════════════════════════════════════════════════
 
-describe('B. await_payment.next — recurring giving routes to confirm_recurring', () => {
+describe('B. await_payment.next — post-convergence routing (#163)', () => {
   const step = getStep(paymentFlow, 'await_payment');
 
-  it('B1. recurring giving routes to confirm_recurring and sets recurring_frequency', async () => {
+  it('B1. already_confirmed ends flow (null) — recurring continuation removed (#165)', async () => {
+    // After #163 convergence, canonical completed maps to already_confirmed → flow ends.
+    // Recurring continuation from await_payment is tracked separately in #165.
     const ctx = buildPaymentCtx({
-      _action: 'payment_confirmed',
+      _action: 'already_confirmed',
       service_billing_type: 'recurring',
       service_recurring_interval: 'monthly',
     });
 
     const next = await step.next(ctx);
-
-    expect(next).toBe('confirm_recurring');
-    expect(ctx.session.session_data.recurring_frequency).toBe('monthly');
+    expect(next).toBeNull();
   });
 
-  it('B2. one-time giving routes to offer_recurring (optional opt-in)', async () => {
+  it('B2. payment_processing stays at await_payment for retry', async () => {
     const ctx = buildPaymentCtx({
-      _action: 'payment_confirmed',
-      service_billing_type: 'one_time',
+      _action: 'payment_processing',
     });
 
     const next = await step.next(ctx);
-
-    expect(next).toBe('offer_recurring');
+    expect(next).toBe('await_payment');
   });
 
-  it('B3. weekly recurring giving sets frequency correctly', async () => {
+  it('B3. cancel ends flow', async () => {
     const ctx = buildPaymentCtx({
-      _action: 'payment_confirmed',
-      service_billing_type: 'recurring',
-      service_recurring_interval: 'weekly',
+      _action: 'cancel',
     });
 
     const next = await step.next(ctx);
-
-    expect(next).toBe('confirm_recurring');
-    expect(ctx.session.session_data.recurring_frequency).toBe('weekly');
+    expect(next).toBeNull();
   });
 });
 

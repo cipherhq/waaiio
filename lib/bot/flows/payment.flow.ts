@@ -1,14 +1,11 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
-import { formatCurrency, getCurrencySymbol, getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
-import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
-import { getPaymentReceiptMessage } from './shared/templates';
-import { handlePostCompletion } from './shared/post-completion';
+import { initializePayment } from './shared/payment';
 import { getTermsPrompt } from './shared/terms';
 import { notifyOwnerNewPayment } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
-import type { SubscriptionTier } from '@/lib/constants';
 import { getAuthorization, createPlan as createPaystackPlan, createSubscription as createPaystackSubscription } from '@/lib/payments/paystack-recurring';
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
 import { getCardToken } from '@/lib/payments/flutterwave-recurring';
@@ -16,9 +13,6 @@ import { checkBankTransferEligibility, createPendingTransfer, formatBankTransfer
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
-import { createServiceClient } from '@/lib/supabase/service';
-import { getPlatformFees } from '@/lib/getPlatformFees';
-import { calculateLtvTier } from '@/lib/bot/customer-intelligence';
 
 export const paymentFlow: FlowDefinition = {
   type: 'payment',
@@ -586,17 +580,48 @@ export const paymentFlow: FlowDefinition = {
         if ((text === 'cancel' || text === 'go_back')) {
           const bookingId = d.booking_id as string;
           if (bookingId) {
-            await ctx.supabase
+            // CAS guard: cancel only while booking is still pending.
+            // Prevents overwriting a booking that Payment Authority already confirmed.
+            const { data: cancelResult, error: cancelErr } = await ctx.supabase
               .from('bookings')
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-              .eq('id', bookingId);
-          }
-          // Also cancel the pending_transfer if one exists
-          if (d.bank_transfer_reference) {
-            await ctx.supabase
-              .from('pending_transfers')
-              .update({ status: 'cancelled' })
-              .eq('reference_code', d.bank_transfer_reference as string);
+              .eq('id', bookingId)
+              .in('status', ['pending'])
+              .select('id');
+
+            if (cancelErr) {
+              // DB error — fail closed, do not claim cancellation succeeded
+              logger.withContext({ op: 'payment.cancel', ...safeLogErrorContext(cancelErr) }).error('[PAYMENT] Cancel DB error');
+              return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+            }
+
+            if (!cancelResult?.length) {
+              // Zero rows — booking is no longer pending; payment may have confirmed it
+              const { data: bk, error: readErr } = await ctx.supabase.from('bookings')
+                .select('status, deposit_status').eq('id', bookingId).single();
+              if (readErr || !bk) {
+                // Re-read failed — fail closed
+                logger.withContext({ op: 'payment.cancel-reread', ...safeLogErrorContext(readErr) }).error('[PAYMENT] Cancel re-read error');
+                return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+              }
+              if (bk.deposit_status === 'paid' || bk.status === 'confirmed') {
+                const isGivingFlow = d.active_capability === 'giving';
+                const tips = isGivingFlow
+                  ? '\n\n💡 Type *my giving* to see your giving history, or *receipt* for your payment receipt.'
+                  : '\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.';
+                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`✅ Your payment has been confirmed! Your ${isGivingFlow ? 'giving' : 'booking'} is active.${tips}`) });
+                return { valid: true, data: { _action: 'already_confirmed' } };
+              }
+              // Booking is in some other non-pending state (e.g. cancelled by another path) — treat as cancelled
+            }
+
+            // Booking cancel succeeded (or was already non-pending/cancelled) — now safe to cancel pending_transfer
+            if (d.bank_transfer_reference) {
+              await ctx.supabase
+                .from('pending_transfers')
+                .update({ status: 'cancelled' })
+                .eq('reference_code', d.bank_transfer_reference as string);
+            }
           }
           await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Payment to *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start over.`) });
           return { valid: true, data: { _action: 'cancel' } };
@@ -710,159 +735,38 @@ export const paymentFlow: FlowDefinition = {
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
-          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-          const verified = await verifyPayment(ctx.supabase, ref, cc);
-          if (verified) {
-            const d = ctx.session.session_data;
+          // Converge through canonical Payment Authority — same path as webhooks.
+          // Authority handles: provider verification, booking confirmation, platform fee,
+          // apply_payment_spend_once (exactly-once customer spend), customer confirmation (Stage 3).
+          const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
+          const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
 
-            // Check if webhook already confirmed this booking (avoid double-processing)
-            const { data: currentBooking } = await ctx.supabase
-              .from('bookings')
-              .select('status, deposit_status')
-              .eq('id', d.booking_id as string)
-              .single();
-
-            if (currentBooking?.deposit_status === 'paid') {
-              const labels = getCategoryLabels(ctx.business?.category || 'church');
-              const isGivingFlow = d.active_capability === 'giving';
-              const dedupTips = isGivingFlow
-                ? `\n\n💡 *What you can do:*\n• Type *my giving* to see your giving history\n• Type *receipt* to get your payment receipt\n• Type *Hi* to make another payment`
-                : `\n\n💡 *What you can do:*\n• Type *my bookings* to view your bookings\n• Type *receipt* to get your payment receipt\n• Type *Hi* to make another payment`;
-              await ctx.sender.sendText({
-                to: ctx.from,
-                text: await ctx.t(getPaymentReceiptMessage({
-                  emoji: labels.confirmationEmoji,
-                  businessName: ctx.business?.name || 'Business',
-                  categoryName: d.service_name as string,
-                  amount: d.amount as number,
-                  referenceCode: d.reference_code as string,
-                  countryCode: cc,
-                  subscriptionTier: ctx.business?.subscription_tier,
-                }) + dedupTips),
-              });
-              return { valid: true, data: { _action: 'already_confirmed' } };
-            }
-
-            // Upsert customer_profiles so the member appears in the dashboard
-            if (ctx.business?.id) {
-              const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
-              const name = `${d.first_name || ''} ${d.last_name || ''}`.trim() || null;
-              const amount = d.amount as number;
-              const now = new Date().toISOString();
-
-              const { data: existing } = await ctx.supabase
-                .from('customer_profiles')
-                .select('id, total_visits, total_spent')
-                .eq('business_id', ctx.business.id)
-                .eq('phone', phone)
-                .maybeSingle();
-
-              if (existing) {
-                const newTotalSpent = (existing.total_spent || 0) + amount;
-                const newTotalVisits = (existing.total_visits || 0) + 1;
-                const ltvTier = calculateLtvTier(newTotalSpent, newTotalVisits);
-                await ctx.supabase
-                  .from('customer_profiles')
-                  .update({
-                    name: name || undefined,
-                    total_visits: newTotalVisits,
-                    total_spent: newTotalSpent,
-                    ltv_tier: ltvTier,
-                    last_seen_at: now,
-                  })
-                  .eq('id', existing.id);
-              } else {
-                const ltvTier = calculateLtvTier(amount, 1);
-                await ctx.supabase
-                  .from('customer_profiles')
-                  .insert({
-                    business_id: ctx.business.id,
-                    phone,
-                    name,
-                    total_visits: 1,
-                    total_spent: amount,
-                    ltv_tier: ltvTier,
-                    first_seen_at: now,
-                    last_seen_at: now,
-                  });
-              }
-            }
-
-            // Record platform fee now that payment is verified
-            if (ctx.business) {
-              const isInTrial = (ctx.business.subscription_tier === 'free') && new Date(ctx.business.trial_ends_at) > new Date();
-              recordPlatformFee(ctx.supabase, {
-                businessId: ctx.business.id,
-                bookingId: d.booking_id as string,
-                transactionAmount: d.amount as number,
-                tier: ctx.business.subscription_tier as SubscriptionTier,
-                isInTrial,
-              }).catch(err => logger.withContext({ op: 'payment.platform-fee', ...safeLogErrorContext(err) }).error('[PAYMENT] recordPlatformFee error'));
-            }
-
-            const labels = getCategoryLabels(ctx.business?.category || 'church');
+          if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
+            // Payment Authority fully completed Stage 2+3. Customer confirmation,
+            // owner notification, receipts, and post-completion already handled by
+            // sendProactiveConfirmation. Bot provides only a brief acknowledgment.
             const isGivingFlow = d.active_capability === 'giving';
-            const tipsText = isGivingFlow
-              ? `\n\n💡 *What you can do:*\n• Type *my giving* to see your giving history\n• Type *receipt* to get your payment receipt\n• Type *Hi* to make another payment`
-              : `\n\n💡 *What you can do:*\n• Type *my bookings* to view your bookings\n• Type *receipt* to get your payment receipt\n• Type *Hi* to make another payment`;
-
+            const tips = isGivingFlow
+              ? '\n\n💡 Type *my giving* to see your giving history, or *receipt* for your payment receipt.'
+              : '\n\n💡 Type *my bookings* to view your bookings, or *receipt* for your payment receipt.';
             await ctx.sender.sendText({
               to: ctx.from,
-              text: await ctx.t(getPaymentReceiptMessage({
-                emoji: labels.confirmationEmoji,
-                businessName: ctx.business?.name || 'Business',
-                categoryName: d.service_name as string,
-                amount: d.amount as number,
-                referenceCode: d.reference_code as string,
-                countryCode: cc,
-                subscriptionTier: ctx.business?.subscription_tier,
-              }) + tipsText),
+              text: await ctx.t(`✅ *Payment Confirmed!*\n\nRef: *${d.reference_code as string}*${tips}`),
             });
-
-            // Post-completion: auto-receipt, loyalty, feedback, referral
-            if (ctx.business) {
-              const custName = `${d.first_name || ''} ${d.last_name || ''}`.trim() || null;
-              const isGiving = ctx.session.session_data.active_capability === 'giving';
-              handlePostCompletion({
-                supabase: ctx.supabase,
-                businessId: ctx.business.id,
-                customerPhone: ctx.from,
-                customerName: custName,
-                serviceType: 'payment',
-                referenceId: d.booking_id as string,
-                sender: ctx.sender,
-                amountPaid: d.amount as number,
-                serviceName: d.service_name as string,
-                referenceCode: d.reference_code as string,
-                skipLoyalty: isGiving,
-              }).catch(err => logger.withContext({ op: 'payment.post-completion', ...safeLogErrorContext(err) }).error('[PAYMENT] Post-completion error'));
-
-              // Notify owner: email + WhatsApp
-              notifyOwnerNewPayment({
-                supabase: ctx.supabase,
-                sender: ctx.sender,
-                businessId: ctx.business.id,
-                businessName: ctx.business.name,
-                countryCode: cc,
-                referenceCode: d.reference_code as string,
-                customerName: custName || 'Customer',
-                amount: d.amount as number,
-                categoryName: d.service_name as string,
-              }).catch(err => logger.withContext({ op: 'payment.owner-notify', ...safeLogErrorContext(err) }).error('[PAYMENT] Notify error'));
-
-              // In-app notification
-              createNotification(ctx.supabase, {
-                businessId: ctx.business.id,
-                bookingId: d.booking_id as string,
-                type: 'payment_received',
-                channel: 'whatsapp',
-                body: `New payment of ${formatCurrency(d.amount as number, cc)} for ${d.service_name} from ${custName || 'Customer'}. Ref: ${d.reference_code}`,
-              }).catch(err => logger.withContext({ op: 'payment.notification', ...safeLogErrorContext(err) }).error('[PAYMENT] Notification error'));
-            }
-
-            return { valid: true, data: { _action: 'payment_confirmed' } };
+            return { valid: true, data: { _action: 'already_confirmed' } };
           }
 
+          if (recovery.outcome === 'processing' || recovery.outcome === 'retryable') {
+            // Provider confirmed payment but Stage 2/3 not yet complete.
+            // Keep session active — customer can retry "I've Paid" to resume.
+            await ctx.sender.sendText({
+              to: ctx.from,
+              text: await ctx.t('✅ Payment received! Your payment is being processed.\n\nYou\'ll get a confirmation shortly. If not, tap *I\'ve Paid* again.'),
+            });
+            return { valid: true, data: { _action: 'payment_processing' } };
+          }
+
+          // not_verified: provider could not confirm payment (not paid, API error, or config error)
           return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
         }
 
@@ -878,13 +782,9 @@ export const paymentFlow: FlowDefinition = {
           delete ctx.session.session_data._action;
           return 'process_payment'; // regenerate payment link
         }
-        if (ctx.session.session_data._action === 'payment_confirmed') {
-          // If the service itself is recurring, skip the offer step and go straight to consent
-          if (ctx.session.session_data.service_billing_type === 'recurring') {
-            ctx.session.session_data.recurring_frequency = ctx.session.session_data.service_recurring_interval as string;
-            return 'confirm_recurring';
-          }
-          return 'offer_recurring';
+        // Keep session active for processing/retryable lifecycle
+        if (ctx.session.session_data._action === 'payment_processing') {
+          return 'await_payment';
         }
         return null;
       },
