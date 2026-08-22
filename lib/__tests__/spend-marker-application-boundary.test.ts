@@ -20,6 +20,9 @@ vi.mock('@/lib/capabilities/service', () => ({
 vi.mock('@/lib/bot/customer-intelligence', () => ({
   calculateLtvTier: vi.fn().mockReturnValue('new'),
 }));
+vi.mock('@/lib/pdf/receipt-generator', () => ({
+  generateReceiptPdf: vi.fn().mockResolvedValue(Buffer.from('fake-pdf')),
+}));
 
 describe('handlePostCompletion with skipCustomerSpend=true', () => {
   let rpcCalls: Array<{ name: string; args: Record<string, unknown> }>;
@@ -196,32 +199,83 @@ describe('handlePostCompletion with skipCustomerSpend=true', () => {
   });
 });
 
-describe('send-confirmation → handlePostCompletion call boundary', () => {
-  it('Booking payment passes real amount + skipCustomerSpend=true', () => {
-    // Read the actual send-confirmation source to verify the call args.
-    // This is a source-level supplemental check; the handlePostCompletion
-    // behavioral tests above prove the actual function behavior.
-    const fs = require('fs');
-    const src = fs.readFileSync('lib/payments/send-confirmation.ts', 'utf-8');
+describe('skipCustomerSpend + amount-dependent effect', () => {
+  let rpcCalls2: Array<{ name: string; args: Record<string, unknown> }>;
 
-    // For booking payments: amountPaid should NOT be 0
-    // The expression is: isOrderPayment ? 0 : payment.amount
-    expect(src).toContain('isOrderPayment ? 0 : payment.amount');
+  function mockSupabaseWithSender() {
+    rpcCalls2 = [];
 
-    // skipCustomerSpend should include booking but NOT order
-    expect(src).toContain('skipCustomerSpend: isBookingPayment || isReservationPayment');
-  });
+    const chainMock = () => {
+      // eslint-disable-next-line
+      const c: Record<string, any> = {};
+      ['select', 'eq', 'neq', 'is', 'not', 'in', 'order', 'limit', 'update', 'insert', 'delete'].forEach(
+        m => c[m] = vi.fn().mockReturnValue(c),
+      );
+      c.single = vi.fn().mockResolvedValue({ data: null, error: null });
+      c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      return c;
+    };
 
-  it('Order payment preserves pre-#161 amountPaid=0 and no skipCustomerSpend', () => {
-    const fs = require('fs');
-    const src = fs.readFileSync('lib/payments/send-confirmation.ts', 'utf-8');
+    return {
+      rpc: vi.fn().mockImplementation((name: string, args: Record<string, unknown>) => {
+        rpcCalls2.push({ name, args });
+        return Promise.resolve({ data: null, error: null });
+      }),
+      from: vi.fn().mockImplementation((table: string) => {
+        const chain = chainMock();
+        if (table === 'customer_profiles') {
+          chain.maybeSingle = vi.fn().mockResolvedValue({
+            data: { id: 'cp-1', total_spent: 5000, total_visits: 3, first_seen_at: '2025-01-01' },
+            error: null,
+          });
+        }
+        if (table === 'businesses') {
+          chain.single = vi.fn().mockResolvedValue({
+            data: { name: 'Test Biz', country_code: 'NG', subscription_tier: 'free', metadata: {} },
+            error: null,
+          });
+        }
+        return chain;
+      }),
+      storage: {
+        from: vi.fn().mockReturnValue({
+          upload: vi.fn().mockResolvedValue({ data: null, error: { message: 'mocked' } }),
+          createSignedUrl: vi.fn().mockResolvedValue({ data: null }),
+        }),
+      },
+    };
+  }
 
-    // Orders: amountPaid=0 (existing behavior)
-    expect(src).toContain('isOrderPayment ? 0 : payment.amount');
+  it('receipt PDF receives real amountPaid=8000 while increment_customer_visit gets p_amount=0', async () => {
+    vi.clearAllMocks();
+    const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
+    const { generateReceiptPdf } = await import('@/lib/pdf/receipt-generator');
+    const supabase = mockSupabaseWithSender();
+    const mockSender = {
+      sendText: vi.fn().mockResolvedValue(undefined),
+      sendDocument: vi.fn().mockResolvedValue(undefined),
+    };
 
-    // skipCustomerSpend must NOT include isOrderPayment
-    const skipLine = src.split('skipCustomerSpend:')[1]?.split('\n')[0] || '';
-    expect(skipLine).toContain('isBookingPayment || isReservationPayment');
-    expect(skipLine).not.toContain('isOrderPayment');
+    await handlePostCompletion({
+      supabase: supabase as never,
+      businessId: 'biz-1',
+      customerPhone: '+2341234567890',
+      customerName: 'Jane Doe',
+      serviceType: 'booking',
+      referenceId: 'bk-1',
+      amountPaid: 8000,
+      skipCustomerSpend: true,
+      sender: mockSender as never,
+    });
+
+    // Spend mutation: p_amount=0 (Stage 2 owns monetary spend)
+    const visitCall = rpcCalls2.find(c => c.name === 'increment_customer_visit');
+    expect(visitCall).toBeTruthy();
+    expect(visitCall!.args.p_amount).toBe(0);
+
+    // Receipt PDF: receives real amount 8000 (not suppressed)
+    expect(generateReceiptPdf).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 8000 }),
+    );
   });
 });
