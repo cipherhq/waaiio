@@ -612,10 +612,16 @@ export const paymentFlow: FlowDefinition = {
                 await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`✅ Your payment has been confirmed! Your ${isGivingFlow ? 'giving' : 'booking'} is active.${tips}`) });
                 return { valid: true, data: { _action: 'already_confirmed' } };
               }
-              // Booking is in some other non-pending state (e.g. cancelled by another path) — treat as cancelled
+              if (bk.status === 'cancelled') {
+                // Already cancelled by another path — cancellation is established
+              } else {
+                // Unknown non-pending state — fail closed, do not claim cancellation or cancel transfers
+                logger.warn('[PAYMENT] Cancel: booking in unexpected non-pending state', bk.status);
+                return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+              }
             }
 
-            // Booking cancel succeeded (or was already non-pending/cancelled) — now safe to cancel pending_transfer
+            // Booking cancel succeeded or already cancelled — now safe to cancel pending_transfer
             if (d.bank_transfer_reference) {
               await ctx.supabase
                 .from('pending_transfers')
