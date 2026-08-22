@@ -53,8 +53,8 @@ const BASE_OPTS = { expectedAmount: 5000, expectedCurrency: 'NGN', paymentMetada
 // Set env vars for platform credentials
 process.env.PAYSTACK_SECRET_KEY = 'test_key_for_unit_test_ps';
 process.env.STRIPE_SECRET_KEY = 'test_key_for_unit_test_stripe';
-process.env.FLUTTERWAVE_SECRET_KEY = 'FLWSECK_TEST-flw';
-process.env.SQUARE_ACCESS_TOKEN = 'sq_test_token';
+process.env.FLUTTERWAVE_SECRET_KEY = 'test_key_for_unit_test_flw';
+process.env.SQUARE_ACCESS_TOKEN = 'test_key_for_unit_test_sq';
 process.env.PAYPAL_CLIENT_ID = 'paypal_client';
 process.env.PAYPAL_CLIENT_SECRET = 'paypal_secret';
 
@@ -64,8 +64,8 @@ beforeEach(() => {
   // Ensure gateway credentials are available for all provider tests
   process.env.PAYSTACK_SECRET_KEY = 'test_key_for_unit_test_ps';
   process.env.STRIPE_SECRET_KEY = 'test_key_for_unit_test_stripe';
-  process.env.FLUTTERWAVE_SECRET_KEY = 'FLWSECK_TEST-flw';
-  process.env.SQUARE_ACCESS_TOKEN = 'sq_test_token';
+  process.env.FLUTTERWAVE_SECRET_KEY = 'test_key_for_unit_test_flw';
+  process.env.SQUARE_ACCESS_TOKEN = 'test_key_for_unit_test_sq';
   process.env.PAYPAL_CLIENT_ID = 'paypal_client';
   process.env.PAYPAL_CLIENT_SECRET = 'paypal_secret';
 });
