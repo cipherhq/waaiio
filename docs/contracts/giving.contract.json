@@ -28,12 +28,17 @@
 
   "sessionKeys": {
     "keys": {
-      "active_capability": { "owner": "executor", "value": "giving", "notes": "Distinguishes from generic payment at runtime" },
-      "_note": "All other session keys are identical to the payment contract — same flow file."
+      "active_capability": { "owner": "executor", "producers": ["capability-selection"], "consumers": ["giving vs payment UX distinction", "skipLoyalty decision (legacy, dead code)"], "classification": "shared", "value": "giving" },
+      "booking_id": { "owner": "payment", "producers": ["process_payment"], "consumers": ["cancel", "post-completion"], "classification": "domain" },
+      "reference_code": { "owner": "payment", "producers": ["process_payment"], "consumers": ["UX messages"], "classification": "domain" },
+      "amount": { "owner": "payment", "producers": ["enter_amount/confirm_amount"], "consumers": ["process_payment", "UX"], "classification": "domain" },
+      "payment_reference": { "owner": "shared-payment", "producers": ["process_payment/initializePayment"], "consumers": ["I've Paid", "retry_payment", "bot-recovery"], "classification": "shared", "stalePostback": "Recovery-gated" },
+      "_payment_retry_blocked": { "owner": "shared-payment", "producers": ["I've Paid/retry_payment validate"], "consumers": ["prompt gating", "retry_payment guard"], "classification": "shared", "persistence": "persistSessionDataOnFailure" },
+      "_action": { "owner": "shared-flow", "producers": ["validate()"], "consumers": ["next()"], "classification": "shared" }
     },
-    "inheritsFrom": "payment",
-    "persistence": "Same as payment contract.",
-    "cleanup": "Same as payment contract."
+    "persistence": "CAS via update_session_cas. Direct .update() for payment step advance (bypasses CAS — known debt).",
+    "cleanup": "Session deactivated by Stage 3. _payment_retry_blocked persisted via persistSessionDataOnFailure.",
+    "notes": "Giving shares payment.flow.ts. All session keys are the same as the payment contract with active_capability='giving'."
   },
 
   "dashboardSurfaces": ["/dashboard/payments"],

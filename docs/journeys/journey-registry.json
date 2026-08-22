@@ -4,36 +4,38 @@
   "journeys": [
     {
       "id": "JOURNEY-001",
-      "name": "Scheduling + Payment I've Paid convergence",
+      "name": "Scheduling + Payment I've Paid convergence routing",
       "capabilities": ["scheduling", "payment"],
       "contracts": ["scheduling", "payment"],
-      "authorityChain": ["verifyAndReconcilePayment", "reconcilePayment", "authorizeAndFinalize", "processSuccessfulPayment", "sendProactiveConfirmation"],
-      "terminalState": "booking confirmed, customer spend applied, confirmation sent",
-      "sideEffects": ["apply_payment_spend_once", "recordPlatformFee", "handlePostCompletion(skipCustomerSpend=true)"],
+      "authorityChain": ["verifyAndReconcilePayment", "reconcilePayment", "authorizeAndFinalize"],
+      "terminalState": "I've Paid routes through canonical Payment Authority (not legacy verifyPayment). No legacy manual effects.",
+      "sideEffects": [],
       "testPaths": ["lib/bot/flows/__tests__/payment-convergence-scheduling-ticketing.test.ts"],
-      "status": "PROTECTED"
+      "status": "PARTIAL",
+      "notes": "Cited tests prove convergence routing and absence of legacy writers via source inspection. They do not execute apply_payment_spend_once or sendProactiveConfirmation end-to-end."
     },
     {
       "id": "JOURNEY-002",
-      "name": "Payment/Giving I've Paid convergence",
+      "name": "Payment/Giving I've Paid convergence routing",
       "capabilities": ["payment", "giving"],
       "contracts": ["payment", "giving"],
-      "authorityChain": ["verifyAndReconcilePayment", "reconcilePayment", "authorizeAndFinalize", "processSuccessfulPayment", "sendProactiveConfirmation"],
-      "terminalState": "booking confirmed, spend applied, bot flow terminates with brief ack",
-      "sideEffects": ["apply_payment_spend_once", "recordPlatformFee", "handlePostCompletion(skipCustomerSpend=true)"],
+      "authorityChain": ["verifyAndReconcilePayment", "reconcilePayment", "authorizeAndFinalize"],
+      "terminalState": "I've Paid routes through canonical Payment Authority. No legacy manual effects. Flow terminates with brief ack.",
+      "sideEffects": [],
       "testPaths": ["lib/bot/flows/__tests__/payment-convergence-giving.test.ts"],
-      "status": "PROTECTED",
-      "notes": "Flow terminates after authority completion. Recurring continuation after Stage 3 is a separate known gap (#165), not this journey's contract."
+      "status": "PARTIAL",
+      "notes": "Cited tests prove convergence routing, outcome handling, and cancel CAS via executable validate/next boundary tests with mocked verifyAndReconcilePayment. They do not execute Stage 2/3 end-to-end. Recurring continuation is a separate gap (#165)."
     },
     {
       "id": "JOURNEY-003",
-      "name": "Ticketing + Payment I've Paid convergence",
+      "name": "Ticketing + Payment I've Paid convergence routing",
       "capabilities": ["ticketing", "payment"],
       "contracts": ["ticketing"],
-      "authorityChain": ["verifyAndReconcilePayment", "reconcilePayment", "authorizeAndFinalize", "processSuccessfulPayment", "ensurePaidTicketState", "sendProactiveConfirmation", "sendTicketsAfterPurchase"],
-      "terminalState": "booking confirmed, tickets issued, confirmation sent",
+      "authorityChain": ["verifyAndReconcilePayment", "reconcilePayment", "authorizeAndFinalize"],
+      "terminalState": "I've Paid routes through canonical Payment Authority. No legacy manual effects.",
       "testPaths": ["lib/bot/flows/__tests__/payment-convergence-scheduling-ticketing.test.ts"],
-      "status": "PROTECTED"
+      "status": "PARTIAL",
+      "notes": "Cited tests prove convergence routing and absence of legacy writers. They do not execute ticket issuance or Stage 3 confirmation end-to-end."
     },
     {
       "id": "JOURNEY-004",
@@ -80,13 +82,14 @@
     },
     {
       "id": "JOURNEY-008",
-      "name": "Exactly-once customer spend (order)",
+      "name": "Order confirmation + stock decrement (exactly-once)",
       "capabilities": ["ordering"],
       "contracts": ["ordering"],
-      "authorityChain": ["processSuccessfulPayment → apply_customer_spend_once"],
-      "terminalState": "customer_profiles.total_spent incremented exactly once per order",
+      "authorityChain": ["processSuccessfulPayment → apply_order_stock_once"],
+      "terminalState": "Order confirmed and stock decremented exactly once. Order spend applied via apply_customer_spend_once.",
       "testPaths": ["lib/payments/__tests__/process-success-finalization.test.ts"],
-      "status": "PROTECTED"
+      "status": "PARTIAL",
+      "notes": "Cited tests prove apply_order_stock_once error handling and processSuccessfulPayment finalization outcomes. apply_customer_spend_once is called in the same path but its exact-once behavior is not independently exercised in these tests."
     },
     {
       "id": "JOURNEY-009",

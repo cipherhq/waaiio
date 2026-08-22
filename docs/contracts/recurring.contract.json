@@ -46,8 +46,17 @@
   ],
 
   "sessionKeys": {
-    "domain": ["recurring_frequency", "recurring_accepted", "_recurring_email_token", "_paystack_email_token"],
-    "shared": ["service_billing_type", "service_recurring_interval", "payment_reference"]
+    "keys": {
+      "recurring_frequency": { "owner": "recurring", "producers": ["offer_recurring/confirm_recurring"], "consumers": ["setup_recurring"], "classification": "domain" },
+      "recurring_accepted": { "owner": "recurring", "producers": ["confirm_recurring"], "consumers": ["next() routing"], "classification": "domain" },
+      "_recurring_email_token": { "owner": "recurring", "producers": ["setup_recurring (Paystack)"], "consumers": ["subscription metadata"], "classification": "domain" },
+      "service_billing_type": { "owner": "payment", "producers": ["select_category"], "consumers": ["recurring routing (dead — #165)"], "classification": "shared" },
+      "service_recurring_interval": { "owner": "payment", "producers": ["select_category"], "consumers": ["recurring routing (dead — #165)"], "classification": "shared" },
+      "payment_reference": { "owner": "shared-payment", "producers": ["process_payment/initializePayment"], "consumers": ["recurring setup (authorization extraction)"], "classification": "shared" }
+    },
+    "persistence": "CAS via update_session_cas.",
+    "cleanup": "Session deactivated by executor terminal step.",
+    "notes": "Recurring setup steps (offer_recurring, confirm_recurring, setup_recurring) live in payment.flow.ts. recurring-manage.flow.ts handles subscription management via 'subscriptions' keyword in a separate session."
   },
 
   "dashboardSurfaces": ["/dashboard/recurring"],

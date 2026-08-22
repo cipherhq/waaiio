@@ -261,6 +261,7 @@ try {
 console.log('\n=== Capability Contract Registry ===');
 
 const TIER1_CAPABILITIES = ['scheduling', 'payment', 'giving', 'ordering', 'ticketing', 'reservation', 'loyalty', 'recurring'];
+let indexIds = []; // Populated from capability index, shared with journey validation
 
 try {
   const indexPath = 'docs/contracts/capability-index.json';
@@ -271,7 +272,7 @@ try {
     if (!capIndex.capabilities || !Array.isArray(capIndex.capabilities)) {
       fail('capability-index.json: capabilities must be an array');
     } else {
-      const indexIds = capIndex.capabilities.map(c => c.id);
+      indexIds = capIndex.capabilities.map(c => c.id);
       const dupes = indexIds.filter((id, i) => indexIds.indexOf(id) !== i);
       if (dupes.length) fail('capability-index.json: duplicate IDs: ' + dupes.join(', '));
       else pass(`capability-index.json: ${indexIds.length} capabilities, no duplicates`);
@@ -299,7 +300,7 @@ try {
         warn('Could not read shared/capabilities.ts: ' + e.message);
       }
 
-      // Validate Tier-1 contracts exist and have requiredTestsOnChange with real files
+      // Validate Tier-1 contracts exist, have requiredTestsOnChange with real files, and have session keys
       for (const cap of TIER1_CAPABILITIES) {
         const contractPath = `docs/contracts/${cap}.contract.json`;
         if (!existsSync(contractPath)) {
@@ -309,12 +310,20 @@ try {
             const contract = JSON.parse(readFileSync(contractPath, 'utf-8'));
             if (contract.id !== cap) fail(`${contractPath}: id mismatch (expected '${cap}', got '${contract.id}')`);
             else pass(`${contractPath}: valid`);
-            // Validate requiredTestsOnChange paths exist
-            if (contract.requiredTestsOnChange && Array.isArray(contract.requiredTestsOnChange)) {
+            // Validate requiredTestsOnChange paths exist (required field)
+            if (!contract.requiredTestsOnChange || !Array.isArray(contract.requiredTestsOnChange) || !contract.requiredTestsOnChange.length) {
+              fail(`${contractPath}: requiredTestsOnChange must be a non-empty array`);
+            } else {
               for (const tp of contract.requiredTestsOnChange) {
                 if (!existsSync(tp)) {
                   fail(`${contractPath}: requiredTestsOnChange path not found: ${tp}`);
                 }
+              }
+            }
+            // Validate session keys use per-key structure (not legacy arrays)
+            if (contract.sessionKeys) {
+              if (!contract.sessionKeys.keys && !contract.sessionKeys.inheritsFrom) {
+                fail(`${contractPath}: sessionKeys must use per-key 'keys' object (not legacy domain/shared arrays)`);
               }
             }
           } catch (e) {
@@ -350,18 +359,36 @@ try {
         if (!validStatuses.includes(j.status)) {
           fail(`Journey ${j.id}: invalid status '${j.status}'`);
         }
-        if ((j.status === 'PROTECTED' || j.status === 'PARTIAL') && j.testPaths) {
-          if (!j.testPaths.length) {
-            fail(`Journey ${j.id} (${j.status}): testPaths must be non-empty`);
-          }
-          for (const tp of j.testPaths) {
-            if (!existsSync(tp)) {
-              fail(`Journey ${j.id} (${j.status}): test file not found: ${tp}`);
+        // PROTECTED and PARTIAL must have non-empty testPaths with existing files
+        if (j.status === 'PROTECTED' || j.status === 'PARTIAL') {
+          if (!j.testPaths || !Array.isArray(j.testPaths) || !j.testPaths.length) {
+            fail(`Journey ${j.id} (${j.status}): testPaths must be a non-empty array`);
+          } else {
+            for (const tp of j.testPaths) {
+              if (!existsSync(tp)) {
+                fail(`Journey ${j.id} (${j.status}): test file not found: ${tp}`);
+              }
             }
           }
         }
         if (j.status === 'KNOWN_GAP' && !j.linkedIssue) {
           fail(`Journey ${j.id} (KNOWN_GAP): must have a linkedIssue`);
+        }
+        // Validate journey capabilities reference the capability index
+        if (j.capabilities && Array.isArray(j.capabilities)) {
+          for (const cap of j.capabilities) {
+            if (!indexIds.includes(cap)) {
+              fail(`Journey ${j.id}: references unknown capability '${cap}'`);
+            }
+          }
+        }
+        // Validate journey contracts reference existing Tier-1 contract files
+        if (j.contracts && Array.isArray(j.contracts)) {
+          for (const c of j.contracts) {
+            if (!existsSync(`docs/contracts/${c}.contract.json`)) {
+              fail(`Journey ${j.id}: references missing contract '${c}'`);
+            }
+          }
         }
       }
       pass('Journey entries validated');
@@ -386,13 +413,17 @@ try {
       const accIds = accRegistry.findings.map(f => f.id);
       const dupes = accIds.filter((id, i) => accIds.indexOf(id) !== i);
       if (dupes.length) fail('acceptance registry: duplicate IDs: ' + dupes.join(', '));
-      const validStatuses = ['OPEN', 'RESOLVED', 'DEFERRED', 'IN_PROGRESS'];
+      // Enforce exact ACC-001..ACC-011 set
+      const requiredAccIds = Array.from({ length: 11 }, (_, i) => `ACC-${String(i + 1).padStart(3, '0')}`);
+      const missingAcc = requiredAccIds.filter(id => !accIds.includes(id));
+      if (missingAcc.length) fail('acceptance registry: missing required IDs: ' + missingAcc.join(', '));
+      const accValidStatuses = ['OPEN', 'RESOLVED', 'DEFERRED', 'IN_PROGRESS'];
       for (const f of accRegistry.findings) {
-        if (!validStatuses.includes(f.status)) {
+        if (!accValidStatuses.includes(f.status)) {
           fail(`${f.id}: invalid status '${f.status}'`);
         }
       }
-      pass(`acceptance registry: ${accIds.length} findings validated`);
+      pass(`acceptance registry: ${accIds.length} findings validated (all ACC-001..ACC-011 present)`);
     }
   }
 } catch (e) {

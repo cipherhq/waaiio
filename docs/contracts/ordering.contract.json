@@ -52,8 +52,23 @@
   ],
 
   "sessionKeys": {
-    "domain": ["cart_items", "order_id", "order_reference", "delivery_name", "delivery_phone", "delivery_address", "promo_code", "_promo_discount", "referral_id"],
-    "shared": ["payment_reference", "_payment_retry_blocked", "_action", "active_capability", "bank_transfer_reference"]
+    "keys": {
+      "cart_items": { "owner": "ordering", "producers": ["add_to_cart"], "consumers": ["confirm_order", "UX summary"], "classification": "domain" },
+      "order_id": { "owner": "ordering", "producers": ["confirm_order"], "consumers": ["payment", "cancel", "post-completion"], "classification": "domain" },
+      "order_reference": { "owner": "ordering", "producers": ["confirm_order"], "consumers": ["UX messages"], "classification": "domain" },
+      "delivery_name": { "owner": "ordering", "producers": ["collect_delivery"], "consumers": ["confirm_order"], "classification": "domain" },
+      "delivery_phone": { "owner": "ordering", "producers": ["collect_delivery"], "consumers": ["confirm_order"], "classification": "domain" },
+      "delivery_address": { "owner": "ordering", "producers": ["collect_delivery"], "consumers": ["confirm_order"], "classification": "domain" },
+      "promo_code": { "owner": "ordering", "producers": ["apply_promo"], "consumers": ["confirm_order"], "classification": "domain" },
+      "referral_id": { "owner": "ordering", "producers": ["apply_referral"], "consumers": ["processSuccessfulPayment referral conversion"], "classification": "domain" },
+      "payment_reference": { "owner": "shared-payment", "producers": ["initializePayment"], "consumers": ["I've Paid", "reconcilePayment"], "classification": "shared", "stalePostback": "Ordering uses reconcilePayment directly (not verifyAndReconcilePayment)" },
+      "_payment_retry_blocked": { "owner": "shared-payment", "producers": ["I've Paid validate"], "consumers": ["prompt gating"], "classification": "shared", "persistence": "persistSessionDataOnFailure" },
+      "_action": { "owner": "shared-flow", "producers": ["validate()"], "consumers": ["next()"], "classification": "shared" },
+      "active_capability": { "owner": "executor", "producers": ["capability-selection"], "consumers": ["executor CAS-007 auth"], "classification": "shared" },
+      "bank_transfer_reference": { "owner": "shared-payment", "producers": ["payment step bank-transfer"], "consumers": ["transfer proof handling", "cancel guard"], "classification": "shared" }
+    },
+    "persistence": "CAS via update_session_cas. Direct .update() for payment step advance.",
+    "cleanup": "Session deactivated by Stage 3 or executor terminal."
   },
 
   "dashboardSurfaces": ["/dashboard/orders", "/dashboard/products"],
