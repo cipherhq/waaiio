@@ -1,0 +1,80 @@
+{
+  "_schema": "waaiio-capability-contract-v1",
+  "id": "scheduling",
+  "subscriptionTier": "free",
+  "riskTier": "tier-1",
+  "flowType": "scheduling",
+  "flowFile": "lib/bot/flows/scheduling.flow.ts",
+
+  "stateOwned": {
+    "write": ["bookings", "bot_sessions.session_data"],
+    "read": ["services", "businesses", "customer_profiles", "events", "event_ticket_types", "payout_accounts", "business_payment_credentials"]
+  },
+
+  "authorities": {
+    "bookingCreation": {
+      "authority": "scheduling.flow.ts create_booking step",
+      "notes": "Free/no-deposit bookings created directly as 'confirmed'. Paid bookings created as 'pending'."
+    },
+    "paidConfirmation": {
+      "authority": "processSuccessfulPayment (via Payment Authority)",
+      "file": "lib/payments/process-success.ts",
+      "notes": "pending→confirmed with CAS guard .in('status', ['pending'])"
+    },
+    "cancellation": {
+      "authority": "CAS-guarded cancel in bot flow + cancel_stale_order_atomic cron",
+      "notes": "Cancel only while status IN ('pending'). Zero-row re-read + already_confirmed recovery."
+    },
+    "customerSpend": {
+      "authority": "apply_payment_spend_once (migration 334)",
+      "notes": "Durable per-payment marker. Called from processSuccessfulPayment."
+    },
+    "postCompletion": {
+      "authority": "handlePostCompletion via sendProactiveConfirmation (Stage 3)",
+      "file": "lib/bot/flows/shared/post-completion.ts",
+      "notes": "Receipts, loyalty, automation, referral. skipCustomerSpend=true for paid bookings."
+    },
+    "providerVerification": {
+      "authority": "verifyAndReconcilePayment → reconcilePayment → authorizeAndFinalize",
+      "file": "lib/payments/bot-recovery.ts",
+      "notes": "I've Paid path converges through canonical Payment Authority (PR #160)."
+    }
+  },
+
+  "forbiddenWrites": [
+    "customer_profiles.total_spent — use apply_payment_spend_once",
+    "bookings.status outside processSuccessfulPayment and cancel-CAS",
+    "bookings.deposit_status outside processSuccessfulPayment"
+  ],
+
+  "sessionKeys": {
+    "domain": ["booking_id", "reference_code", "service_id", "service_name", "service_deposit", "date", "time", "party_size", "event_name", "event_id", "ticket_quantity"],
+    "shared": ["payment_reference", "_payment_retry_blocked", "_action", "_retry_payment", "active_capability", "first_name", "last_name", "bank_transfer_reference", "bank_transfer_offered", "_terms_accepted", "_terms_cancelled"],
+    "persistence": "CAS via update_session_cas RPC. Direct update for payment step session advance.",
+    "cleanup": "Session deactivated by Stage 3 sendProactiveConfirmation or executor terminal step."
+  },
+
+  "dashboardSurfaces": ["/dashboard/reservations", "/dashboard/calendar"],
+  "apiRoutes": ["/api/bookings/*", "/api/services/*"],
+  "webhookDependencies": ["payment webhooks (all 5 gateways via reconcilePayment)"],
+
+  "supportedCombinations": [
+    "scheduling alone (free booking)",
+    "scheduling + payment (deposit/full payment)",
+    "scheduling + ticketing (event bookings)",
+    "scheduling + loyalty (post-completion)",
+    "scheduling + recurring (subscription setup after payment)"
+  ],
+
+  "requiredTestsOnChange": [
+    "lib/bot/flows/__tests__/payment-convergence-scheduling-ticketing.test.ts",
+    "lib/bot/flows/__tests__/recovery-gated-retry.test.ts",
+    "lib/__tests__/payment-vs-cancel-concurrency.test.ts",
+    "lib/__tests__/spend-marker-application-boundary.test.ts"
+  ],
+
+  "knownDebt": [
+    "Legacy verifyPayment() gateway side effects (paystack.ts:204-221 etc.) mutate booking state outside Payment Authority",
+    "handlePostCompletion loyalty/referral side effects are non-idempotent (no per-payment marker)"
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "_schema": "waaiio-capability-contract-v1",
+  "id": "loyalty",
+  "subscriptionTier": "growth",
+  "riskTier": "tier-1",
+  "flowType": null,
+  "flowFile": "lib/bot/flows/loyalty.flow.ts",
+  "notes": "Loyalty is a cross-cutting capability. Points are awarded via handlePostCompletion, not a dedicated flow. loyalty.flow.ts handles 'my points' / 'redeem' keywords.",
+
+  "stateOwned": {
+    "write": ["loyalty_points", "loyalty_transactions", "loyalty_redemptions"],
+    "read": ["customer_profiles", "businesses"]
+  },
+
+  "authorities": {
+    "pointsAward": {
+      "authority": "handlePostCompletion loyalty section",
+      "file": "lib/bot/flows/shared/post-completion.ts",
+      "notes": "Awards points when loyalty capability enabled AND loyalty_earning_enabled=true AND !skipLoyalty. Per-visit or per-amount mode. No durable per-payment marker — replay can double-award."
+    },
+    "membershipTierAssignment": {
+      "authority": "assignCustomerTier (lib/membership/assign-tiers.ts)",
+      "notes": "Runs after loyalty points in handlePostCompletion. Idempotent (reads total_spent, assigns highest qualifying tier)."
+    },
+    "pointsRedemption": {
+      "authority": "loyalty.flow.ts redeem step",
+      "notes": "Deducts points from balance. Creates redemption record."
+    }
+  },
+
+  "forbiddenWrites": [
+    "loyalty_points — only via handlePostCompletion award or loyalty.flow.ts redeem",
+    "loyalty_transactions — only via handlePostCompletion"
+  ],
+
+  "sessionKeys": {
+    "domain": ["redemption_id"],
+    "shared": ["active_capability"]
+  },
+
+  "dashboardSurfaces": ["/dashboard/loyalty"],
+  "webhookDependencies": ["Indirectly: payment webhooks trigger post-completion which awards points"],
+
+  "supportedCombinations": ["loyalty + scheduling", "loyalty + payment", "loyalty + ordering", "loyalty + ticketing", "loyalty + membership (tier multiplier)"],
+
+  "requiredTestsOnChange": [
+    "lib/bot/flows/__tests__/subscription-loyalty.test.ts",
+    "lib/__tests__/spend-marker-application-boundary.test.ts"
+  ],
+
+  "knownDebt": [
+    "#167 — Stage 3 does not pass skipLoyalty for Direct Giving",
+    "No durable per-payment loyalty marker — replay can double-award points"
+  ]
+}

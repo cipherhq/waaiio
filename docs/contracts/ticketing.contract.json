@@ -1,0 +1,47 @@
+{
+  "_schema": "waaiio-capability-contract-v1",
+  "id": "ticketing",
+  "subscriptionTier": "free",
+  "riskTier": "tier-1",
+  "flowType": "ticketing",
+  "flowFile": "lib/bot/flows/ticketing.flow.ts",
+
+  "stateOwned": {
+    "write": ["bookings (flow_type='ticketing')", "tickets", "bot_sessions.session_data"],
+    "read": ["events", "event_ticket_types", "businesses", "services"]
+  },
+
+  "authorities": {
+    "bookingCreation": { "authority": "ticketing.flow.ts process_tickets step", "notes": "Free events: status='confirmed'. Paid: status='pending'." },
+    "paidConfirmation": { "authority": "processSuccessfulPayment (via Payment Authority)" },
+    "ticketInventory": { "authority": "ensurePaidTicketState (Stage 2) + finalize_free_ticket_booking RPC (Stage 3)", "notes": "Split: inventory in Stage 2, delivery in Stage 3." },
+    "ticketDelivery": { "authority": "sendTicketsAfterPurchase in sendProactiveConfirmation (Stage 3)" },
+    "customerSpend": { "authority": "apply_payment_spend_once (migration 334)" },
+    "providerVerification": { "authority": "verifyAndReconcilePayment (PR #160)" },
+    "retryPaymentGate": { "authority": "Recovery-gated retry_payment (PR #170 / #168)" },
+    "cancellation": { "authority": "CAS-guarded cancel in await_ticket_payment (PR #160)" }
+  },
+
+  "forbiddenWrites": [
+    "events.tickets_sold — use finalize_free_ticket_booking RPC",
+    "customer_profiles.total_spent — use apply_payment_spend_once"
+  ],
+
+  "sessionKeys": {
+    "domain": ["event_id", "event_name", "event_date", "event_time", "ticket_quantity", "ticket_type_id", "total_amount"],
+    "shared": ["payment_reference", "_payment_retry_blocked", "_action", "_retry_payment", "active_capability", "booking_id", "reference_code"]
+  },
+
+  "dashboardSurfaces": ["/dashboard/events", "/dashboard/tickets"],
+  "webhookDependencies": ["payment webhooks (all 5 gateways)"],
+
+  "supportedCombinations": ["ticketing alone (free events)", "ticketing + payment (paid events)", "ticketing + typed tickets"],
+
+  "requiredTestsOnChange": [
+    "lib/bot/flows/__tests__/payment-convergence-scheduling-ticketing.test.ts",
+    "lib/bot/flows/__tests__/recovery-gated-retry.test.ts",
+    "lib/__tests__/urgent-payment-ticket-hotfix.test.ts"
+  ],
+
+  "knownDebt": []
+}

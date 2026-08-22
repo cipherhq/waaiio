@@ -1,0 +1,134 @@
+{
+  "_schema": "waaiio-golden-journey-registry-v1",
+  "_generated_from_main": "a88b2b6c0df3149e81509e62a7f167264e31d100",
+  "journeys": [
+    {
+      "id": "JOURNEY-001",
+      "name": "Scheduling + Payment I've Paid convergence",
+      "capabilities": ["scheduling", "payment"],
+      "contracts": ["scheduling", "payment"],
+      "authorityChain": ["verifyAndReconcilePayment", "reconcilePayment", "authorizeAndFinalize", "processSuccessfulPayment", "sendProactiveConfirmation"],
+      "terminalState": "booking confirmed, customer spend applied, confirmation sent",
+      "sideEffects": ["apply_payment_spend_once", "recordPlatformFee", "handlePostCompletion(skipCustomerSpend=true)"],
+      "testPaths": ["lib/bot/flows/__tests__/payment-convergence-scheduling-ticketing.test.ts"],
+      "status": "PROTECTED"
+    },
+    {
+      "id": "JOURNEY-002",
+      "name": "Payment/Giving I've Paid convergence",
+      "capabilities": ["payment", "giving"],
+      "contracts": ["payment", "giving"],
+      "authorityChain": ["verifyAndReconcilePayment", "reconcilePayment", "authorizeAndFinalize", "processSuccessfulPayment", "sendProactiveConfirmation"],
+      "terminalState": "booking confirmed, spend applied, flow ends (no recurring continuation)",
+      "sideEffects": ["apply_payment_spend_once", "recordPlatformFee", "handlePostCompletion(skipCustomerSpend=true)"],
+      "testPaths": ["lib/bot/flows/__tests__/payment-convergence-giving.test.ts"],
+      "status": "PROTECTED"
+    },
+    {
+      "id": "JOURNEY-003",
+      "name": "Ticketing + Payment I've Paid convergence",
+      "capabilities": ["ticketing", "payment"],
+      "contracts": ["ticketing"],
+      "authorityChain": ["verifyAndReconcilePayment", "reconcilePayment", "authorizeAndFinalize", "processSuccessfulPayment", "ensurePaidTicketState", "sendProactiveConfirmation", "sendTicketsAfterPurchase"],
+      "terminalState": "booking confirmed, tickets issued, confirmation sent",
+      "testPaths": ["lib/bot/flows/__tests__/payment-convergence-scheduling-ticketing.test.ts"],
+      "status": "PROTECTED"
+    },
+    {
+      "id": "JOURNEY-004",
+      "name": "Payment-vs-cancel race",
+      "capabilities": ["scheduling", "payment"],
+      "contracts": ["scheduling", "payment"],
+      "authorityChain": ["processSuccessfulPayment (CAS booking confirm)", "cancel CAS guard (.in status pending)"],
+      "terminalState": "Either: booking confirmed (payment wins) OR booking cancelled (cancel wins before payment)",
+      "sideEffects": ["No double-state: CAS prevents overwrite"],
+      "testPaths": ["lib/__tests__/payment-vs-cancel-concurrency.test.ts", "lib/bot/flows/__tests__/payment-convergence-giving.test.ts"],
+      "status": "PROTECTED"
+    },
+    {
+      "id": "JOURNEY-005",
+      "name": "Provider timeout / indeterminate recovery",
+      "capabilities": ["payment"],
+      "contracts": ["payment"],
+      "authorityChain": ["verifyAndReconcilePayment → provider_error", "retry_payment recovery gate"],
+      "terminalState": "Fresh checkout blocked until definitive not_paid established",
+      "sideEffects": ["_payment_retry_blocked=true, prompt omits Get New Link"],
+      "testPaths": ["lib/bot/flows/__tests__/recovery-gated-retry.test.ts", "lib/payments/__tests__/recovery-outcome-fidelity.test.ts"],
+      "status": "PROTECTED"
+    },
+    {
+      "id": "JOURNEY-006",
+      "name": "Webhook-before-I've-Paid replay",
+      "capabilities": ["scheduling", "payment"],
+      "contracts": ["scheduling"],
+      "authorityChain": ["webhook → authorizeAndFinalize → completed", "I've Paid → authorizeAndFinalize → already_completed"],
+      "terminalState": "Idempotent: same result regardless of order",
+      "testPaths": ["lib/payments/__tests__/authority.test.ts"],
+      "status": "PROTECTED"
+    },
+    {
+      "id": "JOURNEY-007",
+      "name": "Exactly-once customer spend (booking/reservation)",
+      "capabilities": ["scheduling", "reservation", "payment"],
+      "contracts": ["scheduling", "reservation"],
+      "authorityChain": ["processSuccessfulPayment → apply_payment_spend_once"],
+      "terminalState": "customer_profiles.total_spent incremented exactly once per payment",
+      "testPaths": ["lib/__tests__/payment-spend-marker.test.ts", "lib/__tests__/spend-marker-application-boundary.test.ts"],
+      "status": "PROTECTED"
+    },
+    {
+      "id": "JOURNEY-008",
+      "name": "Exactly-once customer spend (order)",
+      "capabilities": ["ordering"],
+      "contracts": ["ordering"],
+      "authorityChain": ["processSuccessfulPayment → apply_customer_spend_once"],
+      "terminalState": "customer_profiles.total_spent incremented exactly once per order",
+      "testPaths": ["lib/payments/__tests__/process-success-finalization.test.ts"],
+      "status": "PROTECTED"
+    },
+    {
+      "id": "JOURNEY-009",
+      "name": "Flutterwave recurring Giving renewal spend",
+      "capabilities": ["recurring", "giving"],
+      "contracts": ["recurring", "giving"],
+      "authorityChain": ["processFlutterwaveRenewal → finalize_token_recurring_charge → sendProactiveConfirmation"],
+      "terminalState": "KNOWN GAP: customer spend NOT applied (Stage 2 skipped)",
+      "testPaths": [],
+      "status": "KNOWN_GAP",
+      "linkedIssue": "#164"
+    },
+    {
+      "id": "JOURNEY-010",
+      "name": "Direct Giving loyalty skip",
+      "capabilities": ["giving", "loyalty"],
+      "contracts": ["giving", "loyalty"],
+      "authorityChain": ["sendProactiveConfirmation → handlePostCompletion"],
+      "terminalState": "KNOWN GAP: loyalty IS awarded for Giving (should be skipped)",
+      "testPaths": [],
+      "status": "KNOWN_GAP",
+      "linkedIssue": "#167"
+    },
+    {
+      "id": "JOURNEY-011",
+      "name": "Payment/Giving notification semantics",
+      "capabilities": ["payment", "giving"],
+      "contracts": ["payment", "giving"],
+      "authorityChain": ["sendProactiveConfirmation → notifyOwnerNewBooking"],
+      "terminalState": "KNOWN GAP: notifyOwnerNewBooking (type: new_booking) used instead of notifyOwnerNewPayment (type: payment_received)",
+      "testPaths": [],
+      "status": "KNOWN_GAP",
+      "linkedIssue": "#166"
+    },
+    {
+      "id": "JOURNEY-012",
+      "name": "Recurring continuation after Stage 3",
+      "capabilities": ["payment", "giving", "recurring"],
+      "contracts": ["payment", "recurring"],
+      "authorityChain": ["sendProactiveConfirmation (deactivates session) → next() routing"],
+      "terminalState": "KNOWN GAP: Stage 3 deactivates session before recurring offer can advance",
+      "testPaths": [],
+      "status": "KNOWN_GAP",
+      "linkedIssue": "#165"
+    }
+  ]
+}

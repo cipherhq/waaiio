@@ -1,0 +1,51 @@
+{
+  "_schema": "waaiio-capability-contract-v1",
+  "id": "giving",
+  "subscriptionTier": "free",
+  "riskTier": "tier-1",
+  "flowType": "payment",
+  "flowFile": "lib/bot/flows/payment.flow.ts",
+  "notes": "Giving reuses payment.flow.ts with active_capability='giving'. Services filtered by service_type='giving'.",
+
+  "stateOwned": {
+    "write": ["bookings (flow_type='payment')", "bot_sessions.session_data"],
+    "read": ["services (service_type='giving')", "businesses", "customer_profiles"]
+  },
+
+  "authorities": {
+    "bookingCreation": { "authority": "payment.flow.ts process_payment step", "notes": "Same as payment capability." },
+    "paidConfirmation": { "authority": "processSuccessfulPayment (via Payment Authority)" },
+    "customerSpend": { "authority": "apply_payment_spend_once (migration 334)" },
+    "postCompletion": { "authority": "handlePostCompletion via Stage 3", "notes": "skipCustomerSpend=true. skipLoyalty NOT set (#167)." },
+    "providerVerification": { "authority": "verifyAndReconcilePayment (PR #169)" },
+    "retryPaymentGate": { "authority": "Recovery-gated retry_payment (PR #170 / #168)" }
+  },
+
+  "forbiddenWrites": [
+    "customer_profiles.total_spent — use apply_payment_spend_once",
+    "Standalone handlePostCompletion from I've Paid — handled by Stage 3"
+  ],
+
+  "sessionKeys": {
+    "domain": ["Same as payment contract"],
+    "shared": ["Same as payment contract"],
+    "notes": "active_capability='giving' distinguishes from generic payment at runtime."
+  },
+
+  "dashboardSurfaces": ["/dashboard/payments"],
+  "webhookDependencies": ["payment webhooks (all 5 gateways)"],
+
+  "supportedCombinations": ["giving alone", "giving + recurring (subscription giving)"],
+
+  "requiredTestsOnChange": [
+    "lib/bot/flows/__tests__/payment-convergence-giving.test.ts",
+    "lib/bot/flows/__tests__/recurring-giving.flow.test.ts",
+    "lib/bot/flows/__tests__/recovery-gated-retry.test.ts"
+  ],
+
+  "knownDebt": [
+    "#167 — Stage 3 does not skip loyalty for Giving (intent: giving should not award loyalty)",
+    "#166 — Stage 3 notification semantics: new_booking instead of payment_received",
+    "#164 — Flutterwave recurring Giving renewals skip Stage 2 customer spend"
+  ]
+}

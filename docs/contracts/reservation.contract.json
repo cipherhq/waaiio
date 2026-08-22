@@ -1,0 +1,42 @@
+{
+  "_schema": "waaiio-capability-contract-v1",
+  "id": "reservation",
+  "subscriptionTier": "growth",
+  "riskTier": "tier-1",
+  "flowType": "reservation",
+  "flowFile": "lib/bot/flows/reservation.flow.ts",
+
+  "stateOwned": {
+    "write": ["reservations", "bot_sessions.session_data"],
+    "read": ["services", "businesses", "customer_profiles"]
+  },
+
+  "authorities": {
+    "reservationCreation": { "authority": "reservation.flow.ts create step", "notes": "Creates reservation with status='pending' for paid, 'confirmed' for free." },
+    "paidConfirmation": { "authority": "processSuccessfulPayment (via Payment Authority)", "notes": "pending→confirmed with CAS guard." },
+    "customerSpend": { "authority": "apply_payment_spend_once (migration 334)", "notes": "Durable per-payment marker." },
+    "postCompletion": { "authority": "handlePostCompletion via Stage 3", "notes": "skipCustomerSpend=true for reservations." },
+    "providerVerification": { "authority": "verifyAndReconcilePayment" }
+  },
+
+  "forbiddenWrites": [
+    "customer_profiles.total_spent — use apply_payment_spend_once",
+    "reservations.status outside processSuccessfulPayment and cancel CAS"
+  ],
+
+  "sessionKeys": {
+    "domain": ["reservation_id", "check_in", "check_out", "guest_count", "room_type"],
+    "shared": ["payment_reference", "_payment_retry_blocked", "_action", "active_capability"]
+  },
+
+  "dashboardSurfaces": ["/dashboard/reservations"],
+  "webhookDependencies": ["payment webhooks (all 5 gateways)"],
+  "supportedCombinations": ["reservation alone (free)", "reservation + payment (deposit/full)"],
+
+  "requiredTestsOnChange": [
+    "lib/payments/__tests__/process-success-finalization.test.ts",
+    "lib/__tests__/spend-marker-application-boundary.test.ts"
+  ],
+
+  "knownDebt": []
+}

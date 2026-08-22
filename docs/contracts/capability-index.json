@@ -1,0 +1,200 @@
+{
+  "_schema": "waaiio-capability-index-v1",
+  "_source": "shared/capabilities.ts",
+  "_generated_from_main": "a88b2b6c0df3149e81509e62a7f167264e31d100",
+  "total": 32,
+  "capabilities": [
+    {
+      "id": "scheduling",
+      "subscriptionTier": "free",
+      "riskTier": "tier-1",
+      "contractStatus": "detailed"
+    },
+    {
+      "id": "appointment",
+      "subscriptionTier": "free",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "payment",
+      "subscriptionTier": "free",
+      "riskTier": "tier-1",
+      "contractStatus": "detailed"
+    },
+    {
+      "id": "ordering",
+      "subscriptionTier": "free",
+      "riskTier": "tier-1",
+      "contractStatus": "detailed"
+    },
+    {
+      "id": "ticketing",
+      "subscriptionTier": "free",
+      "riskTier": "tier-1",
+      "contractStatus": "detailed"
+    },
+    {
+      "id": "reservation",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-1",
+      "contractStatus": "detailed"
+    },
+    {
+      "id": "table_reservation",
+      "subscriptionTier": "free",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "whatsapp_sign",
+      "subscriptionTier": "business",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "reminders",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "crowdfunding",
+      "subscriptionTier": "business",
+      "riskTier": "tier-2",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "reports",
+      "subscriptionTier": "business",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "queue",
+      "subscriptionTier": "business",
+      "riskTier": "tier-2",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "feedback",
+      "subscriptionTier": "free",
+      "riskTier": "tier-2",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "loyalty",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-1",
+      "contractStatus": "detailed"
+    },
+    {
+      "id": "chat",
+      "subscriptionTier": "free",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "waitlist",
+      "subscriptionTier": "business",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "referral",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "staff",
+      "subscriptionTier": "business",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "invoice",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-2",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "survey",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "poll",
+      "subscriptionTier": "free",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "giving",
+      "subscriptionTier": "free",
+      "riskTier": "tier-1",
+      "contractStatus": "detailed"
+    },
+    {
+      "id": "broadcast",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "recurring",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-1",
+      "contractStatus": "detailed"
+    },
+    {
+      "id": "auto_reply",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "membership",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-2",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "estimates",
+      "subscriptionTier": "free",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "packages",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "class_booking",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "multi_location",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "waiver",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "promo_verification",
+      "subscriptionTier": "growth",
+      "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    }
+  ]
+}

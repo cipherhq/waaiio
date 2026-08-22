@@ -257,7 +257,112 @@ try {
   warn('Git not available — skipping ancestry checks');
 }
 
-// ── 10. Summary ──
+// ── 10. Capability Contract Registry Validation ──
+console.log('\n=== Capability Contract Registry ===');
+
+const TIER1_CAPABILITIES = ['scheduling', 'payment', 'giving', 'ordering', 'ticketing', 'reservation', 'loyalty', 'recurring'];
+
+try {
+  const indexPath = 'docs/contracts/capability-index.json';
+  if (!existsSync(indexPath)) {
+    fail('Missing capability index: ' + indexPath);
+  } else {
+    const capIndex = JSON.parse(readFileSync(indexPath, 'utf-8'));
+    if (!capIndex.capabilities || !Array.isArray(capIndex.capabilities)) {
+      fail('capability-index.json: capabilities must be an array');
+    } else {
+      const indexIds = capIndex.capabilities.map(c => c.id);
+      const dupes = indexIds.filter((id, i) => indexIds.indexOf(id) !== i);
+      if (dupes.length) fail('capability-index.json: duplicate IDs: ' + dupes.join(', '));
+      else pass(`capability-index.json: ${indexIds.length} capabilities, no duplicates`);
+
+      // Validate Tier-1 contracts exist
+      for (const cap of TIER1_CAPABILITIES) {
+        const contractPath = `docs/contracts/${cap}.contract.json`;
+        if (!existsSync(contractPath)) {
+          fail(`Missing Tier-1 contract: ${contractPath}`);
+        } else {
+          try {
+            const contract = JSON.parse(readFileSync(contractPath, 'utf-8'));
+            if (contract.id !== cap) fail(`${contractPath}: id mismatch (expected '${cap}', got '${contract.id}')`);
+            else pass(`${contractPath}: valid`);
+          } catch (e) {
+            fail(`${contractPath}: invalid JSON — ${e.message}`);
+          }
+        }
+      }
+    }
+  }
+} catch (e) {
+  fail('Contract registry validation error: ' + e.message);
+}
+
+// ── 11. Golden Journey Registry Validation ──
+console.log('\n=== Golden Journey Registry ===');
+
+try {
+  const journeyPath = 'docs/journeys/journey-registry.json';
+  if (!existsSync(journeyPath)) {
+    fail('Missing journey registry: ' + journeyPath);
+  } else {
+    const registry = JSON.parse(readFileSync(journeyPath, 'utf-8'));
+    if (!registry.journeys || !Array.isArray(registry.journeys)) {
+      fail('journey-registry.json: journeys must be an array');
+    } else {
+      const journeyIds = registry.journeys.map(j => j.id);
+      const dupes = journeyIds.filter((id, i) => journeyIds.indexOf(id) !== i);
+      if (dupes.length) fail('journey-registry.json: duplicate IDs: ' + dupes.join(', '));
+      else pass(`journey-registry.json: ${journeyIds.length} journeys, no duplicates`);
+
+      // Validate PROTECTED journeys have existing test files
+      for (const j of registry.journeys) {
+        if (j.status === 'PROTECTED' && j.testPaths) {
+          for (const tp of j.testPaths) {
+            if (!existsSync(tp)) {
+              fail(`Journey ${j.id} (PROTECTED): test file not found: ${tp}`);
+            }
+          }
+        }
+        if (j.status === 'KNOWN_GAP' && !j.linkedIssue) {
+          warn(`Journey ${j.id} (KNOWN_GAP): no linkedIssue`);
+        }
+      }
+      pass('Journey test file references validated');
+    }
+  }
+} catch (e) {
+  fail('Journey registry validation error: ' + e.message);
+}
+
+// ── 12. Acceptance Registry Validation ──
+console.log('\n=== Acceptance Registry ===');
+
+try {
+  const accPath = 'docs/acceptance/registry.json';
+  if (!existsSync(accPath)) {
+    fail('Missing acceptance registry: ' + accPath);
+  } else {
+    const accRegistry = JSON.parse(readFileSync(accPath, 'utf-8'));
+    if (!accRegistry.findings || !Array.isArray(accRegistry.findings)) {
+      fail('registry.json: findings must be an array');
+    } else {
+      const accIds = accRegistry.findings.map(f => f.id);
+      const dupes = accIds.filter((id, i) => accIds.indexOf(id) !== i);
+      if (dupes.length) fail('acceptance registry: duplicate IDs: ' + dupes.join(', '));
+      const validStatuses = ['OPEN', 'RESOLVED', 'DEFERRED', 'IN_PROGRESS'];
+      for (const f of accRegistry.findings) {
+        if (!validStatuses.includes(f.status)) {
+          fail(`${f.id}: invalid status '${f.status}'`);
+        }
+      }
+      pass(`acceptance registry: ${accIds.length} findings validated`);
+    }
+  }
+} catch (e) {
+  fail('Acceptance registry validation error: ' + e.message);
+}
+
+// ── 13. Summary ──
 console.log('\n=== Summary ===');
 console.log(`  Errors: ${errors}`);
 console.log(`  Warnings: ${warnings}`);
