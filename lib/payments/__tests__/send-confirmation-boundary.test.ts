@@ -75,9 +75,9 @@ vi.mock('@/lib/bot/flows/shared/post-completion', () => ({
 
 // ── Mock Supabase factory ──
 function buildSupabase(paymentType: 'booking' | 'reservation' | 'order') {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line
   function chain(): Record<string, any> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line
     const c: Record<string, any> = {};
     ['select', 'eq', 'neq', 'not', 'is', 'in', 'or', 'order', 'limit', 'update', 'insert', 'delete'].forEach(
       m => c[m] = vi.fn().mockReturnValue(c),
