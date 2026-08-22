@@ -428,8 +428,40 @@ describe('Scheduling: validate→merge→next() routing proof', () => {
     expect(nextStep).toBeNull();
   });
 
+  it('not_verified retry_payment → blocked', async () => {
+    mockRecovery.mockResolvedValue({ outcome: 'not_verified' });
+    const ctx = buildCtx();
+    const { valid, nextStep } = await validateMergeNext(step, 'retry_payment', ctx);
+    expect(valid).toBe(false);
+    expect(nextStep).toBeNull();
+  });
+
+  it('processing retry_payment → blocked', async () => {
+    mockRecovery.mockResolvedValue({ outcome: 'processing' });
+    const ctx = buildCtx();
+    const { valid, nextStep } = await validateMergeNext(step, 'retry_payment', ctx);
+    expect(valid).toBe(false);
+    expect(nextStep).toBeNull();
+  });
+
+  it('retryable retry_payment → blocked', async () => {
+    mockRecovery.mockResolvedValue({ outcome: 'retryable' });
+    const ctx = buildCtx();
+    const { valid, nextStep } = await validateMergeNext(step, 'retry_payment', ctx);
+    expect(valid).toBe(false);
+    expect(nextStep).toBeNull();
+  });
+
   it('completed retry_payment → payment_confirmed → null', async () => {
     mockRecovery.mockResolvedValue({ outcome: 'completed' });
+    const ctx = buildCtx();
+    const { valid, nextStep } = await validateMergeNext(step, 'retry_payment', ctx);
+    expect(valid).toBe(true);
+    expect(nextStep).toBeNull();
+  });
+
+  it('not_deliverable retry_payment → payment_confirmed → null', async () => {
+    mockRecovery.mockResolvedValue({ outcome: 'not_deliverable' });
     const ctx = buildCtx();
     const { valid, nextStep } = await validateMergeNext(step, 'retry_payment', ctx);
     expect(valid).toBe(true);
@@ -443,12 +475,13 @@ describe('Scheduling: validate→merge→next() routing proof', () => {
     expect(nextStep).toBeNull();
   });
 
-  it('stale block → not_paid → create_booking', async () => {
+  it('stale block → not_paid → create_booking + block cleared', async () => {
     mockRecovery.mockResolvedValue({ outcome: 'not_paid' });
     const ctx = buildCtx({ _payment_retry_blocked: true });
     const { valid, nextStep } = await validateMergeNext(step, 'retry_payment', ctx);
     expect(valid).toBe(true);
     expect(nextStep).toBe('create_booking');
+    expect(ctx.session.session_data._payment_retry_blocked).toBeUndefined();
   });
 });
 
@@ -472,8 +505,40 @@ describe('Ticketing: validate→merge→next() routing proof', () => {
     expect(nextStep).toBeNull();
   });
 
+  it('not_verified retry_payment → blocked', async () => {
+    mockRecovery.mockResolvedValue({ outcome: 'not_verified' });
+    const ctx = buildCtx({ event_name: 'Test Event' });
+    const { valid, nextStep } = await validateMergeNext(step, 'retry_payment', ctx);
+    expect(valid).toBe(false);
+    expect(nextStep).toBeNull();
+  });
+
+  it('processing retry_payment → blocked', async () => {
+    mockRecovery.mockResolvedValue({ outcome: 'processing' });
+    const ctx = buildCtx({ event_name: 'Test Event' });
+    const { valid, nextStep } = await validateMergeNext(step, 'retry_payment', ctx);
+    expect(valid).toBe(false);
+    expect(nextStep).toBeNull();
+  });
+
+  it('retryable retry_payment → blocked', async () => {
+    mockRecovery.mockResolvedValue({ outcome: 'retryable' });
+    const ctx = buildCtx({ event_name: 'Test Event' });
+    const { valid, nextStep } = await validateMergeNext(step, 'retry_payment', ctx);
+    expect(valid).toBe(false);
+    expect(nextStep).toBeNull();
+  });
+
   it('completed retry_payment → payment_confirmed → null', async () => {
     mockRecovery.mockResolvedValue({ outcome: 'completed' });
+    const ctx = buildCtx({ event_name: 'Test Event' });
+    const { valid, nextStep } = await validateMergeNext(step, 'retry_payment', ctx);
+    expect(valid).toBe(true);
+    expect(nextStep).toBeNull();
+  });
+
+  it('not_deliverable retry_payment → payment_confirmed → null', async () => {
+    mockRecovery.mockResolvedValue({ outcome: 'not_deliverable' });
     const ctx = buildCtx({ event_name: 'Test Event' });
     const { valid, nextStep } = await validateMergeNext(step, 'retry_payment', ctx);
     expect(valid).toBe(true);
@@ -487,11 +552,12 @@ describe('Ticketing: validate→merge→next() routing proof', () => {
     expect(nextStep).toBeNull();
   });
 
-  it('stale block → not_paid → process_tickets', async () => {
+  it('stale block → not_paid → process_tickets + block cleared', async () => {
     mockRecovery.mockResolvedValue({ outcome: 'not_paid' });
     const ctx = buildCtx({ _payment_retry_blocked: true, event_name: 'Test Event' });
     const { valid, nextStep } = await validateMergeNext(step, 'retry_payment', ctx);
     expect(valid).toBe(true);
     expect(nextStep).toBe('process_tickets');
+    expect(ctx.session.session_data._payment_retry_blocked).toBeUndefined();
   });
 });
