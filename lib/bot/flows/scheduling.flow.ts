@@ -3370,19 +3370,41 @@ export const schedulingFlow: FlowDefinition = {
             ],
           }];
         }
+        const buttons: Array<{ id: string; title: string }> = [
+          { id: 'i_paid', title: "I've Paid" },
+        ];
+        if (!d._payment_retry_blocked) {
+          buttons.push({ id: 'retry_payment', title: 'Get New Link' });
+        }
+        buttons.push({ id: 'go_back', title: 'Cancel' });
         return [{
           type: 'buttons',
           body: "Your confirmation will arrive automatically after payment. If it doesn't, tap below:",
-          buttons: [
-            { id: 'i_paid', title: "I've Paid" },
-            { id: 'retry_payment', title: 'Get New Link' },
-            { id: 'go_back', title: 'Cancel' },
-          ],
+          buttons,
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input === 'retry_payment') {
-          return { valid: true, data: { _retry_payment: true } };
+          const ref = ctx.session.session_data.payment_reference as string;
+          if (!ref) {
+            return { valid: false, errorMessage: "If you've already paid, tap *I've Paid*. Otherwise, type *Hi* to start a new booking." };
+          }
+          const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
+          const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
+          if (recovery.outcome === 'not_paid') {
+            ctx.session.session_data._payment_retry_blocked = undefined;
+            return { valid: true, data: { _retry_payment: true } };
+          }
+          if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
+            const d = ctx.session.session_data;
+            await ctx.sender.sendText({
+              to: ctx.from,
+              text: await ctx.t(`✅ *Payment Confirmed!*\n\nYour booking *${d.reference_code as string}* is confirmed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.`),
+            });
+            return { valid: true, data: { _action: 'payment_confirmed' } };
+          }
+          ctx.session.session_data._payment_retry_blocked = true;
+          return { valid: false, persistSessionDataOnFailure: true, errorMessage: "We're still verifying your previous payment. Tap *I've Paid* to check again." };
         }
         const text = input.toLowerCase();
         const d = ctx.session.session_data;
@@ -3562,8 +3584,7 @@ export const schedulingFlow: FlowDefinition = {
           }
 
           if (recovery.outcome === 'processing' || recovery.outcome === 'retryable') {
-            // Money verified by provider but Stage 2/3 not yet complete.
-            // Keep session active — customer can retry "I've Paid" to resume.
+            d._payment_retry_blocked = true;
             await ctx.sender.sendText({
               to: ctx.from,
               text: await ctx.t('✅ Payment received! Your booking is being processed.\n\nYou\'ll get a confirmation shortly. If not, tap *I\'ve Paid* again.'),
@@ -3571,7 +3592,18 @@ export const schedulingFlow: FlowDefinition = {
             return { valid: true, data: { _action: 'payment_processing' } };
           }
 
-          return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
+          if (recovery.outcome === 'not_paid') {
+            d._payment_retry_blocked = undefined;
+            return { valid: false, persistSessionDataOnFailure: true, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
+          }
+
+          if (recovery.outcome === 'provider_error') {
+            d._payment_retry_blocked = true;
+            return { valid: false, persistSessionDataOnFailure: true, errorMessage: "We couldn't verify your payment right now. If you've already paid, tap *I've Paid* again in a moment." };
+          }
+
+          d._payment_retry_blocked = true;
+          return { valid: false, persistSessionDataOnFailure: true, errorMessage: 'Something went wrong. Please try again.' };
         }
 
         return { valid: false, errorMessage: "Tap *I've Paid* after completing payment, or *Cancel* to cancel." };

@@ -560,19 +560,44 @@ export const paymentFlow: FlowDefinition = {
             ],
           }];
         }
+        const buttons: Array<{ id: string; title: string }> = [
+          { id: 'i_paid', title: "I've Paid" },
+        ];
+        if (!d._payment_retry_blocked) {
+          buttons.push({ id: 'retry_payment', title: 'Get New Link' });
+        }
+        buttons.push({ id: 'go_back', title: 'Cancel' });
         return [{
           type: 'buttons',
           body: "Complete your payment using the link above.\n\nYour confirmation will arrive automatically after payment. If it doesn't, tap below:",
-          buttons: [
-            { id: 'i_paid', title: "I've Paid" },
-            { id: 'retry_payment', title: 'Get New Link' },
-            { id: 'go_back', title: 'Cancel' },
-          ],
+          buttons,
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input === 'retry_payment') {
-          return { valid: true, data: { _action: 'retry_payment' } };
+          const ref = ctx.session.session_data.payment_reference as string;
+          if (!ref) {
+            // No payment reference — cannot establish provider truth. Fail closed.
+            return { valid: false, errorMessage: "If you've already paid, tap *I've Paid*. Otherwise, type *Hi* to start a new payment." };
+          }
+          // Canonical recovery gate: only definitive not_paid authorizes a replacement checkout.
+          const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
+          const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
+          if (recovery.outcome === 'not_paid') {
+            ctx.session.session_data._payment_retry_blocked = undefined;
+            return { valid: true, data: { _action: 'retry_payment' } };
+          }
+          if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
+            const isGivingFlow = ctx.session.session_data.active_capability === 'giving';
+            const tips = isGivingFlow
+              ? '\n\n💡 Type *my giving* to see your giving history, or *receipt* for your payment receipt.'
+              : '\n\n💡 Type *my bookings* to view your bookings, or *receipt* for your payment receipt.';
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`✅ Your payment has already been confirmed!${tips}`) });
+            return { valid: true, data: { _action: 'already_confirmed' } };
+          }
+          // provider_error, not_verified, processing, retryable — block fresh checkout
+          ctx.session.session_data._payment_retry_blocked = true;
+          return { valid: false, persistSessionDataOnFailure: true, errorMessage: "We're still verifying your previous payment. Tap *I've Paid* to check again." };
         }
         const text = input.toLowerCase();
         const d = ctx.session.session_data;
@@ -764,7 +789,8 @@ export const paymentFlow: FlowDefinition = {
 
           if (recovery.outcome === 'processing' || recovery.outcome === 'retryable') {
             // Provider confirmed payment but Stage 2/3 not yet complete.
-            // Keep session active — customer can retry "I've Paid" to resume.
+            // Block fresh checkout — prior payment is in-flight.
+            d._payment_retry_blocked = true;
             await ctx.sender.sendText({
               to: ctx.from,
               text: await ctx.t('✅ Payment received! Your payment is being processed.\n\nYou\'ll get a confirmation shortly. If not, tap *I\'ve Paid* again.'),
@@ -772,8 +798,21 @@ export const paymentFlow: FlowDefinition = {
             return { valid: true, data: { _action: 'payment_processing' } };
           }
 
-          // not_verified: provider could not confirm payment (not paid, API error, or config error)
-          return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
+          if (recovery.outcome === 'not_paid') {
+            // Provider definitively confirms unpaid — safe to offer new checkout link.
+            d._payment_retry_blocked = undefined;
+            return { valid: false, persistSessionDataOnFailure: true, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
+          }
+
+          if (recovery.outcome === 'provider_error') {
+            // Indeterminate — do not encourage a new checkout.
+            d._payment_retry_blocked = true;
+            return { valid: false, persistSessionDataOnFailure: true, errorMessage: "We couldn't verify your payment right now. If you've already paid, tap *I've Paid* again in a moment." };
+          }
+
+          // not_verified (config/lookup/rejected) — neutral, do not imply unpaid
+          d._payment_retry_blocked = true;
+          return { valid: false, persistSessionDataOnFailure: true, errorMessage: 'Something went wrong. Please try again.' };
         }
 
         if (d.bank_transfer_offered) {

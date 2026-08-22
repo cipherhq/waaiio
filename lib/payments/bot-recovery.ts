@@ -10,7 +10,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { reconcilePayment } from './reconcile';
 
-export type RecoveryOutcome = 'completed' | 'processing' | 'retryable' | 'not_verified' | 'not_deliverable';
+export type RecoveryOutcome =
+  | 'completed'       // Full lifecycle done (Stage 2+3)
+  | 'processing'      // Provider verified, lifecycle in progress
+  | 'retryable'       // Provider verified, lifecycle retryable
+  | 'not_paid'        // Provider definitively confirms unpaid — safe to retry/new-link
+  | 'provider_error'  // Indeterminate verification (timeout/network) — do NOT encourage new checkout
+  | 'not_verified'    // Config/lookup/rejected/payment-not-found — neutral, do NOT imply unpaid
+  | 'not_deliverable'; // Payment processed but customer not reachable
 
 export interface RecoveryResult {
   outcome: RecoveryOutcome;
@@ -42,8 +49,17 @@ export async function verifyAndReconcilePayment(
   const result = await reconcilePayment(supabase, payment.id, 'ive_paid');
 
   if (!result.lifecycle) {
-    // Provider not verified or other non-success outcome
-    return { outcome: 'not_verified', paymentId: payment.id };
+    // Preserve provider-verification fidelity so callers can distinguish
+    // definitively-unpaid (safe to retry) from indeterminate (unsafe).
+    switch (result.providerOutcome) {
+      case 'not_paid':
+        return { outcome: 'not_paid', paymentId: payment.id };
+      case 'retryable_error':
+        return { outcome: 'provider_error', paymentId: payment.id };
+      case 'config_error':
+      default:
+        return { outcome: 'not_verified', paymentId: payment.id };
+    }
   }
 
   switch (result.lifecycle.status) {
