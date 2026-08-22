@@ -34,9 +34,9 @@
       "ticket_quantity": { "owner": "ticketing", "producers": ["select_quantity"], "consumers": ["process_tickets"], "classification": "domain" },
       "ticket_type_id": { "owner": "ticketing", "producers": ["select_ticket_type"], "consumers": ["process_tickets", "send-confirmation ticket resolution"], "classification": "domain" },
       "payment_reference": { "owner": "shared-payment", "producers": ["process_tickets/initializePayment"], "consumers": ["I've Paid", "retry_payment"], "classification": "shared", "stalePostback": "Recovery-gated" },
-      "_payment_retry_blocked": { "owner": "shared-payment", "classification": "shared", "persistence": "persistSessionDataOnFailure" },
-      "_action": { "owner": "shared-flow", "classification": "shared" },
-      "_retry_payment": { "owner": "shared-payment", "classification": "shared" }
+      "_payment_retry_blocked": { "owner": "shared-payment", "producers": ["I've Paid validate", "retry_payment validate"], "consumers": ["prompt gating", "retry_payment guard"], "classification": "shared", "persistence": "persistSessionDataOnFailure", "cleanup": "Cleared on definitive not_paid" },
+      "_action": { "owner": "shared-flow", "producers": ["validate()"], "consumers": ["next()"], "classification": "shared" },
+      "_retry_payment": { "owner": "shared-payment", "producers": ["retry_payment validate (on not_paid)"], "consumers": ["next() → process_tickets"], "classification": "shared" }
     },
     "persistence": "CAS via update_session_cas. Direct .update() for payment step advance.",
     "cleanup": "Session deactivated by Stage 3 or executor terminal."

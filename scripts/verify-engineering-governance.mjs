@@ -320,10 +320,27 @@ try {
                 }
               }
             }
-            // Validate session keys use per-key structure (not legacy arrays)
+            // Validate session keys use per-key structure with required fields
             if (contract.sessionKeys) {
-              if (!contract.sessionKeys.keys && !contract.sessionKeys.inheritsFrom) {
-                fail(`${contractPath}: sessionKeys must use per-key 'keys' object (not legacy domain/shared arrays)`);
+              if (!contract.sessionKeys.keys) {
+                fail(`${contractPath}: sessionKeys must have a 'keys' object`);
+              } else {
+                const requiredKeyFields = ['owner', 'producers', 'consumers', 'classification'];
+                const validClassifications = ['domain', 'shared'];
+                for (const [keyName, keyMeta] of Object.entries(contract.sessionKeys.keys)) {
+                  if (!keyMeta || typeof keyMeta !== 'object') {
+                    fail(`${contractPath}: sessionKeys.keys.${keyName} must be an object`);
+                    continue;
+                  }
+                  for (const field of requiredKeyFields) {
+                    if (!(field in keyMeta)) {
+                      fail(`${contractPath}: sessionKeys.keys.${keyName} missing required field '${field}'`);
+                    }
+                  }
+                  if (keyMeta.classification && !validClassifications.includes(keyMeta.classification)) {
+                    fail(`${contractPath}: sessionKeys.keys.${keyName} invalid classification '${keyMeta.classification}'`);
+                  }
+                }
               }
             }
           } catch (e) {
@@ -417,6 +434,8 @@ try {
       const requiredAccIds = Array.from({ length: 11 }, (_, i) => `ACC-${String(i + 1).padStart(3, '0')}`);
       const missingAcc = requiredAccIds.filter(id => !accIds.includes(id));
       if (missingAcc.length) fail('acceptance registry: missing required IDs: ' + missingAcc.join(', '));
+      const extraAcc = accIds.filter(id => !requiredAccIds.includes(id));
+      if (extraAcc.length) fail('acceptance registry: unexpected IDs (update requiredAccIds in validator before adding): ' + extraAcc.join(', '));
       const accValidStatuses = ['OPEN', 'RESOLVED', 'DEFERRED', 'IN_PROGRESS'];
       for (const f of accRegistry.findings) {
         if (!accValidStatuses.includes(f.status)) {

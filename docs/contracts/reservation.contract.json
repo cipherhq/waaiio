@@ -27,11 +27,11 @@
   "sessionKeys": {
     "keys": {
       "reservation_id": { "owner": "reservation", "producers": ["create step"], "consumers": ["cancel", "post-completion"], "classification": "domain" },
-      "check_in": { "owner": "reservation", "classification": "domain" },
-      "check_out": { "owner": "reservation", "classification": "domain" },
-      "payment_reference": { "owner": "shared-payment", "classification": "shared", "stalePostback": "Recovery-gated" },
-      "_payment_retry_blocked": { "owner": "shared-payment", "classification": "shared", "persistence": "persistSessionDataOnFailure" },
-      "_action": { "owner": "shared-flow", "classification": "shared" }
+      "check_in": { "owner": "reservation", "producers": ["select_dates"], "consumers": ["create step", "UX messages"], "classification": "domain" },
+      "check_out": { "owner": "reservation", "producers": ["select_dates"], "consumers": ["create step", "UX messages"], "classification": "domain" },
+      "payment_reference": { "owner": "shared-payment", "producers": ["initializePayment"], "consumers": ["I've Paid", "retry_payment"], "classification": "shared", "stalePostback": "Recovery-gated" },
+      "_payment_retry_blocked": { "owner": "shared-payment", "producers": ["I've Paid validate", "retry_payment validate"], "consumers": ["prompt gating", "retry_payment guard"], "classification": "shared", "persistence": "persistSessionDataOnFailure", "cleanup": "Cleared on definitive not_paid" },
+      "_action": { "owner": "shared-flow", "producers": ["validate()"], "consumers": ["next()"], "classification": "shared" }
     },
     "persistence": "CAS via update_session_cas. Direct .update() for payment step advance.",
     "cleanup": "Session deactivated by Stage 3 or executor terminal."
