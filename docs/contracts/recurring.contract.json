@@ -1,0 +1,79 @@
+{
+  "_schema": "waaiio-capability-contract-v1",
+  "id": "recurring",
+  "subscriptionTier": "growth",
+  "riskTier": "tier-1",
+  "flowType": null,
+  "flowFile": "lib/bot/flows/recurring-manage.flow.ts",
+  "notes": "Recurring setup is part of payment.flow.ts (offer_recurring/confirm_recurring/setup_recurring steps). recurring-manage.flow.ts handles subscription management ('subscriptions' keyword).",
+
+  "stateOwned": {
+    "write": ["customer_subscriptions", "subscription_charges", "processed_webhook_events"],
+    "read": ["businesses", "services", "customer_profiles"]
+  },
+
+  "authorities": {
+    "subscriptionCreation": {
+      "authority": "payment.flow.ts setup_recurring step",
+      "notes": "Creates customer_subscriptions row after first payment + consent."
+    },
+    "paystackRenewal": {
+      "authority": "Paystack auto-charges → webhook → reconcilePayment → authorizeAndFinalize",
+      "notes": "Full Payment Authority lifecycle. apply_payment_spend_once fires in Stage 2."
+    },
+    "flutterwaveRenewal": {
+      "authority": "processFlutterwaveRenewal → finalize_token_recurring_charge RPC",
+      "file": "lib/payments/flutterwave-renewal.ts",
+      "notes": "Creates booking + payment in SQL RPC. Platform fee computed in SQL. Calls sendProactiveConfirmation (Stage 3 only). DOES NOT call processSuccessfulPayment (Stage 2)."
+    },
+    "stripeRenewal": {
+      "authority": "Stripe auto-charges via provider subscription. Webhook → reconcilePayment.",
+      "notes": "Full Payment Authority lifecycle."
+    },
+    "customerSpend": {
+      "authority": "apply_payment_spend_once for Paystack/Stripe (via Stage 2). MISSING for Flutterwave (#164).",
+      "notes": "#164 regression: Flutterwave renewals skip Stage 2 entirely."
+    },
+    "subscriptionManagement": {
+      "authority": "recurring-manage.flow.ts",
+      "notes": "Pause/resume/cancel via bot keywords."
+    }
+  },
+
+  "forbiddenWrites": [
+    "customer_subscriptions.charge_count outside finalize_token_recurring_charge or Paystack/Stripe webhooks",
+    "customer_profiles.total_spent — use apply_payment_spend_once (not available for Flutterwave renewals currently)"
+  ],
+
+  "sessionKeys": {
+    "keys": {
+      "recurring_frequency": { "owner": "recurring", "producers": ["offer_recurring/confirm_recurring"], "consumers": ["setup_recurring"], "classification": "domain" },
+      "recurring_accepted": { "owner": "recurring", "producers": ["confirm_recurring"], "consumers": ["next() routing"], "classification": "domain" },
+      "_recurring_email_token": { "owner": "recurring", "producers": ["setup_recurring (Paystack)"], "consumers": ["subscription metadata"], "classification": "domain" },
+      "service_billing_type": { "owner": "payment", "producers": ["select_category"], "consumers": ["recurring routing (dead — #165)"], "classification": "shared" },
+      "service_recurring_interval": { "owner": "payment", "producers": ["select_category"], "consumers": ["recurring routing (dead — #165)"], "classification": "shared" },
+      "payment_reference": { "owner": "shared-payment", "producers": ["process_payment/initializePayment"], "consumers": ["recurring setup (authorization extraction)"], "classification": "shared" }
+    },
+    "persistence": "CAS via update_session_cas.",
+    "cleanup": "Session deactivated by executor terminal step.",
+    "notes": "Recurring setup steps (offer_recurring, confirm_recurring, setup_recurring) live in payment.flow.ts. recurring-manage.flow.ts handles subscription management via 'subscriptions' keyword in a separate session."
+  },
+
+  "dashboardSurfaces": ["/dashboard/recurring"],
+  "apiRoutes": ["/api/subscriptions/*"],
+  "webhookDependencies": ["Paystack charge.success webhook", "Stripe invoice.paid webhook"],
+  "cronDependencies": ["app/api/cron/retry-failed-charges/route.ts"],
+
+  "supportedCombinations": ["recurring + payment", "recurring + giving"],
+
+  "requiredTestsOnChange": [
+    "lib/bot/flows/__tests__/recurring-giving.flow.test.ts",
+    "lib/__tests__/flutterwave-renewal-executable.test.ts",
+    "lib/__tests__/recurring-billing-db.test.ts"
+  ],
+
+  "knownDebt": [
+    "#164 — Flutterwave recurring renewals skip Stage 2 (apply_payment_spend_once never called)",
+    "#165 — Recurring continuation after Stage 3 session deactivation is dead code"
+  ]
+}

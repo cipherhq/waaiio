@@ -1,0 +1,57 @@
+{
+  "_schema": "waaiio-capability-contract-v1",
+  "id": "ticketing",
+  "subscriptionTier": "free",
+  "riskTier": "tier-1",
+  "flowType": "ticketing",
+  "flowFile": "lib/bot/flows/ticketing.flow.ts",
+
+  "stateOwned": {
+    "write": ["bookings (flow_type='ticketing')", "tickets", "bot_sessions.session_data"],
+    "read": ["events", "event_ticket_types", "businesses", "services"]
+  },
+
+  "authorities": {
+    "initialCreation": { "authority": "ticketing.flow.ts process_tickets step", "notes": "Free events: created directly as status='confirmed'. Paid: created as status='pending'. Free confirmed-write is legitimate." },
+    "paidConfirmation": { "authority": "processSuccessfulPayment (via Payment Authority)" },
+    "ticketInventory": { "authority": "ensurePaidTicketState (Stage 2, calls finalize_free_ticket_booking RPC) + Stage 3 finalize_free_ticket_booking (redundant/belt-and-suspenders)", "file": "lib/payments/ticket-business-state.ts:105, lib/payments/send-confirmation.ts:723", "notes": "finalize_free_ticket_booking called from BOTH Stage 2 (ticket-business-state.ts) and Stage 3 (send-confirmation.ts). RPC is idempotent." },
+    "ticketDelivery": { "authority": "sendTicketsAfterPurchase in sendProactiveConfirmation (Stage 3)" },
+    "customerSpend": { "authority": "apply_payment_spend_once (migration 334)" },
+    "providerVerification": { "authority": "verifyAndReconcilePayment (PR #160)" },
+    "retryPaymentGate": { "authority": "Recovery-gated retry_payment (PR #170 / #168)" },
+    "cancellation": { "authority": "CAS-guarded cancel in await_ticket_payment (PR #160)" }
+  },
+
+  "forbiddenWrites": [
+    "events.tickets_sold — use finalize_free_ticket_booking RPC",
+    "customer_profiles.total_spent — use apply_payment_spend_once"
+  ],
+
+  "sessionKeys": {
+    "keys": {
+      "event_id": { "owner": "ticketing", "producers": ["select_event"], "consumers": ["process_tickets"], "classification": "domain" },
+      "event_name": { "owner": "ticketing", "producers": ["select_event"], "consumers": ["UX messages"], "classification": "domain" },
+      "ticket_quantity": { "owner": "ticketing", "producers": ["select_quantity"], "consumers": ["process_tickets"], "classification": "domain" },
+      "ticket_type_id": { "owner": "ticketing", "producers": ["select_ticket_type"], "consumers": ["process_tickets", "send-confirmation ticket resolution"], "classification": "domain" },
+      "payment_reference": { "owner": "shared-payment", "producers": ["process_tickets/initializePayment"], "consumers": ["I've Paid", "retry_payment"], "classification": "shared", "stalePostback": "Recovery-gated" },
+      "_payment_retry_blocked": { "owner": "shared-payment", "producers": ["I've Paid validate", "retry_payment validate"], "consumers": ["prompt gating", "retry_payment guard"], "classification": "shared", "persistence": "persistSessionDataOnFailure", "cleanup": "Cleared on definitive not_paid" },
+      "_action": { "owner": "shared-flow", "producers": ["validate()"], "consumers": ["next()"], "classification": "shared" },
+      "_retry_payment": { "owner": "shared-payment", "producers": ["retry_payment validate (on not_paid)"], "consumers": ["next() → process_tickets"], "classification": "shared" }
+    },
+    "persistence": "CAS via update_session_cas. Direct .update() for payment step advance.",
+    "cleanup": "Session deactivated by Stage 3 or executor terminal."
+  },
+
+  "dashboardSurfaces": ["/dashboard/events", "/dashboard/tickets"],
+  "webhookDependencies": ["payment webhooks (all 5 gateways)"],
+
+  "supportedCombinations": ["ticketing alone (free events)", "ticketing + payment (paid events)", "ticketing + typed tickets"],
+
+  "requiredTestsOnChange": [
+    "lib/bot/flows/__tests__/payment-convergence-scheduling-ticketing.test.ts",
+    "lib/bot/flows/__tests__/recovery-gated-retry.test.ts",
+    "lib/__tests__/urgent-payment-ticket-hotfix.test.ts"
+  ],
+
+  "knownDebt": []
+}

@@ -1,0 +1,90 @@
+{
+  "_schema": "waaiio-capability-contract-v1",
+  "id": "ordering",
+  "subscriptionTier": "free",
+  "riskTier": "tier-1",
+  "flowType": "ordering",
+  "flowFile": "lib/bot/flows/ordering.flow.ts",
+
+  "stateOwned": {
+    "write": ["orders", "order_items", "bot_sessions.session_data"],
+    "read": ["products", "product_variants", "businesses", "customer_profiles", "promo_codes", "promo_reservations"]
+  },
+
+  "authorities": {
+    "orderCreation": { "authority": "ordering.flow.ts confirm_order step", "notes": "Creates order with status='pending'." },
+    "orderConfirmation": {
+      "authority": "apply_order_stock_once RPC (migration 333)",
+      "notes": "SOLE authority for pending→confirmed. Serialized with cancel_stale_order_atomic via FOR UPDATE. Also decrements stock."
+    },
+    "cancellation": {
+      "authority": "CAS-guarded cancel in ordering.flow.ts + cancel_stale_order_atomic cron",
+      "notes": "Cancel only while status IN ('pending')."
+    },
+    "customerSpend": {
+      "authority": "apply_customer_spend_once RPC (migration 333)",
+      "notes": "Durable per-order marker in order_spend_applications. Called from processSuccessfulPayment."
+    },
+    "platformFee": { "authority": "recordPlatformFee in processSuccessfulPayment" },
+    "promoFinalization": {
+      "authority": "finalize_promo_reservation RPC",
+      "notes": "reserved→finalized. Critical for promo capacity accuracy."
+    },
+    "referralConversion": {
+      "authority": "processSuccessfulPayment referral section",
+      "notes": "pending→converted with status='pending' guard."
+    },
+    "providerVerification": {
+      "authority": "reconcilePayment (ordering.flow.ts calls it directly)",
+      "file": "lib/bot/flows/ordering.flow.ts",
+      "notes": "Ordering I've Paid uses reconcilePayment directly, not verifyAndReconcilePayment."
+    },
+    "automation": {
+      "authority": "evaluateRules in processSuccessfulPayment (payment_received event)",
+      "notes": "order_created/after_order fire at creation. payment_received fires at Stage 2."
+    }
+  },
+
+  "forbiddenWrites": [
+    "orders.status outside apply_order_stock_once and cancel CAS",
+    "order_items.quantity outside ordering.flow.ts cart management",
+    "customer_profiles.total_spent — use apply_customer_spend_once"
+  ],
+
+  "sessionKeys": {
+    "keys": {
+      "cart_items": { "owner": "ordering", "producers": ["add_to_cart"], "consumers": ["confirm_order", "UX summary"], "classification": "domain" },
+      "order_id": { "owner": "ordering", "producers": ["confirm_order"], "consumers": ["payment", "cancel", "post-completion"], "classification": "domain" },
+      "order_reference": { "owner": "ordering", "producers": ["confirm_order"], "consumers": ["UX messages"], "classification": "domain" },
+      "delivery_name": { "owner": "ordering", "producers": ["collect_delivery"], "consumers": ["confirm_order"], "classification": "domain" },
+      "delivery_phone": { "owner": "ordering", "producers": ["collect_delivery"], "consumers": ["confirm_order"], "classification": "domain" },
+      "delivery_address": { "owner": "ordering", "producers": ["collect_delivery"], "consumers": ["confirm_order"], "classification": "domain" },
+      "promo_code": { "owner": "ordering", "producers": ["apply_promo"], "consumers": ["confirm_order"], "classification": "domain" },
+      "referral_id": { "owner": "ordering", "producers": ["apply_referral"], "consumers": ["processSuccessfulPayment referral conversion"], "classification": "domain" },
+      "payment_reference": { "owner": "shared-payment", "producers": ["initializePayment"], "consumers": ["I've Paid", "reconcilePayment"], "classification": "shared", "stalePostback": "Ordering uses reconcilePayment directly (not verifyAndReconcilePayment)" },
+      "_payment_retry_blocked": { "owner": "shared-payment", "producers": ["I've Paid validate"], "consumers": ["prompt gating"], "classification": "shared", "persistence": "persistSessionDataOnFailure" },
+      "_action": { "owner": "shared-flow", "producers": ["validate()"], "consumers": ["next()"], "classification": "shared" },
+      "active_capability": { "owner": "executor", "producers": ["capability-selection"], "consumers": ["executor CAS-007 auth"], "classification": "shared" },
+      "bank_transfer_reference": { "owner": "shared-payment", "producers": ["payment step bank-transfer"], "consumers": ["transfer proof handling", "cancel guard"], "classification": "shared" }
+    },
+    "persistence": "CAS via update_session_cas. Direct .update() for payment step advance.",
+    "cleanup": "Session deactivated by Stage 3 or executor terminal."
+  },
+
+  "dashboardSurfaces": ["/dashboard/orders", "/dashboard/products"],
+  "apiRoutes": ["/api/orders/*", "/api/products/*"],
+  "webhookDependencies": ["payment webhooks (all 5 gateways)"],
+
+  "supportedCombinations": ["ordering alone (offline/cash)", "ordering + payment (online checkout)", "ordering + promo"],
+
+  "requiredTestsOnChange": [
+    "lib/bot/flows/__tests__/acc-008-order-checkout-bypass.test.ts",
+    "lib/__tests__/order-stock-authority.test.ts",
+    "lib/payments/__tests__/process-success-finalization.test.ts"
+  ],
+
+  "knownDebt": [
+    "ACC-008 — Order checkout bypass (resolved in PR #156)",
+    "Ordering I've Paid uses reconcilePayment directly rather than verifyAndReconcilePayment adapter"
+  ]
+}

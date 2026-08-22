@@ -1,0 +1,89 @@
+{
+  "_schema": "waaiio-capability-contract-v1",
+  "id": "payment",
+  "subscriptionTier": "free",
+  "riskTier": "tier-1",
+  "flowType": "payment",
+  "flowFile": "lib/bot/flows/payment.flow.ts",
+
+  "stateOwned": {
+    "write": ["bookings (flow_type='payment')", "bot_sessions.session_data"],
+    "read": ["services", "businesses", "customer_profiles", "profiles"]
+  },
+
+  "authorities": {
+    "bookingCreation": {
+      "authority": "payment.flow.ts process_payment step",
+      "notes": "Creates booking with flow_type='payment', status='pending'. New booking on every retry."
+    },
+    "paidConfirmation": {
+      "authority": "processSuccessfulPayment (via Payment Authority)",
+      "file": "lib/payments/process-success.ts"
+    },
+    "cancellation": {
+      "authority": "CAS-guarded cancel in await_payment (PR #169)",
+      "notes": "Cancel only while status IN ('pending'). Zero-row re-read + already_confirmed/cancelled/fail-closed."
+    },
+    "customerSpend": {
+      "authority": "apply_payment_spend_once (migration 334)",
+      "notes": "Durable per-payment marker. Called from processSuccessfulPayment."
+    },
+    "postCompletion": {
+      "authority": "handlePostCompletion via sendProactiveConfirmation (Stage 3)",
+      "notes": "skipCustomerSpend=true. skipLoyalty NOT set (see #167 known gap)."
+    },
+    "providerVerification": {
+      "authority": "verifyAndReconcilePayment (PR #169)",
+      "notes": "I've Paid converges through canonical Payment Authority."
+    },
+    "retryPaymentGate": {
+      "authority": "Recovery-gated retry_payment (PR #170 / #168)",
+      "notes": "Only definitive not_paid authorizes replacement checkout. No-reference fails closed."
+    }
+  },
+
+  "forbiddenWrites": [
+    "customer_profiles.total_spent — use apply_payment_spend_once (raw mutation removed in PR #169)",
+    "Standalone recordPlatformFee — handled by processSuccessfulPayment",
+    "Standalone handlePostCompletion — handled by Stage 3",
+    "Standalone notifyOwnerNewPayment from I've Paid — handled by Stage 3"
+  ],
+
+  "sessionKeys": {
+    "keys": {
+      "booking_id": { "owner": "payment", "producers": ["process_payment"], "consumers": ["cancel", "post-completion"], "classification": "domain" },
+      "reference_code": { "owner": "payment", "producers": ["process_payment"], "consumers": ["UX messages"], "classification": "domain" },
+      "amount": { "owner": "payment", "producers": ["enter_amount/confirm_amount"], "consumers": ["process_payment", "UX"], "classification": "domain" },
+      "service_billing_type": { "owner": "payment", "producers": ["select_category"], "consumers": ["recurring routing (dead — #165)"], "classification": "domain" },
+      "payment_reference": { "owner": "shared-payment", "producers": ["process_payment/initializePayment"], "consumers": ["I've Paid", "retry_payment", "bot-recovery"], "classification": "shared", "stalePostback": "Recovery-gated" },
+      "_payment_retry_blocked": { "owner": "shared-payment", "producers": ["I've Paid/retry_payment validate"], "consumers": ["prompt gating", "retry_payment guard"], "classification": "shared", "persistence": "persistSessionDataOnFailure", "cleanup": "Cleared on not_paid" },
+      "_action": { "owner": "shared-flow", "producers": ["validate()"], "consumers": ["next()"], "classification": "shared" },
+      "active_capability": { "owner": "executor", "producers": ["capability-selection"], "consumers": ["giving vs payment UX distinction"], "classification": "shared" }
+    },
+    "persistence": "CAS via update_session_cas. Direct .update() for payment step advance (bypasses CAS — known debt).",
+    "cleanup": "Session deactivated by Stage 3. _payment_retry_blocked persisted via persistSessionDataOnFailure."
+  },
+
+  "dashboardSurfaces": ["/dashboard/payments"],
+  "apiRoutes": ["/api/bookings/*", "/api/services/*"],
+  "webhookDependencies": ["payment webhooks (all 5 gateways)"],
+
+  "supportedCombinations": [
+    "payment alone (generic payment)",
+    "giving (payment with active_capability='giving', service_type='giving')"
+  ],
+
+  "requiredTestsOnChange": [
+    "lib/bot/flows/__tests__/payment-convergence-giving.test.ts",
+    "lib/bot/flows/__tests__/recovery-gated-retry.test.ts",
+    "lib/bot/flows/__tests__/recurring-giving.flow.test.ts",
+    "lib/__tests__/spend-marker-application-boundary.test.ts",
+    "lib/payments/__tests__/recovery-outcome-fidelity.test.ts"
+  ],
+
+  "knownDebt": [
+    "#166 — Stage 3 sends notifyOwnerNewBooking (type: new_booking) for payment/giving; should be notifyOwnerNewPayment (type: payment_received)",
+    "#167 — Stage 3 does not pass skipLoyalty for Direct Giving",
+    "#165 — Recurring continuation after Stage 3 session deactivation is dead code"
+  ]
+}
