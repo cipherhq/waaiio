@@ -142,14 +142,15 @@ describe('await_payment.validate — I\'ve Paid authority convergence', () => {
     expect(result.data?._action).toBe('payment_processing');
   });
 
-  it('not_verified: non-success retry UX', async () => {
+  it('not_verified: neutral error UX (does not claim unpaid)', async () => {
     mockRecovery.mockResolvedValue({ outcome: 'not_verified' });
     const ctx = buildCtx();
 
     const result = await step.validate('i_paid', ctx);
 
     expect(result.valid).toBe(false);
-    expect(result.errorMessage).toContain('not yet received');
+    expect(result.errorMessage).toContain('Something went wrong');
+    expect(result.errorMessage).not.toContain('not yet received');
   });
 });
 
