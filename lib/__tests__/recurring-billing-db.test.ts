@@ -16,6 +16,8 @@ import * as path from 'path';
 
 const MIGRATION_PATH = path.resolve('supabase/migrations/305_annual_subscriptions_loyalty.sql');
 const MIGRATION_306_PATH = path.resolve('supabase/migrations/306_concurrent_finalizer_lock.sql');
+const MIGRATION_334_PATH = path.resolve('supabase/migrations/334_payment_spend_marker.sql');
+const MIGRATION_335_PATH = path.resolve('supabase/migrations/335_recurring_spend_finalization.sql');
 const dbUrl = process.env.TEST_DATABASE_URL;
 
 function psql(sql: string): string {
@@ -106,10 +108,10 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
       CREATE TABLE IF NOT EXISTS payments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID, user_id UUID,
-        booking_id UUID, amount NUMERIC(12,2), currency TEXT, gateway TEXT,
+        booking_id UUID, reservation_id UUID, amount NUMERIC(12,2), currency TEXT, gateway TEXT,
         gateway_reference TEXT UNIQUE, status TEXT DEFAULT 'pending',
         gateway_status TEXT, payment_method TEXT, card_last_four TEXT, card_brand TEXT,
-        paid_at TIMESTAMPTZ, metadata JSONB
+        paid_at TIMESTAMPTZ, metadata JSONB, payment_authority_version INT
       );
       CREATE TABLE IF NOT EXISTS subscription_charges (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), subscription_id UUID,
@@ -133,15 +135,46 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         recurring_interval TEXT
       );
+      -- #164: spend marker + customer profiles tables
+      CREATE TABLE IF NOT EXISTS payment_spend_applications (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        payment_id UUID NOT NULL UNIQUE,
+        source_type TEXT NOT NULL CHECK (source_type IN ('booking', 'reservation')),
+        source_id UUID NOT NULL,
+        business_id UUID NOT NULL,
+        customer_phone TEXT NOT NULL,
+        amount INTEGER NOT NULL DEFAULT 0,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS customer_profiles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID NOT NULL,
+        phone TEXT NOT NULL,
+        name TEXT,
+        total_spent NUMERIC(12,2) DEFAULT 0,
+        total_visits INT DEFAULT 0,
+        total_bookings INT DEFAULT 0,
+        last_seen_at TIMESTAMPTZ,
+        first_seen_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ,
+        UNIQUE(business_id, phone)
+      );
+      CREATE TABLE IF NOT EXISTS reservations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID, guest_phone TEXT, guest_name TEXT, status TEXT DEFAULT 'pending'
+      );
+
       INSERT INTO businesses (id) VALUES ('${BIZ_ID}') ON CONFLICT DO NOTHING;
     `);
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_306_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
+    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_334_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
+    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_335_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
   });
 
   afterAll(() => {
     if (!dbUrl) return;
-    psql(`DROP TABLE IF EXISTS platform_fees, subscription_charges, payments, bookings, customer_subscriptions, processed_webhook_events, platform_settings, services, businesses CASCADE;`);
+    psql(`DROP TABLE IF EXISTS payment_spend_applications, customer_profiles, reservations, platform_fees, subscription_charges, payments, bookings, customer_subscriptions, processed_webhook_events, platform_settings, services, businesses CASCADE;`);
   });
 
   it('1. concurrent claim → exactly one wins', async () => {
@@ -942,5 +975,168 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     // No uniqueness violation escaped — both returned clean JSON, not errors
     expect(a.stdout).toContain('"success"');
     expect(b.stdout).toContain('"success"');
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // #164: RECURRING SPEND FINALIZATION TESTS
+  // Proves apply_payment_spend_once executes atomically inside
+  // finalize_token_recurring_charge after migration 335.
+  // ═══════════════════════════════════════════════════════════
+
+  const SPEND_SUB_ID = '64dddddd-dddd-dddd-dddd-dddddddddddd';
+  const SPEND_BIZ_ID = BIZ_ID;
+  const SPEND_USER_ID = USER_ID;
+  const SPEND_STABLE_REF = `flw-${SPEND_SUB_ID}-2026-09-15`;
+
+  it('#164: fresh finalization creates spend marker + increments total_spent', () => {
+    // Clean state
+    psql(`DELETE FROM payment_spend_applications; DELETE FROM customer_profiles WHERE business_id = '${SPEND_BIZ_ID}';`);
+    psql(`DELETE FROM processed_webhook_events WHERE event_id = '${SPEND_STABLE_REF}';`);
+    psql(`DELETE FROM subscription_charges; DELETE FROM platform_fees; DELETE FROM payments; DELETE FROM bookings;`);
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${SPEND_SUB_ID}';`);
+
+    // Create subscription with guest_phone for spend authority
+    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, frequency, status, gateway, customer_phone, customer_name, next_charge_at)
+          VALUES ('${SPEND_SUB_ID}', '${SPEND_BIZ_ID}', '${SPEND_USER_ID}', 100, 'monthly', 'active', 'flutterwave', '+2349012345678', 'Test Customer', NOW() - INTERVAL '1 hour');`);
+
+    // Claim
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SPEND_SUB_ID}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+
+    // Set attempt ref (required for finalization)
+    psql(`UPDATE processed_webhook_events SET last_error = 'flw-attempt-spend-1' WHERE event_id = '${claim.stable_ref}';`);
+
+    // Finalize — should create payment + spend atomically
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claim.stable_ref}', '${SPEND_SUB_ID}'::uuid, 100, 'NGN', 'flutterwave', 'flw-attempt-spend-1');`);
+    expect(r.success).toBe(true);
+    expect(r.already_finalized).toBe(false);
+    expect(r.payment_id).toBeTruthy();
+
+    // Verify spend marker exists
+    const spendCount = psql(`SELECT COUNT(*) FROM payment_spend_applications WHERE payment_id = '${r.payment_id}';`);
+    expect(spendCount).toBe('1');
+
+    // Verify customer_profiles.total_spent was incremented
+    const totalSpent = psql(`SELECT total_spent FROM customer_profiles WHERE business_id = '${SPEND_BIZ_ID}' AND phone = '+2349012345678';`);
+    expect(parseFloat(totalSpent)).toBe(100);
+
+    // Verify amount came from payments.amount (DB-authoritative)
+    const paymentAmount = psql(`SELECT amount FROM payments WHERE id = '${r.payment_id}';`);
+    expect(parseFloat(paymentAmount)).toBe(100);
+    const spendAmount = psql(`SELECT amount FROM payment_spend_applications WHERE payment_id = '${r.payment_id}';`);
+    expect(parseInt(spendAmount)).toBe(100);
+  });
+
+  it('#164: already-finalized replay does NOT double-spend', () => {
+    // Find the completed event from test 1
+    const completedRef = psql(`SELECT event_id FROM processed_webhook_events WHERE event_id LIKE 'flw-${SPEND_SUB_ID}-%' AND status = 'completed' LIMIT 1;`);
+    expect(completedRef).toBeTruthy();
+
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${completedRef}', '${SPEND_SUB_ID}'::uuid, 100, 'NGN', 'flutterwave');`);
+    expect(r.success).toBe(true);
+    expect(r.already_finalized).toBe(true);
+
+    // Spend marker still exactly 1 for the payment
+    const spendCount = psql(`SELECT COUNT(*) FROM payment_spend_applications WHERE payment_id = '${r.payment_id}';`);
+    expect(spendCount).toBe('1');
+
+    // total_spent unchanged (still 100, not 200)
+    const totalSpent = psql(`SELECT total_spent FROM customer_profiles WHERE business_id = '${SPEND_BIZ_ID}' AND phone = '+2349012345678';`);
+    expect(parseFloat(totalSpent)).toBe(100);
+  });
+
+  it('#164: validation failure prevents any partial state (no spend, no payment)', () => {
+    // Use a separate subscription to avoid stale claim/event conflicts
+    const valSubId = '64eeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${valSubId}';`);
+    psql(`DELETE FROM processed_webhook_events WHERE event_id LIKE 'flw-${valSubId}-%';`);
+    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, frequency, status, gateway, customer_phone, next_charge_at)
+          VALUES ('${valSubId}', '${SPEND_BIZ_ID}', '${SPEND_USER_ID}', 100, 'monthly', 'active', 'flutterwave', '+2349012345678', NOW() - INTERVAL '1 hour');`);
+
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${valSubId}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+    psql(`UPDATE processed_webhook_events SET last_error = 'flw-attempt-val-fail' WHERE event_id = '${claim.stable_ref}';`);
+
+    // Amount mismatch: subscription has 100, we pass 999
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claim.stable_ref}', '${valSubId}'::uuid, 999, 'NGN', 'flutterwave', 'flw-attempt-val-fail');`);
+    expect(r.success).toBe(false);
+    expect(r.reason).toBe('amount_mismatch');
+
+    // No payment created for this attempt
+    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'flw-attempt-val-fail';`);
+    expect(paymentCount).toBe('0');
+
+    // Event is NOT completed
+    const eventStatus = psql(`SELECT status FROM processed_webhook_events WHERE event_id = '${claim.stable_ref}';`);
+    expect(eventStatus).not.toBe('completed');
+
+    // Cleanup
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${valSubId}';`);
+  });
+
+  it('#164: spend failure AFTER payment creation rolls back entire transaction', () => {
+    // Fault injection: temporarily replace apply_payment_spend_once with a
+    // version that always raises, then restore it after the test.
+    // This proves the F1 transactional invariant: if spend fails after
+    // payment INSERT, the entire finalization rolls back.
+    const faultSubId = '64ffffff-ffff-ffff-ffff-ffffffffffff';
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    psql(`DELETE FROM processed_webhook_events WHERE event_id LIKE 'flw-${faultSubId}-%';`);
+    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, frequency, status, gateway, customer_phone, customer_name, next_charge_at)
+          VALUES ('${faultSubId}', '${SPEND_BIZ_ID}', '${SPEND_USER_ID}', 75, 'monthly', 'active', 'flutterwave', '+2340001112222', 'Fault Test', NOW() - INTERVAL '1 hour');`);
+
+    // Record pre-test subscription state
+    const preChargeCount = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    const preTotalCharged = psql(`SELECT total_charged FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    const preNextCharge = psql(`SELECT next_charge_at FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${faultSubId}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+    psql(`UPDATE processed_webhook_events SET last_error = 'flw-fault-attempt' WHERE event_id = '${claim.stable_ref}';`);
+
+    // Inject a fault: replace apply_payment_spend_once with a version that always raises
+    psql(`
+      CREATE OR REPLACE FUNCTION apply_payment_spend_once(p_payment_id UUID) RETURNS JSONB
+      LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+      BEGIN RAISE EXCEPTION 'FAULT_INJECTION: spend authority failure for test'; END; $fn$;
+    `);
+
+    // Finalization should RAISE because the injected spend function always fails
+    let threw = false;
+    try {
+      psqlJson(`SELECT finalize_token_recurring_charge('${claim.stable_ref}', '${faultSubId}'::uuid, 75, 'NGN', 'flutterwave', 'flw-fault-attempt');`);
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+
+    // Restore the real function by re-applying migration 334
+    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_334_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
+
+    // Verify FULL rollback: no payment, no booking, no spend marker
+    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'flw-fault-attempt';`);
+    expect(paymentCount).toBe('0');
+
+    const bookingCount = psql(`SELECT COUNT(*) FROM bookings WHERE guest_phone = '+2340001112222' AND notes LIKE '%Recurring%';`);
+    expect(bookingCount).toBe('0');
+
+    const spendCount = psql(`SELECT COUNT(*) FROM payment_spend_applications WHERE customer_phone = '+2340001112222';`);
+    expect(spendCount).toBe('0');
+
+    // Event is NOT completed
+    const eventStatus = psql(`SELECT status FROM processed_webhook_events WHERE event_id = '${claim.stable_ref}';`);
+    expect(eventStatus).not.toBe('completed');
+
+    // Subscription charge_count/total_charged/next_charge unchanged
+    const postChargeCount = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    const postTotalCharged = psql(`SELECT total_charged FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    const postNextCharge = psql(`SELECT next_charge_at FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    expect(postChargeCount).toBe(preChargeCount);
+    expect(postTotalCharged).toBe(preTotalCharged);
+    expect(postNextCharge).toBe(preNextCharge);
+
+    // Cleanup
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    psql(`DROP FUNCTION IF EXISTS _original_apply_payment_spend_once(UUID);`);
   });
 });
