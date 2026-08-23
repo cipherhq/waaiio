@@ -1046,8 +1046,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
   });
 
   it('#164: validation failure prevents any partial state (no spend, no payment)', () => {
-    // Use amount mismatch to trigger a clean validation failure
-    // This proves the "fail before spend" path leaves no state
+    // Clean up events from prior tests so claim can succeed
+    psql(`DELETE FROM processed_webhook_events WHERE event_id LIKE 'flw-${SPEND_SUB_ID}-%' AND status != 'completed';`);
     psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', failure_count = 0, amount = 100, next_charge_at = '2026-10-14T10:00:00Z' WHERE id = '${SPEND_SUB_ID}';`);
 
     const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SPEND_SUB_ID}'::uuid);`);
