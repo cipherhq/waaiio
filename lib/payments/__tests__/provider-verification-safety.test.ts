@@ -442,6 +442,84 @@ describe('PayPal verification safety', () => {
 });
 
 // ═══════════════════════════════════════════════════════════
+// MALFORMED RESPONSE BODY — response.json() throws
+// Distinct from network errors (fetch() throws).
+// Proves the catch block in each adapter handles JSON parse failure.
+// ═══════════════════════════════════════════════════════════
+
+function malformedResponse() {
+  return { ok: true, status: 200, json: () => { throw new SyntaxError('Unexpected token < in JSON'); } };
+}
+
+describe('Malformed response body → retryable_error (NOT not_paid)', () => {
+  it('Paystack: malformed JSON → retryable_error', async () => {
+    mockFetch.mockResolvedValueOnce(malformedResponse());
+    // eslint-disable-next-line
+    const r = await verifyWithProvider(buildSupabase() as any, { provider: 'paystack', gatewayReference: 'REF-1', ...BASE_OPTS });
+    expect(r.status).toBe('retryable_error');
+    expect(r.status).not.toBe('not_paid');
+  });
+
+  it('Stripe: malformed JSON → retryable_error', async () => {
+    mockFetch.mockResolvedValueOnce(malformedResponse());
+    // eslint-disable-next-line
+    const r = await verifyWithProvider(buildSupabase() as any, {
+      provider: 'stripe', gatewayReference: 'cs_test_1', expectedAmount: 5000, expectedCurrency: 'USD',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-1',
+    });
+    expect(r.status).toBe('retryable_error');
+    expect(r.status).not.toBe('not_paid');
+  });
+
+  it('Flutterwave: malformed JSON → retryable_error', async () => {
+    mockFetch.mockResolvedValueOnce(malformedResponse());
+    // eslint-disable-next-line
+    const r = await verifyWithProvider(buildSupabase() as any, {
+      provider: 'flutterwave', gatewayReference: 'FLW-1', expectedAmount: 5000, expectedCurrency: 'NGN',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-1',
+    });
+    expect(r.status).toBe('retryable_error');
+    expect(r.status).not.toBe('not_paid');
+  });
+
+  it('Square: malformed JSON → retryable_error', async () => {
+    mockFetch.mockResolvedValueOnce(malformedResponse());
+    // eslint-disable-next-line
+    const r = await verifyWithProvider(buildSupabase() as any, {
+      provider: 'square', gatewayReference: 'SQ-1', expectedAmount: 5000, expectedCurrency: 'USD',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-1',
+    });
+    expect(r.status).toBe('retryable_error');
+    expect(r.status).not.toBe('not_paid');
+  });
+
+  it('PayPal OAuth: malformed JSON → retryable_error', async () => {
+    mockFetch.mockResolvedValueOnce(malformedResponse());
+    // eslint-disable-next-line
+    const r = await verifyWithProvider(buildSupabase() as any, {
+      provider: 'paypal', gatewayReference: 'PP-1', expectedAmount: 50, expectedCurrency: 'USD',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-1',
+    });
+    expect(r.status).toBe('retryable_error');
+    expect(r.status).not.toBe('not_paid');
+  });
+
+  it('PayPal Order (after valid OAuth): malformed JSON → retryable_error', async () => {
+    // Valid OAuth response, then malformed order response
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ access_token: 'tok' }) })
+      .mockResolvedValueOnce(malformedResponse());
+    // eslint-disable-next-line
+    const r = await verifyWithProvider(buildSupabase() as any, {
+      provider: 'paypal', gatewayReference: 'PP-2', expectedAmount: 50, expectedCurrency: 'USD',
+      paymentMetadata: {}, isNewAuthority: false, businessId: 'biz-1',
+    });
+    expect(r.status).toBe('retryable_error');
+    expect(r.status).not.toBe('not_paid');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
 // CROSS-CUTTING: no outcome can bypass #168 gate
 // ═══════════════════════════════════════════════════════════
 
