@@ -1046,29 +1046,31 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
   });
 
   it('#164: validation failure prevents any partial state (no spend, no payment)', () => {
-    // Clean up events from prior tests so claim can succeed
-    psql(`DELETE FROM processed_webhook_events WHERE event_id LIKE 'flw-${SPEND_SUB_ID}-%' AND status != 'completed';`);
-    psql(`UPDATE customer_subscriptions SET status = 'active', gateway = 'flutterwave', failure_count = 0, amount = 100, next_charge_at = '2026-10-14T10:00:00Z' WHERE id = '${SPEND_SUB_ID}';`);
+    // Use a separate subscription to avoid stale claim/event conflicts
+    const valSubId = '64eeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${valSubId}';`);
+    psql(`DELETE FROM processed_webhook_events WHERE event_id LIKE 'flw-${valSubId}-%';`);
+    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, frequency, status, gateway, customer_phone, next_charge_at)
+          VALUES ('${valSubId}', '${SPEND_BIZ_ID}', '${SPEND_USER_ID}', 100, 'monthly', 'active', 'flutterwave', '+2349012345678', NOW() - INTERVAL '1 hour');`);
 
-    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${SPEND_SUB_ID}'::uuid);`);
+    const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${valSubId}'::uuid);`);
     expect(claim.claimed).toBe(true);
     psql(`UPDATE processed_webhook_events SET last_error = 'flw-attempt-val-fail' WHERE event_id = '${claim.stable_ref}';`);
 
     // Amount mismatch: subscription has 100, we pass 999
-    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claim.stable_ref}', '${SPEND_SUB_ID}'::uuid, 999, 'NGN', 'flutterwave', 'flw-attempt-val-fail');`);
+    const r = psqlJson(`SELECT finalize_token_recurring_charge('${claim.stable_ref}', '${valSubId}'::uuid, 999, 'NGN', 'flutterwave', 'flw-attempt-val-fail');`);
     expect(r.success).toBe(false);
     expect(r.reason).toBe('amount_mismatch');
 
-    // No payment, no booking, no spend marker created
+    // No payment created for this attempt
     const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'flw-attempt-val-fail';`);
     expect(paymentCount).toBe('0');
-
-    const spendCountAfterFail = psql(`SELECT COUNT(*) FROM payment_spend_applications;`);
-    // Should only have the one from test 1 (total count may vary, but no new ones for this attempt)
-    expect(parseInt(spendCountAfterFail)).toBeGreaterThanOrEqual(0); // At least no crash
 
     // Event is NOT completed
     const eventStatus = psql(`SELECT status FROM processed_webhook_events WHERE event_id = '${claim.stable_ref}';`);
     expect(eventStatus).not.toBe('completed');
+
+    // Cleanup
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${valSubId}';`);
   });
 });
