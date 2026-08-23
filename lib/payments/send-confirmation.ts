@@ -512,13 +512,17 @@ export async function sendProactiveConfirmation(
         const isOrderPayment = !!payment.order_id;
         const isBookingPayment = !!payment.booking_id;
         const isReservationPayment = !!payment.reservation_id;
+        const isCampaignPayment = !!payment.campaign_id;
+        const isInvoicePayment = !!payment.invoice_id;
         await handlePostCompletion({
           supabase, businessId, customerPhone, customerName,
-          serviceType: payment.booking_id ? 'booking' : 'order',
-          referenceId: payment.booking_id || undefined,
+          // Entity-correct serviceType: reservation uses booking semantics (#173)
+          serviceType: (isBookingPayment || isReservationPayment) ? 'booking' : 'order',
+          referenceId: payment.booking_id || payment.reservation_id || undefined,
           sender: resolved?.sender,
           amountPaid: isOrderPayment ? 0 : payment.amount,
-          skipAutomation: isOrderPayment,
+          // Skip automation for entities that don't have booking/order semantics (#173)
+          skipAutomation: isOrderPayment || isCampaignPayment || isInvoicePayment,
           // Only booking/reservation: suppress legacy additive spend (Stage 2 owns it).
           // Orders: do NOT set skipCustomerSpend — existing amountPaid=0 behavior is unchanged.
           skipCustomerSpend: isBookingPayment || isReservationPayment,
@@ -557,6 +561,35 @@ export async function sendProactiveConfirmation(
         }
       }
 
+      // ── 7a2. Reservation owner notification ──
+      if (payment.reservation_id && !payment.booking_id && resolved) {
+        const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
+        const { data: reservation } = await supabase.from('reservations')
+          .select('guest_name, check_in, check_out, guest_count')
+          .eq('id', payment.reservation_id).single();
+
+        if (reservation) {
+          const checkIn = new Date(reservation.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+          const checkOut = new Date(reservation.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+          await notifyOwnerNewBooking({
+            supabase, sender: resolved.sender, businessId, businessName, countryCode,
+            referenceCode, customerName: reservation.guest_name || 'Guest',
+            date: checkIn, time: `→ ${checkOut}`,
+            quantity: reservation.guest_count || 1, quantityLabel: 'guest(s)',
+            amount: payment.amount,
+          });
+        }
+
+        // In-app notification for reservation payment (#173)
+        const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
+        createNotification(supabase, {
+          businessId,
+          type: 'booking_confirmation',
+          channel: 'whatsapp',
+          body: `Reservation confirmed (paid): ${serviceName} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}`,
+        }).catch(err => logSafeError(logPrefix, 'reservation-in-app-notification', err));
+      }
+
       // ── 7b. Invoice payment owner notification ──
       if (payment.invoice_id && resolved) {
         const { notifyOwnerNewInvoicePayment } = await import('@/lib/bot/flows/shared/notify-owner');
@@ -578,12 +611,11 @@ export async function sendProactiveConfirmation(
       // ── 7c. Campaign donation owner notification ──
       if (payment.campaign_id && resolved) {
         const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
+        // Payment-scoped lookup: bind to exact payment_id, not newest campaign-wide success (#173)
         const { data: donation } = await supabase.from('campaign_donations')
           .select('donor_name, reference_code, campaigns(title)')
-          .eq('campaign_id', payment.campaign_id)
+          .eq('payment_id', payment.id)
           .eq('status', 'success')
-          .order('created_at', { ascending: false })
-          .limit(1)
           .maybeSingle();
 
         const campaignTitle = (donation?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
@@ -594,6 +626,15 @@ export async function sendProactiveConfirmation(
           amount: payment.amount,
           campaignTitle,
         }).catch(err => logSafeError(logPrefix, 'donation-owner-notify', err));
+
+        // In-app notification for campaign donation (#173)
+        const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
+        createNotification(supabase, {
+          businessId,
+          type: 'donation',
+          channel: 'whatsapp',
+          body: `New donation of ${formatCurrency(payment.amount, countryCode)} for ${campaignTitle}${donation?.donor_name ? ` from ${donation.donor_name}` : ''}. Ref: ${donation?.reference_code || referenceCode}`,
+        }).catch(err => logSafeError(logPrefix, 'campaign-in-app-notification', err));
       }
 
       // ── 7d. Order owner notification ──
@@ -837,13 +878,12 @@ export async function sendProactiveConfirmation(
     // ── 8c. Send email receipt for campaign donations ──
     if (payment.campaign_id) {
       try {
+        // Payment-scoped lookup (#173)
         const { data: donation } = await supabase
           .from('campaign_donations')
           .select('donor_name, donor_phone, reference_code, campaigns(title)')
-          .eq('campaign_id', payment.campaign_id)
+          .eq('payment_id', payment.id)
           .eq('status', 'success')
-          .order('created_at', { ascending: false })
-          .limit(1)
           .maybeSingle();
 
         if (donation?.donor_phone) {
@@ -894,7 +934,7 @@ export async function sendProactiveConfirmation(
         .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
         .eq('business_id', businessId)
         .eq('is_active', true)
-        .in('current_step', ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking']);
+        .in('current_step', ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking', 'reservation_payment', 'await_invoice_payment', 'await_donation_payment']);
     }
 
     // ── 10. Finalize: mark confirmation as successfully completed ──
