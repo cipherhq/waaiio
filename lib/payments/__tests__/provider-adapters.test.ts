@@ -66,7 +66,7 @@ describe('Provider adapters', () => {
   // ── PAYSTACK ──
 
   it('1. Paystack platform → platform credential', async () => {
-    mockFetch.mockResolvedValueOnce({ json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx1', channel: 'card', authorization: { last4: '1234' }, fees: 750 } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx1', channel: 'card', authorization: { last4: '1234' }, fees: 750 } }) });
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(buildSupabase(), {
       provider: 'paystack', gatewayReference: 'REF-1', expectedAmount: 5000, expectedCurrency: 'NGN',
@@ -83,7 +83,7 @@ describe('Provider adapters', () => {
   });
 
   it('2. Paystack BYO → exact merchant credential', async () => {
-    mockFetch.mockResolvedValueOnce({ json: () => ({ data: { status: 'success', amount: 100000, currency: 'NGN', id: 'tx2' } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ data: { status: 'success', amount: 100000, currency: 'NGN', id: 'tx2' } }) });
     const supabase = buildSupabase({ id: 'cred-byo-1', business_id: 'biz-byo', secret_key: 'sk_merchant_encrypted', gateway: 'paystack' });
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(supabase, {
@@ -120,7 +120,7 @@ describe('Provider adapters', () => {
   // ── STRIPE ──
 
   it('7. Stripe platform → no Stripe-Account header', async () => {
-    mockFetch.mockResolvedValueOnce({ json: () => ({ payment_status: 'paid', amount_total: 500, currency: 'usd', payment_intent: 'pi_123' }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ payment_status: 'paid', amount_total: 500, currency: 'usd', payment_intent: 'pi_123' }) });
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(buildSupabase(), {
       provider: 'stripe', gatewayReference: 'cs_test_123', expectedAmount: 5, expectedCurrency: 'USD',
@@ -131,7 +131,7 @@ describe('Provider adapters', () => {
   });
 
   it('8. Stripe Connect → exact Stripe-Account header', async () => {
-    mockFetch.mockResolvedValueOnce({ json: () => ({ payment_status: 'paid', amount_total: 1000, currency: 'usd', payment_intent: 'pi_456' }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ payment_status: 'paid', amount_total: 1000, currency: 'usd', payment_intent: 'pi_456' }) });
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(buildSupabase(), {
       provider: 'stripe', gatewayReference: 'cs_test_456', expectedAmount: 10, expectedCurrency: 'USD',
@@ -155,7 +155,7 @@ describe('Provider adapters', () => {
   // ── SQUARE ──
 
   it('15. Square merchant token → exact merchant credential', async () => {
-    mockFetch.mockResolvedValueOnce({ json: () => ({ payment: { status: 'COMPLETED', id: 'sq_pay', amount_money: { amount: 5000, currency: 'USD' }, source_type: 'CARD' } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ payment: { status: 'COMPLETED', id: 'sq_pay', amount_money: { amount: 5000, currency: 'USD' }, source_type: 'CARD' } }) });
     const supabase = buildSupabase(null, { id: 'payout-sq-1', business_id: 'biz-sq', access_token: 'sq_merchant_encrypted', merchant_id: 'merch_1' });
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(supabase, {
@@ -191,7 +191,7 @@ describe('Provider adapters', () => {
   });
 
   it('27. provider says unpaid → not_paid', async () => {
-    mockFetch.mockResolvedValueOnce({ json: () => ({ data: { status: 'failed', amount: 500000 } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ data: { status: 'failed', amount: 500000 } }) });
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(buildSupabase(), {
       provider: 'paystack', gatewayReference: 'REF-failed', expectedAmount: 5000, expectedCurrency: 'NGN',
@@ -203,7 +203,7 @@ describe('Provider adapters', () => {
   // ── READ-ONLY ──
 
   it('29. verification does NOT mutate Waaiio state', async () => {
-    mockFetch.mockResolvedValueOnce({ json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx_ro' } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx_ro' } }) });
     const supabase = buildSupabase();
     const { verifyWithProvider } = await import('../provider-adapters');
     await verifyWithProvider(supabase, {
@@ -245,7 +245,7 @@ describe('Provider adapters', () => {
   });
 
   it('32. new-authority platform payment → platform credential allowed', async () => {
-    mockFetch.mockResolvedValueOnce({ json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx_plat' } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx_plat' } }) });
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(buildSupabase(), {
       provider: 'paystack', gatewayReference: 'REF-PLAT', expectedAmount: 5000, expectedCurrency: 'NGN',
@@ -282,7 +282,7 @@ describe('Provider adapters', () => {
       }
       return mockChain();
     });
-    mockFetch.mockResolvedValueOnce({ json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx_rot' } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx_rot' } }) });
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(supabase, {
       provider: 'paystack', gatewayReference: 'REF-ROTATED', expectedAmount: 5000, expectedCurrency: 'NGN',
@@ -353,7 +353,7 @@ describe('Provider adapters', () => {
   });
 
   it('34. legacy payment without origin does NOT become platform (isNewAuthority=false)', async () => {
-    mockFetch.mockResolvedValueOnce({ json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx_leg' } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx_leg' } }) });
     const { verifyWithProvider } = await import('../provider-adapters');
     // Legacy payments (isNewAuthority=false) with empty metadata still resolve to platform (backward compat)
     const r = await verifyWithProvider(buildSupabase(), {

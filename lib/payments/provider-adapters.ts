@@ -279,32 +279,49 @@ async function verifyPaystack(
       `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
       { headers, signal: AbortSignal.timeout(15000) },
     );
-    const data = await response.json();
 
-    if (!data?.data || data.data.status !== 'success') {
-      return { status: 'not_paid', reason: `paystack_status: ${data?.data?.status || 'unknown'}` };
+    // HTTP safety: non-2xx responses must never become not_paid (#172)
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        return { status: 'config_error', reason: `paystack_http_${response.status}` };
+      }
+      return { status: 'retryable_error', reason: `paystack_http_${response.status}` };
     }
 
-    const providerAmountKobo = data.data.amount as number;
-    const providerCurrency = (data.data.currency as string || '').toUpperCase();
-    const authorization = data.data.authorization as Record<string, string> | undefined;
+    const data = await response.json();
+    const txStatus = data?.data?.status as string | undefined;
 
-    return {
-      status: 'verified',
-      result: {
-        provider: 'paystack',
-        waaiioReference: reference,
-        providerTransactionId: String(data.data.id || ''),
-        amount: providerAmountKobo / 100, // kobo → naira
-        currency: providerCurrency,
-        paymentMethod: (data.data.channel as string) || 'card',
-        cardLast4: authorization?.last4,
-        cardBrand: authorization?.brand,
-        gatewayFee: data.data.fees ? (data.data.fees as number) / 100 : undefined,
-        providerStatus: 'success',
-        verifiedAt: new Date().toISOString(),
-      },
-    };
+    if (txStatus === 'success') {
+      const providerAmountKobo = data.data.amount as number;
+      const providerCurrency = (data.data.currency as string || '').toUpperCase();
+      const authorization = data.data.authorization as Record<string, string> | undefined;
+
+      return {
+        status: 'verified',
+        result: {
+          provider: 'paystack',
+          waaiioReference: reference,
+          providerTransactionId: String(data.data.id || ''),
+          amount: providerAmountKobo / 100, // kobo → naira
+          currency: providerCurrency,
+          paymentMethod: (data.data.channel as string) || 'card',
+          cardLast4: authorization?.last4,
+          cardBrand: authorization?.brand,
+          gatewayFee: data.data.fees ? (data.data.fees as number) / 100 : undefined,
+          providerStatus: 'success',
+          verifiedAt: new Date().toISOString(),
+        },
+      };
+    }
+
+    // Terminal unpaid: only definitive provider states that cannot settle later
+    const PAYSTACK_TERMINAL_UNPAID = new Set(['failed', 'abandoned']);
+    if (txStatus && PAYSTACK_TERMINAL_UNPAID.has(txStatus)) {
+      return { status: 'not_paid', reason: `paystack_status: ${txStatus}` };
+    }
+
+    // Everything else (pending, ongoing, processing, queued, reversed, unknown) → fail closed
+    return { status: 'retryable_error', reason: `paystack_status_indeterminate: ${txStatus || 'unknown'}` };
   } catch (err) {
     logger.withContext({ op: 'provider-adapter.paystack', ...safeLogErrorContext(err) }).error('[PROVIDER] Paystack verify error');
     return { status: 'retryable_error', reason: 'paystack_network_error' };
@@ -331,28 +348,63 @@ async function verifyStripe(
       : `https://api.stripe.com/v1/payment_intents/${reference}`;
 
     const response = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
-    const data = await response.json();
 
-    const paid = isCheckout ? data.payment_status === 'paid' : data.status === 'succeeded';
-    if (!paid) {
-      return { status: 'not_paid', reason: `stripe_status: ${data.payment_status || data.status || 'unknown'}` };
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        return { status: 'config_error', reason: `stripe_http_${response.status}` };
+      }
+      return { status: 'retryable_error', reason: `stripe_http_${response.status}` };
     }
 
-    const amountTotal = isCheckout ? data.amount_total : data.amount;
+    const data = await response.json();
 
-    return {
-      status: 'verified',
-      result: {
-        provider: 'stripe',
-        waaiioReference: reference,
-        providerTransactionId: isCheckout ? data.payment_intent : data.id,
-        amount: (amountTotal as number) / 100, // cents → dollars
-        currency: ((data.currency as string) || '').toUpperCase(),
-        paymentMethod: 'card',
-        providerStatus: 'success',
-        verifiedAt: new Date().toISOString(),
-      },
-    };
+    if (isCheckout) {
+      // Stripe Checkout: payment_status + session status
+      if (data.payment_status === 'paid') {
+        return {
+          status: 'verified',
+          result: {
+            provider: 'stripe', waaiioReference: reference,
+            providerTransactionId: data.payment_intent,
+            amount: (data.amount_total as number) / 100,
+            currency: ((data.currency as string) || '').toUpperCase(),
+            paymentMethod: 'card', providerStatus: 'success',
+            verifiedAt: new Date().toISOString(),
+          },
+        };
+      }
+      // Terminal: expired session with unpaid → safe not_paid
+      if (data.status === 'expired' && data.payment_status === 'unpaid') {
+        return { status: 'not_paid', reason: 'stripe_checkout_expired_unpaid' };
+      }
+      // no_payment_required → config anomaly (Waaiio creates mode='payment')
+      if (data.payment_status === 'no_payment_required') {
+        return { status: 'config_error', reason: 'stripe_checkout_no_payment_required' };
+      }
+      // open+unpaid, complete+unpaid, unknown → fail closed
+      return { status: 'retryable_error', reason: `stripe_checkout_indeterminate: status=${data.status} payment_status=${data.payment_status}` };
+    }
+
+    // Stripe PaymentIntent
+    if (data.status === 'succeeded') {
+      return {
+        status: 'verified',
+        result: {
+          provider: 'stripe', waaiioReference: reference,
+          providerTransactionId: data.id,
+          amount: (data.amount as number) / 100,
+          currency: ((data.currency as string) || '').toUpperCase(),
+          paymentMethod: 'card', providerStatus: 'success',
+          verifiedAt: new Date().toISOString(),
+        },
+      };
+    }
+    const STRIPE_PI_TERMINAL_UNPAID = new Set(['canceled']);
+    if (STRIPE_PI_TERMINAL_UNPAID.has(data.status)) {
+      return { status: 'not_paid', reason: `stripe_pi_status: ${data.status}` };
+    }
+    // processing, requires_action, requires_capture, etc. → fail closed
+    return { status: 'retryable_error', reason: `stripe_pi_indeterminate: ${data.status || 'unknown'}` };
   } catch (err) {
     logger.withContext({ op: 'provider-adapter.stripe', ...safeLogErrorContext(err) }).error('[PROVIDER] Stripe verify error');
     return { status: 'retryable_error', reason: 'stripe_network_error' };
@@ -377,26 +429,40 @@ async function verifyFlutterwave(
       `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
       { headers: { Authorization: `Bearer ${cred.secretKey}` }, signal: AbortSignal.timeout(15000) },
     );
-    const data = await response.json();
 
-    if (data.status !== 'success' || data.data?.status !== 'successful') {
-      return { status: 'not_paid', reason: `flutterwave_status: ${data.data?.status || data.status || 'unknown'}` };
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        return { status: 'config_error', reason: `flutterwave_http_${response.status}` };
+      }
+      return { status: 'retryable_error', reason: `flutterwave_http_${response.status}` };
     }
 
-    return {
-      status: 'verified',
-      result: {
-        provider: 'flutterwave',
-        waaiioReference: reference,
-        providerTransactionId: String(data.data.id || ''),
-        amount: data.data.amount as number, // Flutterwave uses major units
-        currency: ((data.data.currency as string) || '').toUpperCase(),
-        paymentMethod: data.data.payment_type || 'card',
-        gatewayFee: data.data.app_fee as number | undefined,
-        providerStatus: 'successful',
-        verifiedAt: new Date().toISOString(),
-      },
-    };
+    const data = await response.json();
+    const txStatus = data.data?.status as string | undefined;
+
+    if (data.status === 'success' && txStatus === 'successful') {
+      return {
+        status: 'verified',
+        result: {
+          provider: 'flutterwave',
+          waaiioReference: reference,
+          providerTransactionId: String(data.data.id || ''),
+          amount: data.data.amount as number,
+          currency: ((data.data.currency as string) || '').toUpperCase(),
+          paymentMethod: data.data.payment_type || 'card',
+          gatewayFee: data.data.app_fee as number | undefined,
+          providerStatus: 'successful',
+          verifiedAt: new Date().toISOString(),
+        },
+      };
+    }
+
+    const FLUTTERWAVE_TERMINAL_UNPAID = new Set(['failed']);
+    if (txStatus && FLUTTERWAVE_TERMINAL_UNPAID.has(txStatus)) {
+      return { status: 'not_paid', reason: `flutterwave_status: ${txStatus}` };
+    }
+
+    return { status: 'retryable_error', reason: `flutterwave_status_indeterminate: ${txStatus || data.status || 'unknown'}` };
   } catch (err) {
     logger.withContext({ op: 'provider-adapter.flutterwave', ...safeLogErrorContext(err) }).error('[PROVIDER] Flutterwave verify error');
     return { status: 'retryable_error', reason: 'flutterwave_network_error' };
@@ -420,27 +486,40 @@ async function verifySquare(
       `https://${squareEnv}.com/v2/payments/${encodeURIComponent(reference)}`,
       { headers: { Authorization: `Bearer ${cred.secretKey}`, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(15000) },
     );
-    const data = await response.json();
 
-    if (data.payment?.status !== 'COMPLETED') {
-      return { status: 'not_paid', reason: `square_status: ${data.payment?.status || 'unknown'}` };
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        return { status: 'config_error', reason: `square_http_${response.status}` };
+      }
+      return { status: 'retryable_error', reason: `square_http_${response.status}` };
     }
 
-    const amountMoney = data.payment.amount_money;
+    const data = await response.json();
+    const paymentStatus = data.payment?.status as string | undefined;
 
-    return {
-      status: 'verified',
-      result: {
-        provider: 'square',
-        waaiioReference: reference,
-        providerTransactionId: data.payment.id,
-        amount: (amountMoney?.amount as number) / 100, // cents → dollars
-        currency: ((amountMoney?.currency as string) || '').toUpperCase(),
-        paymentMethod: data.payment.source_type || 'card',
-        providerStatus: 'COMPLETED',
-        verifiedAt: new Date().toISOString(),
-      },
-    };
+    if (paymentStatus === 'COMPLETED') {
+      const amountMoney = data.payment.amount_money;
+      return {
+        status: 'verified',
+        result: {
+          provider: 'square',
+          waaiioReference: reference,
+          providerTransactionId: data.payment.id,
+          amount: (amountMoney?.amount as number) / 100,
+          currency: ((amountMoney?.currency as string) || '').toUpperCase(),
+          paymentMethod: data.payment.source_type || 'card',
+          providerStatus: 'COMPLETED',
+          verifiedAt: new Date().toISOString(),
+        },
+      };
+    }
+
+    const SQUARE_TERMINAL_UNPAID = new Set(['CANCELED', 'FAILED']);
+    if (paymentStatus && SQUARE_TERMINAL_UNPAID.has(paymentStatus)) {
+      return { status: 'not_paid', reason: `square_status: ${paymentStatus}` };
+    }
+
+    return { status: 'retryable_error', reason: `square_status_indeterminate: ${paymentStatus || 'unknown'}` };
   } catch (err) {
     logger.withContext({ op: 'provider-adapter.square', ...safeLogErrorContext(err) }).error('[PROVIDER] Square verify error');
     return { status: 'retryable_error', reason: 'square_network_error' };
@@ -459,7 +538,7 @@ async function verifyPaypal(
     const [clientId, clientSecret] = cred.secretKey.split(':');
     const paypalEnv = process.env.PAYPAL_ENVIRONMENT === 'live' ? 'api-m' : 'api-m.sandbox';
 
-    // Get OAuth token
+    // OAuth token boundary
     const tokenRes = await fetch(`https://${paypalEnv}.paypal.com/v1/oauth2/token`, {
       method: 'POST',
       headers: {
@@ -469,38 +548,75 @@ async function verifyPaypal(
       body: 'grant_type=client_credentials',
       signal: AbortSignal.timeout(15000),
     });
-    const tokenData = await tokenRes.json();
 
-    if (!tokenData.access_token) {
-      return { status: 'config_error', reason: 'paypal_oauth_failed' };
+    if (!tokenRes.ok) {
+      if (tokenRes.status === 401 || tokenRes.status === 403) {
+        return { status: 'config_error', reason: `paypal_oauth_http_${tokenRes.status}` };
+      }
+      return { status: 'retryable_error', reason: `paypal_oauth_http_${tokenRes.status}` };
     }
 
-    // Capture/verify order
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) {
+      return { status: 'config_error', reason: 'paypal_oauth_no_token' };
+    }
+
+    // Order verification boundary
     const orderRes = await fetch(`https://${paypalEnv}.paypal.com/v2/checkout/orders/${reference}`, {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
       signal: AbortSignal.timeout(15000),
     });
-    const order = await orderRes.json();
 
-    if (order.status !== 'COMPLETED') {
-      return { status: 'not_paid', reason: `paypal_status: ${order.status || 'unknown'}` };
+    if (!orderRes.ok) {
+      if (orderRes.status === 401 || orderRes.status === 403) {
+        return { status: 'config_error', reason: `paypal_order_http_${orderRes.status}` };
+      }
+      return { status: 'retryable_error', reason: `paypal_order_http_${orderRes.status}` };
     }
 
-    const capture = order.purchase_units?.[0]?.payments?.captures?.[0];
+    const order = await orderRes.json();
+    const orderStatus = order.status as string | undefined;
 
-    return {
-      status: 'verified',
-      result: {
-        provider: 'paypal',
-        waaiioReference: reference,
-        providerTransactionId: capture?.id || order.id,
-        amount: parseFloat(capture?.amount?.value || '0'),
-        currency: ((capture?.amount?.currency_code as string) || '').toUpperCase(),
-        paymentMethod: 'paypal',
-        providerStatus: 'COMPLETED',
-        verifiedAt: new Date().toISOString(),
-      },
-    };
+    // Terminal unpaid at order level
+    if (orderStatus === 'VOIDED') {
+      return { status: 'not_paid', reason: 'paypal_order_voided' };
+    }
+
+    // Non-terminal orders → fail closed
+    if (orderStatus !== 'COMPLETED') {
+      return { status: 'retryable_error', reason: `paypal_order_indeterminate: ${orderStatus || 'unknown'}` };
+    }
+
+    // Order COMPLETED — must validate capture status
+    const capture = order.purchase_units?.[0]?.payments?.captures?.[0];
+    if (!capture) {
+      return { status: 'retryable_error', reason: 'paypal_capture_missing' };
+    }
+
+    const captureStatus = capture.status as string | undefined;
+    if (captureStatus === 'COMPLETED') {
+      return {
+        status: 'verified',
+        result: {
+          provider: 'paypal',
+          waaiioReference: reference,
+          providerTransactionId: capture.id || order.id,
+          amount: parseFloat(capture.amount?.value || '0'),
+          currency: ((capture.amount?.currency_code as string) || '').toUpperCase(),
+          paymentMethod: 'paypal',
+          providerStatus: 'COMPLETED',
+          verifiedAt: new Date().toISOString(),
+        },
+      };
+    }
+
+    // Terminal capture failure
+    if (captureStatus === 'DECLINED') {
+      return { status: 'not_paid', reason: `paypal_capture_declined` };
+    }
+
+    // FAILED (retryable), PENDING, REFUNDED, PARTIALLY_REFUNDED, unknown → fail closed
+    return { status: 'retryable_error', reason: `paypal_capture_indeterminate: ${captureStatus || 'unknown'}` };
   } catch (err) {
     logger.withContext({ op: 'provider-adapter.paypal', ...safeLogErrorContext(err) }).error('[PROVIDER] PayPal verify error');
     return { status: 'retryable_error', reason: 'paypal_network_error' };
