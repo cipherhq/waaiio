@@ -723,7 +723,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
 
     if (text === 'i_paid' || text === 'i_paid_online' || text === 'paid' || text === 'done' || text === 'check') {
       const ref = ctx.session.session_data.payment_reference as string;
-      if (!ref) return { valid: true, data: { _action: 'cancel' } };
+      if (!ref) return { valid: false, errorMessage: "We couldn't verify your donation. If you've already paid, please contact the organization." };
 
       // Converge through canonical Payment Authority (#173)
       const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
@@ -760,8 +760,11 @@ const awaitDonationPaymentStep: FlowStepConfig = {
     return { valid: false, errorMessage: "Tap *I've Paid* or *Cancel*." };
   },
 
-  async next() {
-    return null; // Flow complete after confirmation or cancel
+  async next(ctx: FlowContext) {
+    if (ctx.session.session_data._action === 'payment_processing') {
+      return 'await_donation_payment';
+    }
+    return null;
   },
 };
 

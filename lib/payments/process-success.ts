@@ -692,7 +692,7 @@ export async function processCampaignDonation(
   // Fail closed: only explicit applied=true or already_applied=true is acceptable.
   // Any other result (semantic rejection, missing/malformed) means the donation was
   // not applied — a provider-paid payment whose business finalization is blocked.
-  if (result && result.applied !== true && !result.already_applied) {
+  if (!result || (result.applied !== true && !result.already_applied)) {
     logger.withContext({ op: 'process-success.campaign-semantic-failure' })
       .error('[CAMPAIGN-DONATION] Semantic rejection — donation not applied, requires reconciliation');
     Sentry.captureException(new Error(`Campaign donation semantic failure: ${result.reason || 'unknown'}`), {

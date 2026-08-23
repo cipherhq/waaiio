@@ -1332,7 +1332,7 @@ export const reservationFlow: FlowDefinition = {
 
         if (text === 'check' || text === 'done' || text === 'paid' || text === 'i_paid' || text === 'i_paid_online' || text === "i've paid") {
           const ref = ctx.session.session_data.payment_reference as string;
-          if (!ref) return { valid: true, data: { _action: 'cancel' } };
+          if (!ref) return { valid: false, errorMessage: "We couldn't verify your payment. If you've already paid, please contact the business." };
 
           // Converge through canonical Payment Authority — same path as webhooks (#173).
           const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
