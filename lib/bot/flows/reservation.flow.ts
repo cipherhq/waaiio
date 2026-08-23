@@ -8,6 +8,7 @@ import { truncTitle } from '../utils/truncate';
 import { createNotification } from './shared/notifications';
 import { notifyOwnerNewBooking } from './shared/notify-owner';
 import { getReservationConfirmationMessage } from './shared/templates';
+import { handlePostCompletion } from './shared/post-completion';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { getPoweredByFooter } from '@/lib/whitelabel';
