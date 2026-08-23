@@ -1086,23 +1086,19 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
           VALUES ('${faultSubId}', '${SPEND_BIZ_ID}', '${SPEND_USER_ID}', 75, 'monthly', 'active', 'flutterwave', '+2340001112222', 'Fault Test', NOW() - INTERVAL '1 hour');`);
 
     // Record pre-test subscription state
-    const preSub = psqlJson(`SELECT charge_count, total_charged::text, next_charge_at FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    const preChargeCount = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    const preTotalCharged = psql(`SELECT total_charged FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    const preNextCharge = psql(`SELECT next_charge_at FROM customer_subscriptions WHERE id = '${faultSubId}';`);
 
     const claim = psqlJson(`SELECT claim_recurring_billing_cycle('${faultSubId}'::uuid);`);
     expect(claim.claimed).toBe(true);
     psql(`UPDATE processed_webhook_events SET last_error = 'flw-fault-attempt' WHERE event_id = '${claim.stable_ref}';`);
 
-    // Save the real function, then inject a fault
-    psql(`
-      CREATE OR REPLACE FUNCTION _original_apply_payment_spend_once(p_payment_id UUID) RETURNS JSONB
-      LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
-      BEGIN RETURN apply_payment_spend_once(p_payment_id); END; $fn$;
-    `);
+    // Inject a fault: replace apply_payment_spend_once with a version that always raises
     psql(`
       CREATE OR REPLACE FUNCTION apply_payment_spend_once(p_payment_id UUID) RETURNS JSONB
       LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
-      BEGIN RAISE EXCEPTION 'FAULT_INJECTION: spend authority failure for test';
-      END; $fn$;
+      BEGIN RAISE EXCEPTION 'FAULT_INJECTION: spend authority failure for test'; END; $fn$;
     `);
 
     // Finalization should RAISE because the injected spend function always fails
@@ -1132,10 +1128,12 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     expect(eventStatus).not.toBe('completed');
 
     // Subscription charge_count/total_charged/next_charge unchanged
-    const postSub = psqlJson(`SELECT charge_count, total_charged::text, next_charge_at FROM customer_subscriptions WHERE id = '${faultSubId}';`);
-    expect(postSub.charge_count).toBe(preSub.charge_count);
-    expect(postSub.total_charged).toBe(preSub.total_charged);
-    expect(postSub.next_charge_at).toBe(preSub.next_charge_at);
+    const postChargeCount = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    const postTotalCharged = psql(`SELECT total_charged FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    const postNextCharge = psql(`SELECT next_charge_at FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    expect(postChargeCount).toBe(preChargeCount);
+    expect(postTotalCharged).toBe(preTotalCharged);
+    expect(postNextCharge).toBe(preNextCharge);
 
     // Cleanup
     psql(`DELETE FROM customer_subscriptions WHERE id = '${faultSubId}';`);
