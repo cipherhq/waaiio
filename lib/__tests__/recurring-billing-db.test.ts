@@ -108,10 +108,10 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
       CREATE TABLE IF NOT EXISTS payments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID, user_id UUID,
-        booking_id UUID, amount NUMERIC(12,2), currency TEXT, gateway TEXT,
+        booking_id UUID, reservation_id UUID, amount NUMERIC(12,2), currency TEXT, gateway TEXT,
         gateway_reference TEXT UNIQUE, status TEXT DEFAULT 'pending',
         gateway_status TEXT, payment_method TEXT, card_last_four TEXT, card_brand TEXT,
-        paid_at TIMESTAMPTZ, metadata JSONB
+        paid_at TIMESTAMPTZ, metadata JSONB, payment_authority_version INT
       );
       CREATE TABLE IF NOT EXISTS subscription_charges (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), subscription_id UUID,
