@@ -7,8 +7,8 @@ import { safeLogErrorContext } from '@/lib/errors';
 import { notifyOwnerNewDonation } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
 import { checkTierLimit } from '@/lib/tier-limits';
-import { handlePostCompletion } from './shared/post-completion';
-import { recordPlatformFee as _recordFee } from '@/lib/payments/process-success';
+// handlePostCompletion and recordPlatformFee removed from I've Paid path (#173)
+// Stage 2 (processSuccessfulPayment) and Stage 3 (sendProactiveConfirmation) now own these effects
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter } from '@/lib/whitelabel';
 import { isToggleColumnMissing } from '@/lib/utils/campaign-column-fallback';
@@ -602,19 +602,40 @@ const awaitDonationPaymentStep: FlowStepConfig = {
     const sd = ctx.session.session_data;
 
     if ((text === 'cancel' || text === 'go_back')) {
-      // Mark donation as cancelled
+      // CAS guard: cancel donation only while still pending (#173)
       const refCode = sd.donation_ref_code as string;
       if (refCode) {
-        await ctx.supabase
+        const { data: cancelResult, error: cancelErr } = await ctx.supabase
           .from('campaign_donations')
           .update({ status: 'cancelled' })
-          .eq('reference_code', refCode);
-      }
-      if (sd.bank_transfer_reference) {
-        await ctx.supabase
-          .from('pending_transfers')
-          .update({ status: 'cancelled' })
-          .eq('reference_code', sd.bank_transfer_reference as string);
+          .eq('reference_code', refCode)
+          .in('status', ['pending'])
+          .select('id');
+
+        if (cancelErr) {
+          return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+        }
+
+        if (!cancelResult?.length) {
+          const { data: don } = await ctx.supabase.from('campaign_donations')
+            .select('status').eq('reference_code', refCode).maybeSingle();
+          if (don?.status === 'success') {
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your donation has already been confirmed! Thank you for your generosity.\n\n💡 Type *my giving* to see your giving history.') });
+            return { valid: true, data: { _action: 'already_confirmed' } };
+          }
+          if (don?.status === 'cancelled') {
+            // Already cancelled — treat as established
+          } else {
+            return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+          }
+        }
+
+        if (sd.bank_transfer_reference) {
+          await ctx.supabase
+            .from('pending_transfers')
+            .update({ status: 'cancelled' })
+            .eq('reference_code', sd.bank_transfer_reference as string);
+        }
       }
       await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Donation to *${ctx.business?.name || 'organization'}* cancelled. Send *Hi* to start over.`) });
       return { valid: true, data: { _action: 'cancel' } };
@@ -704,111 +725,36 @@ const awaitDonationPaymentStep: FlowStepConfig = {
       const ref = ctx.session.session_data.payment_reference as string;
       if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
-      const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-      const { verifyPayment } = await import('./shared/payment');
-      const verified = await verifyPayment(ctx.supabase, ref, cc);
+      // Converge through canonical Payment Authority (#173)
+      const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
+      const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
 
-      if (verified) {
+      if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
         const sd = ctx.session.session_data;
-        const amount = sd.donation_amount as number;
-        const refCode = sd.donation_ref_code as string;
-
-        // Check if webhook already confirmed this donation (avoid double-processing)
-        const { data: currentDonation } = await ctx.supabase
-          .from('campaign_donations')
-          .select('status')
-          .eq('reference_code', refCode)
-          .maybeSingle();
-
-        if (currentDonation?.status === 'success') {
-          await ctx.sender.sendText({
-            to: ctx.from,
-            text: await ctx.t([
-              `✅ *Donation Confirmed!*`,
-              '',
-              `🙏 Thank you for supporting *${sd.campaign_title}*`,
-              `💰 Amount: ${formatCurrency(amount, cc)}`,
-              `🔑 Ref: *${refCode}*`,
-              '',
-              `Your generosity makes a difference! ❤️`,
-              '',
-              '💡 *What you can do:*',
-              '• Type *my giving* to see your giving history',
-              '• Type *receipt* to get your donation receipt',
-              '• Type *Hi* to give again',
-              ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
-            ].join('\n')),
-          });
-          return { valid: true, data: { _action: 'already_confirmed' } };
-        }
-
-        // Webhook already updates campaign_donations status and campaign stats
-        // Just send the confirmation message here
         await ctx.sender.sendText({
           to: ctx.from,
-          text: await ctx.t([
-            `✅ *Donation Confirmed!*`,
-            '',
-            `🙏 Thank you for supporting *${sd.campaign_title}*`,
-            `💰 Amount: ${formatCurrency(amount, cc)}`,
-            `🔑 Ref: *${refCode}*`,
-            '',
-            `Your generosity makes a difference! ❤️`,
-            '',
-            '💡 *What you can do:*',
-            '• Type *my giving* to see your giving history',
-            '• Type *receipt* to get your donation receipt',
-            '• Type *Hi* to give again',
-            ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
-          ].join('\n')),
+          text: await ctx.t(`✅ *Donation Confirmed!*\n\n🙏 Thank you for supporting *${sd.campaign_title}*\n\n💡 Type *my giving* to see your giving history, or *receipt* for your donation receipt.`),
         });
-
-        // Record platform fee (safety net — webhook also records, but may not fire)
-        const campaignId = sd.campaign_id as string;
-        if (campaignId && ctx.business) {
-          _recordFee(ctx.supabase, {
-            campaignId,
-            paymentAmount: amount,
-          }).catch(err => logger.withContext({ op: 'crowdfunding.platform-fee', ...safeLogErrorContext(err) }).error('[CROWDFUNDING] Platform fee error'));
-        }
-
-        // Notify owner: email + WhatsApp
-        if (ctx.business) {
-          notifyOwnerNewDonation({
-            supabase: ctx.supabase,
-            sender: ctx.sender,
-            businessId: ctx.business.id,
-            businessName: ctx.business.name,
-            countryCode: cc,
-            referenceCode: refCode,
-            donorName: (sd.donor_display_name as string) || null,
-            amount,
-            campaignTitle: sd.campaign_title as string,
-          }).catch(err => logger.withContext({ op: 'crowdfunding.owner-notify', ...safeLogErrorContext(err) }).error('[CROWDFUNDING] Notify error'));
-
-          // In-app notification
-          createNotification(ctx.supabase, {
-            businessId: ctx.business.id,
-            type: 'donation',
-            channel: 'whatsapp',
-            body: `New donation of ${formatCurrency(amount, cc)} for ${sd.campaign_title}${(sd.donor_display_name as string) ? ` from ${sd.donor_display_name}` : ' (Anonymous)'}. Ref: ${refCode}`,
-          }).catch(err => logger.withContext({ op: 'crowdfunding.notification', ...safeLogErrorContext(err) }).error('[CROWDFUNDING] Notification error'));
-
-          // Auto-create/update customer profile
-          handlePostCompletion({
-            supabase: ctx.supabase,
-            sender: ctx.sender,
-            businessId: ctx.business.id,
-            customerPhone: ctx.from,
-            customerName: (sd.donor_display_name as string) || null,
-            amountPaid: amount,
-          }).catch(err => logger.withContext({ op: 'crowdfunding.post-completion', ...safeLogErrorContext(err) }).error('[CROWDFUNDING] Post-completion error'));
-        }
-
-        return { valid: true, data: { _action: 'payment_confirmed' } };
+        return { valid: true, data: { _action: 'already_confirmed' } };
       }
 
-      return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
+      if (recovery.outcome === 'processing' || recovery.outcome === 'retryable') {
+        await ctx.sender.sendText({
+          to: ctx.from,
+          text: await ctx.t('✅ Donation received! Your donation is being processed.\n\nYou\'ll get a confirmation shortly. If not, tap *I\'ve Paid* again.'),
+        });
+        return { valid: true, data: { _action: 'payment_processing' } };
+      }
+
+      if (recovery.outcome === 'not_paid') {
+        return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
+      }
+
+      if (recovery.outcome === 'provider_error') {
+        return { valid: false, errorMessage: "We couldn't verify your donation right now. If you've already paid, tap *I've Paid* again in a moment." };
+      }
+
+      return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
     }
 
     return { valid: false, errorMessage: "Tap *I've Paid* or *Cancel*." };

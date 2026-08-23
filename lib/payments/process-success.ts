@@ -335,6 +335,37 @@ export async function processSuccessfulPayment(
         logger.withContext({ op: 'process-success.reservation', ...safeLogErrorContext(resErr) }).error('[PROCESS-SUCCESS] Reservation confirmation DB error');
       }
 
+      // Stage-2 postcondition: verify reservation is in a legitimate paid state
+      // before proceeding to fee/spend consequences. Same pattern as booking postcondition.
+      const { data: resPost, error: resPostErr } = await supabase
+        .from('reservations')
+        .select('status, deposit_status')
+        .eq('id', payment.reservation_id)
+        .single();
+
+      if (resPostErr || !resPost) {
+        criticalErrors.push('reservation_postcondition_missing');
+        logger.error('[PROCESS-SUCCESS] Reservation postcondition read failed for', payment.reservation_id);
+        return { criticalSuccess: false, errors: criticalErrors };
+      } else if (resPost.status === 'cancelled') {
+        criticalErrors.push('reservation_cancelled_at_payment');
+        logger.error('[PROCESS-SUCCESS] Reservation cancelled before payment finalization', payment.reservation_id);
+        return { criticalSuccess: false, errors: criticalErrors };
+      } else if (resPost.deposit_status !== 'paid') {
+        // Repair deposit_status only for non-cancelled states
+        const { data: resRepair, error: resRepairErr } = await supabase.from('reservations')
+          .update({ deposit_status: 'paid' })
+          .eq('id', payment.reservation_id)
+          .in('status', ['confirmed', 'in_progress', 'completed'])
+          .select('status, deposit_status')
+          .single();
+        if (resRepairErr || !resRepair || resRepair.deposit_status !== 'paid') {
+          criticalErrors.push('reservation_deposit_repair_failed');
+          logger.error('[PROCESS-SUCCESS] Reservation deposit_status repair failed', payment.reservation_id);
+          return { criticalSuccess: false, errors: criticalErrors };
+        }
+      }
+
       try {
         await recordPlatformFee(supabase, {
           reservationId: payment.reservation_id,
@@ -656,5 +687,18 @@ export async function processCampaignDonation(
         extra: { campaignId, paymentId },
       });
     }
+  }
+
+  // Fail closed: only explicit applied=true or already_applied=true is acceptable.
+  // Any other result (semantic rejection, missing/malformed) means the donation was
+  // not applied — a provider-paid payment whose business finalization is blocked.
+  if (result && result.applied !== true && !result.already_applied) {
+    logger.withContext({ op: 'process-success.campaign-semantic-failure' })
+      .error('[CAMPAIGN-DONATION] Semantic rejection — donation not applied, requires reconciliation');
+    Sentry.captureException(new Error(`Campaign donation semantic failure: ${result.reason || 'unknown'}`), {
+      tags: { component: 'process-success', operation: 'campaign-donation-semantic' },
+      extra: { campaignId, paymentId, result },
+    });
+    throw new Error(`Campaign donation not applied: ${result.reason || 'semantic_failure'}`);
   }
 }

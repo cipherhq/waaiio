@@ -1,5 +1,5 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
-import { initializePayment, verifyPayment } from './shared/payment';
+import { initializePayment } from './shared/payment';
 import { notifyOwnerNewInvoicePayment } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
 import { formatCurrency, getLocale, getCurrencyCode, type CountryCode } from '@/lib/constants';
@@ -581,52 +581,36 @@ const awaitInvoicePaymentStep: FlowStepConfig = {
       const ref = sd.payment_reference as string;
       if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
-      const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-      const verified = await verifyPayment(ctx.supabase, ref, cc);
+      // Converge through canonical Payment Authority (#173)
+      const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
+      const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
 
-      if (verified) {
-        const invoiceId = sd._invoice_id as string;
+      if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
         const invoiceNum = sd._invoice_ref as string;
-        const amount = sd._invoice_amount as number;
-
-        // Atomic dedup: only proceed if invoice is not already paid
-        const { data: updated } = await ctx.supabase
-          .from('invoices')
-          .update({ status: 'paid', paid_at: new Date().toISOString() })
-          .eq('id', invoiceId)
-          .neq('status', 'paid')
-          .select('id')
-          .maybeSingle();
-
-        if (!updated) {
-          // Already paid (webhook or concurrent tap beat us)
-          await ctx.sender.sendText({
-            to: ctx.from,
-            text: await ctx.t(`✅ Payment for Invoice ${invoiceNum} was already confirmed. Thank you!`),
-          });
-          return { valid: true, data: { _action: 'already_confirmed' } };
-        }
-
         await ctx.sender.sendText({
           to: ctx.from,
-          text: await ctx.t([
-            `✅ *Payment Confirmed!*`,
-            '',
-            `Invoice ${invoiceNum} has been paid.`,
-            `💰 Amount: ${formatCurrency(amount, cc)}`,
-            '',
-            '💡 *What you can do:*',
-            '• Type *my invoices* to check your invoices',
-            '• Type *receipt* to get your payment receipt',
-            '• Type *Hi* to start over',
-            ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
-          ].join('\n')),
+          text: await ctx.t(`✅ *Payment Confirmed!*\n\nInvoice ${invoiceNum} has been paid.\n\n💡 Type *my invoices* to check your invoices, or *receipt* for your payment receipt.`),
         });
-
-        return { valid: true, data: { _action: 'payment_confirmed' } };
+        return { valid: true, data: { _action: 'already_confirmed' } };
       }
 
-      return { valid: false, errorMessage: "Payment not yet received. The link may have expired — please try again or send your transfer proof." };
+      if (recovery.outcome === 'processing' || recovery.outcome === 'retryable') {
+        await ctx.sender.sendText({
+          to: ctx.from,
+          text: await ctx.t('✅ Payment received! Your invoice payment is being processed.\n\nYou\'ll get a confirmation shortly. If not, tap *I\'ve Paid* again.'),
+        });
+        return { valid: true, data: { _action: 'payment_processing' } };
+      }
+
+      if (recovery.outcome === 'not_paid') {
+        return { valid: false, errorMessage: "Payment not yet received. The link may have expired — please try again or send your transfer proof." };
+      }
+
+      if (recovery.outcome === 'provider_error') {
+        return { valid: false, errorMessage: "We couldn't verify your payment right now. If you've already paid, tap *I've Paid* again in a moment." };
+      }
+
+      return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
     }
 
     return { valid: false, errorMessage: "Tap *I've Paid Online*, *I've Sent Transfer*, or *Cancel*." };

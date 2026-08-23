@@ -3,12 +3,11 @@ import { formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type Countr
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
-import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
+import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
 import { createNotification } from './shared/notifications';
 import { notifyOwnerNewBooking } from './shared/notify-owner';
 import { getReservationConfirmationMessage } from './shared/templates';
-import { handlePostCompletion } from './shared/post-completion';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { getPoweredByFooter } from '@/lib/whitelabel';
@@ -1164,14 +1163,17 @@ export const reservationFlow: FlowDefinition = {
             ],
           }];
         }
+        const buttons: Array<{ id: string; title: string }> = [
+          { id: 'i_paid', title: "I've Paid" },
+        ];
+        if (!d._payment_retry_blocked) {
+          buttons.push({ id: 'retry_payment', title: 'Get New Link' });
+        }
+        buttons.push({ id: 'go_back', title: 'Cancel' });
         return [{
           type: 'buttons',
           body: "Please complete your payment using the link sent above.\n\nYour confirmation will arrive automatically after payment.",
-          buttons: [
-            { id: 'i_paid', title: "I've Paid" },
-            { id: 'retry_payment', title: 'Get New Link' },
-            { id: 'go_back', title: 'Cancel' },
-          ],
+          buttons,
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
@@ -1179,23 +1181,67 @@ export const reservationFlow: FlowDefinition = {
         const d = ctx.session.session_data;
 
         if (text === 'retry_payment') {
-          return { valid: true, data: { _retry_payment: true } };
+          const ref = ctx.session.session_data.payment_reference as string;
+          if (!ref) {
+            return { valid: false, errorMessage: "If you've already paid, tap *I've Paid*. Otherwise, type *Hi* to start a new reservation." };
+          }
+          const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
+          const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
+          if (recovery.outcome === 'not_paid') {
+            ctx.session.session_data._payment_retry_blocked = undefined;
+            return { valid: true, data: { _retry_payment: true } };
+          }
+          if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your payment has already been confirmed! Your reservation is active.\n\n💡 Type *my bookings* to view details.') });
+            return { valid: true, data: { _action: 'already_confirmed' } };
+          }
+          ctx.session.session_data._payment_retry_blocked = true;
+          return { valid: false, persistSessionDataOnFailure: true, errorMessage: "We're still verifying your previous payment. Tap *I've Paid* to check again." };
         }
 
         if ((text === 'cancel' || text === 'go_back')) {
           const reservationId = d.reservation_id as string;
           if (reservationId) {
-            await ctx.supabase
+            // CAS guard: cancel only while reservation is still pending (#173)
+            const { data: cancelResult, error: cancelErr } = await ctx.supabase
               .from('reservations')
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'guest' })
-              .eq('id', reservationId);
+              .eq('id', reservationId)
+              .in('status', ['pending'])
+              .select('id');
+
+            if (cancelErr) {
+              logger.withContext({ op: 'reservation.cancel', ...safeLogErrorContext(cancelErr) }).error('[RESERVATION] Cancel DB error');
+              return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+            }
+
+            if (!cancelResult?.length) {
+              const { data: res, error: readErr } = await ctx.supabase.from('reservations')
+                .select('status, deposit_status').eq('id', reservationId).single();
+              if (readErr || !res) {
+                logger.withContext({ op: 'reservation.cancel-reread', ...safeLogErrorContext(readErr) }).error('[RESERVATION] Cancel re-read error');
+                return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+              }
+              if (res.deposit_status === 'paid' || res.status === 'confirmed') {
+                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your payment has been confirmed! Your reservation is active.\n\n💡 Type *my bookings* to view details.') });
+                return { valid: true, data: { _action: 'already_confirmed' } };
+              }
+              if (res.status === 'cancelled') {
+                // Already cancelled — treat as established
+              } else {
+                logger.warn('[RESERVATION] Cancel: reservation in unexpected non-pending state', res.status);
+                return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+              }
+            }
+
+            if (d.bank_transfer_reference) {
+              await ctx.supabase
+                .from('pending_transfers')
+                .update({ status: 'cancelled' })
+                .eq('reference_code', d.bank_transfer_reference as string);
+            }
           }
-          if (d.bank_transfer_reference) {
-            await ctx.supabase
-              .from('pending_transfers')
-              .update({ status: 'cancelled' })
-              .eq('reference_code', d.bank_transfer_reference as string);
-          }
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Reservation cancelled. Send *Hi* to start over.`) });
           return { valid: true, data: { _action: 'cancel' } };
         }
 
@@ -1287,146 +1333,39 @@ export const reservationFlow: FlowDefinition = {
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
-          const verified = await verifyPayment(ctx.supabase, ref, (ctx.business?.country_code || 'NG') as CountryCode);
-          if (verified) {
-            const d = ctx.session.session_data;
-            const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          // Converge through canonical Payment Authority — same path as webhooks (#173).
+          const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
+          const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
 
-            // Check if webhook already confirmed this reservation (avoid double-processing)
-            const { data: currentReservation } = await ctx.supabase
-              .from('reservations')
-              .select('status, deposit_status')
-              .eq('id', d.reservation_id as string)
-              .single();
-
-            if (currentReservation?.deposit_status === 'paid') {
-              const dedupCheckInLabel = new Date((d.check_in as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
-                weekday: 'short', day: 'numeric', month: 'short',
-              });
-              const dedupCheckOutLabel = new Date((d.check_out as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
-                weekday: 'short', day: 'numeric', month: 'short',
-              });
-              const dedupResCalLinks = getCalendarLinksText({
-                businessName: ctx.business?.name || 'Business',
-                businessAddress: undefined,
-                serviceName: (d.service_name as string) || 'Reservation',
-                referenceCode: d.reference_code as string,
-                date: d.check_in as string,
-                time: '14:00',
-                durationMinutes: 120,
-              });
-              await ctx.sender.sendText({
-                to: ctx.from,
-                text: await ctx.t([
-                  `✅ *Payment Confirmed!*`,
-                  '',
-                  `Your reservation at *${ctx.business?.name}* is fully confirmed.`,
-                  `🏠 ${d.service_name}`,
-                  `📅 ${dedupCheckInLabel} → ${dedupCheckOutLabel}`,
-                  `🌙 ${d.nights} nights`,
-                  `👥 ${d.guests} guest${(d.guests as number) > 1 ? 's' : ''}`,
-                  `💰 ${formatCurrency(d.payable_amount as number, cc)}`,
-                  `🔑 Ref: *${d.reference_code as string}*`,
-                  '',
-                  'See you soon!',
-                  dedupResCalLinks ? dedupResCalLinks : null,
-                  '',
-                  '💡 *What you can do:*',
-                  '• Type *my bookings* to view your reservation',
-                  '• Type *receipt* to get your receipt',
-                  '• Type *Hi* to make another booking',
-                  ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
-                ].filter(Boolean).join('\n')),
-              });
-              return { valid: true, data: { _action: 'already_confirmed' } };
-            }
-
-            // Record platform fee after confirmed payment (fee on full total, not just deposit)
-            if (ctx.business) {
-              const isInTrial = (ctx.business.subscription_tier === 'free') && new Date(ctx.business.trial_ends_at) > new Date();
-              await recordPlatformFee(ctx.supabase, {
-                businessId: ctx.business.id,
-                reservationId: d.reservation_id as string,
-                transactionAmount: d.total_amount as number,
-                tier: ctx.business.subscription_tier as SubscriptionTier,
-                isInTrial,
-              });
-            }
-            const checkInLabel = new Date((d.check_in as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
-              weekday: 'short', day: 'numeric', month: 'short',
-            });
-            const checkOutLabel = new Date((d.check_out as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
-              weekday: 'short', day: 'numeric', month: 'short',
-            });
-
-            const resPayCalLinks = getCalendarLinksText({
-              businessName: ctx.business?.name || 'Business',
-              businessAddress: undefined,
-              serviceName: (d.service_name as string) || 'Reservation',
-              referenceCode: d.reference_code as string,
-              date: d.check_in as string,
-              time: '14:00',
-              durationMinutes: 120,
-            });
-
+          if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
             await ctx.sender.sendText({
               to: ctx.from,
-              text: await ctx.t([
-                `✅ *Payment Confirmed!*`,
-                '',
-                `Your reservation at *${ctx.business?.name}* is fully confirmed.`,
-                `🏠 ${d.service_name}`,
-                `📅 ${checkInLabel} → ${checkOutLabel}`,
-                `🌙 ${d.nights} nights`,
-                `👥 ${d.guests} guest${(d.guests as number) > 1 ? 's' : ''}`,
-                `🔑 Ref: *${d.reference_code as string}*`,
-                '',
-                'See you soon!',
-                resPayCalLinks ? resPayCalLinks : null,
-                ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
-              ].filter(Boolean).join('\n')),
+              text: await ctx.t('✅ *Payment Confirmed!*\n\nYour reservation is confirmed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.'),
             });
-
-            if (ctx.business) {
-              handlePostCompletion({
-                supabase: ctx.supabase,
-                businessId: ctx.business.id,
-                customerPhone: ctx.from,
-                customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim() || null,
-                serviceType: 'booking',
-                referenceId: d.reservation_id as string,
-                sender: ctx.sender,
-              }).catch(err => logger.withContext({ op: 'reservation.paid-post-completion', ...safeLogErrorContext(err) }).error('[RESERVATION] Post-completion error'));
-
-              // Notify owner: email + WhatsApp + in-app notification
-              notifyOwnerNewBooking({
-                supabase: ctx.supabase,
-                sender: ctx.sender,
-                businessId: ctx.business.id,
-                businessName: ctx.business.name,
-                countryCode: (ctx.business.country_code || 'NG') as CountryCode,
-                referenceCode: d.reference_code as string,
-                customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-                date: checkInLabel,
-                time: `→ ${checkOutLabel}`,
-                quantity: (d.guests as number) || 1,
-                quantityLabel: 'guest(s)',
-                amount: d.payable_amount as number,
-              }).catch(err => logger.withContext({ op: 'reservation.paid-notify', ...safeLogErrorContext(err) }).error('[RESERVATION] Notify error'));
-
-              createNotification(ctx.supabase, {
-                businessId: ctx.business.id,
-                bookingId: d.reservation_id as string,
-                type: 'booking_confirmation',
-                channel: 'whatsapp',
-                body: `Reservation confirmed (paid): ${d.service_name} from ${checkInLabel} to ${checkOutLabel} (${d.nights} nights). Ref: ${d.reference_code}`,
-              }).catch(err => logger.withContext({ op: 'reservation.paid-notification', ...safeLogErrorContext(err) }).error('[RESERVATION] Notification error'));
-            }
-
-            return { valid: true, data: { _action: 'payment_confirmed' } };
+            return { valid: true, data: { _action: 'already_confirmed' } };
           }
 
-          return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
+          if (recovery.outcome === 'processing' || recovery.outcome === 'retryable') {
+            d._payment_retry_blocked = true;
+            await ctx.sender.sendText({
+              to: ctx.from,
+              text: await ctx.t('✅ Payment received! Your reservation is being processed.\n\nYou\'ll get a confirmation shortly. If not, tap *I\'ve Paid* again.'),
+            });
+            return { valid: true, data: { _action: 'payment_processing' } };
+          }
+
+          if (recovery.outcome === 'not_paid') {
+            d._payment_retry_blocked = undefined;
+            return { valid: false, persistSessionDataOnFailure: true, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
+          }
+
+          if (recovery.outcome === 'provider_error') {
+            d._payment_retry_blocked = true;
+            return { valid: false, persistSessionDataOnFailure: true, errorMessage: "We couldn't verify your payment right now. If you've already paid, tap *I've Paid* again in a moment." };
+          }
+
+          d._payment_retry_blocked = true;
+          return { valid: false, persistSessionDataOnFailure: true, errorMessage: 'Something went wrong. Please try again.' };
         }
 
         return { valid: false, errorMessage: "Tap *I've Paid* after completing payment, or *Cancel* to cancel." };
@@ -1435,7 +1374,10 @@ export const reservationFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         if (d._retry_payment) {
           delete d._retry_payment;
-          return 'create_reservation'; // regenerate payment link
+          return 'create_reservation';
+        }
+        if (d._action === 'payment_processing') {
+          return 'reservation_payment';
         }
         return null;
       },
