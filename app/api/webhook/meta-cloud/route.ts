@@ -657,7 +657,7 @@ export async function POST(request: NextRequest) {
 
               mark('bot_enter');
               msgLog.debug('[META-WEBHOOK] Calling bot.handleMessage for ...', source.slice(-4), 'preResolvedBiz:', preResolvedBusinessId);
-              await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl);
+              await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl, metaMsgId);
               mark('bot_complete');
               msgLog.debug('[META-WEBHOOK] bot.handleMessage completed for ...', source.slice(-4));
 

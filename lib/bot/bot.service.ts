@@ -69,6 +69,8 @@ export class BotService {
     destinationPhone?: string,
     preResolvedBusinessId?: string,
     mediaUrl?: string,
+    /** Provider inbound message ID (Meta wamid). Request-scoped, not persisted to session. */
+    messageId?: string,
   ): Promise<void> {
     try {
     const text = messageText.trim();
@@ -957,6 +959,9 @@ export class BotService {
       _bmark('session_resolved');
       // Determine standalone business
       let businessId: string | null = preResolvedBusinessId || restartBusinessId || null;
+      // ACC-180: Track HOW business was resolved — trusted sources only authorize first-message promo
+      type BizResolution = 'pre_resolved' | 'dedicated_number' | 'restart' | 'bot_code' | 'fuzzy' | 'returning_customer' | null;
+      let bizResolution: BizResolution = preResolvedBusinessId ? 'pre_resolved' : restartBusinessId ? 'restart' : null;
       logger.debug('[BOT] preResolvedBusinessId:', preResolvedBusinessId);
 
       // Determine the country of the shared number being messaged (for country scoping)
@@ -970,6 +975,7 @@ export class BotService {
           .eq('whatsapp_phone_number_id', destinationPhone)
           .single();
         businessId = biz?.id || null;
+        if (businessId) bizResolution = 'dedicated_number';
         logger.debug('[BOT] destPhone lookup:', destinationPhone, '→', businessId);
 
         // If not a dedicated business number, check if it's a shared channel
@@ -1014,6 +1020,8 @@ export class BotService {
         pendingSuggestions = detection.suggestions;
         isCategoryMatch = detection.isCategory || false;
         deepLinkCapability = detection.deepLinkCapability;
+        // ACC-180: Detection results are fuzzy/inferred — NOT trusted for first-message promo
+        if (businessId && !bizResolution) bizResolution = 'fuzzy';
         logger.debug('[BOT] detectBotCode("' + text + '") →', businessId, 'suggestions:', pendingSuggestions?.length || 0, 'category:', isCategoryMatch, 'deepLink:', deepLinkCapability || 'none');
       }
 
@@ -1021,7 +1029,7 @@ export class BotService {
       // Scope to the shared number's country to prevent cross-country routing
       if (!businessId) {
         businessId = await this.findReturningCustomerBusiness(from, profile?.id || null, sharedNumberCountry);
-        if (businessId) logger.debug('[BOT] returning customer → business:', businessId);
+        if (businessId) { bizResolution = 'returning_customer'; logger.debug('[BOT] returning customer → business:', businessId); }
       }
 
       // "Did you mean?" — fuzzy suggestions / category matches / auto-correct confirmation
@@ -1160,6 +1168,42 @@ export class BotService {
         }
         waConfig = config;
         tierInfo = tier;
+      }
+
+      // ACC-180: First-message promo verification for trusted business context.
+      // Evaluated AFTER business/block/capability/tier checks, BEFORE canonical semantic routing.
+      // Only trusted resolution sources (pre_resolved, dedicated_number, restart) may claim.
+      const PROMO_TRUSTED_SOURCES: ReadonlySet<string> = new Set(['pre_resolved', 'dedicated_number', 'restart']);
+      if (business && tierInfo?.allowed && bizResolution && PROMO_TRUSTED_SOURCES.has(bizResolution)
+          && capabilities.includes('promo_verification' as CapabilityId) && text.length >= 4) {
+        const promoResult = await _handlePromoVerification(
+          this.supabase, this.sendText.bind(this), from, text,
+          business.id, messageId, capabilities as string[],
+        );
+        if (promoResult.handled) {
+          // Promo handled — create canonical session for eligibility YES/NO continuation
+          const cleanupQ = this.supabase.from('bot_sessions').delete()
+            .eq('whatsapp_number', from).eq('is_active', false);
+          await cleanupQ.eq('business_id', business.id);
+
+          await this.supabase.from('bot_sessions').insert({
+            whatsapp_number: from,
+            user_id: profile?.id || null,
+            business_id: business.id,
+            current_step: 'greeting',
+            session_data: {
+              business_id: business.id,
+              business_name: business.name,
+              business_category: business.category,
+              capabilities,
+              ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
+            },
+            is_active: true,
+            expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          });
+          return; // Promo response already sent by handler
+        }
+        // handled:false → continue normal flow (canonical understanding, greeting, etc.)
       }
 
       // Auto-reply: away message (outside hours) and instant reply (during hours)
@@ -1998,7 +2042,7 @@ export class BotService {
         from,
         text,
         session.business_id,
-        session.session_data?.whatsapp_message_id as string | undefined,
+        messageId, // ACC-180: request-scoped provider message ID, not stale session state
         sessionCapabilities,
       );
       if (promoResult.handled) return;
