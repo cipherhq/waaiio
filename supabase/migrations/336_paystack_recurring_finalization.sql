@@ -236,12 +236,22 @@ BEGIN
   END IF;
 
   IF v_attempt.status = 'finalized' THEN
-    -- Replay identity validation: incoming evidence must match persisted identity
+    -- Replay identity validation: incoming evidence must match ALL persisted identity
     IF p_provider_amount_minor != v_attempt.intended_amount_minor THEN
       RETURN jsonb_build_object('success', false, 'reason', 'replay_amount_mismatch');
     END IF;
     IF LOWER(p_provider_currency) != LOWER(v_attempt.intended_currency) THEN
       RETURN jsonb_build_object('success', false, 'reason', 'replay_currency_mismatch');
+    END IF;
+    -- Validate transaction_id if both present
+    IF p_provider_transaction_id IS NOT NULL AND v_attempt.provider_transaction_id IS NOT NULL
+       AND p_provider_transaction_id IS DISTINCT FROM v_attempt.provider_transaction_id THEN
+      RETURN jsonb_build_object('success', false, 'reason', 'replay_transaction_id_mismatch');
+    END IF;
+    -- Validate invoice_code if both present
+    IF p_provider_invoice_code IS NOT NULL AND v_attempt.provider_invoice_code IS NOT NULL
+       AND p_provider_invoice_code IS DISTINCT FROM v_attempt.provider_invoice_code THEN
+      RETURN jsonb_build_object('success', false, 'reason', 'replay_invoice_mismatch');
     END IF;
     -- Return canonical IDs for safe Stage 3 recovery
     RETURN jsonb_build_object('success', true, 'already_finalized', true,
@@ -253,8 +263,8 @@ BEGIN
       'subscription_id', v_attempt.customer_subscription_id);
   END IF;
 
+  -- Guard: only dispatched/charged/failed may finalize. 'reserved' cannot.
   IF v_attempt.status NOT IN ('dispatched', 'charged', 'failed') THEN
-    -- 'failed' allowed for late-success recovery
     RETURN jsonb_build_object('success', false, 'reason', 'wrong_status', 'status', v_attempt.status);
   END IF;
 

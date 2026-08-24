@@ -104,7 +104,8 @@ export async function GET(request: NextRequest) {
                 // Prior charge definitively failed — mark attempt failed, allow new claim next run
                 await supabase.from('paystack_billing_attempts')
                   .update({ status: 'failed', failure_reason: verifyResult.reason || 'provider_terminal_failure' })
-                  .eq('id', claim.attempt_id);
+                  .eq('id', claim.attempt_id)
+                  .in('status', ['dispatched', 'charged']);
               }
               // pending/not_found/indeterminate → leave dispatched, skip
             } catch (verifyErr) {
@@ -154,7 +155,8 @@ export async function GET(request: NextRequest) {
             // Synchronous success — mark charged (webhook will finalize)
             await supabase.from('paystack_billing_attempts')
               .update({ status: 'charged', charged_at: new Date().toISOString() })
-              .eq('id', claim.attempt_id);
+              .eq('id', claim.attempt_id)
+              .in('status', ['dispatched']);
             cron.itemCompleted({ gateway: 'paystack', subscriptionId: sub.id, providerReference: claim.provider_reference });
             retried++;
           }
