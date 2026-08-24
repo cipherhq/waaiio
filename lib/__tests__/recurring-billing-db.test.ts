@@ -1398,7 +1398,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     expect(chargeCount).toBe('2');
   });
 
-  it('#176-R2: same invoice + two refs → one canonical finalization (partial unique index)', () => {
+  it('#176-R2: same invoice + two refs → finalized index prevents double finalization', () => {
     psql(`DELETE FROM paystack_billing_attempts; DELETE FROM payments; DELETE FROM bookings; DELETE FROM subscription_charges; DELETE FROM platform_fees;`);
     psql(`UPDATE customer_subscriptions SET charge_count = 0, total_charged = 0 WHERE id = '${MC_SUB_ID}';`);
 
@@ -1408,21 +1408,26 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`INSERT INTO paystack_billing_attempts (customer_subscription_id, cycle_key, scheduled_at, attempt_number, provider_reference, intended_amount_minor, intended_currency, status, charged_at, provider_invoice_code)
           VALUES ('${MC_SUB_ID}', '${cycleKey}', NOW(), 1, 'ps-ref-conv1', 10000, 'NGN', 'charged', NOW(), 'INV_CONV');`);
 
-    const attemptId = psql(`SELECT id FROM paystack_billing_attempts WHERE provider_reference = 'ps-ref-conv1';`);
-    const r1 = psqlJson(`SELECT finalize_paystack_recurring_charge('${attemptId}'::uuid, 10000, 'NGN', 'tx_conv1', 'INV_CONV');`);
+    const attemptId1 = psql(`SELECT id FROM paystack_billing_attempts WHERE provider_reference = 'ps-ref-conv1';`);
+    const r1 = psqlJson(`SELECT finalize_paystack_recurring_charge('${attemptId1}'::uuid, 10000, 'NGN', 'tx_conv1', 'INV_CONV');`);
     expect(r1.success).toBe(true);
     expect(r1.already_finalized).toBe(false);
 
-    // Second ref for same invoice → partial unique index prevents second unresolved
-    let insertThrew = false;
-    try {
-      psql(`INSERT INTO paystack_billing_attempts (customer_subscription_id, cycle_key, scheduled_at, attempt_number, provider_reference, intended_amount_minor, intended_currency, status, charged_at, provider_invoice_code)
-            VALUES ('${MC_SUB_ID}', '${cycleKey}', NOW(), 2, 'ps-ref-conv2', 10000, 'NGN', 'charged', NOW(), 'INV_CONV');`);
-    } catch { insertThrew = true; }
-    // Index prevents insert because one finalized already exists for this cycle
-    expect(insertThrew).toBe(true);
+    // Second ref for same invoice: insert succeeds (unresolved index doesn't block after finalized)
+    // but finalization must fail (finalized index prevents two finalized for same cycle)
+    psql(`INSERT INTO paystack_billing_attempts (customer_subscription_id, cycle_key, scheduled_at, attempt_number, provider_reference, intended_amount_minor, intended_currency, status, charged_at, provider_invoice_code)
+          VALUES ('${MC_SUB_ID}', '${cycleKey}', NOW(), 2, 'ps-ref-conv2', 10000, 'NGN', 'charged', NOW(), 'INV_CONV');`);
 
-    // Still exactly one payment
+    const attemptId2 = psql(`SELECT id FROM paystack_billing_attempts WHERE provider_reference = 'ps-ref-conv2';`);
+
+    // Attempt to finalize the second attempt → must fail (finalized unique index)
+    let finThrew = false;
+    try {
+      psqlJson(`SELECT finalize_paystack_recurring_charge('${attemptId2}'::uuid, 10000, 'NGN', 'tx_conv2', 'INV_CONV');`);
+    } catch { finThrew = true; }
+    expect(finThrew).toBe(true);
+
+    // Still exactly one payment (second finalization rolled back)
     const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE business_id = '${BIZ_ID}' AND status = 'success';`);
     expect(paymentCount).toBe('1');
 
