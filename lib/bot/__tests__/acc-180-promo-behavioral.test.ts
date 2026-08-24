@@ -99,10 +99,13 @@ function buildMockChainClient() {
     c.in = vi.fn().mockReturnValue(c);
     c.ilike = vi.fn().mockReturnValue(c);
     c.like = vi.fn().mockReturnValue(c);
+    c.gt = vi.fn().mockReturnValue(c);
     c.gte = vi.fn().mockReturnValue(c);
+    c.lt = vi.fn().mockReturnValue(c);
     c.lte = vi.fn().mockReturnValue(c);
     c.order = vi.fn().mockReturnValue(c);
     c.limit = vi.fn().mockReturnValue(c);
+    c.range = vi.fn().mockReturnValue(c);
     c.single = vi.fn().mockResolvedValue({ data: null, error: null });
     c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
     return c;
@@ -149,15 +152,14 @@ function buildSupabase(opts: {
     c.in = vi.fn().mockReturnValue(c);
     c.ilike = vi.fn().mockReturnValue(c);
     c.like = vi.fn().mockReturnValue(c);
+    c.gt = vi.fn().mockReturnValue(c);
     c.gte = vi.fn().mockReturnValue(c);
+    c.lt = vi.fn().mockReturnValue(c);
     c.lte = vi.fn().mockReturnValue(c);
     c.order = vi.fn().mockReturnValue(c);
     c.limit = vi.fn().mockReturnValue(c);
-    c.single = vi.fn().mockResolvedValue(
-      opts.sessionInsertFail
-        ? { data: null, error: { message: 'unique violation', code: '23505' } }
-        : { data: { id: 'sess-new', whatsapp_number: '+234', business_id: bizId, current_step: 'select_capability', session_data: { capabilities: caps }, is_active: true, version: 0 }, error: null },
-    );
+    c.range = vi.fn().mockReturnValue(c);
+    c.single = vi.fn().mockResolvedValue({ data: null, error: null });
     c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
     return c;
   };
@@ -192,8 +194,17 @@ function buildSupabase(opts: {
           return origSel(...a);
         });
       }
-      if (table === 'bot_sessions' && opts.sessionInsertFail) {
-        c.single = vi.fn().mockResolvedValue({ data: null, error: { message: 'unique violation', code: '23505' } });
+      if (table === 'bot_sessions') {
+        // Session insert → .insert().select().single()
+        const sessResult = opts.sessionInsertFail
+          ? { data: null, error: { message: 'unique violation', code: '23505' } }
+          : { data: { id: 'sess-new', whatsapp_number: '+234', business_id: bizId, current_step: 'select_capability', session_data: { capabilities: caps }, is_active: true, version: 0 }, error: null };
+        const insertChain = mkChain();
+        insertChain.single = vi.fn().mockResolvedValue(sessResult);
+        c.insert = vi.fn((...args: any[]) => {
+          if (args[0]?.whatsapp_number) sessionInsertCalls.push(args[0]);
+          return insertChain;
+        });
       }
       return c;
     }),
@@ -224,6 +235,12 @@ function buildSupabase(opts: {
           },
           error: null,
         };
+      }
+      if (name === 'update_session_cas') {
+        return { data: { success: true, version: 2 }, error: null };
+      }
+      if (name === 'deactivate_session_atomic') {
+        return { data: null, error: null };
       }
       return { data: null, error: null };
     }),
@@ -299,27 +316,17 @@ describe('ACC-180 Runtime: pre_resolved business', () => {
 // ══════════════════════════════════════════════════════════
 
 describe('ACC-180 Runtime: dedicated-number resolution', () => {
-  it('dedicated business number with distinct preResolvedBusinessId → promo handler called', async () => {
-    // In production, dedicated WhatsApp numbers are pre-resolved by the webhook
-    // channel resolver, which sets preResolvedBusinessId. This tests that the
-    // pre-resolved path (which sets bizResolution='pre_resolved') correctly
-    // authorizes first-message promo. The 'dedicated_number' bizResolution
-    // path is a legacy fallback inside handleMessage that only fires when
-    // the channel resolver didn't pre-resolve.
-    const sb = buildSupabase({ businessId: 'biz-ded' });
+  it('business resolved via dedicated-number DB lookup (no preResolvedBusinessId) → promo handler called', async () => {
+    // preResolvedBusinessId is ABSENT — business resolves through
+    // from('businesses').eq('whatsapp_phone_number_id', destinationPhone).single()
+    const sb = buildSupabase({ businessId: 'biz-ded', dedicatedNumber: true });
     const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
-    // Simulates dedicated-number: channel resolver sets preResolvedBusinessId + destinationPhone
-    await bot.handleMessage('+2341234567890', 'TROPHY ABC12345', 'text', 'dedicated-phone-id', 'biz-ded', undefined, 'wamid.DED456');
+    // Only destinationPhone, no preResolvedBusinessId
+    await bot.handleMessage('+2341234567890', 'TROPHY ABC12345', 'text', 'dedicated-phone-id', undefined, undefined, 'wamid.DED456');
 
     expect(promoHandlerCalls.length).toBeGreaterThanOrEqual(1);
     expect(promoHandlerCalls[0].businessId).toBe('biz-ded');
     expect(promoHandlerCalls[0].messageId).toBe('wamid.DED456');
-  });
-
-  it('bizResolution=dedicated_number is trusted in PROMO_TRUSTED_SOURCES', () => {
-    // Source-level proof that the dedicated_number fallback IS trusted
-    const PROMO_TRUSTED: ReadonlySet<string> = new Set(['pre_resolved', 'dedicated_number', 'restart']);
-    expect(PROMO_TRUSTED.has('dedicated_number')).toBe(true);
   });
 });
 
@@ -337,22 +344,30 @@ describe('ACC-180 Runtime: untrusted resolution blocked', () => {
     expect(promoHandlerCalls.length).toBe(0);
   });
 
-  it('fuzzy and returning_customer are NOT in PROMO_TRUSTED_SOURCES (source proof)', () => {
-    const PROMO_TRUSTED: ReadonlySet<string> = new Set(['pre_resolved', 'dedicated_number', 'restart']);
-    expect(PROMO_TRUSTED.has('fuzzy')).toBe(false);
-    expect(PROMO_TRUSTED.has('returning_customer')).toBe(false);
-    expect(PROMO_TRUSTED.has('bot_code')).toBe(false);
+  it('business resolved via fuzzy detection → promo NOT authorized (runtime)', async () => {
+    // Configure detector mock to return a business through fuzzy matching
+    mockDetectionResult = { businessId: 'biz-fuzzy' };
+    const sb = buildSupabase({ businessId: 'biz-fuzzy' });
+    // No RPC call without preResolvedBusinessId — legacy path
+    const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
+    // No preResolvedBusinessId, no destinationPhone → detectBotCodeWithSuggestions resolves business
+    await bot.handleMessage('+2341234567890', 'TROPHY K7PM4XQ9', 'text', undefined, undefined, undefined, 'wamid.FUZZY');
+
+    // Business WAS resolved (fuzzy), but first-message promo NOT called
+    expect(promoHandlerCalls.length).toBe(0);
+    // Normal flow should continue
+    expect(flowExecutorExecuteCalls).toBe(1);
   });
 
-  it('bizResolution source code sets fuzzy for detection results', () => {
-    const fs = require('fs');
-    const src = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
-    // Detection results (fuzzy/phonetic/acronym) set bizResolution='fuzzy'
-    expect(src).toContain("bizResolution = 'fuzzy'");
-    // Returning customer sets bizResolution='returning_customer'
-    expect(src).toContain("bizResolution = 'returning_customer'");
-    // PROMO_TRUSTED_SOURCES does NOT include fuzzy or returning_customer
-    expect(src).toContain("new Set(['pre_resolved', 'dedicated_number', 'restart'])");
+  it('business resolved via returning-customer inference → promo NOT authorized (runtime)', async () => {
+    mockReturningCustomerResult = 'biz-returning';
+    const sb = buildSupabase({ businessId: 'biz-returning' });
+    const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
+    await bot.handleMessage('+2341234567890', 'TROPHY K7PM4XQ9', 'text', undefined, undefined, undefined, 'wamid.RETURN');
+
+    // Business resolved via returning-customer (untrusted)
+    expect(promoHandlerCalls.length).toBe(0);
+    expect(flowExecutorExecuteCalls).toBe(1);
   });
 });
 
@@ -481,15 +496,31 @@ describe('ACC-180 Runtime: eligibility continuation', () => {
     expect((sessData.capabilities as string[]) || []).toContain('promo_verification');
   });
 
-  it('existing-session promo path uses request-scoped messageId (source contract)', () => {
-    // The existing-session promo handler at line ~2037 uses messageId (not session state).
-    // This is proven by source contract and the pre_resolved runtime test above
-    // (which enters the existing-session revalidation path via RPC).
-    const fs = require('fs');
-    const src = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
-    const promoSection = src.split('Promo code verification (before keyword matching)')[1]?.split('Unified keyword matching')[0] || '';
-    expect(promoSection).toContain('messageId,');
-    expect(promoSection).not.toContain('whatsapp_message_id');
+  it('message 2 YES on existing session reaches promo handler with correct messageId (runtime)', async () => {
+    // Build supabase with existing session (as if message 1 created it)
+    promoHandledBehavior = 'force_true';
+    const sb = buildSupabase({
+      businessId: 'biz-elig',
+      hasExistingSession: true,
+      existingSessionData: {
+        capabilities: ['ordering', 'promo_verification'],
+        business_id: 'biz-elig',
+        business_name: 'PromoBiz',
+        business_category: 'shop',
+      },
+    });
+    const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
+
+    // Message 2: YES with different Meta ID — uses RPC path (preResolvedBusinessId set)
+    await bot.handleMessage('+2341234567890', 'YES', 'text', 'phone-id', 'biz-elig', undefined, 'wamid.ELIG2');
+
+    // Existing-session promo handler MUST be called
+    expect(promoHandlerCalls.length).toBeGreaterThanOrEqual(1);
+    expect(promoHandlerCalls[0].text).toBe('YES');
+    expect(promoHandlerCalls[0].businessId).toBe('biz-elig');
+    expect(promoHandlerCalls[0].messageId).toBe('wamid.ELIG2');
+    // handled:true → flow executor NOT called
+    expect(flowExecutorExecuteCalls).toBe(0);
   });
 });
 
