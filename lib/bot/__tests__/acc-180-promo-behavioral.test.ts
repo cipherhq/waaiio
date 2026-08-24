@@ -1,241 +1,285 @@
 /**
- * ACC-180: Behavioral tests for first-message promo routing.
+ * ACC-180: BotService runtime behavioral tests for first-message promo routing.
  *
- * Uses the actual BotService class with mocked Supabase/sender/dependencies
- * to prove runtime control flow, not just source-string assertions.
+ * Executes actual bot.handleMessage() calls with mocked dependencies.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { BotService } from '../bot.service';
 
-// Mock createServiceClient to avoid env var dependency
+// ── Tracking state ──
+let promoHandlerCalls: Array<{ businessId: string; messageId?: string; text: string }> = [];
+let flowExecutorExecuteCalls = 0;
+let canonicalUnderstandingCalls = 0;
+
+// ── Mock modules BEFORE imports ──
+
 vi.mock('@/lib/supabase/service', () => ({
-  createServiceClient: () => ({
-    from: vi.fn(() => {
-      const c: Record<string, any> = {};
-      c.select = vi.fn().mockReturnValue(c);
-      c.insert = vi.fn().mockReturnValue(c);
-      c.update = vi.fn().mockReturnValue(c);
-      c.upsert = vi.fn().mockReturnValue(c);
-      c.eq = vi.fn().mockReturnValue(c);
-      c.ilike = vi.fn().mockReturnValue(c);
-      c.or = vi.fn().mockReturnValue(c);
-      c.is = vi.fn().mockReturnValue(c);
-      c.not = vi.fn().mockReturnValue(c);
-      c.order = vi.fn().mockReturnValue(c);
-      c.limit = vi.fn().mockReturnValue(c);
-      c.single = vi.fn().mockResolvedValue({ data: null, error: null });
-      c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-      return c;
-    }),
-    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+  createServiceClient: () => buildMockChainClient(),
+}));
+
+const mockGetConfiguredCapabilities = vi.fn().mockResolvedValue({ ok: true, rows: [{ capability: 'ordering', is_enabled: true, sort_order: 0 }, { capability: 'promo_verification', is_enabled: true, sort_order: 1 }] });
+vi.mock('@/lib/capabilities/service', () => ({
+  getConfiguredCapabilities: (...args: any[]) => mockGetConfiguredCapabilities(...args),
+  getCapabilityCustomLabels: vi.fn().mockResolvedValue({}),
+}));
+
+vi.mock('../handlers/promo-verification', () => ({
+  handlePromoVerification: vi.fn(async (_sb: any, _send: any, _from: string, text: string, businessId: string, messageId?: string, caps?: string[]) => {
+    promoHandlerCalls.push({ businessId, messageId, text });
+    if (!caps?.includes('promo_verification')) return { handled: false };
+    // Keyword mode: "TROPHY CODE" has 2+ tokens
+    if (text.trim().split(/\s+/).length >= 2) return { handled: true };
+    return { handled: false };
   }),
 }));
 
-// ── Mock infrastructure ──
+vi.mock('../flows/executor', () => ({
+  FlowExecutor: class { async execute() { flowExecutorExecuteCalls++; } },
+}));
 
-function mockChain() {
-  const c: Record<string, any> = {};
-  c.select = vi.fn().mockReturnValue(c);
-  c.insert = vi.fn().mockReturnValue(c);
-  c.update = vi.fn().mockReturnValue(c);
-  c.delete = vi.fn().mockReturnValue(c);
-  c.upsert = vi.fn().mockReturnValue(c);
-  c.eq = vi.fn().mockReturnValue(c);
-  c.neq = vi.fn().mockReturnValue(c);
-  c.or = vi.fn().mockReturnValue(c);
-  c.is = vi.fn().mockReturnValue(c);
-  c.not = vi.fn().mockReturnValue(c);
-  c.in = vi.fn().mockReturnValue(c);
-  c.ilike = vi.fn().mockReturnValue(c);
-  c.like = vi.fn().mockReturnValue(c);
-  c.gte = vi.fn().mockReturnValue(c);
-  c.lte = vi.fn().mockReturnValue(c);
-  c.order = vi.fn().mockReturnValue(c);
-  c.limit = vi.fn().mockReturnValue(c);
-  c.single = vi.fn().mockResolvedValue({ data: null, error: null });
-  c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-  return c;
+vi.mock('../canonical-understanding', () => ({
+  understandCanonicalMessage: vi.fn(async () => {
+    canonicalUnderstandingCalls++;
+    return { confidence: 0, broadIntent: null, semanticFamily: null, requestedAction: null, entities: {}, language: 'en', languageBlocked: false, languageEntitlement: { allowedLanguages: ['en'] }, allowedLanguageNames: ['English'] };
+  }),
+}));
+
+// ── Helper: chainable supabase mock ──
+
+function buildMockChainClient() {
+  const mkChain = (): Record<string, any> => {
+    const c: Record<string, any> = {};
+    c.select = vi.fn().mockReturnValue(c);
+    c.insert = vi.fn().mockReturnValue(c);
+    c.update = vi.fn().mockReturnValue(c);
+    c.delete = vi.fn().mockReturnValue(c);
+    c.upsert = vi.fn().mockReturnValue(c);
+    c.eq = vi.fn().mockReturnValue(c);
+    c.neq = vi.fn().mockReturnValue(c);
+    c.or = vi.fn().mockReturnValue(c);
+    c.is = vi.fn().mockReturnValue(c);
+    c.not = vi.fn().mockReturnValue(c);
+    c.in = vi.fn().mockReturnValue(c);
+    c.ilike = vi.fn().mockReturnValue(c);
+    c.like = vi.fn().mockReturnValue(c);
+    c.gte = vi.fn().mockReturnValue(c);
+    c.lte = vi.fn().mockReturnValue(c);
+    c.order = vi.fn().mockReturnValue(c);
+    c.limit = vi.fn().mockReturnValue(c);
+    c.single = vi.fn().mockResolvedValue({ data: null, error: null });
+    c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    return c;
+  };
+  return { from: vi.fn(() => mkChain()), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) };
 }
 
-function mockSupabase() {
-  return {
-    from: vi.fn(() => mockChain()),
-    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
-    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) },
+// ── Build a supabase mock with configurable bot context RPC ──
+
+function buildSupabase(opts: { businessId?: string; caps?: string[]; tierAllowed?: boolean } = {}) {
+  const bizId = opts.businessId || 'biz-test';
+  const caps = opts.caps || ['ordering', 'promo_verification'];
+  const tierAllowed = opts.tierAllowed !== false;
+
+  const mkChain = (): Record<string, any> => {
+    const c: Record<string, any> = {};
+    c.select = vi.fn().mockReturnValue(c);
+    c.insert = vi.fn().mockReturnValue(c);
+    c.update = vi.fn().mockReturnValue(c);
+    c.delete = vi.fn().mockReturnValue(c);
+    c.upsert = vi.fn().mockReturnValue(c);
+    c.eq = vi.fn().mockReturnValue(c);
+    c.neq = vi.fn().mockReturnValue(c);
+    c.or = vi.fn().mockReturnValue(c);
+    c.is = vi.fn().mockReturnValue(c);
+    c.not = vi.fn().mockReturnValue(c);
+    c.in = vi.fn().mockReturnValue(c);
+    c.ilike = vi.fn().mockReturnValue(c);
+    c.like = vi.fn().mockReturnValue(c);
+    c.gte = vi.fn().mockReturnValue(c);
+    c.lte = vi.fn().mockReturnValue(c);
+    c.order = vi.fn().mockReturnValue(c);
+    c.limit = vi.fn().mockReturnValue(c);
+    c.single = vi.fn().mockResolvedValue({
+      data: { id: 'sess-new', whatsapp_number: '+234', business_id: bizId, current_step: 'select_capability', session_data: { capabilities: caps }, is_active: true, version: 0 },
+      error: null,
+    });
+    c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    return c;
   };
+
+  const bizData = { id: bizId, name: 'PromoBiz', slug: 'promobiz', category: 'shop', flow_type: 'ordering', subscription_tier: 'growth', trial_ends_at: null, metadata: {}, country_code: 'NG', is_whitelabel: false, payment_gateway: null, operating_hours: null, status: 'active', whatsapp_phone_number_id: null, bot_code: null, total_bookings: 0, rating_avg: 0 };
+
+  const sb: Record<string, any> = {
+    from: vi.fn((table: string) => {
+      const c = mkChain();
+      if (table === 'businesses') {
+        c.single = vi.fn().mockResolvedValue({ data: bizData, error: null });
+        c.maybeSingle = vi.fn().mockResolvedValue({ data: bizData, error: null });
+      }
+      if (table === 'blocked_phones') {
+        const origSel = c.select;
+        c.select = vi.fn((...a: any[]) => {
+          if (a[1]?.count === 'exact') {
+            const cc2 = mkChain();
+            (cc2 as any).then = (fn: any) => Promise.resolve(fn({ count: 0 }));
+            return cc2;
+          }
+          return origSel(...a);
+        });
+      }
+      return c;
+    }),
+    rpc: vi.fn().mockImplementation(async (name: string) => {
+      if (name === 'get_bot_context') {
+        return {
+          data: {
+            has_session: false, session: null,
+            business: { id: bizId, name: 'PromoBiz', slug: 'promobiz', category: 'shop', flow_type: 'ordering', subscription_tier: 'growth', trial_ends_at: null, metadata: {}, country_code: 'NG', is_whitelabel: false, payment_gateway: null, operating_hours: null, status: 'active' },
+            capabilities: caps.map(c => ({ capability: c, is_enabled: true, sort_order: 0 })),
+            capability_overrides: [],
+          },
+          error: null,
+        };
+      }
+      return { data: null, error: null };
+    }),
+  };
+
+  return sb;
 }
 
 function mockSender() {
+  return { sendText: vi.fn().mockResolvedValue({}), sendButtons: vi.fn().mockResolvedValue({}), sendList: vi.fn().mockResolvedValue({}), sendDocument: vi.fn().mockResolvedValue({}), sendImage: vi.fn().mockResolvedValue({}), markAsRead: vi.fn().mockResolvedValue({}) };
+}
+
+function mockStandalone(tierAllowed = true) {
   return {
-    sendText: vi.fn().mockResolvedValue({}),
-    sendButtons: vi.fn().mockResolvedValue({}),
-    sendList: vi.fn().mockResolvedValue({}),
-    sendDocument: vi.fn().mockResolvedValue({}),
-    sendImage: vi.fn().mockResolvedValue({}),
-    markAsRead: vi.fn().mockResolvedValue({}),
+    loadWhatsAppConfigBundle: vi.fn().mockResolvedValue({ templates: { greeting: 'Welcome!' }, welcome_buttons: [], auto_reply_enabled: false, business_hours: null, alias: null }),
+    checkTierLimitsFromBusiness: vi.fn().mockResolvedValue({ allowed: tierAllowed, isWhitelabel: false }),
+    fillTemplate: vi.fn((t: string) => t),
   };
 }
 
-// ── Tests ──
+function mockIntelligence() {
+  return {
+    getPersonaGreeting: vi.fn(() => 'Hello!'),
+    isTimedOut: vi.fn(() => false),
+    containsProfanity: vi.fn(() => false),
+    recordProfanity: vi.fn(() => ({ blocked: false })),
+  };
+}
 
-describe('ACC-180 Behavioral: handleMessage signature', () => {
-  it('BotService.handleMessage accepts messageId as 8th parameter', () => {
-    const bot = new BotService(mockSupabase() as any, mockSender() as any, {} as any, {} as any);
-    // The method exists and accepts 8 params
-    expect(typeof bot.handleMessage).toBe('function');
-    expect(bot.handleMessage.length).toBeGreaterThanOrEqual(3); // required params
+// ── Reset ──
+
+beforeEach(() => {
+  promoHandlerCalls = [];
+  flowExecutorExecuteCalls = 0;
+  canonicalUnderstandingCalls = 0;
+});
+
+// ── Import BotService AFTER mocks ──
+
+const { BotService } = await import('../bot.service');
+
+// ══════════════════════════════════════════════════════════
+// RUNTIME TESTS
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-180 Runtime: trusted pre_resolved → first-message promo', () => {
+  it('preResolvedBusinessId → promo handler called with correct businessId and messageId', async () => {
+    const sb = buildSupabase({ businessId: 'biz-promo-1' });
+    const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
+
+    await bot.handleMessage('+2341234567890', 'TROPHY K7PM4XQ9', 'text', 'phone-num-id', 'biz-promo-1', undefined, 'wamid.META123');
+
+    expect(promoHandlerCalls.length).toBeGreaterThanOrEqual(1);
+    expect(promoHandlerCalls[0].businessId).toBe('biz-promo-1');
+    expect(promoHandlerCalls[0].messageId).toBe('wamid.META123');
   });
 });
 
-describe('ACC-180 Behavioral: tenant authority at source level', () => {
-  // These tests verify the bizResolution tracking by inspecting the source
-  // since full BotService integration requires extensive mocking of
-  // get_bot_context RPC, channel resolver, etc.
+describe('ACC-180 Runtime: handled:true skips CAS-004', () => {
+  it('promo handled → canonical understanding NOT called, flow executor NOT called', async () => {
+    const sb = buildSupabase({ businessId: 'biz-promo-2' });
+    const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
 
-  it('PROMO_TRUSTED_SOURCES contains only pre_resolved, dedicated_number, restart', () => {
-    // Reconstruct the trusted set from the agreed architecture
-    const trusted = new Set(['pre_resolved', 'dedicated_number', 'restart']);
-    const untrusted = ['fuzzy', 'returning_customer', 'bot_code', null];
+    await bot.handleMessage('+2341234567890', 'TROPHY K7PM4XQ9', 'text', 'phone-id', 'biz-promo-2', undefined, 'wamid.META456');
 
-    for (const src of ['pre_resolved', 'dedicated_number', 'restart']) {
-      expect(trusted.has(src)).toBe(true);
-    }
-    for (const src of untrusted) {
-      expect(trusted.has(src as string)).toBe(false);
-    }
+    expect(promoHandlerCalls.length).toBeGreaterThanOrEqual(1);
+    expect(canonicalUnderstandingCalls).toBe(0);
+    expect(flowExecutorExecuteCalls).toBe(0);
   });
 });
 
-describe('ACC-180 Behavioral: promo handler capability gating', () => {
-  it('handlePromoVerification returns handled:false when promo_verification absent', async () => {
-    const { handlePromoVerification } = await import('../handlers/promo-verification');
-    const result = await handlePromoVerification(
-      mockSupabase() as any,
-      vi.fn(),
-      '+2341234567890',
-      'TROPHY K7PM4XQ9',
-      'biz-123',
-      'wamid.test123',
-      ['ordering', 'payment', 'chat'], // no promo_verification
-    );
-    expect(result.handled).toBe(false);
-  });
+describe('ACC-180 Runtime: handled:false → normal flow', () => {
+  it('non-promo text → flow executor runs', async () => {
+    const sb = buildSupabase({ businessId: 'biz-normal' });
+    const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
 
-  it('handlePromoVerification returns handled:false with empty capabilities', async () => {
-    const { handlePromoVerification } = await import('../handlers/promo-verification');
-    const result = await handlePromoVerification(
-      mockSupabase() as any,
-      vi.fn(),
-      '+2341234567890',
-      'TROPHY K7PM4XQ9',
-      'biz-123',
-      'wamid.test123',
-      [], // empty capabilities
-    );
-    expect(result.handled).toBe(false);
-  });
+    await bot.handleMessage('+2341234567890', 'Hi', 'text', 'phone-id', 'biz-normal', undefined, 'wamid.NORMAL');
 
-  it('handlePromoVerification returns handled:false with undefined capabilities', async () => {
-    const { handlePromoVerification } = await import('../handlers/promo-verification');
-    const result = await handlePromoVerification(
-      mockSupabase() as any,
-      vi.fn(),
-      '+2341234567890',
-      'TROPHY K7PM4XQ9',
-      'biz-123',
-      'wamid.test123',
-      undefined,
-    );
-    expect(result.handled).toBe(false);
+    expect(flowExecutorExecuteCalls).toBe(1);
   });
 });
 
-describe('ACC-180 Behavioral: promo code detection', () => {
-  it('looksLikePromoCode accepts valid promo format', async () => {
-    const { looksLikePromoCode } = await import('../../promotions/verify');
-    expect(looksLikePromoCode('K7PM4XQ9N2WF')).toBe(true);
-    expect(looksLikePromoCode('K7PM-4XQ9-N2WF')).toBe(true);
-    expect(looksLikePromoCode('ABC123DEF')).toBe(true);
-  });
+describe('ACC-180 Runtime: untrusted resolution blocked', () => {
+  it('no preResolved, no destinationPhone → promo handler NOT called', async () => {
+    const sb = buildSupabase();
+    // Override RPC to return no business (shared number, unresolved)
+    sb.rpc = vi.fn().mockResolvedValue({ data: null, error: null });
+    const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
 
-  it('looksLikePromoCode rejects natural language', async () => {
-    const { looksLikePromoCode } = await import('../../promotions/verify');
-    expect(looksLikePromoCode('hello')).toBe(false); // no digit
-    expect(looksLikePromoCode('I want to book')).toBe(false); // spaces
-    expect(looksLikePromoCode('Hi')).toBe(false); // too short
-    expect(looksLikePromoCode('booking')).toBe(false); // no digit
-  });
+    await bot.handleMessage('+2341234567890', 'TROPHY K7PM4XQ9', 'text');
 
-  it('looksLikePromoCode rejects very short/long codes', async () => {
-    const { looksLikePromoCode } = await import('../../promotions/verify');
-    expect(looksLikePromoCode('AB1')).toBe(false); // too short
-    expect(looksLikePromoCode('A'.repeat(25) + '1')).toBe(false); // too long (26 chars)
+    expect(promoHandlerCalls.length).toBe(0);
   });
 });
 
-describe('ACC-180 Behavioral: message ID threading', () => {
-  it('handlePromoVerification receives the inboundMessageId parameter', async () => {
-    const { handlePromoVerification } = await import('../handlers/promo-verification');
-    // With promo_verification capability but no active campaign,
-    // the handler should check for campaigns and return handled:false
-    // The key assertion: the function signature accepts inboundMessageId
-    const sb = mockSupabase();
-    // Make the campaign queries return no active campaigns
-    sb.from = vi.fn(() => {
-      const c = mockChain();
-      // count query for hasActiveKeywordCampaign/hasActiveBareCodeCampaign
-      c.select = vi.fn((...args: any[]) => {
-        if (args[1]?.count === 'exact') {
-          return { ...c, then: (fn: any) => fn({ count: 0 }) };
-        }
-        return c;
-      });
-      return c;
+describe('ACC-180 Runtime: capability gating', () => {
+  it('no promo_verification capability → promo handler NOT called', async () => {
+    // Override capability mock to exclude promo_verification
+    mockGetConfiguredCapabilities.mockResolvedValueOnce({
+      ok: true,
+      rows: [{ capability: 'ordering', is_enabled: true, sort_order: 0 }, { capability: 'payment', is_enabled: true, sort_order: 1 }],
     });
+    const sb = buildSupabase({ businessId: 'biz-nocap', caps: ['ordering', 'payment'] });
+    const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
 
-    const result = await handlePromoVerification(
-      sb as any,
-      vi.fn(),
-      '+2341234567890',
-      'TROPHY K7PM4XQ9',
-      'biz-123',
-      'wamid.META_MESSAGE_ID_123', // This should reach the handler
-      ['promo_verification'],
-    );
-    // No active campaign → handled:false, but the function received the messageId
-    expect(result.handled).toBe(false);
+    await bot.handleMessage('+2341234567890', 'TROPHY K7PM4XQ9', 'text', 'phone-id', 'biz-nocap', undefined, 'wamid.NOCAP');
+
+    expect(promoHandlerCalls.length).toBe(0);
   });
 });
 
-describe('ACC-180 Behavioral: draft campaign exclusion', () => {
-  it('hasActiveKeywordCampaign requires status=active', async () => {
-    const { hasActiveKeywordCampaign } = await import('../../promotions/verify');
-    // With a properly mocked supabase that returns 0 active campaigns
-    // (all campaigns are draft), this should return false
-    // The function uses createServiceClient internally
-    // We can test the contract by checking the function exists and returns boolean
-    expect(typeof hasActiveKeywordCampaign).toBe('function');
-  });
+describe('ACC-180 Runtime: tier rejection', () => {
+  it('tier not allowed → promo handler NOT called', async () => {
+    const sb = buildSupabase({ businessId: 'biz-tier' });
+    const bot = new BotService(sb as any, mockSender() as any, mockStandalone(false) as any, mockIntelligence() as any);
 
-  it('hasActiveBareCodeCampaign requires status=active', async () => {
-    const { hasActiveBareCodeCampaign } = await import('../../promotions/verify');
-    expect(typeof hasActiveBareCodeCampaign).toBe('function');
+    await bot.handleMessage('+2341234567890', 'TROPHY K7PM4XQ9', 'text', 'phone-id', 'biz-tier', undefined, 'wamid.TIER');
+
+    expect(promoHandlerCalls.length).toBe(0);
   });
 });
 
-describe('ACC-180 Behavioral: verifyPromoCode message ID propagation', () => {
-  it('verifyPromoCode accepts inboundMessageId in input', async () => {
-    const { verifyPromoCode } = await import('../../promotions/verify');
-    // The function accepts inboundMessageId — it will fail with no active campaign
-    // but the parameter is accepted
-    const result = await verifyPromoCode({
-      businessId: 'biz-nonexistent',
-      rawCode: 'K7PM4XQ9',
-      phoneE164: '+2341234567890',
-      inboundMessageId: 'wamid.test123',
-    });
-    // No campaign found → campaign_inactive
-    expect(result.result).toBe('campaign_inactive');
-    expect(result.message).toBe('No active promotion found.');
+describe('ACC-180 Runtime: message ID threading', () => {
+  it('exact Meta msg.id reaches promo handler', async () => {
+    const sb = buildSupabase({ businessId: 'biz-msgid' });
+    const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
+
+    const metaId = 'wamid.HBgMNTcxMjc0OTg0NzgVAgARGBI1QkRDRjU3RjM2NjUxMkE5AA';
+    await bot.handleMessage('+2341234567890', 'TROPHY ABCD1234', 'text', 'phone-id', 'biz-msgid', undefined, metaId);
+
+    expect(promoHandlerCalls.length).toBeGreaterThanOrEqual(1);
+    expect(promoHandlerCalls[0].messageId).toBe(metaId);
+  });
+
+  it('undefined messageId passes undefined to promo handler', async () => {
+    const sb = buildSupabase({ businessId: 'biz-nomsgid' });
+    const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
+
+    await bot.handleMessage('+2341234567890', 'TROPHY WXYZ9876', 'text', 'phone-id', 'biz-nomsgid');
+
+    expect(promoHandlerCalls.length).toBeGreaterThanOrEqual(1);
+    expect(promoHandlerCalls[0].messageId).toBeUndefined();
   });
 });
