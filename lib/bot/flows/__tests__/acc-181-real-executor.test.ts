@@ -158,11 +158,19 @@ describe('ACC-181 Real Executor: sole promo_verification → promo_entry', () =>
     // Verify messages sent
     expect(sentMessages.length).toBeGreaterThanOrEqual(1);
 
-    // The entry prompt should contain campaign context (from the mocked entry helper)
-    const allText = sentMessages.map(m => m.text || m.body || '').join(' ');
-    expect(allText).toContain('TROPHY Promo');
+    // The Instant Win campaign-entry prompt must appear EXACTLY ONCE.
+    // Count messages containing the campaign-entry marker from renderPromoEntryMessage.
+    const entryPrompts = sentMessages.filter(m => {
+      const text = m.text || m.body || '';
+      return text.includes('TROPHY Promo');
+    });
+    expect(entryPrompts.length).toBe(1);
 
-    // Must NOT contain booking/scheduling content
+    // The single entry prompt must contain the campaign context
+    expect(entryPrompts[0].text || entryPrompts[0].body).toContain('TROPHY <your code>');
+
+    // Must NOT contain booking/scheduling content in any message
+    const allText = sentMessages.map(m => m.text || m.body || '').join(' ');
     expect(allText).not.toContain('When would you like to book');
     expect(allText).not.toContain('select a service');
     expect(allText).not.toContain('Our Services');
