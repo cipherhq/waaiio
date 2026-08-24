@@ -10,14 +10,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 let mockRedemptionRows: any[] = [];
 let mockRedemptionCount = 0;
 
-// Mock service client with controllable return data
+// ── Shared query-chain spies (instrumented across all service client instances) ──
+const chainSpies = {
+  eq: vi.fn(),
+  order: vi.fn(),
+  limit: vi.fn(),
+};
+
+// Mock service client with controllable return data + shared spies
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => {
     const mkChain = (): Record<string, any> => {
       const c: Record<string, any> = {};
       c.select = vi.fn((...args: any[]) => {
         if (args[1]?.count === 'exact') {
-          // Count query for hasPromoHistory
           const countChain = mkChain();
           (countChain as any).then = (fn: any) => Promise.resolve(fn({ count: mockRedemptionCount, data: [], error: null }));
           Object.defineProperty(countChain, Symbol.toStringTag, { value: 'Promise' });
@@ -25,12 +31,11 @@ vi.mock('@/lib/supabase/service', () => ({
         }
         return c;
       });
-      c.eq = vi.fn().mockReturnValue(c);
-      c.order = vi.fn().mockReturnValue(c);
-      c.limit = vi.fn().mockReturnValue(c);
+      c.eq = vi.fn((...args: any[]) => { chainSpies.eq(...args); return c; });
+      c.order = vi.fn((...args: any[]) => { chainSpies.order(...args); return c; });
+      c.limit = vi.fn((...args: any[]) => { chainSpies.limit(...args); return c; });
       c.single = vi.fn().mockResolvedValue({ data: null, error: null });
       c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-      // For data queries, resolve with mockRedemptionRows
       c.then = (fn: any) => Promise.resolve(fn({ data: mockRedemptionRows, error: null }));
       Object.defineProperty(c, Symbol.toStringTag, { value: 'Promise' });
       return c;
@@ -45,6 +50,9 @@ vi.mock('@/lib/supabase/service', () => ({
 beforeEach(() => {
   mockRedemptionRows = [];
   mockRedemptionCount = 0;
+  chainSpies.eq.mockClear();
+  chainSpies.order.mockClear();
+  chainSpies.limit.mockClear();
 });
 
 // ══════════════════════════════════════════════════════════
@@ -289,34 +297,16 @@ describe('ACC-184 Behavioral: attempts excluded', () => {
 
 describe('ACC-184 Behavioral: query-chain contract', () => {
   it('getPromoHistory invokes .limit(10) and .order(claimed_at, ascending:false)', async () => {
-    // Spy on the service client chain to verify production query shape
-    const limitSpy = vi.fn().mockReturnThis();
-    const orderSpy = vi.fn().mockReturnThis();
-    const { createServiceClient } = await import('@/lib/supabase/service');
-    const client = createServiceClient();
-    const origFrom = client.from;
-    client.from = vi.fn(() => {
-      const c = (origFrom as any)();
-      c.limit = limitSpy;
-      c.order = orderSpy;
-      // Make it resolve with empty data
-      c.then = (fn: any) => Promise.resolve(fn({ data: [], error: null }));
-      Object.defineProperty(c, Symbol.toStringTag, { value: 'Promise' });
-      return c;
-    }) as any;
-
-    // Execute getPromoHistory — it calls createServiceClient internally
-    // But since the module is already mocked, we verify via the mock chain
     mockRedemptionRows = [];
     const { getPromoHistory } = await import('@/lib/promotions/history');
-    await getPromoHistory('biz-test', '2341234567890');
 
-    // The production code's chain is invoked through our mock
-    // Verify the mock captured the chain method calls
-    // Since the module mock intercepts createServiceClient, we verify
-    // via the mock behavior: the function returns empty array for empty data
-    const entries = await getPromoHistory('biz-test', '2341234567890');
-    expect(entries).toEqual([]);
+    await getPromoHistory('biz-chain-test', '2349999999999');
+
+    // Shared spies recorded the real production query-chain calls
+    expect(chainSpies.limit).toHaveBeenCalledWith(10);
+    expect(chainSpies.order).toHaveBeenCalledWith('claimed_at', { ascending: false });
+    expect(chainSpies.eq).toHaveBeenCalledWith('business_id', 'biz-chain-test');
+    expect(chainSpies.eq).toHaveBeenCalledWith('phone_e164', '2349999999999');
   });
 });
 

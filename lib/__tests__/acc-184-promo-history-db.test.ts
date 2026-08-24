@@ -30,14 +30,24 @@ const REDEMPTION_B_ID = '00000000-0000-4000-e184-bbbbbbbbbbbb';
 
 describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation', () => {
   beforeAll(() => {
-    // Create fixtures: two businesses, two campaigns, two codes, two redemptions — SAME phone
+    // Create fixture businesses first (FK requirement), then campaigns, codes, redemptions
     psql(`
-      -- Cleanup
+      -- Cleanup (reverse FK order)
+      DELETE FROM promo_verification_attempts WHERE business_id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
       DELETE FROM promo_redemptions WHERE id IN ('${REDEMPTION_A_ID}', '${REDEMPTION_B_ID}');
       DELETE FROM promo_campaign_codes WHERE id IN ('${CODE_A_ID}', '${CODE_B_ID}');
       DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}');
+      DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
 
-      -- Business A campaign + code + redemption
+      -- Business A + B (minimal valid rows for FK satisfaction)
+      INSERT INTO businesses (id, name, slug, category, flow_type, subscription_tier)
+      VALUES ('${BIZ_A_ID}', 'ACC184 Biz A', 'acc184-biz-a', 'shop', 'ordering', 'free')
+      ON CONFLICT (id) DO NOTHING;
+      INSERT INTO businesses (id, name, slug, category, flow_type, subscription_tier)
+      VALUES ('${BIZ_B_ID}', 'ACC184 Biz B', 'acc184-biz-b', 'shop', 'ordering', 'free')
+      ON CONFLICT (id) DO NOTHING;
+
+      -- Business A campaign (ended) + code + redemption
       INSERT INTO promo_campaigns (id, business_id, name, status, timezone, code_entry_mode, code_length, max_attempts_per_phone, rate_limit_window_minutes, rate_limit_max_attempts, eligibility_mode, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
       VALUES ('${CAMP_A_ID}', '${BIZ_A_ID}', 'Biz A Promo', 'ended', 'UTC', 'both', 12, 3, 60, 5, 'none', 'W', 'T', 'I', 'A', 'E')
       ON CONFLICT (id) DO NOTHING;
@@ -50,7 +60,7 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation', () => {
       VALUES ('${REDEMPTION_A_ID}', '${BIZ_A_ID}', '${CAMP_A_ID}', '${CODE_A_ID}', '${PHONE}', 'winner', 'WAA-BIZA', 'pending')
       ON CONFLICT (id) DO NOTHING;
 
-      -- Business B campaign + code + redemption
+      -- Business B campaign (archived) + code + redemption
       INSERT INTO promo_campaigns (id, business_id, name, status, timezone, code_entry_mode, code_length, max_attempts_per_phone, rate_limit_window_minutes, rate_limit_max_attempts, eligibility_mode, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
       VALUES ('${CAMP_B_ID}', '${BIZ_B_ID}', 'Biz B Promo', 'archived', 'UTC', 'both', 12, 3, 60, 5, 'none', 'W', 'T', 'I', 'A', 'E')
       ON CONFLICT (id) DO NOTHING;
@@ -67,9 +77,11 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation', () => {
 
   afterAll(() => {
     psql(`
+      DELETE FROM promo_verification_attempts WHERE business_id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
       DELETE FROM promo_redemptions WHERE id IN ('${REDEMPTION_A_ID}', '${REDEMPTION_B_ID}');
       DELETE FROM promo_campaign_codes WHERE id IN ('${CODE_A_ID}', '${CODE_B_ID}');
       DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}');
+      DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
     `);
   });
 
