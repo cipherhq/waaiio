@@ -78,6 +78,7 @@ export function capabilityToFirstStep(cap: CapabilityId): string {
     case 'packages': return 'select_service'; // purchased at point of booking, falls through to scheduling
     case 'class_booking': return 'select_service'; // uses scheduling flow with is_class=true
     case 'multi_location': return 'select_service'; // location selection is a step within scheduling
+    case 'promo_verification': return 'promo_entry'; // Dedicated entry step
     default: return 'select_service';
   }
 }

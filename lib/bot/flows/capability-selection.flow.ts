@@ -90,6 +90,11 @@ async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
             .eq('business_id', businessId).eq('is_active', true);
           return [cap, (count || 0) > 0];
         }
+        case 'promo_verification': {
+          const { hasActivePromoCampaigns } = await import('@/lib/promotions/entry');
+          const hasPromo = await hasActivePromoCampaigns(businessId);
+          return [cap, hasPromo];
+        }
         case 'waitlist':
           return [cap, false]; // waitlist is never shown as a menu option — triggered automatically when no slots
         default:
@@ -128,6 +133,7 @@ function getFirstStepForCapability(cap: CapabilityId): string {
     case 'loyalty': return 'loyalty_menu';
     case 'invoice': return 'invoice_list';
     case 'class_booking': return 'select_service';
+    case 'promo_verification': return 'promo_entry'; // Dedicated entry step — prevents select_capability recursion
     default: return 'select_service';
   }
 }
@@ -492,6 +498,23 @@ const selectCapabilityStep: FlowStepConfig = {
       return { valid: true, data: { active_capability: 'waiver', _waiver_handled: true } };
     }
 
+    // Instant Win: inline dispatch using shared entry helper
+    if (capId === 'promo_verification' && ctx.business) {
+      const caps = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
+      if (!caps.includes('promo_verification')) {
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('This feature is not available right now.') });
+        return { valid: true, data: { active_capability: 'promo_verification', _promo_entry_handled: true } };
+      }
+      const { getActivePromoEntryCampaigns, renderPromoEntryMessage } = await import('@/lib/promotions/entry');
+      const campaigns = await getActivePromoEntryCampaigns(ctx.business.id);
+      if (campaigns.length === 0) {
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No active promotions right now. Check back later! 🎰') });
+      } else {
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(renderPromoEntryMessage(campaigns)) });
+      }
+      return { valid: true, data: { active_capability: 'promo_verification', _promo_entry_handled: true } };
+    }
+
     return {
       valid: true,
       data: { active_capability: capId },
@@ -505,6 +528,10 @@ const selectCapabilityStep: FlowStepConfig = {
     if (ctx.session.session_data._waiver_handled) {
       delete ctx.session.session_data._waiver_handled;
       return 'select_capability';
+    }
+    if (ctx.session.session_data._promo_entry_handled) {
+      delete ctx.session.session_data._promo_entry_handled;
+      return 'select_capability'; // Message already sent inline — return to menu for code submission
     }
     return getFirstStepForCapability(cap as CapabilityId);
   },
@@ -941,9 +968,48 @@ const myOrdersStep: FlowStepConfig = {
   async next() { return null; },
 };
 
+// ── Instant Win Entry Step ──
+// Thin dedicated step that shows active campaign context/instructions.
+// Prevents select_capability recursion when promo_verification is the sole capability.
+// After displaying, returns to select_capability for the next inbound message
+// (which will be the actual promo code, handled by handlePromoVerification).
+const promoEntryStep: FlowStepConfig = {
+  id: 'promo_entry',
+  async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+    if (!ctx.business) {
+      return [{ type: 'text', text: 'Something went wrong. Send *Hi* to start over.' }];
+    }
+    const caps = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
+    if (!caps.includes('promo_verification')) {
+      return [{ type: 'text', text: 'This feature is not available right now.' }];
+    }
+    try {
+      const { getActivePromoEntryCampaigns, renderPromoEntryMessage } = await import('@/lib/promotions/entry');
+      const campaigns = await getActivePromoEntryCampaigns(ctx.business.id);
+      if (campaigns.length === 0) {
+        return [{ type: 'text', text: 'No active promotions right now. Check back later! 🎰' }];
+      }
+      return [{ type: 'text', text: renderPromoEntryMessage(campaigns) }];
+    } catch {
+      return [{ type: 'text', text: 'Something went wrong. Please try again.' }];
+    }
+  },
+  async validate(): Promise<ValidationResult> {
+    // Any response from the customer after seeing the entry prompt is a promo code attempt.
+    // Return valid so next() can route back to select_capability,
+    // where the next inbound message will be handled by handlePromoVerification.
+    return { valid: true };
+  },
+  async next() {
+    // Return to capability selection — the customer's next message (the actual code)
+    // will be handled by handlePromoVerification in the existing-session path.
+    return 'select_capability';
+  },
+};
+
 export const capabilitySelectionFlow: FlowDefinition = {
   type: 'scheduling', // placeholder — this is a pseudo-flow
-  steps: [selectCapabilityStep, myAccountMenuStep, myBookingsStep, myOrdersStep],
+  steps: [selectCapabilityStep, promoEntryStep, myAccountMenuStep, myBookingsStep, myOrdersStep],
 };
 
 export { getFirstStepForCapability };

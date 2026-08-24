@@ -2024,6 +2024,31 @@ export class BotService {
     );
     if (escapeResult.handled) return;
 
+    // ── ACC-181: Deterministic Instant Win menu action intercept ──
+    // Handles exact cap_promo_verification / promo_verification from stale or current menus.
+    // Must fire BEFORE promo-code handling, semantic routing, keywords, and FlowExecutor
+    // so a stale booking/reservation session cannot consume this action.
+    if (session.business_id && (text === 'cap_promo_verification' || text === 'promo_verification')) {
+      const caps = (session.session_data?.capabilities as string[]) || [];
+      if (!caps.includes('promo_verification')) {
+        await this.sendText(from, 'This feature is not available right now.');
+        return;
+      }
+      try {
+        const { getActivePromoEntryCampaigns, renderPromoEntryMessage } = await import('@/lib/promotions/entry');
+        const campaigns = await getActivePromoEntryCampaigns(session.business_id);
+        if (campaigns.length === 0) {
+          await this.sendText(from, 'No active promotions right now. Check back later! 🎰');
+        } else {
+          await this.sendText(from, renderPromoEntryMessage(campaigns));
+        }
+      } catch (err) {
+        logger.error('[BOT] Instant Win entry error:', err);
+        await this.sendText(from, 'Something went wrong. Please try again.');
+      }
+      return; // Terminate — booking/reservation/FlowExecutor cannot consume this action
+    }
+
     // ── Promo code verification (before keyword matching) ──
     // Check if this message is a promo code attempt (keyword mode or bare code mode).
     // Pass effective capabilities from the session — the bot already resolved them,
