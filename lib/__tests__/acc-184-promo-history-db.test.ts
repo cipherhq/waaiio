@@ -39,12 +39,17 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation', () => {
       DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}');
       DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
 
-      -- Business A + B (minimal valid rows for FK satisfaction)
-      INSERT INTO businesses (id, name, slug, category, flow_type, subscription_tier)
-      VALUES ('${BIZ_A_ID}', 'ACC184 Biz A', 'acc184-biz-a', 'shop', 'ordering', 'free')
+      -- Test user for owner_id FK (businesses requires non-null owner_id)
+      INSERT INTO auth.users (id, email, role, aud, instance_id)
+      VALUES ('00000000-0000-4000-f184-000000000001', 'acc184-test@test.local', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000')
       ON CONFLICT (id) DO NOTHING;
-      INSERT INTO businesses (id, name, slug, category, flow_type, subscription_tier)
-      VALUES ('${BIZ_B_ID}', 'ACC184 Biz B', 'acc184-biz-b', 'shop', 'ordering', 'free')
+
+      -- Business A + B (minimal valid rows for FK satisfaction)
+      INSERT INTO businesses (id, owner_id, name, slug, category, flow_type, subscription_tier)
+      VALUES ('${BIZ_A_ID}', '00000000-0000-4000-f184-000000000001', 'ACC184 Biz A', 'acc184-biz-a', 'shop', 'ordering', 'free')
+      ON CONFLICT (id) DO NOTHING;
+      INSERT INTO businesses (id, owner_id, name, slug, category, flow_type, subscription_tier)
+      VALUES ('${BIZ_B_ID}', '00000000-0000-4000-f184-000000000001', 'ACC184 Biz B', 'acc184-biz-b', 'shop', 'ordering', 'free')
       ON CONFLICT (id) DO NOTHING;
 
       -- Business A campaign (ended) + code + redemption
@@ -82,6 +87,7 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation', () => {
       DELETE FROM promo_campaign_codes WHERE id IN ('${CODE_A_ID}', '${CODE_B_ID}');
       DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}');
       DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
+      DELETE FROM auth.users WHERE id = '00000000-0000-4000-f184-000000000001';
     `);
   });
 
