@@ -1173,7 +1173,10 @@ export class BotService {
       // ACC-180: First-message promo verification for trusted business context.
       // Evaluated AFTER business/block/capability/tier checks, BEFORE canonical semantic routing.
       // Only trusted resolution sources (pre_resolved, dedicated_number, restart) may claim.
+      // If handled, sets flag to skip CAS-004 and greeting/flow — but the SAME canonical
+      // session creation path runs to preserve all lifecycle invariants.
       const PROMO_TRUSTED_SOURCES: ReadonlySet<string> = new Set(['pre_resolved', 'dedicated_number', 'restart']);
+      let promoHandledFirstMessage = false;
       if (business && tierInfo?.allowed && bizResolution && PROMO_TRUSTED_SOURCES.has(bizResolution)
           && capabilities.includes('promo_verification' as CapabilityId) && text.length >= 4) {
         const promoResult = await _handlePromoVerification(
@@ -1181,29 +1184,12 @@ export class BotService {
           business.id, messageId, capabilities as string[],
         );
         if (promoResult.handled) {
-          // Promo handled — create canonical session for eligibility YES/NO continuation
-          const cleanupQ = this.supabase.from('bot_sessions').delete()
-            .eq('whatsapp_number', from).eq('is_active', false);
-          await cleanupQ.eq('business_id', business.id);
-
-          await this.supabase.from('bot_sessions').insert({
-            whatsapp_number: from,
-            user_id: profile?.id || null,
-            business_id: business.id,
-            current_step: 'greeting',
-            session_data: {
-              business_id: business.id,
-              business_name: business.name,
-              business_category: business.category,
-              capabilities,
-              ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
-            },
-            is_active: true,
-            expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-          });
-          return; // Promo response already sent by handler
+          promoHandledFirstMessage = true;
+          // Continue to canonical session creation below — do NOT return here.
+          // The flag skips CAS-004 semantic understanding and greeting/flow executor,
+          // but the session is created through the same canonical path as normal messages.
         }
-        // handled:false → continue normal flow (canonical understanding, greeting, etc.)
+        // handled:false → continue normal flow unchanged
       }
 
       // Auto-reply: away message (outside hours) and instant reply (during hours)
@@ -1235,7 +1221,7 @@ export class BotService {
       let directCanonicalCap: string | null = null; // High-confidence direct routing target
       let canonicalActivatedLanguage: string | null = null; // Seamlessly activated language
       let forceCapabilityMenu = false; // CAS-004: confidence/semantic forces menu
-      if (business && text && text.length > 2 && !isRestart) {
+      if (business && text && text.length > 2 && !isRestart && !promoHandledFirstMessage) {
         try {
           const { understandCanonicalMessage } = await import('./canonical-understanding');
           canonicalResult = await understandCanonicalMessage({
@@ -1439,6 +1425,14 @@ export class BotService {
       }
 
       session = newSession as BotSession;
+
+      // ACC-180: If promo was handled on first message, the canonical session has been created
+      // through the normal path above. Promo response was already sent. Return without
+      // running greeting/flow executor — the next inbound message will find this session
+      // and can continue eligibility YES/NO or start fresh.
+      if (promoHandledFirstMessage) {
+        return;
+      }
 
       if (business && waConfig && tierInfo) {
         // Standalone bot greeting — use pre-fetched config (no extra queries)

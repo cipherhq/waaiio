@@ -106,15 +106,26 @@ describe('ACC-180: Source code contracts', () => {
     expect(promoBlock).toContain('tierInfo?.allowed');
   });
 
-  it('first-message promo creates canonical session (not ad-hoc)', () => {
+  it('first-message promo uses canonical session path (not ad-hoc insert)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
     const promoBlock = src.split('ACC-180: First-message promo verification')[1]?.split('Auto-reply')[0] || '';
-    // Session must include canonical fields
-    expect(promoBlock).toContain('business_name: business.name');
-    expect(promoBlock).toContain('business_category: business.category');
-    expect(promoBlock).toContain('capabilities');
-    expect(promoBlock).toContain("current_step: 'greeting'");
+    // Promo block must NOT contain its own bot_sessions.insert — it sets a flag instead
+    expect(promoBlock).not.toContain('bot_sessions');
+    expect(promoBlock).not.toContain('.insert(');
+    // Must set promoHandledFirstMessage flag
+    expect(promoBlock).toContain('promoHandledFirstMessage = true');
+    // Must NOT return early — continues to canonical session creation
+    expect(promoBlock).not.toContain('return;');
+  });
+
+  it('promoHandledFirstMessage flag skips CAS-004 and returns after canonical session', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
+    // CAS-004 block must check the flag
+    expect(src).toContain('!promoHandledFirstMessage');
+    // After canonical session creation, early return for promo-handled
+    expect(src).toContain('if (promoHandledFirstMessage)');
   });
 
   it('bizResolution tracks all resolution paths', () => {
