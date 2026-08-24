@@ -40,8 +40,8 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation', () => {
       DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
 
       -- Test user for owner_id FK (businesses requires non-null owner_id)
-      INSERT INTO auth.users (id, email, role, aud, instance_id)
-      VALUES ('00000000-0000-4000-f184-000000000001', 'acc184-test@test.local', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000')
+      INSERT INTO auth.users (id)
+      VALUES ('00000000-0000-4000-f184-000000000001')
       ON CONFLICT (id) DO NOTHING;
 
       -- Business A + B (minimal valid rows for FK satisfaction)
