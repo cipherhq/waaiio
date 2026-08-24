@@ -40,9 +40,12 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation', () => {
       DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
 
       -- Test user for owner_id FK (businesses requires non-null owner_id)
+      -- Disable trigger that tries to read NEW.phone (not present in minimal insert)
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
       INSERT INTO auth.users (id)
       VALUES ('00000000-0000-4000-f184-000000000001')
       ON CONFLICT (id) DO NOTHING;
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
 
       -- Business A + B (minimal valid rows for FK satisfaction)
       INSERT INTO businesses (id, owner_id, name, slug, category, flow_type, subscription_tier)
