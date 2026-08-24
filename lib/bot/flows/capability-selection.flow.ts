@@ -215,6 +215,14 @@ const selectCapabilityStep: FlowStepConfig = {
           || (invoiceCount || 0) > 0 || (donationCount || 0) > 0;
       }
     }
+    // ACC-184: Promo redemption history — independent of profiles row.
+    // Uses ctx.from directly (same canonical phone as promo_redemptions.phone_e164).
+    if (!hasHistory && ctx.business) {
+      try {
+        const { hasPromoHistory } = await import('@/lib/promotions/history');
+        hasHistory = await hasPromoHistory(ctx.business.id, ctx.from);
+      } catch { /* service client unavailable in test — fail open for discoverability */ }
+    }
 
     // Build capability items
     const capItems = userFacing.map(cap => ({
@@ -547,6 +555,15 @@ const myAccountMenuStep: FlowStepConfig = {
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
     const hasCapability = (...caps: CapabilityId[]) => caps.some(c => capabilities.includes(c));
 
+    // ACC-184: Check promo history existence (independent of capability state)
+    let hasPromoHistoryForMenu = false;
+    if (ctx.business) {
+      try {
+        const { hasPromoHistory } = await import('@/lib/promotions/history');
+        hasPromoHistoryForMenu = await hasPromoHistory(ctx.business.id, ctx.from);
+      } catch { /* service client unavailable — hide promo history item */ }
+    }
+
     // Build menu items based on enabled capabilities
     const allItems = [
       // My Bookings — always show (covers scheduling, appointment, ticketing, reservation)
@@ -564,9 +581,9 @@ const myAccountMenuStep: FlowStepConfig = {
       // My Points — show if loyalty capability enabled
       { title: 'My Points', description: 'Loyalty balance', postbackText: 'acct_loyalty', show: hasCapability('loyalty') },
       // Subscriptions — show if recurring OR giving capability enabled
-      // Giving services can be recurring (billing_type='recurring'), creating subscriptions
-      // that members must be able to manage even without the explicit 'recurring' capability.
       { title: 'Subscriptions', description: 'Manage recurring payments', postbackText: 'acct_subscriptions', show: hasCapability('recurring', 'giving') },
+      // ACC-184: My Instant Win History — show if actual promo history exists (not capability-gated)
+      { title: 'My Instant Win History', description: 'Promotion results', postbackText: 'acct_promo_history', show: hasPromoHistoryForMenu },
       // Get Receipt — always show
       { title: 'Get Receipt', description: 'Download your last receipt', postbackText: 'acct_receipt', show: true },
       // Switch Business — always show (helps users discover how to change)
@@ -786,6 +803,26 @@ const myAccountMenuStep: FlowStepConfig = {
           buttons: [{ id: 'back_to_account', title: '← Back' }],
         });
       }
+      ctx.session.session_data._my_account_route = 'my_account_menu';
+      return { valid: true, data: { _my_account_route: 'my_account_menu' } };
+    }
+
+    // ACC-184: My Instant Win History — inline handler
+    if (action === 'acct_promo_history' || action === 'my instant win history' || action === 'promo history') {
+      if (!ctx.business) {
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t("Something went wrong. Please try again.") });
+        ctx.session.session_data._my_account_route = 'my_account_menu';
+        return { valid: true, data: { _my_account_route: 'my_account_menu' } };
+      }
+      const { getPromoHistory, renderPromoHistoryMessage } = await import('@/lib/promotions/history');
+      const entries = await getPromoHistory(ctx.business.id, ctx.from);
+      const message = renderPromoHistoryMessage(entries);
+      await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(message) });
+      await ctx.sender.sendButtons({
+        to: ctx.from,
+        body: ' ',
+        buttons: [{ id: 'back_to_account', title: '← Back' }],
+      });
       ctx.session.session_data._my_account_route = 'my_account_menu';
       return { valid: true, data: { _my_account_route: 'my_account_menu' } };
     }
