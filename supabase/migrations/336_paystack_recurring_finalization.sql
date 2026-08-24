@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS paystack_billing_attempts (
   verify_attempts INT NOT NULL DEFAULT 0,
   provider_invoice_code TEXT,
   provider_transaction_id TEXT,
+  canonical_payment_id UUID,
+  canonical_booking_id UUID,
+  canonical_booking_ref TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   dispatched_at TIMESTAMPTZ,
   charged_at TIMESTAMPTZ,
@@ -233,7 +236,21 @@ BEGIN
   END IF;
 
   IF v_attempt.status = 'finalized' THEN
-    RETURN jsonb_build_object('success', true, 'already_finalized', true);
+    -- Replay identity validation: incoming evidence must match persisted identity
+    IF p_provider_amount_minor != v_attempt.intended_amount_minor THEN
+      RETURN jsonb_build_object('success', false, 'reason', 'replay_amount_mismatch');
+    END IF;
+    IF LOWER(p_provider_currency) != LOWER(v_attempt.intended_currency) THEN
+      RETURN jsonb_build_object('success', false, 'reason', 'replay_currency_mismatch');
+    END IF;
+    -- Return canonical IDs for safe Stage 3 recovery
+    RETURN jsonb_build_object('success', true, 'already_finalized', true,
+      'payment_id', v_attempt.canonical_payment_id,
+      'booking_id', v_attempt.canonical_booking_id,
+      'booking_ref', v_attempt.canonical_booking_ref,
+      'amount', v_attempt.intended_amount_minor / 100.0,
+      'currency', v_attempt.intended_currency,
+      'subscription_id', v_attempt.customer_subscription_id);
   END IF;
 
   IF v_attempt.status NOT IN ('dispatched', 'charged', 'failed') THEN
@@ -346,11 +363,14 @@ BEGIN
     last_charged_at = v_now, next_charge_at = v_next_charge, failure_count = 0
   WHERE id = v_sub.id;
 
-  -- Mark attempt finalized
+  -- Mark attempt finalized with canonical IDs for replay recovery
   UPDATE paystack_billing_attempts SET
     status = 'finalized', finalized_at = v_now,
     provider_transaction_id = p_provider_transaction_id,
-    provider_invoice_code = p_provider_invoice_code
+    provider_invoice_code = p_provider_invoice_code,
+    canonical_payment_id = v_payment_id,
+    canonical_booking_id = v_booking_id,
+    canonical_booking_ref = v_booking_ref
   WHERE id = p_attempt_id;
 
   RETURN jsonb_build_object('success', true, 'already_finalized', false,

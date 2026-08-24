@@ -122,17 +122,31 @@ export async function verifyPaystackTransaction(reference: string): Promise<Pays
   }
 
   try {
-    const data = await paystackRequest(
-      `/transaction/verify/${encodeURIComponent(reference)}`,
-      'GET',
+    // Use raw fetch for HTTP fidelity (#172 pattern) — paystackRequest doesn't preserve HTTP status
+    const response = await fetch(
+      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
+      { headers: { Authorization: `Bearer ${paystackSecretKey}` }, signal: AbortSignal.timeout(15000) },
     );
 
-    if (!data.status) {
+    if (!response.ok) {
+      // HTTP error — NOT the same as "transaction not found"
+      if (response.status === 401 || response.status === 403) {
+        return { status: 'indeterminate', reason: `http_${response.status}_config` };
+      }
+      return { status: 'indeterminate', reason: `http_${response.status}` };
+    }
+
+    const data = await response.json();
+
+    if (!data.status || !data.data) {
       // Paystack says the reference was not found or invalid
       return { status: 'not_found' };
     }
 
-    const txData = data.data as Record<string, unknown>;
+    const txData = data.data as Record<string, unknown> | undefined;
+    if (!txData) {
+      return { status: 'not_found' };
+    }
     const txStatus = txData.status as string;
     const txAmount = txData.amount as number; // kobo
 

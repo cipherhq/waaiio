@@ -1275,4 +1275,83 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     }
     expect(threw).toBe(true);
   });
+
+  it('#176: finalized replay validates amount and returns canonical IDs', () => {
+    // The attempt from the earlier finalization test is still finalized
+    const attemptId = psql(`SELECT id FROM paystack_billing_attempts WHERE customer_subscription_id = '${PS_SUB_ID}' AND status = 'finalized' LIMIT 1;`);
+
+    // Replay with correct amount → success with canonical IDs
+    const r = psqlJson(`SELECT finalize_paystack_recurring_charge('${attemptId}'::uuid, 20000, 'NGN');`);
+    expect(r.success).toBe(true);
+    expect(r.already_finalized).toBe(true);
+    expect(r.payment_id).toBeTruthy();
+
+    // Replay with wrong amount → rejected
+    const rBad = psqlJson(`SELECT finalize_paystack_recurring_charge('${attemptId}'::uuid, 19999, 'NGN');`);
+    expect(rBad.success).toBe(false);
+    expect(rBad.reason).toBe('replay_amount_mismatch');
+
+    // Replay with wrong currency → rejected
+    const rCur = psqlJson(`SELECT finalize_paystack_recurring_charge('${attemptId}'::uuid, 20000, 'USD');`);
+    expect(rCur.success).toBe(false);
+    expect(rCur.reason).toBe('replay_currency_mismatch');
+  });
+
+  it('#176: spend failure rolls back entire Paystack finalization', () => {
+    const faultSubId = '76dddddd-dddd-dddd-dddd-dddddddddddd';
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+    psql(`DELETE FROM paystack_billing_attempts WHERE customer_subscription_id = '${faultSubId}';`);
+    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, currency, frequency, status, gateway, authorization_code, customer_phone, customer_name, next_charge_at)
+          VALUES ('${faultSubId}', '${BIZ_ID}', '${USER_ID}', 50, 'NGN', 'monthly', 'active', 'paystack', 'AUTH_FAULT', '+2346666666666', 'Fault Test', NOW() - INTERVAL '1 hour');`);
+
+    const claim = psqlJson(`SELECT claim_paystack_billing_cycle('${faultSubId}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+    const token = psql(`SELECT claim_token FROM paystack_billing_attempts WHERE id = '${claim.attempt_id}';`);
+    psqlJson(`SELECT dispatch_paystack_attempt('${claim.attempt_id}'::uuid, '${token}'::uuid);`);
+
+    // Inject spend fault
+    psql("CREATE OR REPLACE FUNCTION apply_payment_spend_once(p_payment_id UUID) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$ BEGIN RAISE EXCEPTION 'FAULT_INJECTION: Paystack spend failure'; END; $fn$;");
+
+    let threw = false;
+    try {
+      psqlJson(`SELECT finalize_paystack_recurring_charge('${claim.attempt_id}'::uuid, 5000, 'NGN');`);
+    } catch { threw = true; }
+    expect(threw).toBe(true);
+
+    // Restore real function
+    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_334_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
+
+    // Verify rollback — no payment created
+    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = '${claim.provider_reference}';`);
+    expect(paymentCount).toBe('0');
+
+    // Attempt is NOT finalized
+    const status = psql(`SELECT status FROM paystack_billing_attempts WHERE id = '${claim.attempt_id}';`);
+    expect(status).not.toBe('finalized');
+
+    psql(`DELETE FROM paystack_billing_attempts WHERE customer_subscription_id = '${faultSubId}';`);
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${faultSubId}';`);
+  });
+
+  it('#176: partial unique index prevents two unresolved attempts for same cycle', () => {
+    const dupeSubId = '76eeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${dupeSubId}';`);
+    psql(`DELETE FROM paystack_billing_attempts WHERE customer_subscription_id = '${dupeSubId}';`);
+    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, currency, frequency, status, gateway, authorization_code, customer_phone, next_charge_at)
+          VALUES ('${dupeSubId}', '${BIZ_ID}', '${USER_ID}', 100, 'NGN', 'monthly', 'active', 'paystack', 'AUTH_DUPE', '+2345555555555', NOW() - INTERVAL '1 hour');`);
+
+    const claim = psqlJson(`SELECT claim_paystack_billing_cycle('${dupeSubId}'::uuid);`);
+    expect(claim.claimed).toBe(true);
+
+    // Try to insert a second unresolved attempt for the same cycle — should fail
+    let insertThrew = false;
+    try {
+      psql(`INSERT INTO paystack_billing_attempts (customer_subscription_id, cycle_key, scheduled_at, attempt_number, provider_reference, intended_amount_minor, intended_currency, status)
+            VALUES ('${dupeSubId}', '${psql(`SELECT cycle_key FROM paystack_billing_attempts WHERE id = '${claim.attempt_id}';`)}', NOW(), 2, 'ps-dupe-ref', 10000, 'NGN', 'reserved');`);
+    } catch { insertThrew = true; }
+    expect(insertThrew).toBe(true);
+
+    psql(`DELETE FROM paystack_billing_attempts WHERE customer_subscription_id = '${dupeSubId}';`);
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${dupeSubId}';`);
+  });
 });
