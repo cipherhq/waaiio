@@ -50,6 +50,8 @@ export function getCapabilityLabel(cap: CapabilityId, category: string, customLa
       return 'Sign Waiver';
     case 'class_booking':
       return 'Book a Class';
+    case 'promo_verification':
+      return 'Instant Win';
     default:
       return cap;
   }

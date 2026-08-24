@@ -90,6 +90,11 @@ async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
             .eq('business_id', businessId).eq('is_active', true);
           return [cap, (count || 0) > 0];
         }
+        case 'promo_verification': {
+          const { hasActivePromoCampaigns } = await import('@/lib/promotions/entry');
+          const hasPromo = await hasActivePromoCampaigns(businessId);
+          return [cap, hasPromo];
+        }
         case 'waitlist':
           return [cap, false]; // waitlist is never shown as a menu option — triggered automatically when no slots
         default:
@@ -128,6 +133,7 @@ function getFirstStepForCapability(cap: CapabilityId): string {
     case 'loyalty': return 'loyalty_menu';
     case 'invoice': return 'invoice_list';
     case 'class_booking': return 'select_service';
+    case 'promo_verification': return 'select_capability'; // Handled inline — should never reach here
     default: return 'select_service';
   }
 }
@@ -492,6 +498,23 @@ const selectCapabilityStep: FlowStepConfig = {
       return { valid: true, data: { active_capability: 'waiver', _waiver_handled: true } };
     }
 
+    // Instant Win: inline dispatch using shared entry helper
+    if (capId === 'promo_verification' && ctx.business) {
+      const caps = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
+      if (!caps.includes('promo_verification')) {
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('This feature is not available right now.') });
+        return { valid: true, data: { active_capability: 'promo_verification', _promo_entry_handled: true } };
+      }
+      const { getActivePromoEntryCampaigns, renderPromoEntryMessage } = await import('@/lib/promotions/entry');
+      const campaigns = await getActivePromoEntryCampaigns(ctx.business.id);
+      if (campaigns.length === 0) {
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No active promotions right now. Check back later! 🎰') });
+      } else {
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(renderPromoEntryMessage(campaigns)) });
+      }
+      return { valid: true, data: { active_capability: 'promo_verification', _promo_entry_handled: true } };
+    }
+
     return {
       valid: true,
       data: { active_capability: capId },
@@ -504,6 +527,10 @@ const selectCapabilityStep: FlowStepConfig = {
     // Waiver was handled inline — return to capability menu
     if (ctx.session.session_data._waiver_handled) {
       delete ctx.session.session_data._waiver_handled;
+      return 'select_capability';
+    }
+    if (ctx.session.session_data._promo_entry_handled) {
+      delete ctx.session.session_data._promo_entry_handled;
       return 'select_capability';
     }
     return getFirstStepForCapability(cap as CapabilityId);
