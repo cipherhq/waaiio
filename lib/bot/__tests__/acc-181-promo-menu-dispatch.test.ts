@@ -211,20 +211,20 @@ describe('ACC-181: Instant Win label', () => {
 // ══════════════════════════════════════════════════════════
 
 describe('ACC-181: Routing defense', () => {
-  it('getFirstStepForCapability returns select_capability for promo_verification', () => {
+  it('getFirstStepForCapability returns promo_entry for promo_verification', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/capability-selection.flow.ts', 'utf-8');
     const fnBody = src.split('function getFirstStepForCapability')[1]?.split('}')[0] || '';
     expect(fnBody).toContain("case 'promo_verification':");
-    expect(fnBody).toContain("return 'select_capability'");
+    expect(fnBody).toContain("return 'promo_entry'");
   });
 
-  it('capabilityToFirstStep returns select_capability for promo_verification', () => {
+  it('capabilityToFirstStep returns promo_entry for promo_verification', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/handlers/flow-routing.ts', 'utf-8');
     const fnBody = src.split('function capabilityToFirstStep')[1]?.split('}')[0] || '';
     expect(fnBody).toContain("case 'promo_verification':");
-    expect(fnBody).toContain("return 'select_capability'");
+    expect(fnBody).toContain("return 'promo_entry'");
   });
 });
 
@@ -378,5 +378,80 @@ describe('ACC-181 Runtime: promo code claim path preserved', () => {
     expect(promoHandlerCalls.length).toBeGreaterThanOrEqual(1);
     expect(promoHandlerCalls[0].text).toBe('TROPHY K7PM4XQ9');
     expect(promoHandlerCalls[0].messageId).toBe('wamid.CODE1');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// SINGLE-CAPABILITY + PROMO_ENTRY STEP
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-181: Single-capability promo_verification', () => {
+  it('promo_entry step exists in capabilitySelectionFlow', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const stepIds = capabilitySelectionFlow.steps.map(s => s.id);
+    expect(stepIds).toContain('promo_entry');
+  });
+
+  it('getFirstStepForCapability routes promo_verification to promo_entry (not select_service)', async () => {
+    const { getFirstStepForCapability } = await import('../flows/capability-selection.flow');
+    expect(getFirstStepForCapability('promo_verification' as any)).toBe('promo_entry');
+  });
+
+  it('capabilityToFirstStep routes promo_verification to promo_entry', async () => {
+    const { capabilityToFirstStep } = await import('../handlers/flow-routing');
+    expect(capabilityToFirstStep('promo_verification' as any)).toBe('promo_entry');
+  });
+
+  it('promo_entry step prompt returns campaign context (not booking)', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const promoEntry = capabilitySelectionFlow.steps.find(s => s.id === 'promo_entry');
+    expect(promoEntry).toBeDefined();
+
+    // Mock context with promo_verification capability
+    const ctx = {
+      business: { id: 'biz-test', name: 'Test' },
+      session: { session_data: { capabilities: ['promo_verification'] } },
+      from: '+234',
+      sender: { sendText: vi.fn() },
+      supabase: {},
+      t: async (s: string) => s,
+    };
+
+    const messages = await promoEntry!.prompt(ctx as any);
+    expect(messages.length).toBe(1);
+    expect(messages[0].type).toBe('text');
+    // Should contain promo-related content, not booking
+    const text = (messages[0] as any).text;
+    expect(text).not.toContain('book');
+    // May contain no-active message or campaign context depending on mock
+  });
+
+  it('promo_entry next() returns select_capability (no recursion)', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const promoEntry = capabilitySelectionFlow.steps.find(s => s.id === 'promo_entry');
+    const next = await promoEntry!.next({} as any);
+    expect(next).toBe('select_capability');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// RUNTIME: select_capability with cap_promo_verification
+// ══════════════════════════════════════════════════════════
+
+describe('ACC-181 Runtime: fresh capability selection', () => {
+  it('cap_promo_verification from select_capability → Instant Win entry, not booking', async () => {
+    const sb = buildSb({ step: 'select_capability' });
+    const sender = mockSender();
+    const bot = new BotService(sb as any, sender as any, mockStandalone() as any, mockIntelligence() as any);
+
+    await bot.handleMessage('+2341234567890', 'cap_promo_verification', 'text', 'phone-id', 'biz-promo', undefined, 'wamid.FRESH');
+
+    // Must NOT reach FlowExecutor as a booking step
+    // The BotService intercept handles it before FlowExecutor
+    expect(flowExecutorExecuteCalls).toBe(0);
+    // Should have sent a promo-related message
+    const texts = sender.sendText.mock.calls.map((c: any[]) => typeof c[0] === 'string' ? c[0] : c[0]?.text || '');
+    const hasPromo = texts.some((t: string) => t.includes('promotions') || t.includes('🎰') || t.includes('not available') || t.includes('Instant Win'));
+    expect(hasPromo).toBe(true);
   });
 });
