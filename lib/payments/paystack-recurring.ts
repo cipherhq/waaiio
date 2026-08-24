@@ -101,6 +101,66 @@ export async function createSubscription(opts: {
 }
 
 /**
+ * Typed Paystack transaction verification outcome (#176).
+ * Preserves #168/#172 fail-closed semantics.
+ */
+export type PaystackVerifyOutcome =
+  | { status: 'success'; amountMinor: number; currency: string; transactionId?: string }
+  | { status: 'terminal_failure'; reason: string }
+  | { status: 'pending'; txStatus: string }
+  | { status: 'reversed' }
+  | { status: 'not_found' }
+  | { status: 'indeterminate'; reason: string };
+
+/**
+ * Verify a Paystack transaction by reference with typed outcomes.
+ * Does NOT collapse results to boolean — preserves provider fidelity.
+ */
+export async function verifyPaystackTransaction(reference: string): Promise<PaystackVerifyOutcome> {
+  if (!paystackSecretKey) {
+    return { status: 'indeterminate', reason: 'no_credentials' };
+  }
+
+  try {
+    const data = await paystackRequest(
+      `/transaction/verify/${encodeURIComponent(reference)}`,
+      'GET',
+    );
+
+    if (!data.status) {
+      // Paystack says the reference was not found or invalid
+      return { status: 'not_found' };
+    }
+
+    const txData = data.data as Record<string, unknown>;
+    const txStatus = txData.status as string;
+    const txAmount = txData.amount as number; // kobo
+
+    if (txStatus === 'success') {
+      return {
+        status: 'success',
+        amountMinor: txAmount,
+        currency: ((txData.currency as string) || 'NGN').toUpperCase(),
+        transactionId: txData.id ? String(txData.id) : undefined,
+      };
+    }
+
+    if (txStatus === 'failed' || txStatus === 'abandoned') {
+      return { status: 'terminal_failure', reason: `paystack_tx_${txStatus}` };
+    }
+
+    if (txStatus === 'reversed') {
+      return { status: 'reversed' };
+    }
+
+    // pending, processing, ongoing, queued, unknown
+    return { status: 'pending', txStatus };
+  } catch (err) {
+    return { status: 'indeterminate', reason: 'network_error' };
+  }
+}
+
+/**
  * Cancel (disable) a Paystack subscription.
  */
 export async function cancelSubscription(
