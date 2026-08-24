@@ -346,12 +346,25 @@ export async function POST(request: NextRequest) {
           if (metaSubId && metaSubId !== existingAttempt.customer_subscription_id) {
             logger.error(`[PAYSTACK RECURRING] Identity conflict: attempt sub=${existingAttempt.customer_subscription_id} metadata sub=${metaSubId}`);
           } else {
-            // Finalize the existing attempt
+            const webhookTransactionId = data.id ? String(data.id) : null;
+
+            // Fetch invoice_code for cron-initiated attempts if subscription_code available
+            let cronInvoiceCode: string | null = null;
+            if (webhookSubscriptionCode && webhookTransactionId) {
+              try {
+                const { fetchSubscriptionInvoice } = await import('@/lib/payments/paystack-recurring');
+                const invoice = await fetchSubscriptionInvoice(webhookSubscriptionCode, webhookTransactionId);
+                if (invoice) cronInvoiceCode = invoice.invoiceCode;
+              } catch { /* non-fatal */ }
+            }
+
+            // Finalize with full identity
             const { data: finResult, error: finErr } = await supabase.rpc('finalize_paystack_recurring_charge', {
               p_attempt_id: existingAttempt.id,
               p_provider_amount_minor: webhookAmountKobo,
               p_provider_currency: webhookCurrency,
-              p_provider_transaction_id: (data.id as string) || null,
+              p_provider_transaction_id: webhookTransactionId,
+              p_provider_invoice_code: cronInvoiceCode,
             });
 
             if (finErr) {
@@ -361,7 +374,7 @@ export async function POST(request: NextRequest) {
               try {
                 const { data: paymentRec } = await supabase.from('payments')
                   .select('id, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id')
-                  .eq('gateway_reference', reference).single();
+                  .eq('id', finResult.payment_id).single();
                 if (paymentRec) {
                   await sendProactiveConfirmation(supabase, paymentRec, '[PAYSTACK RECURRING]');
                 }
@@ -379,14 +392,27 @@ export async function POST(request: NextRequest) {
           .maybeSingle();
 
         if (localSub) {
-          // Provider-managed renewal: use subscription_code as cycle authority
-          // invoice_code from Paystack API reconciliation if available
-          const providerCycleKey = `ps-auto-${localSub.id}-${webhookSubscriptionCode}`;
+          const webhookTransactionId = data.id ? String(data.id) : undefined;
 
-          // Check if already finalized for this subscription+cycle
+          // Fetch authoritative invoice_code for billing-cycle identity (#176)
+          let invoiceCode: string | null = null;
+          try {
+            const { fetchSubscriptionInvoice } = await import('@/lib/payments/paystack-recurring');
+            const invoice = await fetchSubscriptionInvoice(webhookSubscriptionCode, webhookTransactionId);
+            if (invoice) invoiceCode = invoice.invoiceCode;
+          } catch (invoiceErr) {
+            logger.error('[PAYSTACK RECURRING] Invoice fetch error:', invoiceErr);
+          }
+
+          // Cycle key: invoice_code is authoritative cycle discriminator.
+          // Falls back to reference if invoice unavailable (each reference treated as distinct cycle).
+          const cycleDiscriminator = invoiceCode || reference;
+          const providerCycleKey = `ps-auto-${localSub.id}-${cycleDiscriminator}`;
+
+          // Check if already finalized for this cycle
           const { data: existingFinalized } = await supabase
             .from('paystack_billing_attempts')
-            .select('id')
+            .select('id, canonical_payment_id')
             .eq('customer_subscription_id', localSub.id)
             .eq('cycle_key', providerCycleKey)
             .eq('status', 'finalized')
@@ -395,50 +421,93 @@ export async function POST(request: NextRequest) {
           if (existingFinalized) {
             logger.info(`[PAYSTACK RECURRING] Already finalized for cycle ${providerCycleKey}`);
           } else {
-            // Create attempt atomically and finalize
-            const { error: insertErr } = await supabase.from('paystack_billing_attempts').insert({
-              customer_subscription_id: localSub.id,
-              cycle_key: providerCycleKey,
-              scheduled_at: new Date().toISOString(),
-              attempt_number: 1,
-              provider_reference: reference,
-              intended_amount_minor: Math.round(localSub.amount * 100),
-              intended_currency: localSub.currency || 'NGN',
-              status: 'charged',
-              charged_at: new Date().toISOString(),
-            });
+            // Check for existing unresolved attempt for this cycle (same invoice, possibly different ref)
+            const { data: existingUnresolved } = await supabase
+              .from('paystack_billing_attempts')
+              .select('id, provider_reference, status')
+              .eq('customer_subscription_id', localSub.id)
+              .eq('cycle_key', providerCycleKey)
+              .in('status', ['reserved', 'dispatched', 'charged'])
+              .maybeSingle();
 
-            if (!insertErr) {
-              const { data: newAttempt } = await supabase
-                .from('paystack_billing_attempts')
-                .select('id')
-                .eq('provider_reference', reference)
-                .single();
+            let attemptIdToFinalize: string | undefined;
 
-              if (newAttempt) {
-                const { data: finResult, error: finErr } = await supabase.rpc('finalize_paystack_recurring_charge', {
-                  p_attempt_id: newAttempt.id,
-                  p_provider_amount_minor: webhookAmountKobo,
-                  p_provider_currency: webhookCurrency,
-                  p_provider_transaction_id: (data.id as string) || null,
-                  p_provider_invoice_code: null, // TODO: obtain from Paystack Subscription API
-                });
+            if (existingUnresolved) {
+              // Same cycle (invoice), convergence — finalize existing attempt
+              // Mark as charged with latest provider evidence
+              await supabase.from('paystack_billing_attempts')
+                .update({
+                  status: 'charged',
+                  charged_at: new Date().toISOString(),
+                  provider_transaction_id: webhookTransactionId || null,
+                  provider_invoice_code: invoiceCode,
+                })
+                .eq('id', existingUnresolved.id)
+                .in('status', ['reserved', 'dispatched', 'charged']);
+              attemptIdToFinalize = existingUnresolved.id;
+              logger.info(`[PAYSTACK RECURRING] Converging ref ${reference} into existing attempt ${existingUnresolved.id} for cycle ${providerCycleKey}`);
+            } else {
+              // Create new attempt for this cycle
+              const { error: insertErr } = await supabase.from('paystack_billing_attempts').insert({
+                customer_subscription_id: localSub.id,
+                cycle_key: providerCycleKey,
+                scheduled_at: new Date().toISOString(),
+                attempt_number: 1,
+                provider_reference: reference,
+                intended_amount_minor: Math.round(localSub.amount * 100),
+                intended_currency: localSub.currency || 'NGN',
+                status: 'charged',
+                charged_at: new Date().toISOString(),
+                provider_transaction_id: webhookTransactionId || null,
+                provider_invoice_code: invoiceCode,
+              });
 
-                if (finErr) {
-                  logger.error('[PAYSTACK RECURRING] Provider-managed finalizer error:', finErr);
-                } else if (finResult?.success && !finResult.already_finalized) {
-                  try {
-                    const { data: paymentRec } = await supabase.from('payments')
-                      .select('id, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id')
-                      .eq('gateway_reference', reference).single();
-                    if (paymentRec) {
-                      await sendProactiveConfirmation(supabase, paymentRec, '[PAYSTACK RECURRING]');
-                    }
-                  } catch { /* non-fatal */ }
+              if (!insertErr) {
+                const { data: newAttempt } = await supabase
+                  .from('paystack_billing_attempts')
+                  .select('id')
+                  .eq('provider_reference', reference)
+                  .single();
+                if (newAttempt) attemptIdToFinalize = newAttempt.id;
+              } else {
+                // Unique constraint (likely concurrent delivery) — check if already finalized
+                const { data: raceFinalized } = await supabase
+                  .from('paystack_billing_attempts')
+                  .select('id')
+                  .eq('customer_subscription_id', localSub.id)
+                  .eq('cycle_key', providerCycleKey)
+                  .eq('status', 'finalized')
+                  .maybeSingle();
+                if (raceFinalized) {
+                  logger.info(`[PAYSTACK RECURRING] Race: cycle ${providerCycleKey} already finalized by concurrent worker`);
+                } else {
+                  logger.info(`[PAYSTACK RECURRING] Attempt insert failed (concurrent processing): ${reference}`);
                 }
               }
-            } else {
-              logger.info(`[PAYSTACK RECURRING] Attempt insert failed (likely duplicate): ${reference}`);
+            }
+
+            // Finalize with full mutually-consistent identity
+            if (attemptIdToFinalize) {
+              const { data: finResult, error: finErr } = await supabase.rpc('finalize_paystack_recurring_charge', {
+                p_attempt_id: attemptIdToFinalize,
+                p_provider_amount_minor: webhookAmountKobo,
+                p_provider_currency: webhookCurrency,
+                p_provider_transaction_id: webhookTransactionId || null,
+                p_provider_invoice_code: invoiceCode,
+              });
+
+              if (finErr) {
+                logger.error('[PAYSTACK RECURRING] Provider-managed finalizer error:', finErr);
+              } else if (finResult?.success && !finResult.already_finalized) {
+                try {
+                  const { data: paymentRec } = await supabase.from('payments')
+                    .select('id, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id')
+                    .eq('id', finResult.payment_id).single();
+                  if (paymentRec) {
+                    await sendProactiveConfirmation(supabase, paymentRec, '[PAYSTACK RECURRING]');
+                  }
+                } catch { /* non-fatal */ }
+              }
             }
           }
         } else {

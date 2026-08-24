@@ -265,7 +265,24 @@ export async function enableSubscription(
 }
 
 /**
- * Charge an authorization (for retrying failed recurring charges).
+ * Typed outcome for Paystack charge_authorization (#176).
+ * Preserves #168/#172 HTTP fidelity and fail-closed semantics.
+ *
+ * Post-dispatch semantics:
+ * - success → mark charged (webhook will finalize)
+ * - pending → leave dispatched (reconcile next run)
+ * - terminal_failure → mark failed (allow retry next cycle)
+ * - indeterminate → leave dispatched (reconcile next run, NEVER authorize replacement)
+ */
+export type PaystackChargeOutcome =
+  | { status: 'success'; reference: string; transactionId?: string }
+  | { status: 'pending'; providerStatus: string; reference: string }
+  | { status: 'terminal_failure'; reason: string; reference: string }
+  | { status: 'indeterminate'; reason: string };
+
+/**
+ * Charge an authorization with typed outcome boundary (#176).
+ * Uses raw fetch for HTTP fidelity (#172 pattern).
  * Amount is in kobo (multiply by 100 before calling).
  */
 export async function chargeAuthorization(
@@ -274,25 +291,141 @@ export async function chargeAuthorization(
   email: string,
   reference: string,
   splitParams?: { subaccount: string; transaction_charge: number },
-): Promise<{ success: boolean; reference?: string }> {
+): Promise<PaystackChargeOutcome> {
   if (!paystackSecretKey) {
     if (process.env.NODE_ENV === 'production') {
       throw new Error('Payment gateway not configured: missing Paystack secret key');
     }
-    return { success: true, reference: `mock_${Date.now()}` };
+    return { status: 'success', reference: `mock_${Date.now()}` };
   }
 
-  const data = await paystackRequest('/transaction/charge_authorization', 'POST', {
-    authorization_code: authorizationCode,
-    amount: amountKobo,
-    email,
-    reference,
-    ...(splitParams || {}),
-  });
+  try {
+    const response = await fetch('https://api.paystack.co/transaction/charge_authorization', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${paystackSecretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        authorization_code: authorizationCode,
+        amount: amountKobo,
+        email,
+        reference,
+        ...(splitParams || {}),
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
 
-  const txData = data.data as Record<string, unknown> | undefined;
-  return {
-    success: data.status === true && txData?.status === 'success',
-    reference: (txData?.reference as string) || reference,
-  };
+    // #172: HTTP error is NOT charge failure — preserve as indeterminate
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        return { status: 'indeterminate', reason: `http_${response.status}_config` };
+      }
+      return { status: 'indeterminate', reason: `http_${response.status}` };
+    }
+
+    let data: Record<string, unknown>;
+    try {
+      data = await response.json() as Record<string, unknown>;
+    } catch {
+      return { status: 'indeterminate', reason: 'malformed_json' };
+    }
+
+    if (!data.status || !data.data) {
+      const message = (data.message as string) || 'unknown';
+      return { status: 'terminal_failure', reason: `api_rejected: ${message}`, reference };
+    }
+
+    const txData = data.data as Record<string, unknown>;
+    const txStatus = txData.status as string;
+
+    if (txStatus === 'success') {
+      return {
+        status: 'success',
+        reference: (txData.reference as string) || reference,
+        transactionId: txData.id ? String(txData.id) : undefined,
+      };
+    }
+
+    if (txStatus === 'failed' || txStatus === 'abandoned') {
+      return {
+        status: 'terminal_failure',
+        reason: `paystack_charge_${txStatus}`,
+        reference: (txData.reference as string) || reference,
+      };
+    }
+
+    // pending, processing, ongoing, queued
+    return {
+      status: 'pending',
+      providerStatus: txStatus,
+      reference: (txData.reference as string) || reference,
+    };
+  } catch {
+    // Network error, timeout, AbortError
+    return { status: 'indeterminate', reason: 'network_error' };
+  }
+}
+
+/**
+ * Fetch the invoice for a Paystack subscription charge.
+ * Used to obtain the authoritative invoice_code for provider-managed billing cycles.
+ * Returns null on any error — fail-closed, caller decides how to handle.
+ */
+export async function fetchSubscriptionInvoice(
+  subscriptionCode: string,
+  transactionId?: string,
+): Promise<{ invoiceCode: string; amount: number; status: string } | null> {
+  if (!paystackSecretKey) return null;
+
+  try {
+    const response = await fetch(
+      `https://api.paystack.co/subscription/${encodeURIComponent(subscriptionCode)}`,
+      {
+        headers: { Authorization: `Bearer ${paystackSecretKey}` },
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+
+    if (!response.ok) return null;
+
+    let data: Record<string, unknown>;
+    try {
+      data = await response.json() as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+
+    if (!data.status || !data.data) return null;
+
+    const subData = data.data as Record<string, unknown>;
+
+    // Match by transaction ID if available
+    if (transactionId) {
+      const invoices = (subData.invoices || []) as Array<Record<string, unknown>>;
+      for (const inv of invoices) {
+        if (String(inv.transaction) === transactionId) {
+          return {
+            invoiceCode: inv.invoice_code as string,
+            amount: inv.amount as number,
+            status: (inv.status as string) || 'unknown',
+          };
+        }
+      }
+    }
+
+    // Fallback: most recent invoice
+    const mostRecent = subData.most_recent_invoice as Record<string, unknown> | undefined;
+    if (mostRecent?.invoice_code) {
+      return {
+        invoiceCode: mostRecent.invoice_code as string,
+        amount: mostRecent.amount as number,
+        status: (mostRecent.status as string) || 'unknown',
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }

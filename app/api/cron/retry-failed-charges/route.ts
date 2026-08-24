@@ -75,16 +75,28 @@ export async function GET(request: NextRequest) {
           if (claim?.must_reconcile) {
             // Unresolved prior attempt — verify with Paystack before any new charge
             try {
-              const { verifyPaystackTransaction } = await import('@/lib/payments/paystack-recurring');
+              const { verifyPaystackTransaction, fetchSubscriptionInvoice } = await import('@/lib/payments/paystack-recurring');
               const verifyResult = await verifyPaystackTransaction(claim.provider_reference as string);
 
               if (verifyResult.status === 'success') {
-                // Prior charge succeeded — finalize it
+                // Prior charge succeeded — fetch invoice for full identity, then finalize
+                let invoiceCode: string | null = null;
+                if (sub.gateway_subscription_code) {
+                  try {
+                    const invoice = await fetchSubscriptionInvoice(
+                      sub.gateway_subscription_code,
+                      verifyResult.transactionId,
+                    );
+                    if (invoice) invoiceCode = invoice.invoiceCode;
+                  } catch { /* non-fatal — finalize without invoice_code */ }
+                }
+
                 const { data: finResult } = await supabase.rpc('finalize_paystack_recurring_charge', {
                   p_attempt_id: claim.attempt_id,
                   p_provider_amount_minor: verifyResult.amountMinor,
                   p_provider_currency: verifyResult.currency,
                   p_provider_transaction_id: verifyResult.transactionId || null,
+                  p_provider_invoice_code: invoiceCode,
                 });
                 if (finResult?.success) {
                   // Stage 3 confirmation (non-blocking)
@@ -107,7 +119,8 @@ export async function GET(request: NextRequest) {
                   .eq('id', claim.attempt_id)
                   .in('status', ['dispatched', 'charged']);
               }
-              // pending/not_found/indeterminate → leave dispatched, skip
+              // pending/reversed/not_found/indeterminate → leave dispatched, skip
+              // Do NOT authorize replacement charge (#168/#172)
             } catch (verifyErr) {
               logger.error('[RETRY-CHARGES] Paystack verify error during reconciliation', verifyErr);
             }
@@ -142,30 +155,36 @@ export async function GET(request: NextRequest) {
         }
 
         // Step 4: Call Paystack (AFTER dispatch is durable)
-        try {
-          const result = await chargeAuthorization(
-            sub.authorization_code,
-            claim.intended_amount_minor as number,
-            sub.customer_email || '',
-            claim.provider_reference as string,
-            splitParams,
-          );
+        const chargeResult = await chargeAuthorization(
+          sub.authorization_code,
+          claim.intended_amount_minor as number,
+          sub.customer_email || '',
+          claim.provider_reference as string,
+          splitParams,
+        );
 
-          if (result.success) {
-            // Synchronous success — mark charged (webhook will finalize)
-            await supabase.from('paystack_billing_attempts')
-              .update({ status: 'charged', charged_at: new Date().toISOString() })
-              .eq('id', claim.attempt_id)
-              .in('status', ['dispatched']);
-            cron.itemCompleted({ gateway: 'paystack', subscriptionId: sub.id, providerReference: claim.provider_reference });
-            retried++;
-          }
-          // Non-success: leave as 'dispatched' — reconcile next run via verification
-          // Do NOT mark as failed from synchronous boolean result (#172)
-        } catch (err) {
-          // Network/timeout error — leave as 'dispatched', reconcile next run
-          logger.error('[RETRY-CHARGES] Paystack charge error (attempt stays dispatched)', err);
+        if (chargeResult.status === 'success') {
+          // Synchronous success — mark charged with transaction ID (webhook will finalize)
+          await supabase.from('paystack_billing_attempts')
+            .update({
+              status: 'charged',
+              charged_at: new Date().toISOString(),
+              provider_transaction_id: chargeResult.transactionId || null,
+            })
+            .eq('id', claim.attempt_id)
+            .in('status', ['dispatched']);
+          cron.itemCompleted({ gateway: 'paystack', subscriptionId: sub.id, providerReference: claim.provider_reference });
+          retried++;
+        } else if (chargeResult.status === 'terminal_failure') {
+          // Definitive failure — mark attempt failed, increment subscription failure_count
+          await supabase.from('paystack_billing_attempts')
+            .update({ status: 'failed', failure_reason: chargeResult.reason })
+            .eq('id', claim.attempt_id)
+            .in('status', ['dispatched']);
+          cron.itemFailed(chargeResult.reason, { gateway: 'paystack', subscriptionId: sub.id });
         }
+        // pending/indeterminate → leave as 'dispatched', reconcile next run via verification
+        // Do NOT mark as failed from ambiguous result (#168/#172)
       }
 
       // Flutterwave past_due retries use the same claim/reconcile/finalize path below.

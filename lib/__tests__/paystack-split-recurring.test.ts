@@ -108,7 +108,7 @@ describe('retry-failed-charges cron split support', () => {
   it('resolves split before calling chargeAuthorization', () => {
     const chargeSection = cronCode.substring(
       cronCode.indexOf('sub.gateway === \'paystack\' && sub.authorization_code'),
-      cronCode.indexOf('result.success'),
+      cronCode.indexOf('chargeResult.status'),
     );
     // resolvePaystackSplit must appear before chargeAuthorization
     const splitIdx = chargeSection.indexOf('resolvePaystackSplit');
@@ -501,6 +501,7 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
 
     // Mock fetch for the Paystack charge_authorization call
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
       json: () => Promise.resolve({ status: true, data: { status: 'success', reference: 'ref-3' } }),
     }));
 
@@ -556,6 +557,7 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
     };
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
       json: () => Promise.resolve({ status: true, data: { status: 'success', reference: 'ref-4' } }),
     }));
 
