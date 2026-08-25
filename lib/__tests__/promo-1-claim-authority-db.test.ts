@@ -66,13 +66,18 @@ const ADMIN_ID = '00000000-0000-0000-0320-500000000002';
 describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
   beforeAll(() => {
     psql(`
-      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+      -- Reproduce Supabase extension layout: pgcrypto in extensions schema
+      CREATE SCHEMA IF NOT EXISTS extensions;
+      CREATE EXTENSION IF NOT EXISTS "pgcrypto" SCHEMA extensions;
       DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       GRANT USAGE ON SCHEMA public TO service_role;
       GRANT USAGE ON SCHEMA public TO authenticated;
       GRANT USAGE ON SCHEMA public TO anon;
+      GRANT USAGE ON SCHEMA extensions TO service_role;
+      GRANT USAGE ON SCHEMA extensions TO authenticated;
+      GRANT USAGE ON SCHEMA extensions TO anon;
 
       CREATE SCHEMA IF NOT EXISTS auth;
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
@@ -165,6 +170,7 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
   afterAll(() => {
     if (!canRun) return;
     psql(`
+      DROP TABLE IF EXISTS promo_pickup_verifications CASCADE;
       DROP TABLE IF EXISTS promo_eligibility_acks CASCADE;
       DROP TABLE IF EXISTS promo_verification_attempts CASCADE;
       DROP TABLE IF EXISTS promo_redemptions CASCADE;
@@ -174,11 +180,13 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
       DROP TABLE IF EXISTS promo_campaigns CASCADE;
       DROP TYPE IF EXISTS promo_campaign_status, promo_code_entry_mode, promo_prize_type,
         promo_batch_status, promo_batch_source, promo_code_status, promo_code_outcome,
-        promo_fulfillment_status, promo_attempt_result CASCADE;
+        promo_fulfillment_status, promo_attempt_result, promo_verification_mode,
+        promo_verification_status CASCADE;
       DROP FUNCTION IF EXISTS claim_promo_code, validate_promo_campaign_activation,
         admin_promo_governance, activate_promo_campaign, commit_promo_code_chunk,
         commit_promo_import_chunk, get_promo_campaign_aggregates, reset_promo_failed_batch,
-        create_promo_batch_atomic, update_promo_campaign_updated_at, validate_promo_campaign_status_transition CASCADE;
+        create_promo_batch_atomic, update_promo_campaign_updated_at, validate_promo_campaign_status_transition,
+        transition_promo_fulfillment, issue_promo_pickup_token, verify_promo_pickup CASCADE;
       DROP TABLE IF EXISTS admin_audit_logs CASCADE;
       DELETE FROM businesses WHERE id IN ('${BIZ_ID}', '${BIZ_ID_2}');
     `);
@@ -1079,9 +1087,11 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
       FROM promo_campaign_codes WHERE normalized_code_hash = '${m330Hash('HIST02')}' AND business_id = '${M330_BIZ}' LIMIT 1;
     `);
 
-    // Apply migration 330
+    // Apply migrations 330 → 331 → 338 (331 needed for types used by 338's claim_promo_code)
     const fs = require('fs');
     psql(fs.readFileSync('supabase/migrations/330_promo_code_claim_integrity.sql', 'utf-8'));
+    psql(fs.readFileSync('supabase/migrations/331_promo_winner_security.sql', 'utf-8'));
+    psql(fs.readFileSync('supabase/migrations/338_fix_claim_promo_code_crypto_schema.sql', 'utf-8'));
 
     // Create new campaign + codes AFTER migration 330
     psql(`
@@ -1228,6 +1238,7 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
       // Apply migration 331
       const fs = require('fs');
       psql(fs.readFileSync('supabase/migrations/331_promo_winner_security.sql', 'utf-8'));
+      psql(fs.readFileSync('supabase/migrations/338_fix_claim_promo_code_crypto_schema.sql', 'utf-8'));
 
       // Create test data
       psql(`
@@ -1302,6 +1313,28 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
         DELETE FROM promo_campaigns WHERE business_id = '${M331_BIZ}';
         DELETE FROM businesses WHERE id = '${M331_BIZ}';
       `);
+    });
+
+    // ── EXTENSION LAYOUT GUARD (#188) ──
+
+    it('GUARD: pgcrypto extension is installed in extensions schema (pg_extension proof)', () => {
+      const nspname = psql(`SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pgcrypto';`);
+      expect(nspname).toBe('extensions');
+    });
+
+    it('GUARD: public.gen_random_bytes does NOT exist (to_regprocedure proof)', () => {
+      const result = psql(`SELECT to_regprocedure('public.gen_random_bytes(integer)') IS NULL;`);
+      expect(result).toBe('t');
+    });
+
+    it('GUARD: extensions.gen_random_bytes DOES exist (to_regprocedure proof)', () => {
+      const result = psql(`SELECT to_regprocedure('extensions.gen_random_bytes(integer)') IS NOT NULL;`);
+      expect(result).toBe('t');
+    });
+
+    it('GUARD: claim_promo_code uses extensions.gen_random_bytes (migration 338)', () => {
+      const funcSrc = psql(`SELECT prosrc FROM pg_proc WHERE proname = 'claim_promo_code';`);
+      expect(funcSrc).toContain('extensions.gen_random_bytes');
     });
 
     // ── MAX WINS ──
