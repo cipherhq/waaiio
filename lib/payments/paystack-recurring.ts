@@ -500,15 +500,27 @@ export async function correlateInvoiceExact(
 
     for (const inv of invoices) {
       if (String(inv.transaction) === transactionId) {
-        const invoiceCode = inv.invoice_code as string;
-        if (!invoiceCode) {
+        // Runtime shape validation — malformed evidence is indeterminate, not no-match
+        const invoiceCode = inv.invoice_code;
+        if (typeof invoiceCode !== 'string' || !invoiceCode) {
           return { status: 'indeterminate', reason: 'invoice_missing_code' };
         }
+
+        const amount = inv.amount;
+        if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) {
+          return { status: 'indeterminate', reason: 'invoice_invalid_amount' };
+        }
+
+        const invoiceStatus = inv.status;
+        if (typeof invoiceStatus !== 'string' || !invoiceStatus) {
+          return { status: 'indeterminate', reason: 'invoice_missing_status' };
+        }
+
         return {
           status: 'exact_match',
           invoiceCode,
-          amount: inv.amount as number,
-          invoiceStatus: (inv.status as string) || 'unknown',
+          amount,
+          invoiceStatus,
         };
       }
     }

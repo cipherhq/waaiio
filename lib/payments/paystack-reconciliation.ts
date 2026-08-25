@@ -194,25 +194,22 @@ export async function reconcilePaystackEvent(
     }
 
     if (correlation.status === 'exact_match') {
-      // Validate invoice evidence consistency
-      if (!correlation.invoiceCode) {
-        hasIndeterminate = true;
+      // correlateInvoiceExact guarantees invoiceCode, amount (finite number), invoiceStatus (string)
+      // on exact_match — unconditional validation here
+
+      // Invoice amount must match verified transaction amount exactly
+      if (correlation.amount !== verifiedAmount) {
+        continue; // Contradictory invoice amount vs verified transaction
+      }
+
+      // Invoice amount must match local subscription intent exactly
+      if (correlation.amount !== expectedAmountMinor) {
         continue;
       }
 
-      // Invoice amount must match verified transaction amount
-      if (correlation.amount !== undefined && correlation.amount !== verifiedAmount) {
-        continue; // Contradictory invoice — definitive no-match for this candidate
-      }
-
-      // Invoice amount must match local subscription intent
-      if (correlation.amount !== undefined && correlation.amount !== expectedAmountMinor) {
-        continue;
-      }
-
-      // Only explicitly successful/paid invoice status may authorize
+      // Only explicitly successful/paid invoice status may authorize finalization
       const acceptableStatuses = ['success', 'paid'];
-      if (correlation.invoiceStatus && !acceptableStatuses.includes(correlation.invoiceStatus.toLowerCase())) {
+      if (!acceptableStatuses.includes(correlation.invoiceStatus.toLowerCase())) {
         continue; // Non-success invoice — fail closed
       }
 

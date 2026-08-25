@@ -644,6 +644,78 @@ describe('correlateInvoiceExact typed boundary (#176 R7)', () => {
     const r = await mod.correlateInvoiceExact('SUB_x', '123');
     expect(r.status).toBe('indeterminate');
   });
+
+  // ── Invoice shape validation (#176 R8) ──
+
+  it('matched invoice missing amount → indeterminate', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: true,
+        data: { invoices: [{ invoice_code: 'INV_noamt', transaction: 200, status: 'success' }] },
+      }),
+    }));
+
+    const r = await correlateInvoiceExact('SUB_x', '200');
+    expect(r.status).toBe('indeterminate');
+    if (r.status === 'indeterminate') expect(r.reason).toBe('invoice_invalid_amount');
+  });
+
+  it('matched invoice with non-numeric amount → indeterminate', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: true,
+        data: { invoices: [{ invoice_code: 'INV_badamt', transaction: 200, amount: 'not_a_number', status: 'success' }] },
+      }),
+    }));
+
+    const r = await correlateInvoiceExact('SUB_x', '200');
+    expect(r.status).toBe('indeterminate');
+    if (r.status === 'indeterminate') expect(r.reason).toBe('invoice_invalid_amount');
+  });
+
+  it('matched invoice with negative amount → indeterminate', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: true,
+        data: { invoices: [{ invoice_code: 'INV_neg', transaction: 200, amount: -100, status: 'success' }] },
+      }),
+    }));
+
+    const r = await correlateInvoiceExact('SUB_x', '200');
+    expect(r.status).toBe('indeterminate');
+    if (r.status === 'indeterminate') expect(r.reason).toBe('invoice_invalid_amount');
+  });
+
+  it('matched invoice missing invoice_code → indeterminate', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: true,
+        data: { invoices: [{ transaction: 200, amount: 5000, status: 'success' }] },
+      }),
+    }));
+
+    const r = await correlateInvoiceExact('SUB_x', '200');
+    expect(r.status).toBe('indeterminate');
+    if (r.status === 'indeterminate') expect(r.reason).toBe('invoice_missing_code');
+  });
+
+  it('matched invoice missing status → indeterminate', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: true,
+        data: { invoices: [{ invoice_code: 'INV_nostat', transaction: 200, amount: 5000 }] },
+      }),
+    }));
+
+    const r = await correlateInvoiceExact('SUB_x', '200');
+    expect(r.status).toBe('indeterminate');
+    if (r.status === 'indeterminate') expect(r.reason).toBe('invoice_missing_status');
+  });
 });
 
 // ═══════════════════════════════════════════════════════════

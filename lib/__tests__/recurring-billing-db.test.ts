@@ -2102,4 +2102,105 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
     psql(`DELETE FROM customer_subscriptions WHERE id = '${RC_SUB_N}';`);
   });
+
+  // ═══════════════════════════════════════════════════════════
+  // #176 ROUND 8: INVOICE SHAPE + AMOUNT/STATUS + CURRENCY
+  // ═══════════════════════════════════════════════════════════
+
+  it('#176-R8 CASE S: invoice amount contradicts verified amount → NO finalization', async () => {
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+
+    // Invoice amount 9999 ≠ verified 10000 — contradiction
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        correlateInvoiceExact: async (subCode: string) => {
+          if (subCode === 'SUB_CODE_A') return { status: 'exact_match' as const, invoiceCode: 'INV_S', amount: 9999, invoiceStatus: 'success' };
+          return { status: 'definitive_no_match' as const };
+        },
+        verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '3001' }),
+      },
+      { reference: 'ref-caseS', auth_code: 'AUTH_SHARED', amount_kobo: 10000, currency: 'NGN' },
+    );
+
+    expect(result.action).toBe('skipped');
+    if (result.action === 'skipped') expect(result.reason).toBe('zero_authoritative_match');
+    expect(psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseS';`)).toBe('0');
+  });
+
+  it('#176-R8 CASE T: invoice status pending → NO finalization', async () => {
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        correlateInvoiceExact: async (subCode: string) => {
+          if (subCode === 'SUB_CODE_A') return { status: 'exact_match' as const, invoiceCode: 'INV_T', amount: 10000, invoiceStatus: 'pending' };
+          return { status: 'definitive_no_match' as const };
+        },
+        verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '3002' }),
+      },
+      { reference: 'ref-caseT', auth_code: 'AUTH_SHARED', amount_kobo: 10000, currency: 'NGN' },
+    );
+
+    expect(result.action).toBe('skipped');
+    if (result.action === 'skipped') expect(result.reason).toBe('zero_authoritative_match');
+  });
+
+  it('#176-R8 CASE T2: invoice status failed → NO finalization', async () => {
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        correlateInvoiceExact: async () => ({ status: 'exact_match' as const, invoiceCode: 'INV_T2', amount: 10000, invoiceStatus: 'failed' }),
+        verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '3003' }),
+      },
+      { reference: 'ref-caseT2', subscription_code: 'SUB_CODE_A', amount_kobo: 10000, currency: 'NGN' },
+    );
+
+    expect(result.action).toBe('skipped');
+  });
+
+  it('#176-R8 CASE U: existing attempt currency conflict → NO finalization', async () => {
+    // Create a charged attempt with currency NGN
+    psql(`DELETE FROM paystack_billing_attempts WHERE provider_reference = 'ref-caseU';`);
+    psql(`DELETE FROM payments WHERE gateway_reference = 'ref-caseU';`);
+
+    const RC_SUB_U = '76cccc55-5555-5555-5555-cccccccccccc';
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${RC_SUB_U}';`);
+    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, currency, frequency, status, gateway, authorization_code, gateway_subscription_code, customer_phone, customer_name, next_charge_at, charge_count, total_charged)
+          VALUES ('${RC_SUB_U}', '${BIZ_ID}', '${USER_ID}', 100, 'NGN', 'monthly', 'active', 'paystack', 'AUTH_U', 'SUB_CODE_U', '+2340009990000', 'Sub U', NOW() - INTERVAL '1 hour', 0, 0);`);
+
+    // Insert a charged attempt with NGN currency
+    psql(`INSERT INTO paystack_billing_attempts (customer_subscription_id, cycle_key, scheduled_at, attempt_number, provider_reference, intended_amount_minor, intended_currency, status, charged_at, provider_transaction_id, provider_invoice_code)
+          VALUES ('${RC_SUB_U}', 'ps-auto-${RC_SUB_U}-INV_U', NOW(), 1, 'ref-caseU', 10000, 'NGN', 'charged', NOW(), '4001', 'INV_U');`);
+
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+
+    // Try to reconcile with USD currency (conflict)
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        correlateInvoiceExact: async () => ({ status: 'exact_match' as const, invoiceCode: 'INV_U', amount: 10000, invoiceStatus: 'success' }),
+        verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'USD', transactionId: '4001' }),
+      },
+      { reference: 'ref-caseU', subscription_code: 'SUB_CODE_U', amount_kobo: 10000, currency: 'USD' },
+    );
+
+    expect(result.action).toBe('skipped');
+    if (result.action === 'skipped') expect(result.reason).toBe('existing_attempt_currency_conflict');
+
+    // No payment created
+    expect(psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseU';`)).toBe('0');
+
+    // Existing attempt NOT modified
+    expect(psql(`SELECT intended_currency FROM paystack_billing_attempts WHERE provider_reference = 'ref-caseU';`)).toBe('NGN');
+
+    // Subscription totals unchanged
+    expect(psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${RC_SUB_U}';`)).toBe('0');
+
+    psql(`DELETE FROM paystack_billing_attempts WHERE provider_reference = 'ref-caseU';`);
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${RC_SUB_U}';`);
+  });
 });
