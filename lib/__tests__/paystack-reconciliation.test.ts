@@ -257,80 +257,73 @@ describe('reconciliation worker logic (#176 R4)', () => {
   });
 });
 
-describe('cron reconciliation source structure (#176 R4 supplementary)', () => {
+describe('reconciliation architecture (source structure, supplementary)', () => {
   it('cron consumes reconciliation_required events with bounded batch', () => {
     const fs = require('fs') as typeof import('fs');
     const cronCode = fs.readFileSync('app/api/cron/retry-failed-charges/route.ts', 'utf-8');
 
-    // Must query processed_webhook_events with explicit boundaries
     expect(cronCode).toContain("eq('gateway', 'paystack')");
     expect(cronCode).toContain("eq('status', 'reconciliation_required')");
     expect(cronCode).toContain("in('event_type', ['provider_managed_invoice_unresolved', 'unresolved_recurring_charge'])");
-
-    // Bounded batch
     expect(cronCode).toContain('.limit(20)');
   });
 
-  it('cron uses exact gateway_subscription_code for candidate enumeration', () => {
+  it('cron delegates to production reconcilePaystackEvent helper', () => {
     const fs = require('fs') as typeof import('fs');
     const cronCode = fs.readFileSync('app/api/cron/retry-failed-charges/route.ts', 'utf-8');
 
-    const reconSection = cronCode.substring(
-      cronCode.indexOf('Paystack provider-managed reconciliation'),
-      cronCode.indexOf('Cancel subscriptions with 3+ failures'),
-    );
-
-    // Must enumerate by exact gateway_subscription_code, not auth_code/customer_code
-    expect(reconSection).toContain("eq('gateway_subscription_code', evidence.subscription_code)");
-
-    // Must NOT use authorization_code or customer_code as financial authority
-    expect(reconSection).not.toContain("eq('authorization_code', evidence");
-    expect(reconSection).not.toContain("eq('customer_code', evidence");
-    expect(reconSection).not.toContain("eq('gateway_customer_code', evidence");
+    expect(cronCode).toContain('reconcilePaystackEvent');
+    expect(cronCode).toContain('@/lib/payments/paystack-reconciliation');
   });
 
-  it('cron requires exactly one candidate subscription', () => {
+  it('production helper uses gateway_subscription_code for candidates, not auth/customer hints as selectors', () => {
     const fs = require('fs') as typeof import('fs');
-    const cronCode = fs.readFileSync('app/api/cron/retry-failed-charges/route.ts', 'utf-8');
+    const helperCode = fs.readFileSync('lib/payments/paystack-reconciliation.ts', 'utf-8');
 
-    const reconSection = cronCode.substring(
-      cronCode.indexOf('Paystack provider-managed reconciliation'),
-      cronCode.indexOf('Cancel subscriptions with 3+ failures'),
-    );
+    // Direct lookup path uses gateway_subscription_code
+    expect(helperCode).toContain("eq('gateway_subscription_code', evidence.subscription_code)");
 
-    // Zero or multiple candidates → fail closed
-    expect(reconSection).toContain('candidates.length !== 1');
+    // Hint path uses auth/customer for enumeration only
+    expect(helperCode).toContain("eq('authorization_code', evidence.auth_code)");
+    expect(helperCode).toContain("eq('gateway_customer_code', evidence.customer_code)");
+
+    // Requires exactly ONE authoritative match, not LIMIT 1 selection
+    expect(helperCode).toContain('authoritativeMatches.length === 0');
+    expect(helperCode).toContain('authoritativeMatches.length > 1');
+    expect(helperCode).not.toContain('.limit(1)');
   });
 
-  it('cron uses fetchSubscriptionInvoice with explicit transactionId (no discovery mode)', () => {
+  it('production helper verifies transaction before any invoice correlation', () => {
     const fs = require('fs') as typeof import('fs');
-    const cronCode = fs.readFileSync('app/api/cron/retry-failed-charges/route.ts', 'utf-8');
+    const helperCode = fs.readFileSync('lib/payments/paystack-reconciliation.ts', 'utf-8');
 
-    const reconSection = cronCode.substring(
-      cronCode.indexOf('Paystack provider-managed reconciliation'),
-      cronCode.indexOf('Cancel subscriptions with 3+ failures'),
-    );
-
-    // Must call fetchSubscriptionInvoice with transaction_id
-    expect(reconSection).toContain('fetchSubscriptionInvoice(candidate.gateway_subscription_code, evidence.transaction_id)');
+    // In the function body (after 'export async function reconcilePaystackEvent'),
+    // verify must come before fetchSubscriptionInvoice calls
+    const fnBody = helperCode.substring(helperCode.indexOf('export async function reconcilePaystackEvent'));
+    const verifyIdx = fnBody.indexOf('verifyPaystackTransaction(evidence.reference)');
+    // Find the invoice call that correlates candidates (not the type/destructuring)
+    const correlateIdx = fnBody.indexOf('fetchSubscriptionInvoice(\n');
+    if (correlateIdx === -1) {
+      // Alternative: find the await call
+      const altIdx = fnBody.indexOf('await fetchSubscriptionInvoice(');
+      expect(verifyIdx).toBeGreaterThan(-1);
+      expect(altIdx).toBeGreaterThan(verifyIdx);
+    } else {
+      expect(verifyIdx).toBeGreaterThan(-1);
+      expect(correlateIdx).toBeGreaterThan(verifyIdx);
+    }
   });
 
-  it('cron verifies transaction before finalization', () => {
+  it('production helper uses finalize_paystack_recurring_charge (no second writer)', () => {
     const fs = require('fs') as typeof import('fs');
-    const cronCode = fs.readFileSync('app/api/cron/retry-failed-charges/route.ts', 'utf-8');
+    const helperCode = fs.readFileSync('lib/payments/paystack-reconciliation.ts', 'utf-8');
 
-    const reconSection = cronCode.substring(
-      cronCode.indexOf('Paystack provider-managed reconciliation'),
-      cronCode.indexOf('Cancel subscriptions with 3+ failures'),
-    );
-
-    // Must verify transaction amount/currency
-    expect(reconSection).toContain('verifyPaystackTransaction(evidence.reference)');
-    expect(reconSection).toContain('amount_mismatch');
-    expect(reconSection).toContain('currency_mismatch');
+    expect(helperCode).toContain('finalize_paystack_recurring_charge');
+    expect(helperCode).not.toContain("from('payments').insert");
+    expect(helperCode).not.toContain("from('bookings').insert");
   });
 
-  it('cron marks evidence completed ONLY after finalization success', () => {
+  it('cron marks evidence completed ONLY after finalization', () => {
     const fs = require('fs') as typeof import('fs');
     const cronCode = fs.readFileSync('app/api/cron/retry-failed-charges/route.ts', 'utf-8');
 
@@ -339,28 +332,10 @@ describe('cron reconciliation source structure (#176 R4 supplementary)', () => {
       cronCode.indexOf('Cancel subscriptions with 3+ failures'),
     );
 
-    // completed status must appear AFTER finResult check
-    const finResultIdx = reconSection.indexOf('finResult?.success');
-    const completedIdx = reconSection.indexOf("status: 'completed'", finResultIdx);
-    expect(finResultIdx).toBeGreaterThan(-1);
-    expect(completedIdx).toBeGreaterThan(finResultIdx);
-  });
-
-  it('cron converges through the same finalizer (no second accounting writer)', () => {
-    const fs = require('fs') as typeof import('fs');
-    const cronCode = fs.readFileSync('app/api/cron/retry-failed-charges/route.ts', 'utf-8');
-
-    const reconSection = cronCode.substring(
-      cronCode.indexOf('Paystack provider-managed reconciliation'),
-      cronCode.indexOf('Cancel subscriptions with 3+ failures'),
-    );
-
-    // Must use finalize_paystack_recurring_charge
-    expect(reconSection).toContain('finalize_paystack_recurring_charge');
-
-    // Must NOT directly insert into payments, bookings, subscription_charges
-    expect(reconSection).not.toContain("from('payments').insert");
-    expect(reconSection).not.toContain("from('bookings').insert");
-    expect(reconSection).not.toContain("from('subscription_charges').insert");
+    // completed update must appear after result.action === 'finalized' check
+    const finalizedCheck = reconSection.indexOf("result.action === 'finalized'");
+    const completedUpdate = reconSection.indexOf("status: 'completed'");
+    expect(finalizedCheck).toBeGreaterThan(-1);
+    expect(completedUpdate).toBeGreaterThan(finalizedCheck);
   });
 });

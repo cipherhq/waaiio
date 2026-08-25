@@ -289,9 +289,7 @@ export async function GET(request: NextRequest) {
 
     // ── Paystack provider-managed reconciliation (#176) ──
     // Consumes parked webhook evidence where invoice identity was unresolved
-    // at charge.success time. Fetches authoritative invoice from Paystack,
-    // requires exactly one mutually consistent tuple, then finalizes through
-    // the canonical billing-attempt/finalizer authority.
+    // at charge.success time. Uses the production reconcilePaystackEvent helper.
     const { data: unresolvedEvents } = await supabase
       .from('processed_webhook_events')
       .select('id, event_id, last_error')
@@ -301,199 +299,48 @@ export async function GET(request: NextRequest) {
       .limit(20); // Bounded batch
 
     for (const evt of unresolvedEvents || []) {
-      let evidence: {
-        reference?: string; subscription_code?: string; subscription_id?: string;
-        amount_kobo?: number; currency?: string; transaction_id?: string;
-        auth_code?: string; customer_code?: string;
-      };
+      let evidence: Record<string, unknown>;
       try {
         evidence = JSON.parse(evt.last_error || '{}');
       } catch { continue; }
 
       if (!evidence.reference) continue;
 
-      // Step 1: Enumerate candidates ONLY by exact persisted gateway_subscription_code
-      // Hints (auth_code, customer_code) are NOT financial authority
-      let candidates: Array<{ id: string; amount: number; currency: string; gateway_subscription_code: string }> = [];
-      if (evidence.subscription_code) {
-        const { data: subsByCode } = await supabase
-          .from('customer_subscriptions')
-          .select('id, amount, currency, gateway_subscription_code')
-          .eq('gateway', 'paystack')
-          .eq('gateway_subscription_code', evidence.subscription_code)
-          .in('status', ['active', 'past_due']);
-        candidates = subsByCode || [];
-      }
-
-      if (candidates.length !== 1) {
-        // Zero or multiple candidates — fail closed, leave reconciliation_required
-        if (candidates.length > 1) {
-          logger.warn(`[RECONCILE] Ambiguous: ${candidates.length} subscriptions for ${evidence.subscription_code}`);
-        }
-        cron.itemSkipped({ type: 'reconciliation', eventId: evt.event_id, reason: candidates.length === 0 ? 'no_candidate' : 'ambiguous_candidates' });
-        skipped++;
-        continue;
-      }
-
-      const candidate = candidates[0];
-
-      // Step 2: Fetch authoritative invoice from Paystack
+      const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
       const { fetchSubscriptionInvoice, verifyPaystackTransaction } = await import('@/lib/payments/paystack-recurring');
 
-      let invoiceCode: string | null = null;
-      let verifiedTransactionId: string | undefined;
-      let verifiedAmount: number | undefined;
-      let verifiedCurrency: string | undefined;
+      const result = await reconcilePaystackEvent(
+        { supabase, fetchSubscriptionInvoice, verifyPaystackTransaction },
+        evidence as any,
+      );
 
-      // Use explicit transaction ID match — no most_recent_invoice fallback
-      if (evidence.transaction_id) {
-        try {
-          const invoice = await fetchSubscriptionInvoice(candidate.gateway_subscription_code, evidence.transaction_id);
-          if (invoice) invoiceCode = invoice.invoiceCode;
-        } catch { /* fail-closed */ }
-      }
-
-      if (!invoiceCode) {
-        // Invoice still unresolved — leave reconciliation_required
-        cron.itemSkipped({ type: 'reconciliation', eventId: evt.event_id, reason: 'invoice_unresolved' });
-        skipped++;
-        continue;
-      }
-
-      // Step 3: Verify provider transaction for amount/currency authority
-      if (evidence.reference) {
-        try {
-          const verifyResult = await verifyPaystackTransaction(evidence.reference);
-          if (verifyResult.status === 'success') {
-            verifiedTransactionId = verifyResult.transactionId;
-            verifiedAmount = verifyResult.amountMinor;
-            verifiedCurrency = verifyResult.currency;
-          } else {
-            // Not definitively successful — leave reconciliation_required
-            cron.itemSkipped({ type: 'reconciliation', eventId: evt.event_id, reason: `verify_${verifyResult.status}` });
-            skipped++;
-            continue;
-          }
-        } catch {
-          cron.itemSkipped({ type: 'reconciliation', eventId: evt.event_id, reason: 'verify_error' });
-          skipped++;
-          continue;
-        }
-      }
-
-      // Step 4: Require mutually consistent identity tuple
-      const expectedAmountMinor = Math.round(candidate.amount * 100);
-      const expectedCurrency = (candidate.currency || 'NGN').toUpperCase();
-
-      if (verifiedAmount !== expectedAmountMinor) {
-        logger.warn(`[RECONCILE] Amount mismatch for ${evt.event_id}: expected ${expectedAmountMinor}, got ${verifiedAmount}`);
-        cron.itemSkipped({ type: 'reconciliation', eventId: evt.event_id, reason: 'amount_mismatch' });
-        skipped++;
-        continue;
-      }
-
-      if (verifiedCurrency && verifiedCurrency.toUpperCase() !== expectedCurrency) {
-        logger.warn(`[RECONCILE] Currency mismatch for ${evt.event_id}: expected ${expectedCurrency}, got ${verifiedCurrency}`);
-        cron.itemSkipped({ type: 'reconciliation', eventId: evt.event_id, reason: 'currency_mismatch' });
-        skipped++;
-        continue;
-      }
-
-      // Step 5: Converge through the SAME billing-attempt/finalizer authority
-      const providerCycleKey = `ps-auto-${candidate.id}-${invoiceCode}`;
-
-      // Check if already finalized for this cycle
-      const { data: existingFinalized } = await supabase
-        .from('paystack_billing_attempts')
-        .select('id')
-        .eq('customer_subscription_id', candidate.id)
-        .eq('cycle_key', providerCycleKey)
-        .eq('status', 'finalized')
-        .maybeSingle();
-
-      if (existingFinalized) {
-        // Already finalized (webhook or prior reconciliation) — mark evidence resolved
-        await supabase.from('processed_webhook_events')
-          .update({ status: 'completed', completed_at: new Date().toISOString() })
-          .eq('id', evt.id)
-          .eq('status', 'reconciliation_required');
-        cron.itemCompleted({ type: 'reconciliation', eventId: evt.event_id, result: 'already_finalized' });
-        retried++;
-        continue;
-      }
-
-      // Create billing attempt and finalize atomically
-      const { error: insertErr } = await supabase.from('paystack_billing_attempts').insert({
-        customer_subscription_id: candidate.id,
-        cycle_key: providerCycleKey,
-        scheduled_at: new Date().toISOString(),
-        attempt_number: 1,
-        provider_reference: evidence.reference,
-        intended_amount_minor: expectedAmountMinor,
-        intended_currency: expectedCurrency,
-        status: 'charged',
-        charged_at: new Date().toISOString(),
-        provider_transaction_id: verifiedTransactionId || evidence.transaction_id || null,
-        provider_invoice_code: invoiceCode,
-      });
-
-      if (insertErr) {
-        // Unique constraint — likely concurrent processing or already exists
-        cron.itemSkipped({ type: 'reconciliation', eventId: evt.event_id, reason: 'attempt_insert_conflict' });
-        skipped++;
-        continue;
-      }
-
-      const { data: newAttempt } = await supabase
-        .from('paystack_billing_attempts')
-        .select('id')
-        .eq('provider_reference', evidence.reference)
-        .single();
-
-      if (!newAttempt) {
-        cron.itemSkipped({ type: 'reconciliation', eventId: evt.event_id, reason: 'attempt_lookup_failed' });
-        skipped++;
-        continue;
-      }
-
-      const { data: finResult, error: finErr } = await supabase.rpc('finalize_paystack_recurring_charge', {
-        p_attempt_id: newAttempt.id,
-        p_provider_amount_minor: verifiedAmount!,
-        p_provider_currency: verifiedCurrency!,
-        p_provider_transaction_id: verifiedTransactionId || null,
-        p_provider_invoice_code: invoiceCode,
-      });
-
-      if (finErr) {
-        logger.error(`[RECONCILE] Finalizer error for ${evt.event_id}:`, finErr);
-        continue;
-      }
-
-      if (finResult?.success) {
+      if (result.action === 'finalized') {
         // Mark evidence resolved ONLY after successful finalization
         await supabase.from('processed_webhook_events')
           .update({ status: 'completed', completed_at: new Date().toISOString() })
           .eq('id', evt.id)
           .eq('status', 'reconciliation_required');
 
-        if (finResult.already_finalized) {
-          cron.itemCompleted({ type: 'reconciliation', eventId: evt.event_id, result: 'already_finalized' });
-        } else {
+        if (!result.alreadyFinalized) {
           // Stage 3 confirmation (non-blocking)
           try {
             const { data: paymentRec } = await supabase.from('payments')
               .select('id, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id')
-              .eq('id', finResult.payment_id).single();
+              .eq('id', result.paymentId).single();
             if (paymentRec) {
               const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
               await sendProactiveConfirmation(supabase, paymentRec, '[PAYSTACK RECONCILE]');
             }
           } catch { /* non-fatal */ }
-          cron.itemCompleted({ type: 'reconciliation', eventId: evt.event_id, result: 'finalized' });
         }
+        cron.itemCompleted({ type: 'reconciliation', eventId: evt.event_id, result: result.alreadyFinalized ? 'already_finalized' : 'finalized' });
         retried++;
+      } else if (result.action === 'skipped') {
+        cron.itemSkipped({ type: 'reconciliation', eventId: evt.event_id, reason: result.reason });
+        skipped++;
+      } else {
+        cron.itemFailed(result.reason, { type: 'reconciliation', eventId: evt.event_id });
       }
-      // If finalization didn't succeed — leave reconciliation_required for next run
     }
 
     // Cancel subscriptions with 3+ failures

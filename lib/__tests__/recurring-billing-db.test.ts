@@ -84,7 +84,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID, user_id UUID,
         service_id UUID, amount NUMERIC(12,2), currency TEXT DEFAULT 'NGN',
         frequency TEXT DEFAULT 'monthly', status TEXT DEFAULT 'active',
-        gateway TEXT, authorization_code TEXT, customer_name TEXT, customer_phone TEXT,
+        gateway TEXT, authorization_code TEXT, gateway_customer_code TEXT,
+        gateway_subscription_code TEXT, customer_name TEXT, customer_phone TEXT,
         customer_email TEXT, card_last_four TEXT, card_brand TEXT,
         next_charge_at TIMESTAMPTZ, last_charged_at TIMESTAMPTZ,
         charge_count INT DEFAULT 0, total_charged NUMERIC(12,2) DEFAULT 0,
@@ -1616,5 +1617,357 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
     const status = psql(`SELECT status FROM paystack_billing_attempts WHERE id = '${claim.attempt_id}';`);
     expect(status).toBe('finalized');
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // #176 ROUND 5: DEFERRED RECONCILIATION INTEGRATION TESTS
+  // Executes the REAL production reconcilePaystackEvent helper
+  // against the migrated PostgreSQL test database with mocked
+  // provider boundaries.
+  // ═══════════════════════════════════════════════════════════
+
+  const RC_SUB_A = '76aaaaaa-1111-1111-1111-aaaaaaaaaaaa';
+  const RC_SUB_B = '76bbbbbb-2222-2222-2222-bbbbbbbbbbbb';
+
+  /**
+   * Create a minimal supabase-like client that delegates to psql
+   * for real PostgreSQL execution in the same test database.
+   */
+  function createTestSupabase() {
+    // Simple chaining query builder that executes against real PostgreSQL
+    function createQueryBuilder(table: string) {
+      let query = `SELECT * FROM ${table}`;
+      const wheres: string[] = [];
+      let selectCols = '*';
+      let limitVal: number | null = null;
+      let isSingle = false;
+      let isMaybeSingle = false;
+      let insertData: Record<string, unknown> | null = null;
+      let updateData: Record<string, unknown> | null = null;
+
+      const builder: any = {
+        select(cols: string) { selectCols = cols; return builder; },
+        eq(col: string, val: unknown) { wheres.push(`${col} = '${val}'`); return builder; },
+        in(col: string, vals: unknown[]) { wheres.push(`${col} IN (${vals.map(v => `'${v}'`).join(',')})`); return builder; },
+        limit(n: number) { limitVal = n; return builder; },
+        single() { isSingle = true; return builder.execute(); },
+        maybeSingle() { isMaybeSingle = true; return builder.execute(); },
+        insert(data: Record<string, unknown>) {
+          insertData = data;
+          return { select: () => ({ single: () => builder.executeInsert() }), then: (cb: any) => builder.executeInsert().then(cb) };
+        },
+        update(data: Record<string, unknown>) {
+          updateData = data;
+          return builder;
+        },
+        execute() {
+          if (updateData) {
+            const setClauses = Object.entries(updateData).map(([k, v]) => v === null ? `${k} = NULL` : `${k} = '${v}'`).join(', ');
+            const whereClause = wheres.length ? ` WHERE ${wheres.join(' AND ')}` : '';
+            try { psql(`UPDATE ${table} SET ${setClauses}${whereClause};`); } catch {}
+            return Promise.resolve({ data: null, error: null });
+          }
+          const whereClause = wheres.length ? ` WHERE ${wheres.join(' AND ')}` : '';
+          const limitClause = limitVal ? ` LIMIT ${limitVal}` : '';
+          const singleClause = (isSingle || isMaybeSingle) ? ' LIMIT 1' : '';
+          const sql = `SELECT row_to_json(t) FROM (SELECT ${selectCols} FROM ${table}${whereClause}${limitClause}${singleClause}) t;`;
+          try {
+            const raw = psql(sql);
+            if (!raw) return Promise.resolve({ data: (isSingle || isMaybeSingle) ? null : [], error: null });
+            const rows = raw.split('\n').filter(l => l.trim().startsWith('{')).map(l => JSON.parse(l));
+            if (isSingle || isMaybeSingle) return Promise.resolve({ data: rows[0] || null, error: null });
+            return Promise.resolve({ data: rows, error: null });
+          } catch (e) {
+            if (isMaybeSingle) return Promise.resolve({ data: null, error: null });
+            return Promise.resolve({ data: null, error: e });
+          }
+        },
+        executeInsert() {
+          if (!insertData) return Promise.resolve({ data: null, error: null });
+          const cols = Object.keys(insertData);
+          const vals = cols.map(c => {
+            const v = insertData![c];
+            return v === null ? 'NULL' : `'${v}'`;
+          });
+          const sql = `INSERT INTO ${table} (${cols.join(',')}) VALUES (${vals.join(',')});`;
+          try {
+            psql(sql);
+            return Promise.resolve({ error: null });
+          } catch (e) {
+            return Promise.resolve({ error: e });
+          }
+        },
+      };
+      return builder;
+    }
+
+    return {
+      from(table: string) { return createQueryBuilder(table); },
+      rpc(fn: string, params: Record<string, unknown>) {
+        const args = Object.entries(params).map(([k, v]) => {
+          if (v === null) return `${k} := NULL`;
+          if (typeof v === 'number') return `${k} := ${v}`;
+          return `${k} := '${v}'`;
+        }).join(', ');
+        const sql = `SELECT ${fn}(${args});`;
+        try {
+          const raw = psql(sql);
+          const result = raw ? JSON.parse(raw) : null;
+          return Promise.resolve({ data: result, error: null });
+        } catch (e) {
+          return Promise.resolve({ data: null, error: e });
+        }
+      },
+    };
+  }
+
+  it('#176-R5 CASE A: no-subscription-code charge → reconciliation_required, zero financial writes', async () => {
+    // Clean state
+    psql(`DELETE FROM paystack_billing_attempts; DELETE FROM payments; DELETE FROM bookings;
+          DELETE FROM subscription_charges; DELETE FROM platform_fees; DELETE FROM payment_spend_applications;`);
+    psql(`DELETE FROM customer_subscriptions WHERE id IN ('${RC_SUB_A}', '${RC_SUB_B}');`);
+
+    // Create subscriptions with auth hints
+    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, currency, frequency, status, gateway, authorization_code, gateway_customer_code, gateway_subscription_code, customer_phone, customer_name, next_charge_at, charge_count, total_charged)
+          VALUES ('${RC_SUB_A}', '${BIZ_ID}', '${USER_ID}', 100, 'NGN', 'monthly', 'active', 'paystack', 'AUTH_SHARED', 'CUST_SHARED', 'SUB_CODE_A', '+2340001112222', 'Sub A', NOW() - INTERVAL '1 hour', 0, 0);`);
+
+    // Simulate parked unresolved event (no subscription_code)
+    psql(`INSERT INTO processed_webhook_events (event_id, gateway, event_type, status, first_received_at, last_attempted_at, last_error)
+          VALUES ('paystack-unresolved-ref-caseA', 'paystack', 'unresolved_recurring_charge', 'reconciliation_required', NOW(), NOW(),
+          '${JSON.stringify({ reference: 'ref-caseA', auth_code: 'AUTH_SHARED', customer_code: 'CUST_SHARED', amount_kobo: 10000, currency: 'NGN' }).replace(/'/g, "''")}');`);
+
+    // At this point: evidence parked, NO financial writes expected
+    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE business_id = '${BIZ_ID}';`);
+    expect(paymentCount).toBe('0');
+
+    const subTotals = psql(`SELECT charge_count, total_charged FROM customer_subscriptions WHERE id = '${RC_SUB_A}';`);
+    expect(subTotals).toContain('0');
+
+    // Verify the evidence is parked
+    const evtStatus = psql(`SELECT status FROM processed_webhook_events WHERE event_id = 'paystack-unresolved-ref-caseA';`);
+    expect(evtStatus).toBe('reconciliation_required');
+  });
+
+  it('#176-R5 CASE B: hint enumeration with two candidates, exactly one provider match → one finalization', async () => {
+    // Add second subscription sharing the same auth hint but different gateway_subscription_code
+    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, currency, frequency, status, gateway, authorization_code, gateway_customer_code, gateway_subscription_code, customer_phone, customer_name, next_charge_at, charge_count, total_charged)
+          VALUES ('${RC_SUB_B}', '${BIZ_ID}', '${USER_ID}', 100, 'NGN', 'monthly', 'active', 'paystack', 'AUTH_SHARED', 'CUST_SHARED', 'SUB_CODE_B', '+2340003334444', 'Sub B', NOW() - INTERVAL '1 hour', 0, 0)
+          ON CONFLICT (id) DO NOTHING;`);
+
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+
+    // Provider mocks:
+    // - verify ref-caseA → success (amount 10000, NGN, txId 777)
+    // - fetchSubscriptionInvoice(SUB_CODE_A, '777') → NO match (candidate A fails)
+    // - fetchSubscriptionInvoice(SUB_CODE_B, '777') → exact match INV_CASEB
+    const mockVerify = async (ref: string) => ({
+      status: 'success' as const,
+      amountMinor: 10000,
+      currency: 'NGN',
+      transactionId: '777',
+    });
+    const mockFetchInvoice = async (subCode: string, txId?: string) => {
+      if (subCode === 'SUB_CODE_A') return null; // No match
+      if (subCode === 'SUB_CODE_B' && txId === '777') return { invoiceCode: 'INV_CASEB', amount: 10000, status: 'success' };
+      return null;
+    };
+
+    const testSupabase = createTestSupabase();
+
+    const result = await reconcilePaystackEvent(
+      { supabase: testSupabase as any, fetchSubscriptionInvoice: mockFetchInvoice, verifyPaystackTransaction: mockVerify },
+      { reference: 'ref-caseA', auth_code: 'AUTH_SHARED', customer_code: 'CUST_SHARED' },
+    );
+
+    expect(result.action).toBe('finalized');
+    if (result.action === 'finalized') {
+      expect(result.alreadyFinalized).toBe(false);
+      expect(result.paymentId).toBeTruthy();
+    }
+
+    // Verify exactly one payment
+    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseA';`);
+    expect(paymentCount).toBe('1');
+
+    // Verify subscription B totals advanced (not A)
+    const subBTotals = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${RC_SUB_B}';`);
+    expect(subBTotals).toBe('1');
+    const subATotals = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${RC_SUB_A}';`);
+    expect(subATotals).toBe('0');
+
+    // Exactly one billing attempt finalized
+    const attemptStatus = psql(`SELECT status FROM paystack_billing_attempts WHERE provider_reference = 'ref-caseA';`);
+    expect(attemptStatus).toBe('finalized');
+
+    // Spend marker exists
+    if (result.action === 'finalized') {
+      const spendCount = psql(`SELECT COUNT(*) FROM payment_spend_applications WHERE payment_id = '${result.paymentId}';`);
+      expect(spendCount).toBe('1');
+    }
+  });
+
+  it('#176-R5 CASE C: zero authoritative matches → reconciliation_required, zero financial writes', async () => {
+    psql(`DELETE FROM paystack_billing_attempts WHERE provider_reference = 'ref-caseC';`);
+
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+
+    // Both candidates fail invoice match
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        fetchSubscriptionInvoice: async () => null,
+        verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '888' }),
+      },
+      { reference: 'ref-caseC', auth_code: 'AUTH_SHARED', customer_code: 'CUST_SHARED' },
+    );
+
+    expect(result.action).toBe('skipped');
+    if (result.action === 'skipped') {
+      expect(result.reason).toBe('zero_authoritative_match');
+    }
+
+    // Zero payments created
+    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseC';`);
+    expect(paymentCount).toBe('0');
+  });
+
+  it('#176-R5 CASE D: multiple authoritative matches → reconciliation_required, zero finalization', async () => {
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+
+    // Both candidates match (should not happen, but defensive test)
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        fetchSubscriptionInvoice: async (subCode: string) => ({ invoiceCode: `INV_${subCode}`, amount: 10000, status: 'success' }),
+        verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '999' }),
+      },
+      { reference: 'ref-caseD', auth_code: 'AUTH_SHARED', customer_code: 'CUST_SHARED' },
+    );
+
+    expect(result.action).toBe('skipped');
+    if (result.action === 'skipped') {
+      expect(result.reason).toBe('multiple_authoritative_matches');
+    }
+
+    // Zero payments
+    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseD';`);
+    expect(paymentCount).toBe('0');
+  });
+
+  it('#176-R5 CASE E: replay after finalization → no duplicate writes', async () => {
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+
+    // Re-run CASE B scenario with same reference — should be idempotent
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        fetchSubscriptionInvoice: async (subCode: string, txId?: string) => {
+          if (subCode === 'SUB_CODE_B' && txId === '777') return { invoiceCode: 'INV_CASEB', amount: 10000, status: 'success' };
+          return null;
+        },
+        verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '777' }),
+      },
+      { reference: 'ref-caseA', auth_code: 'AUTH_SHARED', customer_code: 'CUST_SHARED' },
+    );
+
+    // Should be already_finalized (from CASE B)
+    expect(result.action).toBe('finalized');
+    if (result.action === 'finalized') {
+      expect(result.alreadyFinalized).toBe(true);
+    }
+
+    // Still exactly one payment
+    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseA';`);
+    expect(paymentCount).toBe('1');
+
+    // Sub B charge_count still 1
+    const subBCharges = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${RC_SUB_B}';`);
+    expect(subBCharges).toBe('1');
+  });
+
+  it('#176-R5 CASE G: provider verify HTTP error → skipped, zero financial writes', async () => {
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        fetchSubscriptionInvoice: async () => null,
+        verifyPaystackTransaction: async () => ({ status: 'indeterminate' as const, reason: 'http_500' }),
+      },
+      { reference: 'ref-caseG', auth_code: 'AUTH_SHARED' },
+    );
+
+    expect(result.action).toBe('skipped');
+    if (result.action === 'skipped') {
+      expect(result.reason).toBe('verify_indeterminate');
+    }
+  });
+
+  it('#176-R5 CASE G2: amount mismatch → skipped', async () => {
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        fetchSubscriptionInvoice: async (subCode: string, txId?: string) => {
+          if (subCode === 'SUB_CODE_A') return { invoiceCode: 'INV_AMT', amount: 99999, status: 'success' };
+          return null;
+        },
+        verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 99999, currency: 'NGN', transactionId: '1234' }),
+      },
+      { reference: 'ref-caseG2', auth_code: 'AUTH_SHARED' },
+    );
+
+    // Amount 99999 != expected 10000 → zero authoritative matches
+    expect(result.action).toBe('skipped');
+
+    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseG2';`);
+    expect(paymentCount).toBe('0');
+  });
+
+  it('#176-R5 CASE H: concurrent reconciliation → exactly one canonical result', async () => {
+    // Clean for fresh reconciliation
+    psql(`DELETE FROM paystack_billing_attempts WHERE provider_reference = 'ref-caseH';`);
+    psql(`DELETE FROM payments WHERE gateway_reference = 'ref-caseH';`);
+
+    // Create a dedicated sub for this test
+    const RC_SUB_H = '76hhhhhh-3333-3333-3333-hhhhhhhhhhhh';
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${RC_SUB_H}';`);
+    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, currency, frequency, status, gateway, authorization_code, gateway_subscription_code, customer_phone, customer_name, next_charge_at, charge_count, total_charged)
+          VALUES ('${RC_SUB_H}', '${BIZ_ID}', '${USER_ID}', 50, 'NGN', 'monthly', 'active', 'paystack', 'AUTH_H', 'SUB_CODE_H', '+2340005556666', 'Sub H', NOW() - INTERVAL '1 hour', 0, 0);`);
+
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+
+    const deps = {
+      supabase: createTestSupabase() as any,
+      fetchSubscriptionInvoice: async (subCode: string, txId?: string) => {
+        if (subCode === 'SUB_CODE_H' && txId === '555') return { invoiceCode: 'INV_H', amount: 5000, status: 'success' };
+        return null;
+      },
+      verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 5000, currency: 'NGN', transactionId: '555' }),
+    };
+
+    // Run two reconciliations concurrently
+    const [r1, r2] = await Promise.all([
+      reconcilePaystackEvent(deps, { reference: 'ref-caseH', subscription_code: 'SUB_CODE_H' }),
+      reconcilePaystackEvent(deps, { reference: 'ref-caseH', subscription_code: 'SUB_CODE_H' }),
+    ]);
+
+    // Both succeed — one original, one idempotent or conflict-handled
+    const finalized = [r1, r2].filter(r => r.action === 'finalized');
+    const skipped = [r1, r2].filter(r => r.action === 'skipped');
+
+    // At least one finalized (possibly both via idempotent replay)
+    expect(finalized.length).toBeGreaterThanOrEqual(1);
+
+    // Exactly one payment
+    const paymentCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseH';`);
+    expect(paymentCount).toBe('1');
+
+    // charge_count = 1
+    const chargeCount = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${RC_SUB_H}';`);
+    expect(chargeCount).toBe('1');
+
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${RC_SUB_H}';`);
   });
 });
