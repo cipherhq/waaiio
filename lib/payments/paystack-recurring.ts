@@ -101,6 +101,80 @@ export async function createSubscription(opts: {
 }
 
 /**
+ * Typed Paystack transaction verification outcome (#176).
+ * Preserves #168/#172 fail-closed semantics.
+ */
+export type PaystackVerifyOutcome =
+  | { status: 'success'; amountMinor: number; currency: string; transactionId?: string }
+  | { status: 'terminal_failure'; reason: string }
+  | { status: 'pending'; txStatus: string }
+  | { status: 'reversed' }
+  | { status: 'not_found' }
+  | { status: 'indeterminate'; reason: string };
+
+/**
+ * Verify a Paystack transaction by reference with typed outcomes.
+ * Does NOT collapse results to boolean — preserves provider fidelity.
+ */
+export async function verifyPaystackTransaction(reference: string): Promise<PaystackVerifyOutcome> {
+  if (!paystackSecretKey) {
+    return { status: 'indeterminate', reason: 'no_credentials' };
+  }
+
+  try {
+    // Use raw fetch for HTTP fidelity (#172 pattern) — paystackRequest doesn't preserve HTTP status
+    const response = await fetch(
+      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
+      { headers: { Authorization: `Bearer ${paystackSecretKey}` }, signal: AbortSignal.timeout(15000) },
+    );
+
+    if (!response.ok) {
+      // HTTP error — NOT the same as "transaction not found"
+      if (response.status === 401 || response.status === 403) {
+        return { status: 'indeterminate', reason: `http_${response.status}_config` };
+      }
+      return { status: 'indeterminate', reason: `http_${response.status}` };
+    }
+
+    const data = await response.json();
+
+    if (!data.status || !data.data) {
+      // Paystack says the reference was not found or invalid
+      return { status: 'not_found' };
+    }
+
+    const txData = data.data as Record<string, unknown> | undefined;
+    if (!txData) {
+      return { status: 'not_found' };
+    }
+    const txStatus = txData.status as string;
+    const txAmount = txData.amount as number; // kobo
+
+    if (txStatus === 'success') {
+      return {
+        status: 'success',
+        amountMinor: txAmount,
+        currency: ((txData.currency as string) || 'NGN').toUpperCase(),
+        transactionId: txData.id ? String(txData.id) : undefined,
+      };
+    }
+
+    if (txStatus === 'failed' || txStatus === 'abandoned') {
+      return { status: 'terminal_failure', reason: `paystack_tx_${txStatus}` };
+    }
+
+    if (txStatus === 'reversed') {
+      return { status: 'reversed' };
+    }
+
+    // pending, processing, ongoing, queued, unknown
+    return { status: 'pending', txStatus };
+  } catch (err) {
+    return { status: 'indeterminate', reason: 'network_error' };
+  }
+}
+
+/**
  * Cancel (disable) a Paystack subscription.
  */
 export async function cancelSubscription(
@@ -191,7 +265,24 @@ export async function enableSubscription(
 }
 
 /**
- * Charge an authorization (for retrying failed recurring charges).
+ * Typed outcome for Paystack charge_authorization (#176).
+ * Preserves #168/#172 HTTP fidelity and fail-closed semantics.
+ *
+ * Post-dispatch semantics:
+ * - success → mark charged (webhook will finalize)
+ * - pending → leave dispatched (reconcile next run)
+ * - terminal_failure → mark failed (allow retry next cycle)
+ * - indeterminate → leave dispatched (reconcile next run, NEVER authorize replacement)
+ */
+export type PaystackChargeOutcome =
+  | { status: 'success'; reference: string; transactionId?: string }
+  | { status: 'pending'; providerStatus: string; reference: string }
+  | { status: 'terminal_failure'; reason: string; reference: string }
+  | { status: 'indeterminate'; reason: string };
+
+/**
+ * Charge an authorization with typed outcome boundary (#176).
+ * Uses raw fetch for HTTP fidelity (#172 pattern).
  * Amount is in kobo (multiply by 100 before calling).
  */
 export async function chargeAuthorization(
@@ -200,25 +291,243 @@ export async function chargeAuthorization(
   email: string,
   reference: string,
   splitParams?: { subaccount: string; transaction_charge: number },
-): Promise<{ success: boolean; reference?: string }> {
+): Promise<PaystackChargeOutcome> {
   if (!paystackSecretKey) {
     if (process.env.NODE_ENV === 'production') {
       throw new Error('Payment gateway not configured: missing Paystack secret key');
     }
-    return { success: true, reference: `mock_${Date.now()}` };
+    return { status: 'success', reference: `mock_${Date.now()}` };
   }
 
-  const data = await paystackRequest('/transaction/charge_authorization', 'POST', {
-    authorization_code: authorizationCode,
-    amount: amountKobo,
-    email,
-    reference,
-    ...(splitParams || {}),
-  });
+  try {
+    const response = await fetch('https://api.paystack.co/transaction/charge_authorization', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${paystackSecretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        authorization_code: authorizationCode,
+        amount: amountKobo,
+        email,
+        reference,
+        ...(splitParams || {}),
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
 
-  const txData = data.data as Record<string, unknown> | undefined;
-  return {
-    success: data.status === true && txData?.status === 'success',
-    reference: (txData?.reference as string) || reference,
-  };
+    // #172: HTTP error is NOT charge failure — preserve as indeterminate
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        return { status: 'indeterminate', reason: `http_${response.status}_config` };
+      }
+      return { status: 'indeterminate', reason: `http_${response.status}` };
+    }
+
+    let data: Record<string, unknown>;
+    try {
+      data = await response.json() as Record<string, unknown>;
+    } catch {
+      return { status: 'indeterminate', reason: 'malformed_json' };
+    }
+
+    if (!data.status || !data.data) {
+      const message = (data.message as string) || 'unknown';
+      return { status: 'terminal_failure', reason: `api_rejected: ${message}`, reference };
+    }
+
+    const txData = data.data as Record<string, unknown>;
+    const txStatus = txData.status as string;
+
+    if (txStatus === 'success') {
+      return {
+        status: 'success',
+        reference: (txData.reference as string) || reference,
+        transactionId: txData.id ? String(txData.id) : undefined,
+      };
+    }
+
+    if (txStatus === 'failed' || txStatus === 'abandoned') {
+      return {
+        status: 'terminal_failure',
+        reason: `paystack_charge_${txStatus}`,
+        reference: (txData.reference as string) || reference,
+      };
+    }
+
+    // pending, processing, ongoing, queued
+    return {
+      status: 'pending',
+      providerStatus: txStatus,
+      reference: (txData.reference as string) || reference,
+    };
+  } catch {
+    // Network error, timeout, AbortError
+    return { status: 'indeterminate', reason: 'network_error' };
+  }
+}
+
+/**
+ * Fetch the invoice for a Paystack subscription charge.
+ * Used to obtain the authoritative invoice_code for provider-managed billing cycles.
+ *
+ * Two modes:
+ * - Explicit-match (transactionId provided): searches invoices for exact transaction
+ *   association. Returns null if no match — does NOT fall back to most_recent_invoice.
+ *   An unrelated invoice must never be bound to a specific transaction.
+ * - Discovery (no transactionId): returns most_recent_invoice as a cycle hint.
+ *   Caller must hold another authoritative identity and must not use the result
+ *   as sole financial authority.
+ *
+ * Returns null on any error — fail-closed, caller decides how to handle.
+ */
+export async function fetchSubscriptionInvoice(
+  subscriptionCode: string,
+  transactionId?: string,
+): Promise<{ invoiceCode: string; amount: number; status: string } | null> {
+  if (!paystackSecretKey) return null;
+
+  try {
+    const response = await fetch(
+      `https://api.paystack.co/subscription/${encodeURIComponent(subscriptionCode)}`,
+      {
+        headers: { Authorization: `Bearer ${paystackSecretKey}` },
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+
+    if (!response.ok) return null;
+
+    let data: Record<string, unknown>;
+    try {
+      data = await response.json() as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+
+    if (!data.status || !data.data) return null;
+
+    const subData = data.data as Record<string, unknown>;
+    const invoices = (subData.invoices || []) as Array<Record<string, unknown>>;
+
+    if (transactionId) {
+      // Explicit-match mode: only return an invoice demonstrably associated
+      // with this transaction. Never fall back to most_recent_invoice.
+      for (const inv of invoices) {
+        if (String(inv.transaction) === transactionId) {
+          return {
+            invoiceCode: inv.invoice_code as string,
+            amount: inv.amount as number,
+            status: (inv.status as string) || 'unknown',
+          };
+        }
+      }
+      // No exact match — return null (unresolved). Do NOT guess.
+      return null;
+    }
+
+    // Discovery mode (no explicit transaction): most_recent_invoice as hint.
+    // Caller must not use this as sole financial cycle authority.
+    const mostRecent = subData.most_recent_invoice as Record<string, unknown> | undefined;
+    if (mostRecent?.invoice_code) {
+      return {
+        invoiceCode: mostRecent.invoice_code as string,
+        amount: mostRecent.amount as number,
+        status: (mostRecent.status as string) || 'unknown',
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Typed exact invoice-transaction correlation for reconciliation (#176 R7).
+ *
+ * Unlike fetchSubscriptionInvoice (which collapses all failures to null),
+ * this preserves the distinction between:
+ * - exact_match: well-formed provider response, invoice's transaction matches
+ * - definitive_no_match: well-formed provider response, no invoice matches
+ * - indeterminate: provider error, network/timeout, malformed data
+ *
+ * Used ONLY by the deferred reconciliation worker.
+ */
+export type PaystackInvoiceCorrelation =
+  | { status: 'exact_match'; invoiceCode: string; amount: number; invoiceStatus: string }
+  | { status: 'definitive_no_match' }
+  | { status: 'indeterminate'; reason: string };
+
+export async function correlateInvoiceExact(
+  subscriptionCode: string,
+  transactionId: string,
+): Promise<PaystackInvoiceCorrelation> {
+  if (!paystackSecretKey) {
+    return { status: 'indeterminate', reason: 'no_credentials' };
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.paystack.co/subscription/${encodeURIComponent(subscriptionCode)}`,
+      {
+        headers: { Authorization: `Bearer ${paystackSecretKey}` },
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+
+    if (!response.ok) {
+      return { status: 'indeterminate', reason: `http_${response.status}` };
+    }
+
+    let data: Record<string, unknown>;
+    try {
+      data = await response.json() as Record<string, unknown>;
+    } catch {
+      return { status: 'indeterminate', reason: 'malformed_json' };
+    }
+
+    if (!data.status || !data.data) {
+      return { status: 'indeterminate', reason: 'invalid_provider_response' };
+    }
+
+    const subData = data.data as Record<string, unknown>;
+    const invoices = (subData.invoices || []) as Array<Record<string, unknown>>;
+
+    if (!Array.isArray(invoices)) {
+      return { status: 'indeterminate', reason: 'invoices_not_array' };
+    }
+
+    for (const inv of invoices) {
+      if (String(inv.transaction) === transactionId) {
+        // Runtime shape validation — malformed evidence is indeterminate, not no-match
+        const invoiceCode = inv.invoice_code;
+        if (typeof invoiceCode !== 'string' || !invoiceCode) {
+          return { status: 'indeterminate', reason: 'invoice_missing_code' };
+        }
+
+        const amount = inv.amount;
+        if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) {
+          return { status: 'indeterminate', reason: 'invoice_invalid_amount' };
+        }
+
+        const invoiceStatus = inv.status;
+        if (typeof invoiceStatus !== 'string' || !invoiceStatus) {
+          return { status: 'indeterminate', reason: 'invoice_missing_status' };
+        }
+
+        return {
+          status: 'exact_match',
+          invoiceCode,
+          amount,
+          invoiceStatus,
+        };
+      }
+    }
+
+    // Well-formed response, searched all invoices, no transaction match
+    return { status: 'definitive_no_match' };
+  } catch {
+    return { status: 'indeterminate', reason: 'network_error' };
+  }
 }
