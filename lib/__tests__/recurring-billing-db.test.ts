@@ -18,7 +18,7 @@ const MIGRATION_PATH = path.resolve('supabase/migrations/305_annual_subscription
 const MIGRATION_306_PATH = path.resolve('supabase/migrations/306_concurrent_finalizer_lock.sql');
 const MIGRATION_334_PATH = path.resolve('supabase/migrations/334_payment_spend_marker.sql');
 const MIGRATION_335_PATH = path.resolve('supabase/migrations/335_recurring_spend_finalization.sql');
-const MIGRATION_336_PATH = path.resolve('supabase/migrations/336_paystack_recurring_finalization.sql');
+const MIGRATION_337_PATH = path.resolve('supabase/migrations/337_paystack_recurring_finalization.sql');
 const dbUrl = process.env.TEST_DATABASE_URL;
 
 function psql(sql: string): string {
@@ -171,7 +171,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_306_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_334_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_335_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
-    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_336_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
+    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_337_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
   });
 
   afterAll(() => {

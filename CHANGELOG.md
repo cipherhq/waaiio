@@ -15,7 +15,7 @@ If something breaks, check this log to find what changed and when.
 - **Guarded state transitions:** Cron post-dispatch updates use `.in('status', [...])` guards. Charged update requires `dispatched`. Failed update requires `dispatched|charged`. Prevents overwriting finalized rows.
 - **Provider-managed convergence:** Same invoice with multiple refs converges to one canonical finalization via partial unique index. Existing unresolved attempt for same cycle_key updated with latest provider evidence. Concurrent webhook delivery handled via race detection.
 - **Reconciliation path:** Cron `must_reconcile` now fetches invoice_code from Paystack API during verification for complete identity finalization.
-- **Files:** `lib/payments/paystack-recurring.ts`, `app/api/cron/retry-failed-charges/route.ts`, `app/api/payments/webhook/route.ts`, `supabase/migrations/336_paystack_recurring_finalization.sql`
+- **Files:** `lib/payments/paystack-recurring.ts`, `app/api/cron/retry-failed-charges/route.ts`, `app/api/payments/webhook/route.ts`, `supabase/migrations/337_paystack_recurring_finalization.sql`
 - **Tests:** 169 suites pass (4407 tests). 29 new provider-boundary typed outcome tests. 10 new PostgreSQL billing-authority tests (multi-cycle, convergence, races, conflicting replay, terminal failure replacement, guard validation).
 - **Affects:** Paystack recurring charge lifecycle (cron + webhook), chargeAuthorization return type
 - **Could break:** Code that checked `chargeAuthorization().success` (boolean) must now check `.status === 'success'`. Only consumer is retry-failed-charges cron (updated).

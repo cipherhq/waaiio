@@ -370,6 +370,15 @@ export async function chargeAuthorization(
 /**
  * Fetch the invoice for a Paystack subscription charge.
  * Used to obtain the authoritative invoice_code for provider-managed billing cycles.
+ *
+ * Two modes:
+ * - Explicit-match (transactionId provided): searches invoices for exact transaction
+ *   association. Returns null if no match — does NOT fall back to most_recent_invoice.
+ *   An unrelated invoice must never be bound to a specific transaction.
+ * - Discovery (no transactionId): returns most_recent_invoice as a cycle hint.
+ *   Caller must hold another authoritative identity and must not use the result
+ *   as sole financial authority.
+ *
  * Returns null on any error — fail-closed, caller decides how to handle.
  */
 export async function fetchSubscriptionInvoice(
@@ -399,10 +408,11 @@ export async function fetchSubscriptionInvoice(
     if (!data.status || !data.data) return null;
 
     const subData = data.data as Record<string, unknown>;
+    const invoices = (subData.invoices || []) as Array<Record<string, unknown>>;
 
-    // Match by transaction ID if available
     if (transactionId) {
-      const invoices = (subData.invoices || []) as Array<Record<string, unknown>>;
+      // Explicit-match mode: only return an invoice demonstrably associated
+      // with this transaction. Never fall back to most_recent_invoice.
       for (const inv of invoices) {
         if (String(inv.transaction) === transactionId) {
           return {
@@ -412,9 +422,12 @@ export async function fetchSubscriptionInvoice(
           };
         }
       }
+      // No exact match — return null (unresolved). Do NOT guess.
+      return null;
     }
 
-    // Fallback: most recent invoice
+    // Discovery mode (no explicit transaction): most_recent_invoice as hint.
+    // Caller must not use this as sole financial cycle authority.
     const mostRecent = subData.most_recent_invoice as Record<string, unknown> | undefined;
     if (mostRecent?.invoice_code) {
       return {

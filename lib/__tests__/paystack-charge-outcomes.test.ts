@@ -438,7 +438,26 @@ describe('fetchSubscriptionInvoice boundary (#176)', () => {
     expect(r!.invoiceCode).toBe('INV_match');
   });
 
-  it('falls back to most_recent_invoice when no transaction match', async () => {
+  it('explicit transaction mismatch → null (does NOT fall back to most_recent_invoice)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: true,
+        data: {
+          invoices: [
+            { invoice_code: 'INV_other', transaction: 300, amount: 5000, status: 'success' },
+          ],
+          most_recent_invoice: { invoice_code: 'INV_recent', transaction: 300, amount: 5000, status: 'success' },
+        },
+      }),
+    }));
+
+    // Transaction 999 not found — must return null, NOT INV_recent
+    const r = await fetchSubscriptionInvoice('SUB_x', '999');
+    expect(r).toBeNull();
+  });
+
+  it('discovery mode (no transactionId) → returns most_recent_invoice', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
@@ -450,7 +469,8 @@ describe('fetchSubscriptionInvoice boundary (#176)', () => {
       }),
     }));
 
-    const r = await fetchSubscriptionInvoice('SUB_x', '999');
+    // No explicit transactionId — discovery mode uses most_recent_invoice
+    const r = await fetchSubscriptionInvoice('SUB_x');
     expect(r).not.toBeNull();
     expect(r!.invoiceCode).toBe('INV_recent');
   });
@@ -486,5 +506,137 @@ describe('fetchSubscriptionInvoice boundary (#176)', () => {
 
     const r = await mod.fetchSubscriptionInvoice('SUB_x');
     expect(r).toBeNull();
+  });
+
+  // ── Provider invoice endpoint failure modes (#176 R3) ──
+
+  it('invoice endpoint 4xx → null (cycle identity unresolved)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 404,
+    }));
+
+    const r = await fetchSubscriptionInvoice('SUB_x', '123');
+    expect(r).toBeNull();
+  });
+
+  it('invoice endpoint malformed JSON → null', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => { throw new SyntaxError('Unexpected token'); },
+    }));
+
+    const r = await fetchSubscriptionInvoice('SUB_x', '123');
+    expect(r).toBeNull();
+  });
+
+  it('invoice endpoint timeout → null', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(
+      new DOMException('signal timed out', 'AbortError'),
+    ));
+
+    const r = await fetchSubscriptionInvoice('SUB_x', '123');
+    expect(r).toBeNull();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// PROVIDER-MANAGED WEBHOOK BOUNDARY TESTS (#176 R3)
+// Proves unresolved-invoice behavior at the application layer:
+// no accounting finalization, durable reconciliation state,
+// later replay convergence.
+// ═══════════════════════════════════════════════════════════
+
+describe('provider-managed webhook: unresolved invoice identity (#176 R3)', () => {
+  it('D. webhook + unresolved invoice → source-string proves no finalization, reconciliation preserved', () => {
+    const fs = require('fs') as typeof import('fs');
+    const webhookCode = fs.readFileSync('app/api/payments/webhook/route.ts', 'utf-8');
+
+    // The webhook must NOT contain invoiceCode || reference as cycle discriminator
+    expect(webhookCode).not.toContain('invoiceCode || reference');
+
+    // When invoiceCode is null, the code must preserve reconciliation evidence
+    // Find the provider-managed section
+    const providerSection = webhookCode.substring(
+      webhookCode.indexOf('Fetch authoritative invoice_code for billing-cycle identity'),
+      webhookCode.indexOf('No local subscription for subscription_code'),
+    );
+
+    // Must check for null invoiceCode before any finalization
+    expect(providerSection).toContain('if (!invoiceCode)');
+
+    // Must preserve reconciliation evidence
+    expect(providerSection).toContain('reconciliation_required');
+    expect(providerSection).toContain('provider_managed_invoice_unresolved');
+
+    // Must NOT finalize when invoiceCode is null
+    const unresolvedBlock = providerSection.substring(
+      providerSection.indexOf('if (!invoiceCode)'),
+      providerSection.indexOf('} else {'),
+    );
+    // The unresolved block must NOT contain finalize_paystack_recurring_charge
+    expect(unresolvedBlock).not.toContain('finalize_paystack_recurring_charge');
+    // Must NOT create billing attempts
+    expect(unresolvedBlock).not.toContain("from('paystack_billing_attempts')");
+    // Must NOT create payments
+    expect(unresolvedBlock).not.toContain("from('payments')");
+  });
+
+  it('E. durable reconciliation evidence contains all identity needed for later replay', () => {
+    const fs = require('fs') as typeof import('fs');
+    const webhookCode = fs.readFileSync('app/api/payments/webhook/route.ts', 'utf-8');
+
+    const unresolvedSection = webhookCode.substring(
+      webhookCode.indexOf('provider_managed_invoice_unresolved'),
+      webhookCode.indexOf('Invoice unresolved for provider-managed charge'),
+    );
+
+    // Must preserve: reference, subscription_code, subscription_id, amount, currency, transaction_id
+    expect(unresolvedSection).toContain('reference');
+    expect(unresolvedSection).toContain('subscription_code');
+    expect(unresolvedSection).toContain('subscription_id');
+    expect(unresolvedSection).toContain('amount_kobo');
+    expect(unresolvedSection).toContain('currency');
+    expect(unresolvedSection).toContain('transaction_id');
+  });
+
+  it('F. fetchSubscriptionInvoice explicit-match mode does NOT bind unrelated invoice', () => {
+    const fs = require('fs') as typeof import('fs');
+    const code = fs.readFileSync('lib/payments/paystack-recurring.ts', 'utf-8');
+
+    // Find the fetchSubscriptionInvoice function
+    const fnStart = code.indexOf('export async function fetchSubscriptionInvoice');
+    const fnEnd = code.indexOf('export', fnStart + 10);
+    const fnCode = code.substring(fnStart, fnEnd > fnStart ? fnEnd : code.length);
+
+    // When transactionId is provided: must return null if no match, NOT most_recent_invoice
+    expect(fnCode).toContain('if (transactionId)');
+
+    // After the transaction search loop, there must be an explicit 'return null'
+    // BEFORE any most_recent_invoice usage
+    const txBlock = fnCode.substring(
+      fnCode.indexOf('if (transactionId)'),
+      fnCode.indexOf('Discovery mode'),
+    );
+    expect(txBlock).toContain('return null');
+    // The txBlock must NOT use most_recent_invoice as a value (the comment mentioning it is OK)
+    // Verify: no `subData.most_recent_invoice` or `mostRecent` variable access in this block
+    expect(txBlock).not.toContain('subData.most_recent_invoice');
+    expect(txBlock).not.toContain('mostRecent');
+  });
+
+  it('G. provider-managed cycle key uses only invoice_code, never reference/transaction', () => {
+    const fs = require('fs') as typeof import('fs');
+    const webhookCode = fs.readFileSync('app/api/payments/webhook/route.ts', 'utf-8');
+
+    // Find the provider-managed finalization section (after invoiceCode is confirmed non-null)
+    const resolvedSection = webhookCode.substring(
+      webhookCode.indexOf('Authoritative invoice_code resolved'),
+      webhookCode.indexOf('No local subscription for subscription_code'),
+    );
+
+    // Cycle key must use invoiceCode directly, not a fallback
+    expect(resolvedSection).toContain('ps-auto-${localSub.id}-${invoiceCode}');
+    expect(resolvedSection).not.toContain('invoiceCode || reference');
+    expect(resolvedSection).not.toContain('cycleDiscriminator');
   });
 });
