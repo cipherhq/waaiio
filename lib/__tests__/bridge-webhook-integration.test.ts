@@ -177,6 +177,7 @@ describe('Bridge v3.1: Actual POST handler integration', () => {
   async function callPOST(
     webhookBody: Record<string, unknown>,
     mockConfig: MockConfig,
+    opts?: { activationResult?: Record<string, unknown> },
   ) {
     const mockData = buildServiceMock(mockConfig);
 
@@ -213,7 +214,9 @@ describe('Bridge v3.1: Actual POST handler integration', () => {
     vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
     vi.doMock('@/lib/utils/sanitize', () => ({ sanitizeFilterValue: vi.fn((v: string) => v) }));
     vi.doMock('@/lib/recurring/activate-subscription', () => ({
-      activatePaystackSubscription: vi.fn().mockResolvedValue({ result: 'skipped' }),
+      activatePaystackSubscription: vi.fn().mockResolvedValue(
+        opts?.activationResult ?? { result: 'skipped' },
+      ),
     }));
     vi.doMock('@/lib/payments/paystack-recurring', () => ({
       fetchSubscriptionInvoice: vi.fn().mockResolvedValue({ invoiceCode: 'INV_test', invoiceId: 'inv-1', paidAt: new Date().toISOString() }),
@@ -279,19 +282,29 @@ describe('Bridge v3.1: Actual POST handler integration', () => {
     expect(mockData.queriedTables).not.toContain('paystack_billing_attempts');
   });
 
-  // ── Role B: Multiple pending setup matches → still B, never D/E ──
+  // ── Role B: Multiple pending setup matches → B, activation returns ambiguous → 500 ──
 
-  it('Role B: multiple pending setups → role B, never enters D/E or probes #176', async () => {
+  it('Role B: multiple pending setups → role B, activation ambiguous → 500, never D/E', async () => {
     const body = makeWebhookBody();
-    const { status, mockData } = await callPOST(body, {
-      existingPayment: null,
-      pendingSetupSubs: [{ id: 'cs-1' }, { id: 'cs-2' }],
-    });
+    const { status, json, mockData } = await callPOST(
+      body,
+      {
+        existingPayment: null,
+        pendingSetupSubs: [{ id: 'cs-1' }, { id: 'cs-2' }],
+      },
+      // Production activatePaystackSubscription returns 'ambiguous' for 2+ pending matches
+      { activationResult: { result: 'ambiguous', count: 2 } },
+    );
 
-    expect(status).toBe(200);
+    // Webhook returns 500 for ambiguous activation (route.ts line 156-158)
+    expect(status).toBe(500);
+    expect(json.error).toContain('Ambiguous');
+    // paystack_billing_attempts never queried — role B, not D/E
     expect(mockData.queriedTables).not.toContain('paystack_billing_attempts');
-    // No finalization RPC
+    // No #176 finalization RPC
     expect(mockData.rpcCalls.length).toBe(0);
+    // Outer event never reaches completed (500 return is before the completed mark)
+    expect(mockData.eventUpdates.some(u => u.status === 'completed')).toBe(false);
   });
 
   // ── Role C: Platform renewal ──
