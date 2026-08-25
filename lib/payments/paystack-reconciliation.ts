@@ -14,6 +14,12 @@
  * before converging through finalize_paystack_recurring_charge.
  *
  * Hints enumerate candidates. They never select financial authority.
+ *
+ * Provider uncertainty rules:
+ * - If ANY candidate correlation is indeterminate → no finalization
+ * - Missing transaction ID from verification → indeterminate
+ * - Webhook evidence amount/currency must match verified amount/currency
+ * - Transient finalizer failure → reuse same attempt on next pass
  */
 
 import { logger } from '@/lib/logger';
@@ -78,7 +84,21 @@ export async function reconcilePaystackEvent(
     return { action: 'skipped', reason: 'verify_error' };
   }
 
-  // Step 2: Enumerate candidate subscriptions
+  // Require non-empty exact transaction ID
+  if (!verifiedTransactionId) {
+    return { action: 'skipped', reason: 'verify_missing_transaction_id' };
+  }
+
+  // Validate verified evidence against durable webhook evidence
+  if (evidence.amount_kobo !== undefined && verifiedAmount !== evidence.amount_kobo) {
+    return { action: 'skipped', reason: 'evidence_amount_mismatch' };
+  }
+  if (evidence.currency && verifiedCurrency &&
+      verifiedCurrency.toUpperCase() !== evidence.currency.toUpperCase()) {
+    return { action: 'skipped', reason: 'evidence_currency_mismatch' };
+  }
+
+  // Step 2: Enumerate candidates
   type CandidateSub = { id: string; amount: number; currency: string; gateway_subscription_code: string };
   let candidates: CandidateSub[] = [];
 
@@ -148,37 +168,43 @@ export async function reconcilePaystackEvent(
   };
 
   const authoritativeMatches: AuthoritativeTuple[] = [];
+  let hasIndeterminate = false;
 
   for (const candidate of candidates) {
+    const expectedAmountMinor = Math.round(candidate.amount * 100);
+    const expectedCurrency = (candidate.currency || 'NGN').toUpperCase();
+
+    // Definitive no-match: amount/currency don't align
+    if (verifiedAmount !== expectedAmountMinor) continue;
+    if (verifiedCurrency && verifiedCurrency.toUpperCase() !== expectedCurrency) continue;
+
+    // Provider invoice correlation
     try {
       const invoice = await fetchSubscriptionInvoice(
         candidate.gateway_subscription_code,
-        verifiedTransactionId!,
+        verifiedTransactionId,
       );
-      if (!invoice) continue;
-
-      // Validate amount and currency
-      const expectedAmountMinor = Math.round(candidate.amount * 100);
-      const expectedCurrency = (candidate.currency || 'NGN').toUpperCase();
-
-      if (verifiedAmount !== expectedAmountMinor) continue;
-      if (verifiedCurrency && verifiedCurrency.toUpperCase() !== expectedCurrency) continue;
-
-      authoritativeMatches.push({
-        subscriptionId: candidate.id,
-        subscriptionCode: candidate.gateway_subscription_code,
-        invoiceCode: invoice.invoiceCode,
-        transactionId: verifiedTransactionId!,
-        amount: verifiedAmount!,
-        currency: (verifiedCurrency || expectedCurrency).toUpperCase(),
-      });
+      if (invoice) {
+        authoritativeMatches.push({
+          subscriptionId: candidate.id,
+          subscriptionCode: candidate.gateway_subscription_code,
+          invoiceCode: invoice.invoiceCode,
+          transactionId: verifiedTransactionId,
+          amount: verifiedAmount!,
+          currency: (verifiedCurrency || expectedCurrency).toUpperCase(),
+        });
+      }
+      // null with explicit transactionId = definitive no-match
     } catch {
-      // Provider error for this candidate — skip it, check others
-      continue;
+      // Provider error = indeterminate (candidate not disproven)
+      hasIndeterminate = true;
     }
   }
 
-  // Step 4: Require exactly ONE authoritative match
+  // ALL candidates must be determinate, exactly ONE match
+  if (hasIndeterminate) {
+    return { action: 'skipped', reason: 'candidate_indeterminate' };
+  }
   if (authoritativeMatches.length === 0) {
     return { action: 'skipped', reason: 'zero_authoritative_match' };
   }
@@ -208,8 +234,33 @@ export async function reconcilePaystackEvent(
     };
   }
 
-  // Step 6: Create billing attempt and finalize
-  const { error: insertErr } = await supabase.from('paystack_billing_attempts').insert({
+  // Step 6: Reuse existing eligible attempt or create new
+  const { data: existingCharged } = await supabase
+    .from('paystack_billing_attempts')
+    .select('id, provider_reference, provider_transaction_id, provider_invoice_code, intended_amount_minor, intended_currency')
+    .eq('customer_subscription_id', match.subscriptionId)
+    .eq('cycle_key', providerCycleKey)
+    .in('status', ['charged', 'dispatched'])
+    .maybeSingle();
+
+  let attemptId: string;
+
+  if (existingCharged) {
+    if (existingCharged.provider_reference !== evidence.reference) {
+      return { action: 'skipped', reason: 'existing_attempt_reference_conflict' };
+    }
+    if (existingCharged.provider_transaction_id && existingCharged.provider_transaction_id !== match.transactionId) {
+      return { action: 'skipped', reason: 'existing_attempt_transaction_conflict' };
+    }
+    if (existingCharged.provider_invoice_code && existingCharged.provider_invoice_code !== match.invoiceCode) {
+      return { action: 'skipped', reason: 'existing_attempt_invoice_conflict' };
+    }
+    if (existingCharged.intended_amount_minor !== match.amount) {
+      return { action: 'skipped', reason: 'existing_attempt_amount_conflict' };
+    }
+    attemptId = existingCharged.id;
+  } else {
+    const { error: insertErr } = await supabase.from('paystack_billing_attempts').insert({
     customer_subscription_id: match.subscriptionId,
     cycle_key: providerCycleKey,
     scheduled_at: new Date().toISOString(),
@@ -223,33 +274,32 @@ export async function reconcilePaystackEvent(
     provider_invoice_code: match.invoiceCode,
   });
 
-  if (insertErr) {
-    // Unique constraint — check if concurrent worker finalized
-    const { data: raceFinalized } = await supabase
-      .from('paystack_billing_attempts')
-      .select('id, canonical_payment_id')
-      .eq('customer_subscription_id', match.subscriptionId)
-      .eq('cycle_key', providerCycleKey)
-      .eq('status', 'finalized')
-      .maybeSingle();
-    if (raceFinalized) {
-      return { action: 'finalized', paymentId: raceFinalized.canonical_payment_id, alreadyFinalized: true };
+    if (insertErr) {
+      const { data: raceFinalized } = await supabase
+        .from('paystack_billing_attempts')
+        .select('id, canonical_payment_id')
+        .eq('customer_subscription_id', match.subscriptionId)
+        .eq('cycle_key', providerCycleKey)
+        .eq('status', 'finalized')
+        .maybeSingle();
+      if (raceFinalized) {
+        return { action: 'finalized', paymentId: raceFinalized.canonical_payment_id, alreadyFinalized: true };
+      }
+      return { action: 'skipped', reason: 'attempt_insert_conflict' };
     }
-    return { action: 'skipped', reason: 'attempt_insert_conflict' };
-  }
 
-  const { data: newAttempt } = await supabase
-    .from('paystack_billing_attempts')
-    .select('id')
-    .eq('provider_reference', evidence.reference)
-    .single();
+    const { data: newAttempt } = await supabase
+      .from('paystack_billing_attempts')
+      .select('id')
+      .eq('provider_reference', evidence.reference)
+      .single();
 
-  if (!newAttempt) {
-    return { action: 'skipped', reason: 'attempt_lookup_failed' };
+    if (!newAttempt) return { action: 'skipped', reason: 'attempt_lookup_failed' };
+    attemptId = newAttempt.id;
   }
 
   const { data: finResult, error: finErr } = await supabase.rpc('finalize_paystack_recurring_charge', {
-    p_attempt_id: newAttempt.id,
+    p_attempt_id: attemptId,
     p_provider_amount_minor: match.amount,
     p_provider_currency: match.currency,
     p_provider_transaction_id: match.transactionId,

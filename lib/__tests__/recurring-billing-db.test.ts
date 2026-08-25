@@ -1977,5 +1977,128 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     expect(chargeCount).toBe('1');
 
     psql(`DELETE FROM customer_subscriptions WHERE id = '${RC_SUB_H}';`);
+
+  // ═══════════════════════════════════════════════════════════
+  // #176 ROUND 6: PROVIDER UNCERTAINTY + FINALIZER RETRY
+  // ═══════════════════════════════════════════════════════════
+
+  it('#176-R6 CASE I: candidate A indeterminate + B match → NO finalization', async () => {
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        fetchSubscriptionInvoice: async (subCode: string) => {
+          if (subCode === 'SUB_CODE_A') throw new Error('HTTP 500');
+          if (subCode === 'SUB_CODE_B') return { invoiceCode: 'INV_I', amount: 10000, status: 'success' };
+          return null;
+        },
+        verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '1001' }),
+      },
+      { reference: 'ref-caseI', auth_code: 'AUTH_SHARED', customer_code: 'CUST_SHARED' },
+    );
+    expect(result.action).toBe('skipped');
+    if (result.action === 'skipped') expect(result.reason).toBe('candidate_indeterminate');
+    expect(psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseI';`)).toBe('0');
+  });
+
+  it('#176-R6 CASE J: candidate A timeout + B match → NO finalization', async () => {
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        fetchSubscriptionInvoice: async (subCode: string) => {
+          if (subCode === 'SUB_CODE_A') throw new DOMException('timeout', 'AbortError');
+          if (subCode === 'SUB_CODE_B') return { invoiceCode: 'INV_J', amount: 10000, status: 'success' };
+          return null;
+        },
+        verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '1002' }),
+      },
+      { reference: 'ref-caseJ', auth_code: 'AUTH_SHARED' },
+    );
+    expect(result.action).toBe('skipped');
+    if (result.action === 'skipped') expect(result.reason).toBe('candidate_indeterminate');
+  });
+
+  it('#176-R6 CASE K: verify success but NO transaction ID → NO finalization', async () => {
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        fetchSubscriptionInvoice: async () => ({ invoiceCode: 'INV_K', amount: 10000, status: 'success' }),
+        verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: undefined }),
+      },
+      { reference: 'ref-caseK', auth_code: 'AUTH_SHARED' },
+    );
+    expect(result.action).toBe('skipped');
+    if (result.action === 'skipped') expect(result.reason).toBe('verify_missing_transaction_id');
+    expect(psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseK';`)).toBe('0');
+  });
+
+  it('#176-R6 CASE L: verified amount differs from webhook evidence → NO finalization', async () => {
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        fetchSubscriptionInvoice: async () => ({ invoiceCode: 'INV_L', amount: 10000, status: 'success' }),
+        verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 20000, currency: 'NGN', transactionId: '1003' }),
+      },
+      { reference: 'ref-caseL', auth_code: 'AUTH_SHARED', amount_kobo: 10000, currency: 'NGN' },
+    );
+    expect(result.action).toBe('skipped');
+    if (result.action === 'skipped') expect(result.reason).toBe('evidence_amount_mismatch');
+  });
+
+  it('#176-R6 CASE M: verified currency differs from webhook evidence → NO finalization', async () => {
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+    const result = await reconcilePaystackEvent(
+      {
+        supabase: createTestSupabase() as any,
+        fetchSubscriptionInvoice: async () => ({ invoiceCode: 'INV_M', amount: 10000, status: 'success' }),
+        verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'USD', transactionId: '1004' }),
+      },
+      { reference: 'ref-caseM', auth_code: 'AUTH_SHARED', amount_kobo: 10000, currency: 'NGN' },
+    );
+    expect(result.action).toBe('skipped');
+    if (result.action === 'skipped') expect(result.reason).toBe('evidence_currency_mismatch');
+  });
+
+  it('#176-R6 CASE N: finalizer fails → reuse attempt → finalize → replay once', async () => {
+    psql(`DELETE FROM paystack_billing_attempts WHERE provider_reference = 'ref-caseN';`);
+    psql(`DELETE FROM payments WHERE gateway_reference = 'ref-caseN';`);
+    const RC_SUB_N = '76cccc44-4444-4444-4444-cccccccccccc';
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${RC_SUB_N}';`);
+    psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, currency, frequency, status, gateway, authorization_code, gateway_subscription_code, customer_phone, customer_name, next_charge_at, charge_count, total_charged)
+          VALUES ('${RC_SUB_N}', '${BIZ_ID}', '${USER_ID}', 100, 'NGN', 'monthly', 'active', 'paystack', 'AUTH_N', 'SUB_CODE_N', '+2340007778888', 'Sub N', NOW() - INTERVAL '1 hour', 0, 0);`);
+
+    const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
+    const goodDeps = {
+      fetchSubscriptionInvoice: async (subCode: string, txId?: string) => {
+        if (subCode === 'SUB_CODE_N' && txId === '2001') return { invoiceCode: 'INV_N', amount: 10000, status: 'success' };
+        return null;
+      },
+      verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '2001' }),
+    };
+
+    psql("CREATE OR REPLACE FUNCTION apply_payment_spend_once(p_payment_id UUID) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$ BEGIN RAISE EXCEPTION 'FAULT: case N'; END; $fn$;");
+
+    const r1 = await reconcilePaystackEvent({ supabase: createTestSupabase() as any, ...goodDeps }, { reference: 'ref-caseN', subscription_code: 'SUB_CODE_N' });
+    expect(r1.action).toBe('error');
+    expect(psql(`SELECT status FROM paystack_billing_attempts WHERE provider_reference = 'ref-caseN';`)).toBe('charged');
+    expect(psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseN';`)).toBe('0');
+
+    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_334_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
+
+    const r2 = await reconcilePaystackEvent({ supabase: createTestSupabase() as any, ...goodDeps }, { reference: 'ref-caseN', subscription_code: 'SUB_CODE_N' });
+    expect(r2.action).toBe('finalized');
+    if (r2.action === 'finalized') expect(r2.alreadyFinalized).toBe(false);
+    expect(psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseN';`)).toBe('1');
+    expect(psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${RC_SUB_N}';`)).toBe('1');
+
+    const r3 = await reconcilePaystackEvent({ supabase: createTestSupabase() as any, ...goodDeps }, { reference: 'ref-caseN', subscription_code: 'SUB_CODE_N' });
+    expect(r3.action).toBe('finalized');
+    if (r3.action === 'finalized') expect(r3.alreadyFinalized).toBe(true);
+    expect(psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseN';`)).toBe('1');
+
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${RC_SUB_N}';`);
   });
 });
