@@ -283,35 +283,68 @@ describe.skipIf(!canRun)('Issue #188: Promo Claim Crypto Schema', () => {
     expect(r.result).toBe('already_claimed');
   });
 
-  // ══════════ F. Transaction rollback on failure ══════════
-  it('F. failed transaction leaves no partial state', () => {
-    // Verify CODE_ROLLBACK is still unused before this test
+  // ══════════ F. Real transaction rollback after downstream failure ══════════
+  // Strategy: install a temporary CHECK constraint on promo_redemptions that
+  // rejects the specific CODE_ROLLBACK promo_code_id. This forces the INSERT
+  // to fail AFTER claim_promo_code has already executed:
+  //   UPDATE promo_campaign_codes SET status = 'claimed'
+  // Because the entire function runs in a single transaction, the code status
+  // update is rolled back when the INSERT fails.
+
+  it('F.1 install test fault: block redemption INSERT for rollback code', () => {
+    // Verify CODE_ROLLBACK is unused before the test
     const statusBefore = psql(`SELECT status FROM promo_campaign_codes WHERE id = '${CODE_ROLLBACK}';`);
     expect(statusBefore).toBe('unused');
 
-    // Simulate a failure by dropping the promo_redemptions table's constraints temporarily
-    // Instead, we test the inverse: a successful claim proves the entire transaction committed.
-    // For rollback proof, we use a non-existent campaign to verify no partial state is created.
-    const r = psqlJson(`
-      SET ROLE service_role;
-      SELECT claim_promo_code('${BIZ_ID}','00000000-0000-0000-0000-000000000000','${testHash('CRYPTORB9012')}','+2348004','msg-rb1');
-      RESET ROLE;
+    // Install a CHECK constraint that rejects this specific promo_code_id
+    psql(`
+      ALTER TABLE promo_redemptions
+        ADD CONSTRAINT test_fault_block_rollback_code
+        CHECK (promo_code_id != '${CODE_ROLLBACK}'::UUID);
     `);
-    expect(r.result).toBe('campaign_inactive');
-
-    // Verify: no redemption was created
-    const redemptionCount = parseInt(psql(`
-      SELECT count(*) FROM promo_redemptions WHERE inbound_message_id = 'msg-rb1';
-    `));
-    expect(redemptionCount).toBe(0);
-
-    // Verify: the code is still unused (transaction was not partially committed)
-    const statusAfter = psql(`SELECT status FROM promo_campaign_codes WHERE id = '${CODE_ROLLBACK}';`);
-    expect(statusAfter).toBe('unused');
   });
 
-  it('F.2 code claimed only after successful claim', () => {
-    // Now actually claim the rollback test code to prove the full transaction works
+  it('F.2 claim with fault installed fails (downstream INSERT rejected)', () => {
+    const r = psqlMayFail(`
+      SET ROLE service_role;
+      SELECT claim_promo_code('${BIZ_ID}','${CAMPAIGN_ID}','${testHash('CRYPTORB9012')}','+2348004','msg-rb1');
+      RESET ROLE;
+    `);
+    // The RPC should fail because the redemption INSERT violates the test constraint
+    expect(r.ok).toBe(false);
+    expect(r.output).toContain('test_fault_block_rollback_code');
+  });
+
+  it('F.3 code remains unused after rollback (status not partially committed)', () => {
+    const status = psql(`SELECT status FROM promo_campaign_codes WHERE id = '${CODE_ROLLBACK}';`);
+    expect(status).toBe('unused');
+  });
+
+  it('F.4 claimed_at remains null after rollback', () => {
+    const claimedAt = psql(`SELECT claimed_at IS NULL FROM promo_campaign_codes WHERE id = '${CODE_ROLLBACK}';`);
+    expect(claimedAt).toBe('t');
+  });
+
+  it('F.5 claimed_by_phone remains null after rollback', () => {
+    const claimedBy = psql(`SELECT claimed_by_phone IS NULL FROM promo_campaign_codes WHERE id = '${CODE_ROLLBACK}';`);
+    expect(claimedBy).toBe('t');
+  });
+
+  it('F.6 no redemption row exists after rollback', () => {
+    const count = parseInt(psql(`SELECT count(*) FROM promo_redemptions WHERE promo_code_id = '${CODE_ROLLBACK}';`));
+    expect(count).toBe(0);
+  });
+
+  it('F.7 no verification attempt logged after rollback', () => {
+    const count = parseInt(psql(`SELECT count(*) FROM promo_verification_attempts WHERE inbound_message_id = 'msg-rb1';`));
+    expect(count).toBe(0);
+  });
+
+  it('F.8 remove test fault and claim succeeds normally', () => {
+    // Remove the test fault constraint
+    psql(`ALTER TABLE promo_redemptions DROP CONSTRAINT test_fault_block_rollback_code;`);
+
+    // Now claim the same code — should succeed with the real migration-338 function
     const r = psqlJson(`
       SET ROLE service_role;
       SELECT claim_promo_code('${BIZ_ID}','${CAMPAIGN_ID}','${testHash('CRYPTORB9012')}','+2348004','msg-rb2');
@@ -320,12 +353,12 @@ describe.skipIf(!canRun)('Issue #188: Promo Claim Crypto Schema', () => {
     expect(r.success).toBe(true);
     expect(r.result).toBe('winner');
 
+    // Code is now claimed
     const status = psql(`SELECT status FROM promo_campaign_codes WHERE id = '${CODE_ROLLBACK}';`);
     expect(status).toBe('claimed');
 
-    const redemptionCount = parseInt(psql(`
-      SELECT count(*) FROM promo_redemptions WHERE promo_code_id = '${CODE_ROLLBACK}';
-    `));
-    expect(redemptionCount).toBe(1);
+    // Redemption committed
+    const count = parseInt(psql(`SELECT count(*) FROM promo_redemptions WHERE promo_code_id = '${CODE_ROLLBACK}';`));
+    expect(count).toBe(1);
   });
 });
