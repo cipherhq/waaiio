@@ -1141,6 +1141,33 @@ jobs:
           if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No ACC-184 DB tests passed."; exit 1; fi
           echo "✅ ACC-184 promo history tenant isolation DB tests complete — zero skips, zero failures."
 
+      - name: ACC-186 promo audit UUID regression DB tests
+        if: hashFiles('lib/__tests__/acc-186-promo-audit-uuid-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+          echo "Running ACC-186 promo audit UUID regression tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-186-promo-audit-uuid-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ ACC-186 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ ACC-186 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No ACC-186 DB tests passed."; exit 1; fi
+          echo "✅ ACC-186 promo audit UUID regression DB tests complete — zero skips, zero failures."
+
       - name: P1-CLASS-1 class session booking authority DB tests
         if: hashFiles('lib/__tests__/p1-class-session-booking.test.ts') != ''
         env:
@@ -1294,7 +1321,7 @@ jobs:
           GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
           CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT NOT NULL, slug TEXT, owner_id UUID REFERENCES auth.users(id), status TEXT DEFAULT 'active', subscription_tier TEXT DEFAULT 'free', created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
           CREATE TABLE IF NOT EXISTS business_members (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), user_id UUID REFERENCES auth.users(id));
-          CREATE TABLE IF NOT EXISTS admin_audit_logs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), actor_id UUID, action TEXT, entity_type TEXT, entity_id TEXT, details JSONB, created_at TIMESTAMPTZ DEFAULT NOW());
+          CREATE TABLE IF NOT EXISTS admin_audit_logs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), actor_id UUID, action TEXT, entity_type TEXT, entity_id UUID, details JSONB, created_at TIMESTAMPTZ DEFAULT NOW());
           CREATE TABLE IF NOT EXISTS business_staff (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), name TEXT, is_active BOOLEAN DEFAULT true);
           CREATE TABLE IF NOT EXISTS business_locations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), name TEXT, is_active BOOLEAN DEFAULT true);
           CREATE TABLE IF NOT EXISTS services (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), name TEXT, price INTEGER DEFAULT 0, duration_minutes INTEGER DEFAULT 60, max_capacity INTEGER DEFAULT 1, is_class BOOLEAN DEFAULT false, is_active BOOLEAN DEFAULT true, class_schedule JSONB DEFAULT '[]', requires_staff BOOLEAN DEFAULT false, buffer_minutes INTEGER DEFAULT 0, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
