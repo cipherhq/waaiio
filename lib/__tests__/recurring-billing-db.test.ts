@@ -1650,11 +1650,19 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
         eq(col: string, val: unknown) { wheres.push(`${col} = '${val}'`); return builder; },
         in(col: string, vals: unknown[]) { wheres.push(`${col} IN (${vals.map(v => `'${v}'`).join(',')})`); return builder; },
         limit(n: number) { limitVal = n; return builder; },
+        not(col: string, op: string, val: unknown) { wheres.push(`${col} IS NOT NULL`); return builder; },
         single() { isSingle = true; return builder.execute(); },
         maybeSingle() { isMaybeSingle = true; return builder.execute(); },
+        then(resolve: (v: any) => void, reject?: (e: any) => void) {
+          return builder.execute().then(resolve, reject);
+        },
         insert(data: Record<string, unknown>) {
           insertData = data;
-          return { select: () => ({ single: () => builder.executeInsert() }), then: (cb: any) => builder.executeInsert().then(cb) };
+          const insertBuilder = {
+            select: () => ({ single: () => builder.executeInsert() }),
+            then: (resolve: any, reject?: any) => builder.executeInsert().then(resolve, reject),
+          };
+          return insertBuilder;
         },
         update(data: Record<string, unknown>) {
           updateData = data;
@@ -1931,7 +1939,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     psql(`DELETE FROM payments WHERE gateway_reference = 'ref-caseH';`);
 
     // Create a dedicated sub for this test
-    const RC_SUB_H = '76hhhhhh-3333-3333-3333-hhhhhhhhhhhh';
+    const RC_SUB_H = '76cccc33-3333-3333-3333-cccccccccccc';
     psql(`DELETE FROM customer_subscriptions WHERE id = '${RC_SUB_H}';`);
     psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, currency, frequency, status, gateway, authorization_code, gateway_subscription_code, customer_phone, customer_name, next_charge_at, charge_count, total_charged)
           VALUES ('${RC_SUB_H}', '${BIZ_ID}', '${USER_ID}', 50, 'NGN', 'monthly', 'active', 'paystack', 'AUTH_H', 'SUB_CODE_H', '+2340005556666', 'Sub H', NOW() - INTERVAL '1 hour', 0, 0);`);
