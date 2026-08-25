@@ -1,8 +1,8 @@
 /**
- * ACC-184: Promo History Tenant Isolation — Real PostgreSQL Tests
+ * ACC-184: Promo History Tenant Isolation — Real Migrated Schema PostgreSQL Tests
  *
- * Proves same phone across Business A / Business B returns
- * only the correct tenant's redemption history.
+ * Runs against the ACTUAL Waaiio migrated schema (waaiio_test).
+ * Creates fixture ROWS only — no schema DDL.
  *
  * Requires TEST_DATABASE_URL.
  */
@@ -19,6 +19,7 @@ function psql(sql: string): string {
 }
 
 const PHONE = '2341234567890';
+const USER_ID = '00000000-0000-4000-f184-000000000001';
 const BIZ_A_ID = '00000000-0000-4000-a184-aaaaaaaaaaaa';
 const BIZ_B_ID = '00000000-0000-4000-a184-bbbbbbbbbbbb';
 const CAMP_A_ID = '00000000-0000-4000-c184-aaaaaaaaaaaa';
@@ -28,90 +29,42 @@ const CODE_B_ID = '00000000-0000-4000-d184-bbbbbbbbbbbb';
 const REDEMPTION_A_ID = '00000000-0000-4000-e184-aaaaaaaaaaaa';
 const REDEMPTION_B_ID = '00000000-0000-4000-e184-bbbbbbbbbbbb';
 
-describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation', () => {
+describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation (real migrated schema)', () => {
   beforeAll(() => {
-    // Create minimal schema (self-contained — no full migration dependency)
+    // Cleanup any prior run
     psql(`
-      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
-      CREATE TABLE IF NOT EXISTS businesses (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        name TEXT NOT NULL
-      );
-
-      DO $$ BEGIN
-        CREATE TYPE promo_campaign_status AS ENUM ('draft','scheduled','active','paused','ended','archived');
-      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN
-        CREATE TYPE promo_code_entry_mode AS ENUM ('keyword','bare_code','both');
-      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN
-        CREATE TYPE promo_code_outcome AS ENUM ('winner','try_again');
-      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN
-        CREATE TYPE promo_fulfillment_status AS ENUM ('pending','processing','fulfilled','rejected','cancelled');
-      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-      CREATE TABLE IF NOT EXISTS promo_campaigns (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        status promo_campaign_status NOT NULL DEFAULT 'draft',
-        timezone TEXT NOT NULL DEFAULT 'UTC',
-        code_entry_mode promo_code_entry_mode NOT NULL DEFAULT 'both',
-        code_length INT NOT NULL DEFAULT 12,
-        max_attempts_per_phone INT NOT NULL DEFAULT 3,
-        rate_limit_window_minutes INT NOT NULL DEFAULT 60,
-        rate_limit_max_attempts INT NOT NULL DEFAULT 5,
-        eligibility_mode TEXT NOT NULL DEFAULT 'none',
-        winner_message TEXT NOT NULL DEFAULT '',
-        try_again_message TEXT NOT NULL DEFAULT '',
-        invalid_message TEXT NOT NULL DEFAULT '',
-        already_used_message TEXT NOT NULL DEFAULT '',
-        expired_message TEXT NOT NULL DEFAULT ''
-      );
-
-      CREATE TABLE IF NOT EXISTS promo_campaign_codes (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        business_id UUID NOT NULL,
-        campaign_id UUID NOT NULL REFERENCES promo_campaigns(id) ON DELETE CASCADE,
-        normalized_code_hash TEXT NOT NULL,
-        encrypted_code TEXT NOT NULL,
-        display_suffix TEXT NOT NULL,
-        outcome promo_code_outcome NOT NULL DEFAULT 'try_again',
-        status TEXT NOT NULL DEFAULT 'unused'
-      );
-
-      CREATE TABLE IF NOT EXISTS promo_redemptions (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        business_id UUID NOT NULL,
-        campaign_id UUID NOT NULL REFERENCES promo_campaigns(id) ON DELETE CASCADE,
-        promo_code_id UUID NOT NULL,
-        phone_e164 TEXT NOT NULL,
-        outcome promo_code_outcome NOT NULL,
-        claim_reference TEXT NOT NULL,
-        claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        fulfillment_status promo_fulfillment_status NOT NULL DEFAULT 'pending'
-      );
-
-      CREATE TABLE IF NOT EXISTS promo_verification_attempts (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        business_id UUID NOT NULL,
-        campaign_id UUID NOT NULL,
-        phone_e164 TEXT NOT NULL,
-        submitted_code_hash TEXT NOT NULL,
-        result TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      );
+      DELETE FROM promo_verification_attempts WHERE business_id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
+      DELETE FROM promo_redemptions WHERE id IN ('${REDEMPTION_A_ID}', '${REDEMPTION_B_ID}');
+      DELETE FROM promo_campaign_codes WHERE id IN ('${CODE_A_ID}', '${CODE_B_ID}');
+      DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}');
+      DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      DELETE FROM profiles WHERE id = '${USER_ID}';
+      DELETE FROM auth.users WHERE id = '${USER_ID}';
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
     `);
 
-    // Create fixtures: two businesses, campaigns, codes, redemptions — SAME phone
+    // Create test user (trigger disabled to avoid phone requirement)
     psql(`
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      INSERT INTO auth.users (id) VALUES ('${USER_ID}') ON CONFLICT (id) DO NOTHING;
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
+      INSERT INTO profiles (id) VALUES ('${USER_ID}') ON CONFLICT (id) DO NOTHING;
+    `);
 
-      INSERT INTO businesses (id, name) VALUES ('${BIZ_A_ID}', 'Biz A') ON CONFLICT DO NOTHING;
-      INSERT INTO businesses (id, name) VALUES ('${BIZ_B_ID}', 'Biz B') ON CONFLICT DO NOTHING;
+    // Create businesses with all required NOT NULL columns
+    psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)
+      VALUES ('${BIZ_A_ID}', 'ACC184 Biz A', 'acc184-biz-a-184', '${USER_ID}', '1 Test', 'Lagos', 'VI', '+000', 'active', 'platform_managed', 'NG', 'basic')
+      ON CONFLICT (id) DO NOTHING;
 
-      -- Business A campaign (ended) + code + redemption
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)
+      VALUES ('${BIZ_B_ID}', 'ACC184 Biz B', 'acc184-biz-b-184', '${USER_ID}', '2 Test', 'Lagos', 'VI', '+001', 'active', 'platform_managed', 'NG', 'basic')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+
+    // Create campaigns, codes, redemptions
+    psql(`
       INSERT INTO promo_campaigns (id, business_id, name, status, timezone, code_entry_mode, code_length, max_attempts_per_phone, rate_limit_window_minutes, rate_limit_max_attempts, eligibility_mode, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
       VALUES ('${CAMP_A_ID}', '${BIZ_A_ID}', 'Biz A Promo', 'ended', 'UTC', 'both', 12, 3, 60, 5, 'none', 'W', 'T', 'I', 'A', 'E')
       ON CONFLICT (id) DO NOTHING;
@@ -124,7 +77,6 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation', () => {
       VALUES ('${REDEMPTION_A_ID}', '${BIZ_A_ID}', '${CAMP_A_ID}', '${CODE_A_ID}', '${PHONE}', 'winner', 'WAA-BIZA', 'pending')
       ON CONFLICT (id) DO NOTHING;
 
-      -- Business B campaign (archived) + code + redemption
       INSERT INTO promo_campaigns (id, business_id, name, status, timezone, code_entry_mode, code_length, max_attempts_per_phone, rate_limit_window_minutes, rate_limit_max_attempts, eligibility_mode, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
       VALUES ('${CAMP_B_ID}', '${BIZ_B_ID}', 'Biz B Promo', 'archived', 'UTC', 'both', 12, 3, 60, 5, 'none', 'W', 'T', 'I', 'A', 'E')
       ON CONFLICT (id) DO NOTHING;
@@ -146,6 +98,10 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation', () => {
       DELETE FROM promo_campaign_codes WHERE id IN ('${CODE_A_ID}', '${CODE_B_ID}');
       DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}');
       DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      DELETE FROM profiles WHERE id = '${USER_ID}';
+      DELETE FROM auth.users WHERE id = '${USER_ID}';
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
     `);
   });
 
@@ -170,30 +126,25 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation', () => {
   });
 
   it('wrong business + same phone → zero results', () => {
-    const WRONG_BIZ = '00000000-0000-4000-a184-cccccccccccc';
     const result = psql(`
       SELECT count(*) FROM promo_redemptions
-      WHERE business_id = '${WRONG_BIZ}' AND phone_e164 = '${PHONE}';
+      WHERE business_id = '00000000-0000-4000-a184-cccccccccccc' AND phone_e164 = '${PHONE}';
     `);
     expect(result).toBe('0');
   });
 
   it('attempts-only phone has no redemption history', () => {
     const ATTEMPTS_PHONE = '2349876543210';
-    // Insert an attempt (not a redemption)
     psql(`
       INSERT INTO promo_verification_attempts (business_id, campaign_id, phone_e164, submitted_code_hash, result)
       VALUES ('${BIZ_A_ID}', '${CAMP_A_ID}', '${ATTEMPTS_PHONE}', 'attempt_hash_184', 'invalid')
       ON CONFLICT DO NOTHING;
     `);
-
     const result = psql(`
       SELECT count(*) FROM promo_redemptions
       WHERE business_id = '${BIZ_A_ID}' AND phone_e164 = '${ATTEMPTS_PHONE}';
     `);
     expect(result).toBe('0');
-
-    // Cleanup
     psql(`DELETE FROM promo_verification_attempts WHERE submitted_code_hash = 'attempt_hash_184';`);
   });
 
