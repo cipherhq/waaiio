@@ -1976,7 +1976,8 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const chargeCount = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${RC_SUB_H}';`);
     expect(chargeCount).toBe('1');
 
-    psql(`DELETE FROM customer_subscriptions WHERE id = '${RC_SUB_H}';`);
+    psql(`Delete from customer_subscriptions WHERE id = '${RC_SUB_H}';`);
+  });
 
   // ═══════════════════════════════════════════════════════════
   // #176 ROUND 6: PROVIDER UNCERTAINTY + FINALIZER RETRY
