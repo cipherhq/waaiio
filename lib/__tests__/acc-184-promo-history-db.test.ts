@@ -72,7 +72,7 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation (real migra
       VALUES ('${CAMP_A_ID}', '${BIZ_A_ID}', 'Biz A Promo', 'ended', 'UTC', 'both', 12, 3, 60, 5, 'none', 'W', 'T', 'I', 'A', 'E')
       ON CONFLICT (id) DO NOTHING;
 
-      INSERT INTO promo_code_batches (id, campaign_id, source, total_codes, status)
+      INSERT INTO promo_code_batches (id, campaign_id, source, requested_count, status)
       VALUES ('${BATCH_A_ID}', '${CAMP_A_ID}', 'generated', 1, 'completed')
       ON CONFLICT (id) DO NOTHING;
 
@@ -88,7 +88,7 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation (real migra
       VALUES ('${CAMP_B_ID}', '${BIZ_B_ID}', 'Biz B Promo', 'archived', 'UTC', 'both', 12, 3, 60, 5, 'none', 'W', 'T', 'I', 'A', 'E')
       ON CONFLICT (id) DO NOTHING;
 
-      INSERT INTO promo_code_batches (id, campaign_id, source, total_codes, status)
+      INSERT INTO promo_code_batches (id, campaign_id, source, requested_count, status)
       VALUES ('${BATCH_B_ID}', '${CAMP_B_ID}', 'generated', 1, 'completed')
       ON CONFLICT (id) DO NOTHING;
 
