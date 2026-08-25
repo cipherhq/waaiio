@@ -95,7 +95,7 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
       );
       CREATE TABLE IF NOT EXISTS admin_audit_logs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), actor_id UUID, action TEXT,
-        entity_type TEXT, entity_id TEXT, details JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now()
+        entity_type TEXT, entity_id UUID, details JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now()
       );
       INSERT INTO businesses (id, name, slug, owner_id) VALUES
         ('${BIZ_ID}', 'Biz1', 's1', '${USER_ID}'), ('${BIZ_ID_2}', 'Biz2', 's2', '${USER_ID}')
@@ -104,6 +104,7 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
 
     const fs = require('fs');
     psql(fs.readFileSync('supabase/migrations/321_promotions_schema.sql', 'utf-8'));
+    psql(fs.readFileSync('supabase/migrations/336_fix_promo_audit_entity_id_cast.sql', 'utf-8'));
 
     psql(`
       INSERT INTO promo_campaigns (id, business_id, name, status, keyword, code_entry_mode, accept_bare_codes,

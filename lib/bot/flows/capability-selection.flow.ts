@@ -90,6 +90,11 @@ async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
             .eq('business_id', businessId).eq('is_active', true);
           return [cap, (count || 0) > 0];
         }
+        case 'promo_verification': {
+          const { hasActivePromoCampaigns } = await import('@/lib/promotions/entry');
+          const hasPromo = await hasActivePromoCampaigns(businessId);
+          return [cap, hasPromo];
+        }
         case 'waitlist':
           return [cap, false]; // waitlist is never shown as a menu option — triggered automatically when no slots
         default:
@@ -128,6 +133,7 @@ function getFirstStepForCapability(cap: CapabilityId): string {
     case 'loyalty': return 'loyalty_menu';
     case 'invoice': return 'invoice_list';
     case 'class_booking': return 'select_service';
+    case 'promo_verification': return 'promo_entry'; // Dedicated entry step — prevents select_capability recursion
     default: return 'select_service';
   }
 }
@@ -208,6 +214,14 @@ const selectCapabilityStep: FlowStepConfig = {
         hasHistory = (bookingCount || 0) > 0 || (orderCount || 0) > 0 || (paymentCount || 0) > 0
           || (invoiceCount || 0) > 0 || (donationCount || 0) > 0;
       }
+    }
+    // ACC-184: Promo redemption history — independent of profiles row.
+    // Uses ctx.from directly (same canonical phone as promo_redemptions.phone_e164).
+    if (!hasHistory && ctx.business) {
+      try {
+        const { hasPromoHistory } = await import('@/lib/promotions/history');
+        hasHistory = await hasPromoHistory(ctx.business.id, ctx.from);
+      } catch { /* service client unavailable in test — fail open for discoverability */ }
     }
 
     // Build capability items
@@ -492,6 +506,23 @@ const selectCapabilityStep: FlowStepConfig = {
       return { valid: true, data: { active_capability: 'waiver', _waiver_handled: true } };
     }
 
+    // Instant Win: inline dispatch using shared entry helper
+    if (capId === 'promo_verification' && ctx.business) {
+      const caps = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
+      if (!caps.includes('promo_verification')) {
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('This feature is not available right now.') });
+        return { valid: true, data: { active_capability: 'promo_verification', _promo_entry_handled: true } };
+      }
+      const { getActivePromoEntryCampaigns, renderPromoEntryMessage } = await import('@/lib/promotions/entry');
+      const campaigns = await getActivePromoEntryCampaigns(ctx.business.id);
+      if (campaigns.length === 0) {
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No active promotions right now. Check back later! 🎰') });
+      } else {
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(renderPromoEntryMessage(campaigns)) });
+      }
+      return { valid: true, data: { active_capability: 'promo_verification', _promo_entry_handled: true } };
+    }
+
     return {
       valid: true,
       data: { active_capability: capId },
@@ -506,6 +537,10 @@ const selectCapabilityStep: FlowStepConfig = {
       delete ctx.session.session_data._waiver_handled;
       return 'select_capability';
     }
+    if (ctx.session.session_data._promo_entry_handled) {
+      delete ctx.session.session_data._promo_entry_handled;
+      return 'select_capability'; // Message already sent inline — return to menu for code submission
+    }
     return getFirstStepForCapability(cap as CapabilityId);
   },
 };
@@ -519,6 +554,15 @@ const myAccountMenuStep: FlowStepConfig = {
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
     const hasCapability = (...caps: CapabilityId[]) => caps.some(c => capabilities.includes(c));
+
+    // ACC-184: Check promo history existence (independent of capability state)
+    let hasPromoHistoryForMenu = false;
+    if (ctx.business) {
+      try {
+        const { hasPromoHistory } = await import('@/lib/promotions/history');
+        hasPromoHistoryForMenu = await hasPromoHistory(ctx.business.id, ctx.from);
+      } catch { /* service client unavailable — hide promo history item */ }
+    }
 
     // Build menu items based on enabled capabilities
     const allItems = [
@@ -537,9 +581,9 @@ const myAccountMenuStep: FlowStepConfig = {
       // My Points — show if loyalty capability enabled
       { title: 'My Points', description: 'Loyalty balance', postbackText: 'acct_loyalty', show: hasCapability('loyalty') },
       // Subscriptions — show if recurring OR giving capability enabled
-      // Giving services can be recurring (billing_type='recurring'), creating subscriptions
-      // that members must be able to manage even without the explicit 'recurring' capability.
       { title: 'Subscriptions', description: 'Manage recurring payments', postbackText: 'acct_subscriptions', show: hasCapability('recurring', 'giving') },
+      // ACC-184: My Instant Win History — show if actual promo history exists (not capability-gated)
+      { title: 'My Instant Win History', description: 'Promotion results', postbackText: 'acct_promo_history', show: hasPromoHistoryForMenu },
       // Get Receipt — always show
       { title: 'Get Receipt', description: 'Download your last receipt', postbackText: 'acct_receipt', show: true },
       // Switch Business — always show (helps users discover how to change)
@@ -763,6 +807,26 @@ const myAccountMenuStep: FlowStepConfig = {
       return { valid: true, data: { _my_account_route: 'my_account_menu' } };
     }
 
+    // ACC-184: My Instant Win History — inline handler
+    if (action === 'acct_promo_history' || action === 'my instant win history' || action === 'promo history') {
+      if (!ctx.business) {
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t("Something went wrong. Please try again.") });
+        ctx.session.session_data._my_account_route = 'my_account_menu';
+        return { valid: true, data: { _my_account_route: 'my_account_menu' } };
+      }
+      const { getPromoHistory, renderPromoHistoryMessage } = await import('@/lib/promotions/history');
+      const entries = await getPromoHistory(ctx.business.id, ctx.from);
+      const message = renderPromoHistoryMessage(entries);
+      await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(message) });
+      await ctx.sender.sendButtons({
+        to: ctx.from,
+        body: ' ',
+        buttons: [{ id: 'back_to_account', title: '← Back' }],
+      });
+      ctx.session.session_data._my_account_route = 'my_account_menu';
+      return { valid: true, data: { _my_account_route: 'my_account_menu' } };
+    }
+
     // Route to flow steps — bookings/orders are stub steps in this flow,
     // subscriptions/loyalty/invoices are steps in their own flows.
     // All found via cross-flow lookup in the executor.
@@ -941,9 +1005,48 @@ const myOrdersStep: FlowStepConfig = {
   async next() { return null; },
 };
 
+// ── Instant Win Entry Step ──
+// Thin dedicated step that shows active campaign context/instructions.
+// Prevents select_capability recursion when promo_verification is the sole capability.
+// After displaying, returns to select_capability for the next inbound message
+// (which will be the actual promo code, handled by handlePromoVerification).
+const promoEntryStep: FlowStepConfig = {
+  id: 'promo_entry',
+  async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+    if (!ctx.business) {
+      return [{ type: 'text', text: 'Something went wrong. Send *Hi* to start over.' }];
+    }
+    const caps = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
+    if (!caps.includes('promo_verification')) {
+      return [{ type: 'text', text: 'This feature is not available right now.' }];
+    }
+    try {
+      const { getActivePromoEntryCampaigns, renderPromoEntryMessage } = await import('@/lib/promotions/entry');
+      const campaigns = await getActivePromoEntryCampaigns(ctx.business.id);
+      if (campaigns.length === 0) {
+        return [{ type: 'text', text: 'No active promotions right now. Check back later! 🎰' }];
+      }
+      return [{ type: 'text', text: renderPromoEntryMessage(campaigns) }];
+    } catch {
+      return [{ type: 'text', text: 'Something went wrong. Please try again.' }];
+    }
+  },
+  async validate(): Promise<ValidationResult> {
+    // Any response from the customer after seeing the entry prompt is a promo code attempt.
+    // Return valid so next() can route back to select_capability,
+    // where the next inbound message will be handled by handlePromoVerification.
+    return { valid: true };
+  },
+  async next() {
+    // Return to capability selection — the customer's next message (the actual code)
+    // will be handled by handlePromoVerification in the existing-session path.
+    return 'select_capability';
+  },
+};
+
 export const capabilitySelectionFlow: FlowDefinition = {
   type: 'scheduling', // placeholder — this is a pseudo-flow
-  steps: [selectCapabilityStep, myAccountMenuStep, myBookingsStep, myOrdersStep],
+  steps: [selectCapabilityStep, promoEntryStep, myAccountMenuStep, myBookingsStep, myOrdersStep],
 };
 
 export { getFirstStepForCapability };
