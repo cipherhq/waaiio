@@ -40,8 +40,8 @@ export interface ReconciliationDeps {
     from: (table: string) => any;
     rpc: (fn: string, params: Record<string, unknown>) => PromiseLike<{ data: any; error: any }>;
   };
-  fetchSubscriptionInvoice: (subscriptionCode: string, transactionId?: string) =>
-    Promise<{ invoiceCode: string; amount: number; status: string } | null>;
+  correlateInvoiceExact: (subscriptionCode: string, transactionId: string) =>
+    Promise<{ status: string; invoiceCode?: string; amount?: number; invoiceStatus?: string; reason?: string }>;
   verifyPaystackTransaction: (reference: string) =>
     Promise<{ status: string; amountMinor?: number; currency?: string; transactionId?: string; reason?: string; txStatus?: string }>;
 }
@@ -61,7 +61,7 @@ export async function reconcilePaystackEvent(
   deps: ReconciliationDeps,
   evidence: ReconciliationEvidence,
 ): Promise<ReconciliationResult> {
-  const { supabase, fetchSubscriptionInvoice, verifyPaystackTransaction } = deps;
+  const { supabase, correlateInvoiceExact, verifyPaystackTransaction } = deps;
 
   if (!evidence.reference) {
     return { action: 'skipped', reason: 'no_reference' };
@@ -178,26 +178,52 @@ export async function reconcilePaystackEvent(
     if (verifiedAmount !== expectedAmountMinor) continue;
     if (verifiedCurrency && verifiedCurrency.toUpperCase() !== expectedCurrency) continue;
 
-    // Provider invoice correlation
-    try {
-      const invoice = await fetchSubscriptionInvoice(
-        candidate.gateway_subscription_code,
-        verifiedTransactionId,
-      );
-      if (invoice) {
-        authoritativeMatches.push({
-          subscriptionId: candidate.id,
-          subscriptionCode: candidate.gateway_subscription_code,
-          invoiceCode: invoice.invoiceCode,
-          transactionId: verifiedTransactionId,
-          amount: verifiedAmount!,
-          currency: (verifiedCurrency || expectedCurrency).toUpperCase(),
-        });
-      }
-      // null with explicit transactionId = definitive no-match
-    } catch {
-      // Provider error = indeterminate (candidate not disproven)
+    // Typed exact invoice correlation — preserves uncertainty
+    const correlation = await correlateInvoiceExact(
+      candidate.gateway_subscription_code,
+      verifiedTransactionId,
+    );
+
+    if (correlation.status === 'indeterminate') {
       hasIndeterminate = true;
+      continue;
+    }
+
+    if (correlation.status === 'definitive_no_match') {
+      continue;
+    }
+
+    if (correlation.status === 'exact_match') {
+      // Validate invoice evidence consistency
+      if (!correlation.invoiceCode) {
+        hasIndeterminate = true;
+        continue;
+      }
+
+      // Invoice amount must match verified transaction amount
+      if (correlation.amount !== undefined && correlation.amount !== verifiedAmount) {
+        continue; // Contradictory invoice — definitive no-match for this candidate
+      }
+
+      // Invoice amount must match local subscription intent
+      if (correlation.amount !== undefined && correlation.amount !== expectedAmountMinor) {
+        continue;
+      }
+
+      // Only explicitly successful/paid invoice status may authorize
+      const acceptableStatuses = ['success', 'paid'];
+      if (correlation.invoiceStatus && !acceptableStatuses.includes(correlation.invoiceStatus.toLowerCase())) {
+        continue; // Non-success invoice — fail closed
+      }
+
+      authoritativeMatches.push({
+        subscriptionId: candidate.id,
+        subscriptionCode: candidate.gateway_subscription_code,
+        invoiceCode: correlation.invoiceCode,
+        transactionId: verifiedTransactionId,
+        amount: verifiedAmount!,
+        currency: (verifiedCurrency || expectedCurrency).toUpperCase(),
+      });
     }
   }
 
@@ -257,6 +283,10 @@ export async function reconcilePaystackEvent(
     }
     if (existingCharged.intended_amount_minor !== match.amount) {
       return { action: 'skipped', reason: 'existing_attempt_amount_conflict' };
+    }
+    if (existingCharged.intended_currency &&
+        existingCharged.intended_currency.toUpperCase() !== match.currency.toUpperCase()) {
+      return { action: 'skipped', reason: 'existing_attempt_currency_conflict' };
     }
     attemptId = existingCharged.id;
   } else {

@@ -442,3 +442,80 @@ export async function fetchSubscriptionInvoice(
     return null;
   }
 }
+
+/**
+ * Typed exact invoice-transaction correlation for reconciliation (#176 R7).
+ *
+ * Unlike fetchSubscriptionInvoice (which collapses all failures to null),
+ * this preserves the distinction between:
+ * - exact_match: well-formed provider response, invoice's transaction matches
+ * - definitive_no_match: well-formed provider response, no invoice matches
+ * - indeterminate: provider error, network/timeout, malformed data
+ *
+ * Used ONLY by the deferred reconciliation worker.
+ */
+export type PaystackInvoiceCorrelation =
+  | { status: 'exact_match'; invoiceCode: string; amount: number; invoiceStatus: string }
+  | { status: 'definitive_no_match' }
+  | { status: 'indeterminate'; reason: string };
+
+export async function correlateInvoiceExact(
+  subscriptionCode: string,
+  transactionId: string,
+): Promise<PaystackInvoiceCorrelation> {
+  if (!paystackSecretKey) {
+    return { status: 'indeterminate', reason: 'no_credentials' };
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.paystack.co/subscription/${encodeURIComponent(subscriptionCode)}`,
+      {
+        headers: { Authorization: `Bearer ${paystackSecretKey}` },
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+
+    if (!response.ok) {
+      return { status: 'indeterminate', reason: `http_${response.status}` };
+    }
+
+    let data: Record<string, unknown>;
+    try {
+      data = await response.json() as Record<string, unknown>;
+    } catch {
+      return { status: 'indeterminate', reason: 'malformed_json' };
+    }
+
+    if (!data.status || !data.data) {
+      return { status: 'indeterminate', reason: 'invalid_provider_response' };
+    }
+
+    const subData = data.data as Record<string, unknown>;
+    const invoices = (subData.invoices || []) as Array<Record<string, unknown>>;
+
+    if (!Array.isArray(invoices)) {
+      return { status: 'indeterminate', reason: 'invoices_not_array' };
+    }
+
+    for (const inv of invoices) {
+      if (String(inv.transaction) === transactionId) {
+        const invoiceCode = inv.invoice_code as string;
+        if (!invoiceCode) {
+          return { status: 'indeterminate', reason: 'invoice_missing_code' };
+        }
+        return {
+          status: 'exact_match',
+          invoiceCode,
+          amount: inv.amount as number,
+          invoiceStatus: (inv.status as string) || 'unknown',
+        };
+      }
+    }
+
+    // Well-formed response, searched all invoices, no transaction match
+    return { status: 'definitive_no_match' };
+  } catch {
+    return { status: 'indeterminate', reason: 'network_error' };
+  }
+}

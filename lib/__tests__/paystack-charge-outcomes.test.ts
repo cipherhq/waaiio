@@ -539,6 +539,113 @@ describe('fetchSubscriptionInvoice boundary (#176)', () => {
   });
 });
 
+describe('correlateInvoiceExact typed boundary (#176 R7)', () => {
+  let correlateInvoiceExact: typeof import('@/lib/payments/paystack-recurring').correlateInvoiceExact;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    process.env.PAYSTACK_SECRET_KEY = MOCK_KEY;
+    vi.doMock('@/lib/logger', () => {
+      const l: Record<string, unknown> = { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), info: vi.fn() };
+      l.withContext = () => l;
+      return { logger: l };
+    });
+    vi.doMock('@/lib/redact', () => ({ safeProviderError: (d: unknown) => d }));
+    const mod = await import('@/lib/payments/paystack-recurring');
+    correlateInvoiceExact = mod.correlateInvoiceExact;
+  });
+
+  afterEach(() => {
+    delete process.env.PAYSTACK_SECRET_KEY;
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('exact transaction match → exact_match with invoice data', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: true,
+        data: {
+          invoices: [
+            { invoice_code: 'INV_exact', transaction: 200, amount: 5000, status: 'success' },
+          ],
+        },
+      }),
+    }));
+
+    const r = await correlateInvoiceExact('SUB_x', '200');
+    expect(r.status).toBe('exact_match');
+    if (r.status === 'exact_match') {
+      expect(r.invoiceCode).toBe('INV_exact');
+      expect(r.amount).toBe(5000);
+      expect(r.invoiceStatus).toBe('success');
+    }
+  });
+
+  it('no transaction match in well-formed response → definitive_no_match', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: true,
+        data: { invoices: [{ invoice_code: 'INV_other', transaction: 300, amount: 5000, status: 'success' }] },
+      }),
+    }));
+
+    const r = await correlateInvoiceExact('SUB_x', '999');
+    expect(r.status).toBe('definitive_no_match');
+  });
+
+  it('HTTP 500 → indeterminate (NOT no-match)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+
+    const r = await correlateInvoiceExact('SUB_x', '123');
+    expect(r.status).toBe('indeterminate');
+    if (r.status === 'indeterminate') expect(r.reason).toBe('http_500');
+  });
+
+  it('network error → indeterminate', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+
+    const r = await correlateInvoiceExact('SUB_x', '123');
+    expect(r.status).toBe('indeterminate');
+    if (r.status === 'indeterminate') expect(r.reason).toBe('network_error');
+  });
+
+  it('timeout → indeterminate', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('timeout', 'AbortError')));
+
+    const r = await correlateInvoiceExact('SUB_x', '123');
+    expect(r.status).toBe('indeterminate');
+  });
+
+  it('malformed JSON → indeterminate', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => { throw new SyntaxError('Unexpected'); },
+    }));
+
+    const r = await correlateInvoiceExact('SUB_x', '123');
+    expect(r.status).toBe('indeterminate');
+    if (r.status === 'indeterminate') expect(r.reason).toBe('malformed_json');
+  });
+
+  it('no credentials → indeterminate', async () => {
+    delete process.env.PAYSTACK_SECRET_KEY;
+    vi.resetModules();
+    vi.doMock('@/lib/logger', () => {
+      const l: Record<string, unknown> = { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), info: vi.fn() };
+      l.withContext = () => l;
+      return { logger: l };
+    });
+    vi.doMock('@/lib/redact', () => ({ safeProviderError: (d: unknown) => d }));
+    const mod = await import('@/lib/payments/paystack-recurring');
+
+    const r = await mod.correlateInvoiceExact('SUB_x', '123');
+    expect(r.status).toBe('indeterminate');
+  });
+});
+
 // ═══════════════════════════════════════════════════════════
 // PROVIDER-MANAGED WEBHOOK BOUNDARY TESTS (#176 R3)
 // Proves unresolved-invoice behavior at the application layer:

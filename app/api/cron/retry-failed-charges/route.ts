@@ -307,10 +307,10 @@ export async function GET(request: NextRequest) {
       if (!evidence.reference) continue;
 
       const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
-      const { fetchSubscriptionInvoice, verifyPaystackTransaction } = await import('@/lib/payments/paystack-recurring');
+      const { correlateInvoiceExact, verifyPaystackTransaction } = await import('@/lib/payments/paystack-recurring');
 
       const result = await reconcilePaystackEvent(
-        { supabase, fetchSubscriptionInvoice, verifyPaystackTransaction },
+        { supabase, correlateInvoiceExact, verifyPaystackTransaction },
         evidence as any,
       );
 

@@ -297,21 +297,11 @@ describe('reconciliation architecture (source structure, supplementary)', () => 
     const fs = require('fs') as typeof import('fs');
     const helperCode = fs.readFileSync('lib/payments/paystack-reconciliation.ts', 'utf-8');
 
-    // In the function body (after 'export async function reconcilePaystackEvent'),
-    // verify must come before fetchSubscriptionInvoice calls
     const fnBody = helperCode.substring(helperCode.indexOf('export async function reconcilePaystackEvent'));
     const verifyIdx = fnBody.indexOf('verifyPaystackTransaction(evidence.reference)');
-    // Find the invoice call that correlates candidates (not the type/destructuring)
-    const correlateIdx = fnBody.indexOf('fetchSubscriptionInvoice(\n');
-    if (correlateIdx === -1) {
-      // Alternative: find the await call
-      const altIdx = fnBody.indexOf('await fetchSubscriptionInvoice(');
-      expect(verifyIdx).toBeGreaterThan(-1);
-      expect(altIdx).toBeGreaterThan(verifyIdx);
-    } else {
-      expect(verifyIdx).toBeGreaterThan(-1);
-      expect(correlateIdx).toBeGreaterThan(verifyIdx);
-    }
+    const correlateIdx = fnBody.indexOf('correlateInvoiceExact(');
+    expect(verifyIdx).toBeGreaterThan(-1);
+    expect(correlateIdx).toBeGreaterThan(verifyIdx);
   });
 
   it('production helper uses finalize_paystack_recurring_charge (no second writer)', () => {
@@ -321,6 +311,19 @@ describe('reconciliation architecture (source structure, supplementary)', () => 
     expect(helperCode).toContain('finalize_paystack_recurring_charge');
     expect(helperCode).not.toContain("from('payments').insert");
     expect(helperCode).not.toContain("from('bookings').insert");
+  });
+
+  it('cron passes correlateInvoiceExact (typed boundary), not fetchSubscriptionInvoice', () => {
+    const fs = require('fs') as typeof import('fs');
+    const cronCode = fs.readFileSync('app/api/cron/retry-failed-charges/route.ts', 'utf-8');
+
+    const reconSection = cronCode.substring(
+      cronCode.indexOf('Paystack provider-managed reconciliation'),
+      cronCode.indexOf('Cancel subscriptions with 3+ failures'),
+    );
+
+    expect(reconSection).toContain('correlateInvoiceExact');
+    expect(reconSection).not.toContain('fetchSubscriptionInvoice');
   });
 
   it('cron marks evidence completed ONLY after finalization', () => {

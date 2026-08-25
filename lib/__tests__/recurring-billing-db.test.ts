@@ -1766,24 +1766,24 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
     // Provider mocks:
     // - verify ref-caseA → success (amount 10000, NGN, txId 777)
-    // - fetchSubscriptionInvoice(SUB_CODE_A, '777') → NO match (candidate A fails)
-    // - fetchSubscriptionInvoice(SUB_CODE_B, '777') → exact match INV_CASEB
+    // - correlateInvoiceExact(SUB_CODE_A, '777') → NO match (candidate A fails)
+    // - correlateInvoiceExact(SUB_CODE_B, '777') → exact match INV_CASEB
     const mockVerify = async (ref: string) => ({
       status: 'success' as const,
       amountMinor: 10000,
       currency: 'NGN',
       transactionId: '777',
     });
-    const mockFetchInvoice = async (subCode: string, txId?: string) => {
-      if (subCode === 'SUB_CODE_A') return null; // No match
-      if (subCode === 'SUB_CODE_B' && txId === '777') return { invoiceCode: 'INV_CASEB', amount: 10000, status: 'success' };
-      return null;
+    const mockCorrelate = async (subCode: string, txId: string) => {
+      if (subCode === 'SUB_CODE_A') return { status: 'definitive_no_match' as const };
+      if (subCode === 'SUB_CODE_B' && txId === '777') return { status: 'exact_match' as const, invoiceCode: 'INV_CASEB', amount: 10000, invoiceStatus: 'success' };
+      return { status: 'definitive_no_match' as const };
     };
 
     const testSupabase = createTestSupabase();
 
     const result = await reconcilePaystackEvent(
-      { supabase: testSupabase as any, fetchSubscriptionInvoice: mockFetchInvoice, verifyPaystackTransaction: mockVerify },
+      { supabase: testSupabase as any, correlateInvoiceExact: mockCorrelate, verifyPaystackTransaction: mockVerify },
       { reference: 'ref-caseA', auth_code: 'AUTH_SHARED', customer_code: 'CUST_SHARED' },
     );
 
@@ -1823,7 +1823,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const result = await reconcilePaystackEvent(
       {
         supabase: createTestSupabase() as any,
-        fetchSubscriptionInvoice: async () => null,
+        correlateInvoiceExact: async () => ({ status: 'definitive_no_match' as const }),
         verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '888' }),
       },
       { reference: 'ref-caseC', auth_code: 'AUTH_SHARED', customer_code: 'CUST_SHARED' },
@@ -1846,7 +1846,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const result = await reconcilePaystackEvent(
       {
         supabase: createTestSupabase() as any,
-        fetchSubscriptionInvoice: async (subCode: string) => ({ invoiceCode: `INV_${subCode}`, amount: 10000, status: 'success' }),
+        correlateInvoiceExact: async (subCode: string) => ({ status: 'exact_match' as const, invoiceCode: `INV_${subCode}`, amount: 10000, invoiceStatus: 'success' }),
         verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '999' }),
       },
       { reference: 'ref-caseD', auth_code: 'AUTH_SHARED', customer_code: 'CUST_SHARED' },
@@ -1869,9 +1869,9 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const result = await reconcilePaystackEvent(
       {
         supabase: createTestSupabase() as any,
-        fetchSubscriptionInvoice: async (subCode: string, txId?: string) => {
-          if (subCode === 'SUB_CODE_B' && txId === '777') return { invoiceCode: 'INV_CASEB', amount: 10000, status: 'success' };
-          return null;
+        correlateInvoiceExact: async (subCode: string, txId: string) => {
+          if (subCode === 'SUB_CODE_B' && txId === '777') return { status: 'exact_match' as const, invoiceCode: 'INV_CASEB', amount: 10000, invoiceStatus: 'success' };
+          return { status: 'definitive_no_match' as const };
         },
         verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '777' }),
       },
@@ -1899,7 +1899,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const result = await reconcilePaystackEvent(
       {
         supabase: createTestSupabase() as any,
-        fetchSubscriptionInvoice: async () => null,
+        correlateInvoiceExact: async () => ({ status: 'definitive_no_match' as const }),
         verifyPaystackTransaction: async () => ({ status: 'indeterminate' as const, reason: 'http_500' }),
       },
       { reference: 'ref-caseG', auth_code: 'AUTH_SHARED' },
@@ -1917,9 +1917,9 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const result = await reconcilePaystackEvent(
       {
         supabase: createTestSupabase() as any,
-        fetchSubscriptionInvoice: async (subCode: string, txId?: string) => {
-          if (subCode === 'SUB_CODE_A') return { invoiceCode: 'INV_AMT', amount: 99999, status: 'success' };
-          return null;
+        correlateInvoiceExact: async (subCode: string) => {
+          if (subCode === 'SUB_CODE_A') return { status: 'exact_match' as const, invoiceCode: 'INV_AMT', amount: 99999, invoiceStatus: 'success' };
+          return { status: 'definitive_no_match' as const };
         },
         verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 99999, currency: 'NGN', transactionId: '1234' }),
       },
@@ -1948,9 +1948,9 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
     const deps = {
       supabase: createTestSupabase() as any,
-      fetchSubscriptionInvoice: async (subCode: string, txId?: string) => {
-        if (subCode === 'SUB_CODE_H' && txId === '555') return { invoiceCode: 'INV_H', amount: 5000, status: 'success' };
-        return null;
+      correlateInvoiceExact: async (subCode: string, txId: string) => {
+        if (subCode === 'SUB_CODE_H' && txId === '555') return { status: 'exact_match' as const, invoiceCode: 'INV_H', amount: 5000, invoiceStatus: 'success' };
+        return { status: 'definitive_no_match' as const };
       },
       verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 5000, currency: 'NGN', transactionId: '555' }),
     };
@@ -1988,10 +1988,10 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const result = await reconcilePaystackEvent(
       {
         supabase: createTestSupabase() as any,
-        fetchSubscriptionInvoice: async (subCode: string) => {
-          if (subCode === 'SUB_CODE_A') throw new Error('HTTP 500');
-          if (subCode === 'SUB_CODE_B') return { invoiceCode: 'INV_I', amount: 10000, status: 'success' };
-          return null;
+        correlateInvoiceExact: async (subCode: string) => {
+          if (subCode === 'SUB_CODE_A') return { status: 'indeterminate' as const, reason: 'http_500' };
+          if (subCode === 'SUB_CODE_B') return { status: 'exact_match' as const, invoiceCode: 'INV_I', amount: 10000, invoiceStatus: 'success' };
+          return { status: 'definitive_no_match' as const };
         },
         verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '1001' }),
       },
@@ -2007,10 +2007,10 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const result = await reconcilePaystackEvent(
       {
         supabase: createTestSupabase() as any,
-        fetchSubscriptionInvoice: async (subCode: string) => {
-          if (subCode === 'SUB_CODE_A') throw new DOMException('timeout', 'AbortError');
-          if (subCode === 'SUB_CODE_B') return { invoiceCode: 'INV_J', amount: 10000, status: 'success' };
-          return null;
+        correlateInvoiceExact: async (subCode: string) => {
+          if (subCode === 'SUB_CODE_A') return { status: 'indeterminate' as const, reason: 'network_error' };
+          if (subCode === 'SUB_CODE_B') return { status: 'exact_match' as const, invoiceCode: 'INV_J', amount: 10000, invoiceStatus: 'success' };
+          return { status: 'definitive_no_match' as const };
         },
         verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '1002' }),
       },
@@ -2025,7 +2025,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const result = await reconcilePaystackEvent(
       {
         supabase: createTestSupabase() as any,
-        fetchSubscriptionInvoice: async () => ({ invoiceCode: 'INV_K', amount: 10000, status: 'success' }),
+        correlateInvoiceExact: async () => ({ status: 'exact_match' as const, invoiceCode: 'INV_K', amount: 10000, invoiceStatus: 'success' }),
         verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: undefined }),
       },
       { reference: 'ref-caseK', auth_code: 'AUTH_SHARED' },
@@ -2040,7 +2040,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const result = await reconcilePaystackEvent(
       {
         supabase: createTestSupabase() as any,
-        fetchSubscriptionInvoice: async () => ({ invoiceCode: 'INV_L', amount: 10000, status: 'success' }),
+        correlateInvoiceExact: async () => ({ status: 'exact_match' as const, invoiceCode: 'INV_L', amount: 10000, invoiceStatus: 'success' }),
         verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 20000, currency: 'NGN', transactionId: '1003' }),
       },
       { reference: 'ref-caseL', auth_code: 'AUTH_SHARED', amount_kobo: 10000, currency: 'NGN' },
@@ -2054,7 +2054,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     const result = await reconcilePaystackEvent(
       {
         supabase: createTestSupabase() as any,
-        fetchSubscriptionInvoice: async () => ({ invoiceCode: 'INV_M', amount: 10000, status: 'success' }),
+        correlateInvoiceExact: async () => ({ status: 'exact_match' as const, invoiceCode: 'INV_M', amount: 10000, invoiceStatus: 'success' }),
         verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'USD', transactionId: '1004' }),
       },
       { reference: 'ref-caseM', auth_code: 'AUTH_SHARED', amount_kobo: 10000, currency: 'NGN' },
@@ -2073,9 +2073,9 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
 
     const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
     const goodDeps = {
-      fetchSubscriptionInvoice: async (subCode: string, txId?: string) => {
-        if (subCode === 'SUB_CODE_N' && txId === '2001') return { invoiceCode: 'INV_N', amount: 10000, status: 'success' };
-        return null;
+      correlateInvoiceExact: async (subCode: string, txId: string) => {
+        if (subCode === 'SUB_CODE_N' && txId === '2001') return { status: 'exact_match' as const, invoiceCode: 'INV_N', amount: 10000, invoiceStatus: 'success' };
+        return { status: 'definitive_no_match' as const };
       },
       verifyPaystackTransaction: async () => ({ status: 'success' as const, amountMinor: 10000, currency: 'NGN', transactionId: '2001' }),
     };
