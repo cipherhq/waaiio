@@ -2,7 +2,8 @@
  * ACC-184: Promo History Tenant Isolation — Real Migrated Schema PostgreSQL Tests
  *
  * Runs against the ACTUAL Waaiio migrated schema (waaiio_test).
- * Creates fixture ROWS only — no schema DDL.
+ * Creates fixture ROWS only — one ADD COLUMN IF NOT EXISTS to complete the
+ * CI-minimal auth.users table so the production handle_new_user() trigger fires.
  *
  * Requires TEST_DATABASE_URL.
  */
@@ -34,7 +35,7 @@ const REDEMPTION_B_ID = '00000000-0000-4000-e184-bbbbbbbbbbbb';
 
 describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation (real migrated schema)', () => {
   beforeAll(() => {
-    // Cleanup any prior run
+    // Cleanup any prior run (reverse FK order)
     psql(`
       DELETE FROM promo_verification_attempts WHERE business_id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
       DELETE FROM promo_redemptions WHERE id IN ('${REDEMPTION_A_ID}', '${REDEMPTION_B_ID}');
@@ -43,18 +44,18 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation (real migra
       DELETE FROM promo_prizes WHERE id = '${PRIZE_A_ID}';
       DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}');
       DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
-      ALTER TABLE auth.users DISABLE TRIGGER ALL;
       DELETE FROM profiles WHERE id = '${USER_ID}';
       DELETE FROM auth.users WHERE id = '${USER_ID}';
-      ALTER TABLE auth.users ENABLE TRIGGER ALL;
     `);
 
-    // Create test user (trigger disabled to avoid phone requirement)
+    // CI creates auth.users without phone; add it so the production
+    // handle_new_user() trigger can fire (INSERT INTO profiles(id,phone,email))
+    psql(`ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone TEXT;`);
+
+    // Create test user — trigger fires and auto-creates profiles row
     psql(`
-      ALTER TABLE auth.users DISABLE TRIGGER ALL;
-      INSERT INTO auth.users (id) VALUES ('${USER_ID}') ON CONFLICT (id) DO NOTHING;
-      ALTER TABLE auth.users ENABLE TRIGGER ALL;
-      INSERT INTO profiles (id) VALUES ('${USER_ID}') ON CONFLICT (id) DO NOTHING;
+      INSERT INTO auth.users (id, phone) VALUES ('${USER_ID}', '+0001840001')
+      ON CONFLICT (id) DO NOTHING;
     `);
 
     // Create businesses with all required NOT NULL columns
@@ -117,10 +118,8 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation (real migra
       DELETE FROM promo_prizes WHERE id = '${PRIZE_A_ID}';
       DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}');
       DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
-      ALTER TABLE auth.users DISABLE TRIGGER ALL;
       DELETE FROM profiles WHERE id = '${USER_ID}';
       DELETE FROM auth.users WHERE id = '${USER_ID}';
-      ALTER TABLE auth.users ENABLE TRIGGER ALL;
     `);
   });
 
