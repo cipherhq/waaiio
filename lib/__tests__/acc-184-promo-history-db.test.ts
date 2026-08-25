@@ -28,6 +28,7 @@ const CODE_A_ID = '00000000-0000-4000-d184-aaaaaaaaaaaa';
 const CODE_B_ID = '00000000-0000-4000-d184-bbbbbbbbbbbb';
 const BATCH_A_ID = '00000000-0000-4000-b184-aaaaaaaaaaaa';
 const BATCH_B_ID = '00000000-0000-4000-b184-bbbbbbbbbbbb';
+const PRIZE_A_ID = '00000000-0000-4000-9184-aaaaaaaaaaaa';
 const REDEMPTION_A_ID = '00000000-0000-4000-e184-aaaaaaaaaaaa';
 const REDEMPTION_B_ID = '00000000-0000-4000-e184-bbbbbbbbbbbb';
 
@@ -39,6 +40,7 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation (real migra
       DELETE FROM promo_redemptions WHERE id IN ('${REDEMPTION_A_ID}', '${REDEMPTION_B_ID}');
       DELETE FROM promo_campaign_codes WHERE id IN ('${CODE_A_ID}', '${CODE_B_ID}');
       DELETE FROM promo_code_batches WHERE id IN ('${BATCH_A_ID}', '${BATCH_B_ID}');
+      DELETE FROM promo_prizes WHERE id = '${PRIZE_A_ID}';
       DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}');
       DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
@@ -72,16 +74,20 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation (real migra
       VALUES ('${CAMP_A_ID}', '${BIZ_A_ID}', 'Biz A Promo', 'ended', 'UTC', 'both', 12, 3, 60, 5, 'none', 'W', 'T', 'I', 'A', 'E')
       ON CONFLICT (id) DO NOTHING;
 
+      INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity, allocated_count, sort_order)
+      VALUES ('${PRIZE_A_ID}', '${CAMP_A_ID}', 'Cash Prize', 'cash', 10, 1, 0)
+      ON CONFLICT (id) DO NOTHING;
+
       INSERT INTO promo_code_batches (id, campaign_id, source, requested_count, status)
       VALUES ('${BATCH_A_ID}', '${CAMP_A_ID}', 'generated', 1, 'completed')
       ON CONFLICT (id) DO NOTHING;
 
-      INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, status)
-      VALUES ('${CODE_A_ID}', '${BIZ_A_ID}', '${CAMP_A_ID}', '${BATCH_A_ID}', 'hash_a_184', 'enc_a', 'AAAA', 'winner', 'claimed')
+      INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+      VALUES ('${CODE_A_ID}', '${BIZ_A_ID}', '${CAMP_A_ID}', '${BATCH_A_ID}', 'hash_a_184', 'enc_a', 'AAAA', 'winner', '${PRIZE_A_ID}', 'claimed')
       ON CONFLICT (id) DO NOTHING;
 
-      INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status)
-      VALUES ('${REDEMPTION_A_ID}', '${BIZ_A_ID}', '${CAMP_A_ID}', '${CODE_A_ID}', '${PHONE}', 'winner', 'WAA-BIZA', 'pending')
+      INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, prize_id, claim_reference, fulfillment_status)
+      VALUES ('${REDEMPTION_A_ID}', '${BIZ_A_ID}', '${CAMP_A_ID}', '${CODE_A_ID}', '${PHONE}', 'winner', '${PRIZE_A_ID}', 'WAA-BIZA', 'pending')
       ON CONFLICT (id) DO NOTHING;
 
       INSERT INTO promo_campaigns (id, business_id, name, status, timezone, code_entry_mode, code_length, max_attempts_per_phone, rate_limit_window_minutes, rate_limit_max_attempts, eligibility_mode, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
@@ -108,6 +114,7 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation (real migra
       DELETE FROM promo_redemptions WHERE id IN ('${REDEMPTION_A_ID}', '${REDEMPTION_B_ID}');
       DELETE FROM promo_campaign_codes WHERE id IN ('${CODE_A_ID}', '${CODE_B_ID}');
       DELETE FROM promo_code_batches WHERE id IN ('${BATCH_A_ID}', '${BATCH_B_ID}');
+      DELETE FROM promo_prizes WHERE id = '${PRIZE_A_ID}';
       DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}');
       DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
