@@ -12,6 +12,7 @@ import { logger } from '@/lib/logger';
 import { getRequestId } from '@/lib/observability';
 import { createWebhookLogger } from '@/lib/observability/webhooks';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { resolveChargeRole, type ResolverResult } from '@/lib/payments/charge-role-resolver';
 
 export const maxDuration = 60;
 
@@ -96,11 +97,35 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Payment events (deposit bookings) — delegated to shared handler ──
-    const { data: existingPayment } = await supabase
+    // Bridge v3.1 (#191): Use .maybeSingle() so resolver can distinguish
+    // "no payment exists" (data:null, error:null) from "query failed" (error:{...}).
+    const { data: existingPayment, error: paymentLookupError } = await supabase
       .from('payments')
       .select('id, status, amount, booking_id, gateway')
       .eq('gateway_reference', reference)
-      .single();
+      .maybeSingle();
+
+    // ── Bridge v3.1: Read-only role resolver for charge.success (#191) ──
+    // Classifies charge.success into roles A–F BEFORE financial mutation.
+    // Only D/E require migration-337. A/B/C/F preserve existing behavior.
+    let chargeRole: ResolverResult | null = null;
+    if (event === 'charge.success') {
+      chargeRole = await resolveChargeRole(reference, data, existingPayment, paymentLookupError, supabase);
+
+      if (!chargeRole.ok) {
+        // RESOLVER_ERROR (503 retryable) or CONFLICT (500 data integrity)
+        const httpStatus = chargeRole.reason === 'CONFLICT' ? 500 : 503;
+        await supabase.from('processed_webhook_events').update({
+          status: 'failed',
+          last_error: `Bridge ${chargeRole.reason}: ${chargeRole.detail.slice(0, 300)}`,
+          last_attempted_at: new Date().toISOString(),
+        }).eq('event_id', eventId);
+        return NextResponse.json(
+          { error: `Bridge: ${chargeRole.detail}` },
+          { status: httpStatus },
+        );
+      }
+    }
 
     if (event === 'charge.success') {
       // Verify payment amount matches expected (Paystack sends amount in kobo)
@@ -188,9 +213,9 @@ export async function POST(request: NextRequest) {
     const isWhatsAppSub = metadata?.type === 'whatsapp_subscription';
 
     // ── Platform subscription renewal via charge.success ──
-    // Paystack recurring charges include plan_object or plan in the data.
-    // Look up the subscription by paystack_subscription_code and update period dates.
-    if (event === 'charge.success') {
+    // Bridge v3.1 (#191): Only role C (platform renewal) enters this block.
+    // Resolver confirmed subscriptions.paystack_subscription_code match before any mutation.
+    if (event === 'charge.success' && chargeRole?.ok && chargeRole.role === 'C') {
       const planObject = data.plan_object as Record<string, unknown> | undefined;
       const subscriptionRef = data.subscription as Record<string, unknown> | undefined;
       const paystackSubCode = (subscriptionRef?.subscription_code as string)
@@ -319,11 +344,31 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Recurring customer subscription events (#176) ──
-    // Identity resolution: provider_reference → attempt → subscription (authoritative)
-    // Provider-managed: subscription_code → exact subscription (authoritative)
-    // No auth_code/customer_code best-match financial finalization.
+    // Bridge v3.1 (#191): Only roles D (cron) and E (provider-managed) enter this block.
+    // Schema probe ensures paystack_billing_attempts exists before any #176 access.
+    if (event === 'charge.success' && chargeRole?.ok && (chargeRole.role === 'D' || chargeRole.role === 'E')) {
+      // ── Schema probe: verify migration-337 prerequisites before #176 access ──
+      const { error: schemaProbe } = await supabase
+        .from('paystack_billing_attempts')
+        .select('id')
+        .limit(0);
 
-    if (event === 'charge.success' && !existingPayment) {
+      if (schemaProbe) {
+        // #176 schema prerequisites absent — fail closed with retryable 5xx.
+        await supabase.from('processed_webhook_events').update({
+          status: 'failed',
+          last_error: `Recurring #176 (role ${chargeRole.role}) blocked: schema prerequisites absent (${
+            String(schemaProbe.message).slice(0, 200)
+          })`,
+          last_attempted_at: new Date().toISOString(),
+        }).eq('event_id', eventId);
+        return NextResponse.json(
+          { error: '#176 prerequisites not deployed' },
+          { status: 503 },
+        );
+      }
+
+      // Schema ready — existing #176 authoritative path (unchanged)
       const webhookAmountKobo = data.amount as number;
       const webhookCurrency = ((data.currency as string) || 'NGN').toUpperCase();
       const webhookMetadata = data.metadata as Record<string, unknown> | undefined;
@@ -554,6 +599,30 @@ export async function POST(request: NextRequest) {
         }, { onConflict: 'event_id', ignoreDuplicates: true });
         logger.warn(`[PAYSTACK RECURRING] Unresolved charge.success preserved as reconciliation_required — ref: ${reference}`);
       }
+    } // end schema-ready block
+
+    // ── Bridge v3.1: Role F — Unresolved charge.success (#191) ──
+    // No authoritative signal matched. Park as reconciliation_required
+    // WITHOUT touching paystack_billing_attempts.
+    if (event === 'charge.success' && chargeRole?.ok && chargeRole.role === 'F') {
+      const authorization = data.authorization as Record<string, string> | undefined;
+      const customerData = data.customer as Record<string, string> | undefined;
+      await supabase.from('processed_webhook_events').upsert({
+        event_id: `paystack-unresolved-${reference}`,
+        gateway: 'paystack',
+        event_type: 'unresolved_recurring_charge',
+        status: 'reconciliation_required',
+        first_received_at: new Date().toISOString(),
+        last_attempted_at: new Date().toISOString(),
+        last_error: JSON.stringify({
+          reference,
+          amount_kobo: (data.amount as number),
+          currency: ((data.currency as string) || 'NGN'),
+          auth_code: authorization?.authorization_code,
+          customer_code: customerData?.customer_code,
+        }),
+      }, { onConflict: 'event_id', ignoreDuplicates: true });
+      logger.warn(`[PAYSTACK RECURRING] Unresolved charge.success (role F) preserved as reconciliation_required — ref: ${reference}`);
     }
 
     // Recurring invoice payment failed
