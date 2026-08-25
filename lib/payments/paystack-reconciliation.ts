@@ -23,6 +23,7 @@
  */
 
 import { logger } from '@/lib/logger';
+import type { PaystackInvoiceCorrelation } from '@/lib/payments/paystack-recurring';
 
 export interface ReconciliationEvidence {
   reference?: string;
@@ -41,7 +42,7 @@ export interface ReconciliationDeps {
     rpc: (fn: string, params: Record<string, unknown>) => PromiseLike<{ data: any; error: any }>;
   };
   correlateInvoiceExact: (subscriptionCode: string, transactionId: string) =>
-    Promise<{ status: string; invoiceCode?: string; amount?: number; invoiceStatus?: string; reason?: string }>;
+    Promise<PaystackInvoiceCorrelation>;
   verifyPaystackTransaction: (reference: string) =>
     Promise<{ status: string; amountMinor?: number; currency?: string; transactionId?: string; reason?: string; txStatus?: string }>;
 }
