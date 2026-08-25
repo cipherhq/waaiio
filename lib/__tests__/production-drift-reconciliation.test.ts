@@ -202,7 +202,7 @@ describe.skipIf(!TEST_DB)('Production Drift Reconciliation (migration 325)', () 
       );
       CREATE TABLE IF NOT EXISTS admin_audit_logs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        actor_id UUID, action TEXT, entity_type TEXT, entity_id TEXT,
+        actor_id UUID, action TEXT, entity_type TEXT, entity_id UUID,
         details JSONB, created_at TIMESTAMPTZ DEFAULT NOW()
       );
       CREATE TABLE IF NOT EXISTS business_staff (
@@ -295,7 +295,7 @@ describe.skipIf(!TEST_DB)('Production Drift Reconciliation (migration 325)', () 
 
       CREATE TABLE IF NOT EXISTS admin_audit_logs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        actor_id UUID, action TEXT, entity_type TEXT, entity_id TEXT,
+        actor_id UUID, action TEXT, entity_type TEXT, entity_id UUID,
         details JSONB, created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
