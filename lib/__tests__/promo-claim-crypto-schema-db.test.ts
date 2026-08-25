@@ -82,6 +82,15 @@ describe.skipIf(!canRun)('Issue #188: Promo Claim Crypto Schema', () => {
         address TEXT DEFAULT 'x', city TEXT DEFAULT 'x', neighborhood TEXT DEFAULT 'x',
         phone TEXT DEFAULT '+0', country_code TEXT DEFAULT 'NG'
       );
+      -- Required by migration 321 RLS policies
+      CREATE TABLE IF NOT EXISTS business_members (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), user_id UUID
+      );
+      -- Required by migration 321/336 admin governance functions
+      CREATE TABLE IF NOT EXISTS admin_audit_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), actor_id UUID, action TEXT,
+        entity_type TEXT, entity_id UUID, details JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now()
+      );
       INSERT INTO businesses (id, name, slug, owner_id)
         VALUES ('${BIZ_ID}', 'CryptoTest', 'crypto-test', '${USER_ID}')
       ON CONFLICT DO NOTHING;
@@ -137,6 +146,8 @@ describe.skipIf(!canRun)('Issue #188: Promo Claim Crypto Schema', () => {
         commit_promo_import_chunk, get_promo_campaign_aggregates, reset_promo_failed_batch,
         create_promo_batch_atomic, update_promo_campaign_updated_at, validate_promo_campaign_status_transition,
         transition_promo_fulfillment, issue_promo_pickup_token, verify_promo_pickup CASCADE;
+      DROP TABLE IF EXISTS admin_audit_logs CASCADE;
+      DROP TABLE IF EXISTS business_members CASCADE;
       DELETE FROM businesses WHERE id = '${BIZ_ID}';
     `);
   });

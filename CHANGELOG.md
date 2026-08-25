@@ -9,14 +9,29 @@ If something breaks, check this log to find what changed and when.
 
 ### fix(promotions): claim_promo_code crypto schema resolution (#188)
 
-- **Root cause:** `claim_promo_code` RPC (migration 331) uses `gen_random_bytes(8)` for claim-reference generation, but the function has `SET search_path = public`. In Supabase production, pgcrypto lives in the `extensions` schema, so unqualified `gen_random_bytes()` fails with "function gen_random_bytes(integer) does not exist".
+- **Root cause:** `claim_promo_code` RPC (migration 331) uses `gen_random_bytes(8)` for claim-reference generation, but the function has `SET search_path = public`. In Supabase production, pgcrypto lives in the `extensions` schema (platform prerequisite), so unqualified `gen_random_bytes()` fails with "function gen_random_bytes(integer) does not exist".
 - **Customer impact:** Valid unused Instant Win codes fail during claim. Transaction rolls back, code stays `unused`, customer sees "That code is not valid" for a valid code.
 - **Fix:** Forward migration 338 redefines `claim_promo_code` with `extensions.gen_random_bytes(8)`. No other changes — search_path remains restricted to `public`, all claim authority/idempotency/eligibility/rate-limiting/winner-security behavior preserved.
 - **Test authority correction:** `promo-1-claim-authority-db.test.ts` now applies migrations 330, 331, 336, and 338 (previously only 321 + 336). pgcrypto installed in `extensions` schema to match Supabase production layout.
-- **New regression test:** `promo-claim-crypto-schema-db.test.ts` — proves claim works with pgcrypto in `extensions` schema (production layout), verifies `public.gen_random_bytes` is NOT available, validates winner/try_again/invalid/replay/rollback paths.
+- **New regression test:** `promo-claim-crypto-schema-db.test.ts` — proves claim works with pgcrypto in `extensions` schema (production layout), verifies `public.gen_random_bytes` is NOT available, validates winner/try_again/invalid/replay/rollback paths with real forced-failure transaction rollback proof.
 - **Files:** `supabase/migrations/338_fix_claim_promo_code_crypto_schema.sql`, `lib/__tests__/promo-claim-crypto-schema-db.test.ts`, `lib/__tests__/promo-1-claim-authority-db.test.ts`, `lib/__tests__/promo-code-claim-integrity.test.ts`
 - **Affects:** All Instant Win / promo code claim processing
 - **Could break:** Nothing — the only change is schema-qualifying a crypto function call that was already broken in production
+
+## 2026-08-24
+
+### fix(payments): Paystack recurring billing-attempt authority — complete Round 2 (#176)
+
+- **Invoice-based cycle authority:** Replaced `subscription_code`-only provider cycle identity with authoritative Paystack `invoice_code`. Added `fetchSubscriptionInvoice()` that queries Paystack Subscription API to resolve invoice for each billing cycle. Cycle keys now use `ps-auto-{sub_id}-{invoice_code}` instead of `ps-auto-{sub_id}-{subscription_code}`. Falls back to transaction reference if invoice unavailable (fail-closed).
+- **Typed charge outcomes:** Replaced boolean `chargeAuthorization` return with `PaystackChargeOutcome` type — `success`, `pending`, `terminal_failure`, `indeterminate`. Uses raw `fetch` with HTTP fidelity (#172 pattern). HTTP 400/401/403/429/5xx, malformed JSON, network/timeout all map to `indeterminate` (never authorize replacement). Cron uses typed outcomes for post-dispatch state transitions.
+- **Replay identity validation:** Finalizer validates transaction_id and invoice_code on replay (not just amount/currency). Conflicting identity → rejected.
+- **Guarded state transitions:** Cron post-dispatch updates use `.in('status', [...])` guards. Charged update requires `dispatched`. Failed update requires `dispatched|charged`. Prevents overwriting finalized rows.
+- **Provider-managed convergence:** Same invoice with multiple refs converges to one canonical finalization via partial unique index. Existing unresolved attempt for same cycle_key updated with latest provider evidence. Concurrent webhook delivery handled via race detection.
+- **Reconciliation path:** Cron `must_reconcile` now fetches invoice_code from Paystack API during verification for complete identity finalization.
+- **Files:** `lib/payments/paystack-recurring.ts`, `app/api/cron/retry-failed-charges/route.ts`, `app/api/payments/webhook/route.ts`, `supabase/migrations/337_paystack_recurring_finalization.sql`
+- **Tests:** 169 suites pass (4407 tests). 29 new provider-boundary typed outcome tests. 10 new PostgreSQL billing-authority tests (multi-cycle, convergence, races, conflicting replay, terminal failure replacement, guard validation).
+- **Affects:** Paystack recurring charge lifecycle (cron + webhook), chargeAuthorization return type
+- **Could break:** Code that checked `chargeAuthorization().success` (boolean) must now check `.status === 'success'`. Only consumer is retry-failed-charges cron (updated).
 
 ## 2026-08-20
 
