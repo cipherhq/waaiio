@@ -126,7 +126,7 @@ jobs:
           CREATE SCHEMA IF NOT EXISTS auth;
           CREATE SCHEMA IF NOT EXISTS extensions;
           CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-          CREATE EXTENSION IF NOT EXISTS pgcrypto;
+          CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
 
           -- Minimal auth.uid() stub for RLS policies
           CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
@@ -1311,7 +1311,8 @@ jobs:
           # Apply prerequisite stubs
           psql "$DBURL" -v ON_ERROR_STOP=1 -q << 'STUBS'
           CREATE SCHEMA IF NOT EXISTS auth;
-          CREATE EXTENSION IF NOT EXISTS pgcrypto;
+          CREATE SCHEMA IF NOT EXISTS extensions;
+          CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
           CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT gen_random_uuid(); $$ LANGUAGE SQL STABLE;
           CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
           CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, raw_app_meta_data JSONB DEFAULT '{}');

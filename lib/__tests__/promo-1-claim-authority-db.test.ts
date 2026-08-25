@@ -1087,9 +1087,10 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
       FROM promo_campaign_codes WHERE normalized_code_hash = '${m330Hash('HIST02')}' AND business_id = '${M330_BIZ}' LIMIT 1;
     `);
 
-    // Apply migration 330
+    // Apply migrations 330 → 331 → 338 (331 needed for types used by 338's claim_promo_code)
     const fs = require('fs');
     psql(fs.readFileSync('supabase/migrations/330_promo_code_claim_integrity.sql', 'utf-8'));
+    psql(fs.readFileSync('supabase/migrations/331_promo_winner_security.sql', 'utf-8'));
     psql(fs.readFileSync('supabase/migrations/338_fix_claim_promo_code_crypto_schema.sql', 'utf-8'));
 
     // Create new campaign + codes AFTER migration 330
@@ -1316,15 +1317,19 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
 
     // ── EXTENSION LAYOUT GUARD (#188) ──
 
-    it('GUARD: public.gen_random_bytes is NOT available (production layout)', () => {
-      const r = psqlMayFail(`SELECT public.gen_random_bytes(8);`);
-      expect(r.ok).toBe(false);
-      expect(r.output).toContain('does not exist');
+    it('GUARD: pgcrypto extension is installed in extensions schema (pg_extension proof)', () => {
+      const nspname = psql(`SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pgcrypto';`);
+      expect(nspname).toBe('extensions');
     });
 
-    it('GUARD: extensions.gen_random_bytes IS available', () => {
-      const r = psqlMayFail(`SELECT extensions.gen_random_bytes(8);`);
-      expect(r.ok).toBe(true);
+    it('GUARD: public.gen_random_bytes does NOT exist (to_regprocedure proof)', () => {
+      const result = psql(`SELECT to_regprocedure('public.gen_random_bytes(integer)') IS NULL;`);
+      expect(result).toBe('t');
+    });
+
+    it('GUARD: extensions.gen_random_bytes DOES exist (to_regprocedure proof)', () => {
+      const result = psql(`SELECT to_regprocedure('extensions.gen_random_bytes(integer)') IS NOT NULL;`);
+      expect(result).toBe('t');
     });
 
     it('GUARD: claim_promo_code uses extensions.gen_random_bytes (migration 338)', () => {

@@ -141,16 +141,20 @@ describe.skipIf(!canRun)('Issue #188: Promo Claim Crypto Schema', () => {
     `);
   });
 
-  // ══════════ GUARD: public.gen_random_bytes must NOT exist ══════════
-  it('GUARD: public.gen_random_bytes is NOT available (production layout)', () => {
-    const r = psqlMayFail(`SELECT public.gen_random_bytes(8);`);
-    expect(r.ok).toBe(false);
-    expect(r.output).toContain('does not exist');
+  // ══════════ GUARD: extension layout must match Supabase production ══════════
+  it('GUARD: pgcrypto extension is in extensions schema (pg_extension proof)', () => {
+    const nspname = psql(`SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pgcrypto';`);
+    expect(nspname).toBe('extensions');
   });
 
-  it('GUARD: extensions.gen_random_bytes IS available', () => {
-    const r = psqlMayFail(`SELECT extensions.gen_random_bytes(8);`);
-    expect(r.ok).toBe(true);
+  it('GUARD: public.gen_random_bytes does NOT exist (to_regprocedure proof)', () => {
+    const result = psql(`SELECT to_regprocedure('public.gen_random_bytes(integer)') IS NULL;`);
+    expect(result).toBe('t');
+  });
+
+  it('GUARD: extensions.gen_random_bytes DOES exist (to_regprocedure proof)', () => {
+    const result = psql(`SELECT to_regprocedure('extensions.gen_random_bytes(integer)') IS NOT NULL;`);
+    expect(result).toBe('t');
   });
 
   it('GUARD: claim_promo_code has SET search_path = public', () => {
