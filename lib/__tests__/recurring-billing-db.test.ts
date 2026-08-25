@@ -2163,22 +2163,23 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
   });
 
   it('#176-R8 CASE U: existing attempt currency conflict → NO finalization', async () => {
-    // Create a charged attempt with currency NGN
+    // Subscription uses USD so candidate passes the pre-check
+    // But existing ATTEMPT was created with NGN (e.g., prior currency change)
     psql(`DELETE FROM paystack_billing_attempts WHERE provider_reference = 'ref-caseU';`);
     psql(`DELETE FROM payments WHERE gateway_reference = 'ref-caseU';`);
 
     const RC_SUB_U = '76cccc55-5555-5555-5555-cccccccccccc';
     psql(`DELETE FROM customer_subscriptions WHERE id = '${RC_SUB_U}';`);
     psql(`INSERT INTO customer_subscriptions (id, business_id, user_id, amount, currency, frequency, status, gateway, authorization_code, gateway_subscription_code, customer_phone, customer_name, next_charge_at, charge_count, total_charged)
-          VALUES ('${RC_SUB_U}', '${BIZ_ID}', '${USER_ID}', 100, 'NGN', 'monthly', 'active', 'paystack', 'AUTH_U', 'SUB_CODE_U', '+2340009990000', 'Sub U', NOW() - INTERVAL '1 hour', 0, 0);`);
+          VALUES ('${RC_SUB_U}', '${BIZ_ID}', '${USER_ID}', 100, 'USD', 'monthly', 'active', 'paystack', 'AUTH_U', 'SUB_CODE_U', '+2340009990000', 'Sub U', NOW() - INTERVAL '1 hour', 0, 0);`);
 
-    // Insert a charged attempt with NGN currency
+    // Insert a charged attempt with NGN (conflict with current subscription USD)
     psql(`INSERT INTO paystack_billing_attempts (customer_subscription_id, cycle_key, scheduled_at, attempt_number, provider_reference, intended_amount_minor, intended_currency, status, charged_at, provider_transaction_id, provider_invoice_code)
           VALUES ('${RC_SUB_U}', 'ps-auto-${RC_SUB_U}-INV_U', NOW(), 1, 'ref-caseU', 10000, 'NGN', 'charged', NOW(), '4001', 'INV_U');`);
 
     const { reconcilePaystackEvent } = await import('@/lib/payments/paystack-reconciliation');
 
-    // Try to reconcile with USD currency (conflict)
+    // Verify returns USD, subscription is USD, but existing attempt is NGN
     const result = await reconcilePaystackEvent(
       {
         supabase: createTestSupabase() as any,
@@ -2194,7 +2195,7 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
     // No payment created
     expect(psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'ref-caseU';`)).toBe('0');
 
-    // Existing attempt NOT modified
+    // Existing attempt NOT modified — still NGN
     expect(psql(`SELECT intended_currency FROM paystack_billing_attempts WHERE provider_reference = 'ref-caseU';`)).toBe('NGN');
 
     // Subscription totals unchanged
