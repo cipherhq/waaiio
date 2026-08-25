@@ -26,6 +26,8 @@ const CAMP_A_ID = '00000000-0000-4000-c184-aaaaaaaaaaaa';
 const CAMP_B_ID = '00000000-0000-4000-c184-bbbbbbbbbbbb';
 const CODE_A_ID = '00000000-0000-4000-d184-aaaaaaaaaaaa';
 const CODE_B_ID = '00000000-0000-4000-d184-bbbbbbbbbbbb';
+const BATCH_A_ID = '00000000-0000-4000-b184-aaaaaaaaaaaa';
+const BATCH_B_ID = '00000000-0000-4000-b184-bbbbbbbbbbbb';
 const REDEMPTION_A_ID = '00000000-0000-4000-e184-aaaaaaaaaaaa';
 const REDEMPTION_B_ID = '00000000-0000-4000-e184-bbbbbbbbbbbb';
 
@@ -36,6 +38,7 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation (real migra
       DELETE FROM promo_verification_attempts WHERE business_id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
       DELETE FROM promo_redemptions WHERE id IN ('${REDEMPTION_A_ID}', '${REDEMPTION_B_ID}');
       DELETE FROM promo_campaign_codes WHERE id IN ('${CODE_A_ID}', '${CODE_B_ID}');
+      DELETE FROM promo_code_batches WHERE id IN ('${BATCH_A_ID}', '${BATCH_B_ID}');
       DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}');
       DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
@@ -69,8 +72,12 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation (real migra
       VALUES ('${CAMP_A_ID}', '${BIZ_A_ID}', 'Biz A Promo', 'ended', 'UTC', 'both', 12, 3, 60, 5, 'none', 'W', 'T', 'I', 'A', 'E')
       ON CONFLICT (id) DO NOTHING;
 
-      INSERT INTO promo_campaign_codes (id, business_id, campaign_id, normalized_code_hash, encrypted_code, display_suffix, outcome, status)
-      VALUES ('${CODE_A_ID}', '${BIZ_A_ID}', '${CAMP_A_ID}', 'hash_a_184', 'enc_a', 'AAAA', 'winner', 'claimed')
+      INSERT INTO promo_code_batches (id, campaign_id, source, total_codes, status)
+      VALUES ('${BATCH_A_ID}', '${CAMP_A_ID}', 'generated', 1, 'completed')
+      ON CONFLICT (id) DO NOTHING;
+
+      INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, status)
+      VALUES ('${CODE_A_ID}', '${BIZ_A_ID}', '${CAMP_A_ID}', '${BATCH_A_ID}', 'hash_a_184', 'enc_a', 'AAAA', 'winner', 'claimed')
       ON CONFLICT (id) DO NOTHING;
 
       INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status)
@@ -81,8 +88,12 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation (real migra
       VALUES ('${CAMP_B_ID}', '${BIZ_B_ID}', 'Biz B Promo', 'archived', 'UTC', 'both', 12, 3, 60, 5, 'none', 'W', 'T', 'I', 'A', 'E')
       ON CONFLICT (id) DO NOTHING;
 
-      INSERT INTO promo_campaign_codes (id, business_id, campaign_id, normalized_code_hash, encrypted_code, display_suffix, outcome, status)
-      VALUES ('${CODE_B_ID}', '${BIZ_B_ID}', '${CAMP_B_ID}', 'hash_b_184', 'enc_b', 'BBBB', 'try_again', 'claimed')
+      INSERT INTO promo_code_batches (id, campaign_id, source, total_codes, status)
+      VALUES ('${BATCH_B_ID}', '${CAMP_B_ID}', 'generated', 1, 'completed')
+      ON CONFLICT (id) DO NOTHING;
+
+      INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, status)
+      VALUES ('${CODE_B_ID}', '${BIZ_B_ID}', '${CAMP_B_ID}', '${BATCH_B_ID}', 'hash_b_184', 'enc_b', 'BBBB', 'try_again', 'claimed')
       ON CONFLICT (id) DO NOTHING;
 
       INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status)
@@ -96,6 +107,7 @@ describe.skipIf(!canRun)('ACC-184 DB: Promo history tenant isolation (real migra
       DELETE FROM promo_verification_attempts WHERE business_id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
       DELETE FROM promo_redemptions WHERE id IN ('${REDEMPTION_A_ID}', '${REDEMPTION_B_ID}');
       DELETE FROM promo_campaign_codes WHERE id IN ('${CODE_A_ID}', '${CODE_B_ID}');
+      DELETE FROM promo_code_batches WHERE id IN ('${BATCH_A_ID}', '${BATCH_B_ID}');
       DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}');
       DELETE FROM businesses WHERE id IN ('${BIZ_A_ID}', '${BIZ_B_ID}');
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
