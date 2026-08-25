@@ -66,13 +66,18 @@ const ADMIN_ID = '00000000-0000-0000-0320-500000000002';
 describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
   beforeAll(() => {
     psql(`
-      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+      -- Reproduce Supabase extension layout: pgcrypto in extensions schema
+      CREATE SCHEMA IF NOT EXISTS extensions;
+      CREATE EXTENSION IF NOT EXISTS "pgcrypto" SCHEMA extensions;
       DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       GRANT USAGE ON SCHEMA public TO service_role;
       GRANT USAGE ON SCHEMA public TO authenticated;
       GRANT USAGE ON SCHEMA public TO anon;
+      GRANT USAGE ON SCHEMA extensions TO service_role;
+      GRANT USAGE ON SCHEMA extensions TO authenticated;
+      GRANT USAGE ON SCHEMA extensions TO anon;
 
       CREATE SCHEMA IF NOT EXISTS auth;
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
@@ -104,7 +109,10 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
 
     const fs = require('fs');
     psql(fs.readFileSync('supabase/migrations/321_promotions_schema.sql', 'utf-8'));
+    psql(fs.readFileSync('supabase/migrations/330_promo_code_claim_integrity.sql', 'utf-8'));
+    psql(fs.readFileSync('supabase/migrations/331_promo_winner_security.sql', 'utf-8'));
     psql(fs.readFileSync('supabase/migrations/336_fix_promo_audit_entity_id_cast.sql', 'utf-8'));
+    psql(fs.readFileSync('supabase/migrations/338_fix_claim_promo_code_crypto_schema.sql', 'utf-8'));
 
     psql(`
       INSERT INTO promo_campaigns (id, business_id, name, status, keyword, code_entry_mode, accept_bare_codes,
@@ -165,6 +173,7 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
   afterAll(() => {
     if (!canRun) return;
     psql(`
+      DROP TABLE IF EXISTS promo_pickup_verifications CASCADE;
       DROP TABLE IF EXISTS promo_eligibility_acks CASCADE;
       DROP TABLE IF EXISTS promo_verification_attempts CASCADE;
       DROP TABLE IF EXISTS promo_redemptions CASCADE;
@@ -174,11 +183,13 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
       DROP TABLE IF EXISTS promo_campaigns CASCADE;
       DROP TYPE IF EXISTS promo_campaign_status, promo_code_entry_mode, promo_prize_type,
         promo_batch_status, promo_batch_source, promo_code_status, promo_code_outcome,
-        promo_fulfillment_status, promo_attempt_result CASCADE;
+        promo_fulfillment_status, promo_attempt_result, promo_verification_mode,
+        promo_verification_status CASCADE;
       DROP FUNCTION IF EXISTS claim_promo_code, validate_promo_campaign_activation,
         admin_promo_governance, activate_promo_campaign, commit_promo_code_chunk,
         commit_promo_import_chunk, get_promo_campaign_aggregates, reset_promo_failed_batch,
-        create_promo_batch_atomic, update_promo_campaign_updated_at, validate_promo_campaign_status_transition CASCADE;
+        create_promo_batch_atomic, update_promo_campaign_updated_at, validate_promo_campaign_status_transition,
+        transition_promo_fulfillment, issue_promo_pickup_token, verify_promo_pickup CASCADE;
       DROP TABLE IF EXISTS admin_audit_logs CASCADE;
       DELETE FROM businesses WHERE id IN ('${BIZ_ID}', '${BIZ_ID_2}');
     `);

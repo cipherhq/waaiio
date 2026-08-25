@@ -299,6 +299,52 @@ describe('Blocker fixes — canonical claim_promo_code behavior', () => {
   });
 });
 
+describe('Issue #188: claim_promo_code crypto schema fix', () => {
+  const fs = require('fs');
+  const fixSrc = fs.readFileSync('supabase/migrations/338_fix_claim_promo_code_crypto_schema.sql', 'utf-8');
+
+  it('uses extensions.gen_random_bytes(8) (schema-qualified)', () => {
+    expect(fixSrc).toContain('extensions.gen_random_bytes(8)');
+    expect(fixSrc).toContain("encode(extensions.gen_random_bytes(8), 'hex')");
+  });
+
+  it('does NOT use unqualified gen_random_bytes', () => {
+    // The only gen_random_bytes references must be schema-qualified
+    const unqualified = fixSrc.match(/(?<!extensions\.)gen_random_bytes\(/g) || [];
+    // Filter out comment references
+    const codeLines = fixSrc.split('\n').filter((l: string) => !l.trim().startsWith('--'));
+    const codeOnly = codeLines.join('\n');
+    const unqualifiedInCode = codeOnly.match(/(?<!extensions\.)gen_random_bytes\(/g) || [];
+    expect(unqualifiedInCode.length).toBe(0);
+  });
+
+  it('search_path remains restricted to public', () => {
+    expect(fixSrc).toContain('SET search_path = public');
+    expect(fixSrc).not.toContain("SET search_path = public, extensions");
+  });
+
+  it('preserves SECURITY DEFINER', () => {
+    expect(fixSrc).toContain('SECURITY DEFINER');
+  });
+
+  it('preserves privilege hardening', () => {
+    expect(fixSrc).toContain("REVOKE EXECUTE ON FUNCTION claim_promo_code");
+    expect(fixSrc).toContain("GRANT EXECUTE ON FUNCTION claim_promo_code");
+    expect(fixSrc).toContain("TO service_role");
+  });
+
+  it('preserves max_wins_per_participant enforcement', () => {
+    expect(fixSrc).toContain('max_wins_per_participant');
+    expect(fixSrc).toContain('max_wins_reached');
+  });
+
+  it('preserves verification snapshot', () => {
+    expect(fixSrc).toContain('verification_mode');
+    expect(fixSrc).toContain('verification_status');
+    expect(fixSrc).toContain('v_prize_verification');
+  });
+});
+
 describe('Wizard entropy enforcement', () => {
   const fs = require('fs');
   const wizardSrc = fs.readFileSync('app/dashboard/promotions/create/page.tsx', 'utf-8');

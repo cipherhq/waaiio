@@ -5,6 +5,19 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-25
+
+### fix(promotions): claim_promo_code crypto schema resolution (#188)
+
+- **Root cause:** `claim_promo_code` RPC (migration 331) uses `gen_random_bytes(8)` for claim-reference generation, but the function has `SET search_path = public`. In Supabase production, pgcrypto lives in the `extensions` schema, so unqualified `gen_random_bytes()` fails with "function gen_random_bytes(integer) does not exist".
+- **Customer impact:** Valid unused Instant Win codes fail during claim. Transaction rolls back, code stays `unused`, customer sees "That code is not valid" for a valid code.
+- **Fix:** Forward migration 338 redefines `claim_promo_code` with `extensions.gen_random_bytes(8)`. No other changes — search_path remains restricted to `public`, all claim authority/idempotency/eligibility/rate-limiting/winner-security behavior preserved.
+- **Test authority correction:** `promo-1-claim-authority-db.test.ts` now applies migrations 330, 331, 336, and 338 (previously only 321 + 336). pgcrypto installed in `extensions` schema to match Supabase production layout.
+- **New regression test:** `promo-claim-crypto-schema-db.test.ts` — proves claim works with pgcrypto in `extensions` schema (production layout), verifies `public.gen_random_bytes` is NOT available, validates winner/try_again/invalid/replay/rollback paths.
+- **Files:** `supabase/migrations/338_fix_claim_promo_code_crypto_schema.sql`, `lib/__tests__/promo-claim-crypto-schema-db.test.ts`, `lib/__tests__/promo-1-claim-authority-db.test.ts`, `lib/__tests__/promo-code-claim-integrity.test.ts`
+- **Affects:** All Instant Win / promo code claim processing
+- **Could break:** Nothing — the only change is schema-qualifying a crypto function call that was already broken in production
+
 ## 2026-08-20
 
 ### fix(observability): release-gate fixes — CI regression, URL safety, allowlist, instrumentation
