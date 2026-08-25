@@ -109,10 +109,7 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
 
     const fs = require('fs');
     psql(fs.readFileSync('supabase/migrations/321_promotions_schema.sql', 'utf-8'));
-    psql(fs.readFileSync('supabase/migrations/330_promo_code_claim_integrity.sql', 'utf-8'));
-    psql(fs.readFileSync('supabase/migrations/331_promo_winner_security.sql', 'utf-8'));
     psql(fs.readFileSync('supabase/migrations/336_fix_promo_audit_entity_id_cast.sql', 'utf-8'));
-    psql(fs.readFileSync('supabase/migrations/338_fix_claim_promo_code_crypto_schema.sql', 'utf-8'));
 
     psql(`
       INSERT INTO promo_campaigns (id, business_id, name, status, keyword, code_entry_mode, accept_bare_codes,
@@ -1093,6 +1090,7 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
     // Apply migration 330
     const fs = require('fs');
     psql(fs.readFileSync('supabase/migrations/330_promo_code_claim_integrity.sql', 'utf-8'));
+    psql(fs.readFileSync('supabase/migrations/338_fix_claim_promo_code_crypto_schema.sql', 'utf-8'));
 
     // Create new campaign + codes AFTER migration 330
     psql(`
@@ -1239,6 +1237,7 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
       // Apply migration 331
       const fs = require('fs');
       psql(fs.readFileSync('supabase/migrations/331_promo_winner_security.sql', 'utf-8'));
+      psql(fs.readFileSync('supabase/migrations/338_fix_claim_promo_code_crypto_schema.sql', 'utf-8'));
 
       // Create test data
       psql(`
@@ -1313,6 +1312,24 @@ describe.skipIf(!canRun)('PROMO-1: Promotion Code Authority', () => {
         DELETE FROM promo_campaigns WHERE business_id = '${M331_BIZ}';
         DELETE FROM businesses WHERE id = '${M331_BIZ}';
       `);
+    });
+
+    // ── EXTENSION LAYOUT GUARD (#188) ──
+
+    it('GUARD: public.gen_random_bytes is NOT available (production layout)', () => {
+      const r = psqlMayFail(`SELECT public.gen_random_bytes(8);`);
+      expect(r.ok).toBe(false);
+      expect(r.output).toContain('does not exist');
+    });
+
+    it('GUARD: extensions.gen_random_bytes IS available', () => {
+      const r = psqlMayFail(`SELECT extensions.gen_random_bytes(8);`);
+      expect(r.ok).toBe(true);
+    });
+
+    it('GUARD: claim_promo_code uses extensions.gen_random_bytes (migration 338)', () => {
+      const funcSrc = psql(`SELECT prosrc FROM pg_proc WHERE proname = 'claim_promo_code';`);
+      expect(funcSrc).toContain('extensions.gen_random_bytes');
     });
 
     // ── MAX WINS ──
