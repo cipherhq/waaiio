@@ -634,7 +634,49 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
     }
   });
 
-  it('migration 340 aborts on keyword-mode campaign with NULL keyword (pre-340 harness)', () => {
+  it('migration 340 aborts on active/scheduled keyword collision after normalization (pre-340 harness)', () => {
+    // Drop post-340 objects
+    psql(`ALTER TABLE promo_campaigns DROP CONSTRAINT IF EXISTS chk_routing_consistency`);
+    psql(`DROP TRIGGER IF EXISTS trg_normalize_promo_keyword ON promo_campaigns`);
+    psql(`ALTER TABLE promo_campaigns ADD CONSTRAINT chk_keyword_or_bare CHECK (
+      (code_entry_mode = 'keyword' AND keyword IS NOT NULL) OR code_entry_mode IN ('bare_code', 'both')
+    )`);
+
+    try {
+      // Seed two active campaigns with keywords that differ only in case
+      // After normalization (both become uppercase 'WIN'), they will collide
+      psql(`INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, keyword, accept_bare_codes, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
+        VALUES ('${CAMP_A_ID}', '${BIZ_ID}', 'Camp Win1', 'active', 'keyword', 'win', false, 'w','t','i','a','e')`);
+      psql(`INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, keyword, accept_bare_codes, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
+        VALUES ('${CAMP_B_ID}', '${BIZ_ID}', 'Camp Win2', 'active', 'keyword', 'WIN', false, 'w','t','i','a','e')`);
+
+      const migrationPath = path.resolve(__dirname, '../../supabase/migrations/340_promo_routing_consistency.sql');
+      const migrationSql = fs.readFileSync(migrationPath, 'utf8');
+
+      const result = psqlMayFail(`BEGIN;\n${migrationSql}\nCOMMIT;`);
+
+      // Migration should abort at the collision guard
+      expect(result.ok).toBe(false);
+      expect(result.output).toContain('keyword collision');
+
+      // Verify earlier normalization rolled back — keywords still have original casing
+      const kw1 = psql(`SELECT keyword FROM promo_campaigns WHERE id = '${CAMP_A_ID}'`);
+      expect(kw1).toBe('win'); // NOT 'WIN' — normalization rolled back
+    } finally {
+      psql(`DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}', '${CAMP_C_ID}')`);
+      psql(`ALTER TABLE promo_campaigns DROP CONSTRAINT IF EXISTS chk_keyword_or_bare`);
+      psql(`ALTER TABLE promo_campaigns DROP CONSTRAINT IF EXISTS chk_routing_consistency`);
+      psql(`ALTER TABLE promo_campaigns ADD CONSTRAINT chk_routing_consistency CHECK (
+        (code_entry_mode = 'keyword' AND keyword IS NOT NULL AND accept_bare_codes = false) OR
+        (code_entry_mode = 'bare_code' AND keyword IS NULL AND accept_bare_codes = true) OR
+        (code_entry_mode = 'both' AND keyword IS NOT NULL AND accept_bare_codes = true)
+      )`);
+      psql(`DROP TRIGGER IF EXISTS trg_normalize_promo_keyword ON promo_campaigns`);
+      psql(`CREATE TRIGGER trg_normalize_promo_keyword BEFORE INSERT OR UPDATE OF keyword ON promo_campaigns FOR EACH ROW EXECUTE FUNCTION normalize_promo_keyword()`);
+    }
+  });
+
+  it('migration 340 successfully repairs keyword-mode campaign with wrong accept_bare_codes (pre-340 harness)', () => {
     // Same pattern, but for keyword mode with NULL keyword
     psql(`ALTER TABLE promo_campaigns DROP CONSTRAINT IF EXISTS chk_routing_consistency`);
     psql(`DROP TRIGGER IF EXISTS trg_normalize_promo_keyword ON promo_campaigns`);

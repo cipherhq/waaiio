@@ -133,9 +133,19 @@ export async function PUT(request: NextRequest) {
     }
   }
 
+  // Detect routing changes early — needed before activation check
+  const isRoutingChange = !campaign.integrity_locked && ('codeEntryMode' in body || 'keyword' in body);
+
   // Fail-closed activation — use atomic RPC that validates + transitions
   const targetStatus = newStatus as PromoCampaignStatus | undefined;
   if (targetStatus === 'active') {
+    // Reject activation combined with routing mutation — routing would be silently lost
+    if (isRoutingChange) {
+      return NextResponse.json(
+        { error: 'Cannot combine status activation with routing changes in one request. Apply routing changes first, then activate.' },
+        { status: 400 },
+      );
+    }
     const { data: activation, error: actError } = await service.rpc('activate_promo_campaign', {
       p_campaign_id: campaignId,
       p_actor_id: user.id,
@@ -200,7 +210,6 @@ export async function PUT(request: NextRequest) {
   if (newStatus !== undefined) updates.status = newStatus;
 
   // ── Routing fields: delegate to update_promo_campaign_routing RPC ──
-  const isRoutingChange = !campaign.integrity_locked && ('codeEntryMode' in body || 'keyword' in body);
   if (isRoutingChange) {
     const mode = (body.codeEntryMode as string) || (campaign.code_entry_mode as string);
     const kw = 'keyword' in body ? (body.keyword as string | null) : (campaign.keyword as string | null);

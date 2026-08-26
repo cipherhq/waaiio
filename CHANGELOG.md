@@ -7,6 +7,18 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-26
 
+### fix(promotions): PR #205 correction round 4 — collision-abort test, POST handler execution, activation+routing guard (#198)
+
+- **Collision-abort migration test:** New DB test proves migration 340 aborts when keyword normalization creates active/scheduled keyword collisions (two campaigns with 'win' and 'WIN' that both normalize to 'WIN'). Verifies transaction rollback preserves original casing.
+- **Renamed misleading test:** `migration 340 aborts on keyword-mode campaign with NULL keyword` renamed to `migration 340 successfully repairs keyword-mode campaign with wrong accept_bare_codes` to match actual behavior (repair, not abort).
+- **Actual POST create handler:** Create route tests now import and call the real `POST` handler from `app/api/promotions/create/route.ts` with mocked Supabase, replacing mirrored helper functions. Tests verify: routing_mode_conflict 400, bare_code+keyword 400, keyword required 400, valid keyword/bare_code creation 201.
+- **Actual bot verification functions:** Bot regression tests now import and call real `looksLikePromoCode`, `hasActiveBareCodeCampaign`, `hasActiveKeywordCampaign` from `lib/promotions/verify.ts` instead of manual string parsing.
+- **Activation + routing guard:** `app/api/promotions/update/route.ts` now rejects requests that combine `status: 'active'` with routing field changes (`codeEntryMode`/`keyword`) in one request with 400, preventing silent loss of routing mutations that would be skipped by the early-return activation path.
+- **PR description updated:** Removed stale "downgrades both with no keyword to bare_code" language; correctly says "fail-closed abort".
+- **Files:** `lib/__tests__/acc-198-promo-routing-db.test.ts`, `lib/__tests__/acc-198-promo-routing.test.ts`, `app/api/promotions/update/route.ts`, `CHANGELOG.md`
+- **Affects:** Activation safety (routing changes no longer silently lost), test accuracy, migration safety proof
+- **Could break:** Clients that send `{status: 'active', codeEntryMode: ..., keyword: ...}` in one request will now get 400; they must send routing changes first, then activate separately.
+
 ### fix(tests): fix CI seed SQL for ACC-198 DB tests (#198)
 
 - **auth.users INSERT:** Replaced `(id, email, encrypted_password, email_confirmed_at, ...)` with `(id, phone)` pattern from ACC-184. CI's `auth.users` schema lacks `encrypted_password`, `email`, and `email_confirmed_at` columns.
