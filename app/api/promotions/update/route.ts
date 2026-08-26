@@ -68,6 +68,34 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'campaignId is required' }, { status: 400 });
   }
 
+  // ── Keyword normalization ──
+  if (body.keyword !== undefined) {
+    body.keyword = body.keyword ? String(body.keyword).trim().toUpperCase() : null;
+  }
+
+  // ── Routing consistency validation ──
+  const routingMode = body.codeEntryMode as string | undefined;
+  const routingKeyword = body.keyword as string | null | undefined;
+  const routingBare = body.acceptBareCodes as boolean | undefined;
+
+  // If accept_bare_codes sent without code_entry_mode, reject (ambiguous)
+  if (routingBare !== undefined && routingMode === undefined) {
+    return NextResponse.json({ error: 'acceptBareCodes requires codeEntryMode to be specified' }, { status: 400 });
+  }
+
+  // If both code_entry_mode and accept_bare_codes provided, check consistency
+  if (routingMode !== undefined && routingBare !== undefined) {
+    const expectedBare = routingMode === 'bare_code' || routingMode === 'both';
+    if (routingBare !== expectedBare) {
+      return NextResponse.json({ error: 'routing_mode_conflict' }, { status: 400 });
+    }
+  }
+
+  // bare_code mode with non-empty keyword is contradictory
+  if (routingMode === 'bare_code' && routingKeyword) {
+    return NextResponse.json({ error: 'bare_code mode cannot have a keyword' }, { status: 400 });
+  }
+
   // Fetch existing campaign (verify it belongs to this business)
   const { data: campaign, error: fetchError } = await service
     .from('promo_campaigns')
@@ -163,14 +191,50 @@ export async function PUT(request: NextRequest) {
   if ('eligibilityPrompt' in body) updates.eligibility_prompt = body.eligibilityPrompt ? String(body.eligibilityPrompt).trim() : null;
   if (newStatus !== undefined) updates.status = newStatus;
 
+  // ── Routing fields: delegate to update_promo_campaign_routing RPC ──
+  const isRoutingChange = !campaign.integrity_locked && ('codeEntryMode' in body || 'keyword' in body);
+  if (isRoutingChange) {
+    const mode = (body.codeEntryMode as string) || (campaign.code_entry_mode as string);
+    const kw = 'keyword' in body ? (body.keyword as string | null) : (campaign.keyword as string | null);
+
+    const { data: routingResult, error: routingError } = await service.rpc('update_promo_campaign_routing', {
+      p_campaign_id: campaignId,
+      p_business_id: businessId,
+      p_actor_id: user.id,
+      p_code_entry_mode: mode,
+      p_keyword: kw,
+      p_reason: null,
+    });
+
+    if (routingError) {
+      logger.error('[PROMOTIONS] routing RPC error:', routingError);
+      return NextResponse.json({ error: 'Failed to update routing' }, { status: 500 });
+    }
+
+    if (routingResult && !routingResult.success) {
+      const rpcError = routingResult.error as string;
+      if (rpcError === 'keyword_conflict' || rpcError === 'bare_code_conflict') {
+        return NextResponse.json({
+          error: rpcError,
+          conflicting_campaign: routingResult.conflicting_campaign,
+        }, { status: 409 });
+      }
+      if (rpcError === 'integrity_locked') {
+        return NextResponse.json({ error: rpcError }, { status: 409 });
+      }
+      if (rpcError === 'keyword_required' || rpcError === 'invalid_mode' || rpcError === 'routing_mode_conflict') {
+        return NextResponse.json({ error: rpcError }, { status: 400 });
+      }
+      return NextResponse.json({ error: rpcError || 'Routing update failed' }, { status: 500 });
+    }
+  }
+
   // Non-integrity-locked updatable fields (only if not locked)
+  // Note: routing fields (codeEntryMode, keyword, acceptBareCodes) handled above via RPC
   if (!campaign.integrity_locked) {
     if ('startAt' in body) updates.start_at = body.startAt || null;
     if ('endAt' in body) updates.end_at = body.endAt || null;
     if ('timezone' in body && body.timezone) updates.timezone = String(body.timezone);
-    if ('codeEntryMode' in body && body.codeEntryMode) updates.code_entry_mode = body.codeEntryMode;
-    if ('keyword' in body) updates.keyword = body.keyword ? String(body.keyword).trim() : null;
-    if ('acceptBareCodes' in body) updates.accept_bare_codes = Boolean(body.acceptBareCodes);
     if ('codeFormat' in body && body.codeFormat) updates.code_format = String(body.codeFormat);
     if ('codeLength' in body && body.codeLength) updates.code_length = Number(body.codeLength);
     if ('codePrefix' in body) {

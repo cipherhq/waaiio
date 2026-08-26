@@ -33,6 +33,26 @@ If something breaks, check this log to find what changed and when.
 - **Affects:** Stripe customer recurring payment processing, subscription charge recording, platform fee calculation, subscription counter updates
 - **Could break:** Nothing — all existing Stripe customer subscriptions are cancelled. New renewals will use the atomic path. Platform subscription handling unchanged.
 
+### feat(promotions): safe routing/keyword edits and deterministic activation-conflict handling (#198)
+
+- **What:** Promo campaign routing fields (code_entry_mode, keyword, accept_bare_codes) are now validated, normalized, and conflict-checked atomically via a new `update_promo_campaign_routing` RPC.
+- **Migration 340:**
+  - Keyword normalization trigger (uppercase + trim on INSERT/UPDATE)
+  - Legacy data repair (deterministic fix for inconsistent keyword/bare-code states)
+  - Collision guard (aborts migration if repair created active/scheduled conflicts — fail-closed)
+  - New `chk_routing_consistency` CHECK constraint replaces old `chk_keyword_or_bare` (stricter: enforces full 3-way consistency)
+  - `validate_promo_campaign_activation` now checks keyword AND bare-code conflicts including scheduled campaigns, with conflict campaign name in error
+  - `activate_promo_campaign` now has constraint-specific unique_violation handling
+  - New `update_promo_campaign_routing` SECURITY DEFINER RPC: atomic routing update with preflight conflict check, audit logging for active/paused campaigns, integrity_locked enforcement
+  - Privilege reassertion for all promo lifecycle functions
+- **API changes:**
+  - `PUT /api/promotions/update`: Routing changes now go through `update_promo_campaign_routing` RPC. Keyword normalized on input. Contradictory accept_bare_codes rejected with 400. Conflict errors return 409 with conflicting campaign name. Activation + routing mutation rejected with 400.
+  - `POST /api/promotions/create`: Keyword normalized to uppercase. `accept_bare_codes` derived from `code_entry_mode`. Contradictions rejected with 400.
+- **Dashboard:** Settings tab now shows Campaign Routing section with entry mode selector and keyword input. `accept_bare_codes` is derived (not shown). Integrity-locked fields disabled with explanation. Active/paused campaigns show warning about immediate effect.
+- **Files:** `supabase/migrations/340_promo_routing_consistency.sql`, `app/api/promotions/update/route.ts`, `app/api/promotions/create/route.ts`, `app/dashboard/promotions/[id]/page.tsx`, `lib/__tests__/acc-198-promo-routing.test.ts`, `lib/__tests__/acc-198-promo-routing-db.test.ts`
+- **Affects:** Promo campaign creation, editing, activation, bot keyword/bare-code routing
+- **Could break:** Old API clients sending contradictory `accept_bare_codes` will get 400. Old `chk_keyword_or_bare` constraint replaced with stricter `chk_routing_consistency`. Campaigns with inconsistent routing state cause migration abort for manual resolution.
+
 ---
 
 ## 2026-08-25
