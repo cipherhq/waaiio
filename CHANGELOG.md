@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-26
 
+### fix(tests): fix CI seed SQL for ACC-198 DB tests (#198)
+
+- **auth.users INSERT:** Replaced `(id, email, encrypted_password, email_confirmed_at, ...)` with `(id, phone)` pattern from ACC-184. CI's `auth.users` schema lacks `encrypted_password`, `email`, and `email_confirmed_at` columns.
+- **businesses INSERT:** Replaced `(id, owner_id, name, slug, category)` with full NOT NULL column list: `(id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)`.
+- **Files:** `lib/__tests__/acc-198-promo-routing-db.test.ts`, `CHANGELOG.md`
+- **Affects:** CI test reliability — DB integration tests now use the correct schema for CI PostgreSQL.
+- **Could break:** Nothing — test-only changes.
+
 ### fix(promotions): PR #205 correction round 3 — CI sentinel removal, migration harness, handler execution tests (#198)
 
 - **CI sentinel removed:** The `if (process.env.CI) expect(TEST_DATABASE_URL)` sentinel test was removed from `acc-198-promo-routing-db.test.ts`. The Main App CI job has no PostgreSQL, so this sentinel broke it. Zero-skip enforcement is handled in ci.yml, not in the test file.

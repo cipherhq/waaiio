@@ -72,17 +72,24 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
       DELETE FROM auth.users WHERE id = '${USER_ID}';
     `);
 
-    // Create test user + businesses
+    // CI creates auth.users without phone; add it so the production
+    // handle_new_user() trigger can fire (INSERT INTO profiles(id,phone,email))
+    psql(`ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone TEXT;`);
+
+    // Create test user — trigger fires and auto-creates profiles row
     psql(`
-      ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone TEXT;
-      INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id)
-      VALUES ('${USER_ID}', 'test198@waaiio.test', '$2a$10$abcdefghijklmnopqrstuv', now(), '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000')
+      INSERT INTO auth.users (id, phone) VALUES ('${USER_ID}', '+0001980001')
       ON CONFLICT (id) DO NOTHING;
     `);
+
+    // Create businesses with all required NOT NULL columns
     psql(`
-      INSERT INTO businesses (id, owner_id, name, slug, category) VALUES
-        ('${BIZ_ID}', '${USER_ID}', 'Test Biz 198', 'test-biz-198', 'retail'),
-        ('${BIZ_B_ID}', '${USER_ID}', 'Test Biz 198B', 'test-biz-198b', 'retail')
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)
+      VALUES ('${BIZ_ID}', 'Test Biz 198', 'test-biz-198', '${USER_ID}', '123 Test', 'Test City', 'Test', '+0001980002', 'active', 'manual', 'US', 'basic')
+      ON CONFLICT (id) DO NOTHING;
+
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)
+      VALUES ('${BIZ_B_ID}', 'Test Biz 198B', 'test-biz-198b', '${USER_ID}', '124 Test', 'Test City', 'Test', '+0001980003', 'active', 'manual', 'US', 'basic')
       ON CONFLICT (id) DO NOTHING;
     `);
   });
