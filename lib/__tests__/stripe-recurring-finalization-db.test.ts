@@ -126,10 +126,22 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
       { encoding: 'utf-8', timeout: 300000, shell: '/bin/bash' },
     );
 
-    // ── 3. Insert fixture data ──
+    // ── 3. Insert fixture data (requires auth.users + profiles for NOT NULL FKs) ──
     psql(`
-      INSERT INTO businesses (id, subscription_tier, trial_ends_at, payout_mode)
-        VALUES ('${BIZ_ID}', 'free', NOW() - INTERVAL '1 day', 'platform')
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      INSERT INTO auth.users (id, email) VALUES ('${USER_ID}', 'stripe-fin-test@test.local')
+        ON CONFLICT DO NOTHING;
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
+
+      INSERT INTO profiles (id, first_name, last_name, email)
+        VALUES ('${USER_ID}', 'Test', 'User', 'stripe-fin-test@test.local')
+        ON CONFLICT DO NOTHING;
+
+      INSERT INTO businesses (id, owner_id, name, slug, address, city, neighborhood, phone,
+        status, subscription_tier, trial_ends_at, payout_mode, country_code)
+        VALUES ('${BIZ_ID}', '${USER_ID}', 'Stripe Fin Test Biz', 'stripe-fin-test-177',
+          '1 Test St', 'Lagos', 'VI', '+10000000000',
+          'active', 'free', NOW() - INTERVAL '1 day', 'platform', 'US')
         ON CONFLICT (id) DO NOTHING;
 
       INSERT INTO platform_settings (key, value)
@@ -152,6 +164,10 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
       DELETE FROM bookings;
       DELETE FROM customer_subscriptions WHERE business_id = '${BIZ_ID}';
       DELETE FROM businesses WHERE id = '${BIZ_ID}';
+      DELETE FROM profiles WHERE id = '${USER_ID}';
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      DELETE FROM auth.users WHERE id = '${USER_ID}';
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
       DELETE FROM platform_settings WHERE key = 'pricing_tiers';
     `);
   });
