@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-26
 
+### test(promotions): PR #205 correction round 5 — actual handlePromoVerification execution + keyword race test (#198)
+
+- **Bot handler tests replaced:** Section E now calls the actual `handlePromoVerification` from `lib/bot/handlers/promo-verification.ts` instead of testing helper functions in isolation. Mocks `@/lib/promotions/verify` module (`verifyPromoCode`, `looksLikePromoCode`, `hasActiveKeywordCampaign`, `hasActiveBareCodeCampaign`). Tests: keyword routing, bare-code routing, both-mode keyword entry, non-promo fallthrough, missing capability fallthrough.
+- **Keyword activation race test:** New DB test in `acc-198-promo-routing-db.test.ts` creates two draft campaigns with the same keyword and concurrently UPDATEs both to 'active'. Asserts the unique index `idx_promo_campaigns_keyword_unique` enforces exactly one success, one failure.
+- **Files:** `lib/__tests__/acc-198-promo-routing.test.ts`, `lib/__tests__/acc-198-promo-routing-db.test.ts`, `CHANGELOG.md`
+- **Affects:** Test coverage for bot handler execution path and concurrent activation safety
+- **Could break:** Nothing — test-only changes.
+
 ### fix(promotions): PR #205 correction round 4 — collision-abort test, POST handler execution, activation+routing guard (#198)
 
 - **Collision-abort migration test:** New DB test proves migration 340 aborts when keyword normalization creates active/scheduled keyword collisions (two campaigns with 'win' and 'WIN' that both normalize to 'WIN'). Verifies transaction rollback preserves original casing.

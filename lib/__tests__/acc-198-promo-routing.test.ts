@@ -91,9 +91,23 @@ vi.mock('@/lib/capabilities/api-guard', () => ({
 const { PUT } = await import('@/app/api/promotions/update/route');
 const { POST } = await import('@/app/api/promotions/create/route');
 
-// ── Import actual bot verification functions ──
+// ── Mock promotions/verify for handlePromoVerification tests ──
 
-const { looksLikePromoCode, hasActiveBareCodeCampaign, hasActiveKeywordCampaign } = await import('@/lib/promotions/verify');
+const mockVerifyPromoCode = vi.fn();
+const mockLooksLikePromoCode = vi.fn();
+const mockHasActiveKeywordCampaign = vi.fn();
+const mockHasActiveBareCodeCampaign = vi.fn();
+
+vi.mock('@/lib/promotions/verify', () => ({
+  verifyPromoCode: (...args: unknown[]) => mockVerifyPromoCode(...args),
+  looksLikePromoCode: (...args: unknown[]) => mockLooksLikePromoCode(...args),
+  hasActiveKeywordCampaign: (...args: unknown[]) => mockHasActiveKeywordCampaign(...args),
+  hasActiveBareCodeCampaign: (...args: unknown[]) => mockHasActiveBareCodeCampaign(...args),
+}));
+
+// ── Import actual bot handler ──
+
+const { handlePromoVerification } = await import('@/lib/bot/handlers/promo-verification');
 
 // ── Helper: build NextRequest ──
 
@@ -322,54 +336,91 @@ describe('Audit logging', () => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// E. Bot regression tests — actual verify.ts functions
+// E. Bot handler regression — actual handlePromoVerification
 // ══════════════════════════════════════════════════════════════
 
-describe('Bot verification regression (actual functions)', () => {
-  it('looksLikePromoCode accepts valid bare codes', () => {
-    expect(looksLikePromoCode('K7PM-4XQ9-N2WF')).toBe(true);
-    expect(looksLikePromoCode('ABC123')).toBe(true);
-    expect(looksLikePromoCode('PROMO1234ABCD')).toBe(true);
+describe('Bot verification regression (handlePromoVerification)', () => {
+  const sendText = vi.fn().mockResolvedValue(undefined);
+  const fakeSupa = {} as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockVerifyPromoCode.mockReset();
+    mockLooksLikePromoCode.mockReset();
+    mockHasActiveKeywordCampaign.mockReset();
+    mockHasActiveBareCodeCampaign.mockReset();
   });
 
-  it('looksLikePromoCode rejects natural language and pure-alpha', () => {
-    expect(looksLikePromoCode('hello world')).toBe(false); // spaces
-    expect(looksLikePromoCode('PROMO')).toBe(false); // no digits
-    expect(looksLikePromoCode('hi')).toBe(false); // too short
-    expect(looksLikePromoCode('book a table')).toBe(false); // natural language
+  it('keyword input routes through keyword campaign', async () => {
+    mockHasActiveKeywordCampaign.mockResolvedValue(true);
+    mockLooksLikePromoCode.mockReturnValue(true);
+    mockVerifyPromoCode.mockResolvedValue({ result: 'winner', message: 'You won a free drink!' });
+
+    const res = await handlePromoVerification(
+      fakeSupa, sendText, '+1234567890', 'PROMO K7PM4XQ9', 'biz-1', undefined, ['promo_verification'],
+    );
+
+    expect(res.handled).toBe(true);
+    expect(sendText).toHaveBeenCalledWith('+1234567890', 'You won a free drink!');
+    expect(mockHasActiveKeywordCampaign).toHaveBeenCalledWith('biz-1', 'PROMO');
+    expect(mockVerifyPromoCode).toHaveBeenCalledWith(expect.objectContaining({
+      businessId: 'biz-1',
+      rawCode: 'K7PM4XQ9',
+      keyword: 'PROMO',
+    }));
   });
 
-  it('keyword-only routing: hasActiveKeywordCampaign calls ilike with keyword', async () => {
-    // The mocked service client returns count from the chain; we verify the function resolves
-    const result = await hasActiveKeywordCampaign('biz-1', 'PROMO');
-    // With mocked supabase returning no count, should be false
-    expect(typeof result).toBe('boolean');
+  it('bare code input routes through bare-code campaign', async () => {
+    mockLooksLikePromoCode.mockImplementation((t: string) => t === 'K7PM4XQ9N2WF');
+    mockHasActiveKeywordCampaign.mockResolvedValue(false);
+    mockHasActiveBareCodeCampaign.mockResolvedValue(true);
+    mockVerifyPromoCode.mockResolvedValue({ result: 'try_again', message: 'Better luck next time!' });
+
+    const res = await handlePromoVerification(
+      fakeSupa, sendText, '+1234567890', 'K7PM4XQ9N2WF', 'biz-1', undefined, ['promo_verification'],
+    );
+
+    expect(res.handled).toBe(true);
+    expect(sendText).toHaveBeenCalledWith('+1234567890', 'Better luck next time!');
+    expect(mockHasActiveBareCodeCampaign).toHaveBeenCalledWith('biz-1');
   });
 
-  it('bare-only routing: hasActiveBareCodeCampaign queries accept_bare_codes=true', async () => {
-    const result = await hasActiveBareCodeCampaign('biz-1');
-    expect(typeof result).toBe('boolean');
+  it('both-mode campaign: keyword entry works', async () => {
+    // "both" means hasActiveKeywordCampaign returns true for the keyword
+    mockHasActiveKeywordCampaign.mockResolvedValue(true);
+    mockLooksLikePromoCode.mockReturnValue(true);
+    mockVerifyPromoCode.mockResolvedValue({ result: 'winner', message: 'Prize claimed!' });
+
+    const res = await handlePromoVerification(
+      fakeSupa, sendText, '+1234567890', 'SPIN ABC123XY', 'biz-1', undefined, ['promo_verification'],
+    );
+
+    expect(res.handled).toBe(true);
+    expect(sendText).toHaveBeenCalledWith('+1234567890', 'Prize claimed!');
+    expect(mockHasActiveKeywordCampaign).toHaveBeenCalledWith('biz-1', 'SPIN');
   });
 
-  it('both-mode routing: keyword path checked first in handler', () => {
-    // Prove the handler logic: when text is "KEYWORD CODE", keyword path runs first
-    const text = 'PROMO K7PM-4XQ9-N2WF';
-    const parts = text.split(/\s+/);
-    const potentialKeyword = parts[0].toUpperCase();
-    const potentialCode = parts.slice(1).join('');
-    // Keyword path extracts keyword and code separately
-    expect(potentialKeyword).toBe('PROMO');
-    expect(looksLikePromoCode(potentialCode)).toBe(true);
-    // Bare code path would NOT match because the full text has spaces
-    expect(looksLikePromoCode(text)).toBe(false);
+  it('non-promo text falls through', async () => {
+    // "hello how are you" splits into 4 parts; first word "HELLO" checked as keyword
+    mockHasActiveKeywordCampaign.mockResolvedValue(false);
+    mockLooksLikePromoCode.mockReturnValue(false);
+
+    const res = await handlePromoVerification(
+      fakeSupa, sendText, '+1234567890', 'hello how are you', 'biz-1', undefined, ['promo_verification'],
+    );
+
+    expect(res.handled).toBe(false);
+    expect(sendText).not.toHaveBeenCalled();
   });
 
-  it('campaign resolution uses case-insensitive keyword matching (ilike)', () => {
-    // The resolveCampaign function uses .ilike('keyword', keyword) for case-insensitive match
-    // Verify normalization produces consistent uppercase
-    const keywords = ['PROMO', 'promo', 'Promo'];
-    const normalized = keywords.map((k) => k.toUpperCase());
-    expect(new Set(normalized).size).toBe(1);
+  it('missing promo_verification capability falls through', async () => {
+    const res = await handlePromoVerification(
+      fakeSupa, sendText, '+1234567890', 'PROMO K7PM4XQ9', 'biz-1', undefined, ['scheduling'],
+    );
+
+    expect(res.handled).toBe(false);
+    expect(sendText).not.toHaveBeenCalled();
+    expect(mockVerifyPromoCode).not.toHaveBeenCalled();
   });
 });
 

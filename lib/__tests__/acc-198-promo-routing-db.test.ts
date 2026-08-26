@@ -682,6 +682,41 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
     }
   });
 
+  // ── H. Two-session distinct-campaign activation race test ──
+  it('two distinct draft campaigns activating the same keyword: exactly one succeeds', async () => {
+    const RACE_A = '00000000-0000-4000-c198-race000000aa';
+    const RACE_B = '00000000-0000-4000-c198-race000000bb';
+
+    // Create two draft campaigns with the same keyword
+    psql(`
+      INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, keyword, accept_bare_codes, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
+      VALUES ('${RACE_A}', '${BIZ_ID}', 'Race A', 'draft', 'keyword', 'RACEKEY', false, 'w', 't', 'i', 'a', 'e');
+    `);
+    psql(`
+      INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, keyword, accept_bare_codes, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
+      VALUES ('${RACE_B}', '${BIZ_ID}', 'Race B', 'draft', 'keyword', 'RACEKEY', false, 'w', 't', 'i', 'a', 'e');
+    `);
+
+    // Both UPDATE to 'active' concurrently — the unique index on (business_id, lower(keyword))
+    // WHERE status IN ('active','scheduled') is the final authority: exactly one must fail.
+    const [a, b] = await Promise.all([
+      psqlAsync(`UPDATE promo_campaigns SET status = 'active' WHERE id = '${RACE_A}' RETURNING id;`),
+      psqlAsync(`UPDATE promo_campaigns SET status = 'active' WHERE id = '${RACE_B}' RETURNING id;`),
+    ]);
+
+    const successCount = [a, b].filter(r => r.ok).length;
+    const failCount = [a, b].filter(r => !r.ok).length;
+    expect(successCount).toBe(1);
+    expect(failCount).toBe(1);
+
+    // Only one campaign should be active
+    const activeCount = psql(`SELECT count(*) FROM promo_campaigns WHERE keyword = 'RACEKEY' AND status = 'active' AND business_id = '${BIZ_ID}'`);
+    expect(activeCount).toBe('1');
+
+    // Cleanup
+    psql(`DELETE FROM promo_campaigns WHERE id IN ('${RACE_A}', '${RACE_B}')`);
+  });
+
   it('migration 340 successfully repairs keyword-mode campaign with wrong accept_bare_codes (pre-340 harness)', () => {
     // Same pattern, but for keyword mode with NULL keyword
     psql(`ALTER TABLE promo_campaigns DROP CONSTRAINT IF EXISTS chk_routing_consistency`);
