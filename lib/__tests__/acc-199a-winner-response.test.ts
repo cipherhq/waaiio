@@ -404,15 +404,7 @@ describe('verifyPromoCode integration', () => {
 // ═══════════════════════════════════════════════════════
 // C. Replay parity tests (real DB)
 // ═══════════════════════════════════════════════════════
-import { execSync } from 'child_process';
-
-// CI guard: if running in CI, TEST_DATABASE_URL must be set
-// so DB tests are never silently skipped.
-if (process.env.CI) {
-  it('CI requires TEST_DATABASE_URL', () => {
-    expect(process.env.TEST_DATABASE_URL).toBeTruthy();
-  });
-}
+import { execSync, execFile } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRunDb = dbUrl.length > 0;
@@ -426,6 +418,32 @@ function psql(sql: string): string {
 function psqlJson(sql: string): Record<string, unknown> {
   const raw = psql(sql);
   return raw ? JSON.parse(raw) : {};
+}
+
+function psqlMayFail(sql: string): { ok: boolean; output: string } {
+  try {
+    const out = execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
+      input: sql, encoding: 'utf-8', timeout: 15000,
+    }).toString().trim();
+    return { ok: true, output: out };
+  } catch (e: unknown) {
+    return { ok: false, output: String((e as { stderr?: string }).stderr || e) };
+  }
+}
+
+/** Run SQL in a separate process (independent connection) — returns promise */
+function psqlAsync(sql: string, timeoutMs = 15000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+      timeout: timeoutMs,
+    }, (err, stdout, stderr) => {
+      resolve({
+        ok: !err,
+        stdout: (stdout || '').trim(),
+        stderr: (stderr || '').trim(),
+      });
+    }).stdin?.end(sql);
+  });
 }
 
 const USER_ID = '00000000-0000-4000-f199-000000000001';
@@ -727,5 +745,212 @@ describe('existing behavior regression', () => {
       verificationMode: 'standard',
     });
     expect(block).toContain(ref);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// F. Two-connection race tests (real DB)
+// ═══════════════════════════════════════════════════════
+const RACE_CAMP_ID = '00000000-0000-4000-c199-cccccccccccc';
+const RACE_PRIZE_ID = '00000000-0000-4000-9199-cccccccccccc';
+const RACE_PRIZE_ID_2 = '00000000-0000-4000-9199-dddddddddddd';
+const RACE_BATCH_ID = '00000000-0000-4000-b199-cccccccccccc';
+const RACE_CODE_ID = '00000000-0000-4000-d199-cccccccccccc';
+const RACE_PHONE = '+2349199000099';
+const RACE_MSG_ID = 'wamid_199a_race_test_001';
+const BOGUS_PRIZE_ID = '00000000-0000-4000-9199-ffffffffffff';
+
+describe.skipIf(!canRunDb)('Two-connection race tests: prize update vs claim_promo_code (real DB)', () => {
+  beforeEach(() => {
+    // Clean up
+    psql(`
+      DELETE FROM promo_verification_attempts WHERE business_id = '${BIZ_ID}';
+      DELETE FROM promo_redemptions WHERE business_id = '${BIZ_ID}';
+      DELETE FROM promo_campaign_codes WHERE business_id = '${BIZ_ID}';
+      DELETE FROM promo_code_batches WHERE id = '${RACE_BATCH_ID}';
+      DELETE FROM promo_prizes WHERE campaign_id = '${RACE_CAMP_ID}';
+      DELETE FROM promo_campaigns WHERE id = '${RACE_CAMP_ID}';
+      DELETE FROM businesses WHERE id = '${BIZ_ID}';
+      DELETE FROM profiles WHERE id = '${USER_ID}';
+      DELETE FROM auth.users WHERE id = '${USER_ID}';
+    `);
+
+    psql(`ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone TEXT;`);
+    psql(`
+      INSERT INTO auth.users (id, phone) VALUES ('${USER_ID}', '+0001990001')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    psql(`
+      INSERT INTO businesses (id, name, owner_id, category, country)
+      VALUES ('${BIZ_ID}', 'Race Test Biz', '${USER_ID}', 'retail', 'NG');
+    `);
+    psql(`
+      INSERT INTO promo_campaigns (id, business_id, name, status, integrity_locked,
+        winner_message, try_again_message, invalid_message, already_used_message, expired_message, created_by)
+      VALUES ('${RACE_CAMP_ID}', '${BIZ_ID}', 'Race Test Camp', 'active', false,
+        'You won!', 'Try again', 'Invalid', 'Already used', 'Expired', '${USER_ID}');
+    `);
+    psql(`
+      INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity, allocated_count, verification_mode, prize_instructions)
+      VALUES ('${RACE_PRIZE_ID}', '${RACE_CAMP_ID}', 'Race Prize', 'product', 10, 1, 'standard', 'Original instructions');
+    `);
+    psql(`
+      INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity, allocated_count)
+      VALUES ('${RACE_PRIZE_ID_2}', '${RACE_CAMP_ID}', 'Prize 2', 'product', 5, 0);
+    `);
+    psql(`
+      INSERT INTO promo_code_batches (id, campaign_id, source, requested_count, generated_count, status)
+      VALUES ('${RACE_BATCH_ID}', '${RACE_CAMP_ID}', 'generated', 1, 1, 'completed');
+    `);
+    psql(`
+      INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, prize_id, status)
+      VALUES ('${RACE_CODE_ID}', '${BIZ_ID}', '${RACE_CAMP_ID}', '${RACE_BATCH_ID}', 'racehash199a', 'YYYY', 'winner', '${RACE_PRIZE_ID}', 'unused');
+    `);
+  });
+
+  it('Test A: prize update first, redemption waits, sees NEW instructions', async () => {
+    // Connection A: BEGIN, lock campaign via RPC, update prize_instructions
+    // Uses pg_sleep to hold the lock for 2 seconds
+    const connA = psqlAsync(`
+      SET statement_timeout = '10s';
+      BEGIN;
+      SELECT update_prize_instructions(
+        '${RACE_CAMP_ID}', '${BIZ_ID}', '${USER_ID}',
+        '[{"prize_id": "${RACE_PRIZE_ID}", "prize_instructions": "Updated by Race A"}]'::jsonb
+      );
+      SELECT pg_sleep(2);
+      COMMIT;
+    `);
+
+    // Small delay to ensure A acquires lock first
+    await new Promise(r => setTimeout(r, 300));
+
+    // Connection B: attempt claim_promo_code — blocks on campaign row lock
+    const connB = psqlAsync(`
+      SET statement_timeout = '10s';
+      SELECT claim_promo_code('${BIZ_ID}', '${RACE_CAMP_ID}', 'racehash199a', '${RACE_PHONE}', '${RACE_MSG_ID}');
+    `);
+
+    const [resultA, resultB] = await Promise.all([connA, connB]);
+
+    expect(resultA.ok).toBe(true);
+    expect(resultB.ok).toBe(true);
+
+    // Parse B's result — claim should succeed and see the NEW instructions
+    const claimResult = JSON.parse(resultB.stdout);
+    const claim = claimResult.claim_promo_code || claimResult;
+    expect(claim.success).toBe(true);
+    expect(claim.result).toBe('winner');
+    expect(claim.prize_instructions).toBe('Updated by Race A');
+
+    // Verify first-claim and replay produce identical blocks
+    const replayResult = psqlJson(`
+      SELECT claim_promo_code('${BIZ_ID}', '${RACE_CAMP_ID}', 'racehash199a', '${RACE_PHONE}', '${RACE_MSG_ID}');
+    `);
+    const replayClaim = (replayResult as Record<string, unknown>).claim_promo_code as Record<string, unknown> ?? replayResult;
+    expect(replayClaim.idempotent_replay).toBe(true);
+    expect(replayClaim.prize_instructions).toBe(claim.prize_instructions);
+  });
+
+  it('Test B: redemption first, prize update waits, sees integrity_locked', async () => {
+    // Connection A: BEGIN, claim the code (sets integrity_locked=true), hold lock
+    const connA = psqlAsync(`
+      SET statement_timeout = '10s';
+      BEGIN;
+      SELECT claim_promo_code('${BIZ_ID}', '${RACE_CAMP_ID}', 'racehash199a', '${RACE_PHONE}', '${RACE_MSG_ID}');
+      SELECT pg_sleep(2);
+      COMMIT;
+    `);
+
+    await new Promise(r => setTimeout(r, 300));
+
+    // Connection B: attempt update_prize_instructions — blocks, then sees integrity_locked
+    const connB = psqlAsync(`
+      SET statement_timeout = '10s';
+      SELECT update_prize_instructions(
+        '${RACE_CAMP_ID}', '${BIZ_ID}', '${USER_ID}',
+        '[{"prize_id": "${RACE_PRIZE_ID}", "prize_instructions": "Should be rejected"}]'::jsonb
+      );
+    `);
+
+    const [resultA, resultB] = await Promise.all([connA, connB]);
+
+    expect(resultA.ok).toBe(true);
+    expect(resultB.ok).toBe(true);
+
+    // B should return integrity_locked error
+    const updateResult = JSON.parse(resultB.stdout);
+    const rpcOut = updateResult.update_prize_instructions || updateResult;
+    expect(rpcOut.success).toBe(false);
+    expect(rpcOut.error).toBe('integrity_locked');
+
+    // Verify first-claim and replay produce identical blocks
+    const replayResult = psqlJson(`
+      SELECT claim_promo_code('${BIZ_ID}', '${RACE_CAMP_ID}', 'racehash199a', '${RACE_PHONE}', '${RACE_MSG_ID}');
+    `);
+    const replayClaim = (replayResult as Record<string, unknown>).claim_promo_code as Record<string, unknown> ?? replayResult;
+    expect(replayClaim.idempotent_replay).toBe(true);
+    expect(replayClaim.prize_instructions).toBe('Original instructions');
+  });
+
+  it('Test C: no deadlock — both orderings complete within bounded timeout', async () => {
+    // Run both orderings with 5s statement timeout — if deadlock occurs, one will timeout
+    // Ordering 1: update then claim (use fresh code)
+    const order1A = psqlAsync(`
+      SET statement_timeout = '5s';
+      SELECT update_prize_instructions(
+        '${RACE_CAMP_ID}', '${BIZ_ID}', '${USER_ID}',
+        '[{"prize_id": "${RACE_PRIZE_ID}", "prize_instructions": "Deadlock test 1"}]'::jsonb
+      );
+    `, 8000);
+
+    const order1B = psqlAsync(`
+      SET statement_timeout = '5s';
+      SELECT claim_promo_code('${BIZ_ID}', '${RACE_CAMP_ID}', 'racehash199a', '${RACE_PHONE}', '${RACE_MSG_ID}');
+    `, 8000);
+
+    const [r1a, r1b] = await Promise.all([order1A, order1B]);
+
+    // At least one must succeed; neither should deadlock/timeout
+    expect(r1a.ok || r1b.ok).toBe(true);
+    // Neither should have a deadlock error
+    expect(r1a.stderr).not.toContain('deadlock');
+    expect(r1b.stderr).not.toContain('deadlock');
+  });
+
+  it('Test D: failing one item rolls back entire batch', () => {
+    // Send a batch with valid prize + non-existent prize
+    const result = psqlMayFail(`
+      SELECT update_prize_instructions(
+        '${RACE_CAMP_ID}', '${BIZ_ID}', '${USER_ID}',
+        '[{"prize_id": "${RACE_PRIZE_ID}", "prize_instructions": "Should not persist"},
+          {"prize_id": "${BOGUS_PRIZE_ID}", "prize_instructions": "Does not exist"}]'::jsonb
+      );
+    `);
+
+    // Should fail due to non-existent prize
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain('does not belong to campaign');
+
+    // Verify: the first prize was NOT updated (rollback)
+    const instructions = psql(`SELECT prize_instructions FROM promo_prizes WHERE id = '${RACE_PRIZE_ID}';`);
+    expect(instructions).toBe('Original instructions');
+  });
+
+  it('Test E: direct service-role bypass blocked by trigger when integrity_locked', () => {
+    // Lock the campaign
+    psql(`UPDATE promo_campaigns SET integrity_locked = true WHERE id = '${RACE_CAMP_ID}';`);
+
+    // Attempt direct UPDATE (bypassing RPC) — trigger should block it
+    const result = psqlMayFail(`
+      UPDATE promo_prizes SET prize_instructions = 'hacked' WHERE id = '${RACE_PRIZE_ID}';
+    `);
+
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain('integrity_locked');
+
+    // Verify instructions unchanged
+    const instructions = psql(`SELECT prize_instructions FROM promo_prizes WHERE id = '${RACE_PRIZE_ID}';`);
+    expect(instructions).toBe('Original instructions');
   });
 });

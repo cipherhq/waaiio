@@ -304,18 +304,31 @@ export async function PUT(request: NextRequest) {
     }
   }
 
-  // ── Prize updates (initial — will be replaced by atomic RPC in later commits) ──
+  // ── Prize updates ──
+  // Supports updating prize_instructions on individual prizes.
+  // Uses atomic RPC that locks the campaign row to serialize against claim_promo_code.
   const prizeUpdates = body.prizeUpdates as Array<{ prizeId: string; prize_instructions?: string | null }> | undefined;
   let updatedPrizes: unknown[] | undefined;
 
   if (Array.isArray(prizeUpdates) && prizeUpdates.length > 0) {
-    if (campaign.integrity_locked) {
+    // Reject mixed payloads: prizeUpdates cannot be combined with campaign mutations
+    const campaignMutationFields = [
+      'name', 'description', 'winnerMessage', 'tryAgainMessage', 'invalidMessage',
+      'alreadyUsedMessage', 'expiredMessage', 'eligibilityPrompt', 'status',
+      'startAt', 'endAt', 'timezone', 'codeEntryMode', 'keyword', 'acceptBareCodes',
+      'codeFormat', 'codeLength', 'codePrefix', 'maxAttemptsPerPhone',
+      'rateLimitWindowMinutes', 'rateLimitMaxAttempts', 'eligibilityMode',
+      'eligibilityMinAge', 'maxWinsPerParticipant',
+    ];
+    const hasCampaignMutation = campaignMutationFields.some(f => f in body);
+    if (hasCampaignMutation) {
       return NextResponse.json(
-        { error: 'Cannot update prize fields after redemptions have occurred (integrity_locked)' },
-        { status: 409 },
+        { error: 'prizeUpdates cannot be combined with campaign mutations in one request' },
+        { status: 400 },
       );
     }
 
+    // Validate types before calling RPC
     for (let i = 0; i < prizeUpdates.length; i++) {
       const pu = prizeUpdates[i];
       if (!pu.prizeId || typeof pu.prizeId !== 'string') {
@@ -331,27 +344,42 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    updatedPrizes = [];
-    for (const pu of prizeUpdates) {
-      const prizeUpdate: Record<string, unknown> = {};
-      if ('prize_instructions' in pu) {
-        prizeUpdate.prize_instructions = pu.prize_instructions?.trim() || null;
-      }
-      if (Object.keys(prizeUpdate).length > 0) {
-        const { data: updatedPrize, error: prizeError } = await service
-          .from('promo_prizes')
-          .update(prizeUpdate)
-          .eq('id', pu.prizeId)
-          .eq('campaign_id', campaignId)
-          .select()
-          .single();
-        if (prizeError) {
-          logger.error('[PROMOTIONS] prize update error:', prizeError);
-          return NextResponse.json({ error: `Failed to update prize ${pu.prizeId}` }, { status: 500 });
-        }
-        updatedPrizes.push(updatedPrize);
-      }
+    // Build RPC payload and call atomic update_prize_instructions
+    const rpcPayload = prizeUpdates.map(pu => ({
+      prize_id: pu.prizeId,
+      prize_instructions: pu.prize_instructions?.trim() ?? null,
+    }));
+
+    const { data: rpcResult, error: rpcError } = await service.rpc('update_prize_instructions', {
+      p_campaign_id: campaignId,
+      p_business_id: businessId,
+      p_actor_id: user.id,
+      p_updates: rpcPayload,
+    });
+
+    if (rpcError) {
+      logger.error('[PROMOTIONS] prize update RPC error:', rpcError);
+      return NextResponse.json({ error: rpcError.message }, { status: 500 });
     }
+    if (!rpcResult?.success) {
+      const err = (rpcResult as Record<string, unknown>)?.error as string | undefined;
+      if (err === 'integrity_locked') {
+        return NextResponse.json({ error: 'Cannot update prizes: campaign is integrity_locked' }, { status: 409 });
+      }
+      if (err === 'campaign_not_found') {
+        return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
+      }
+      return NextResponse.json({ error: err || 'Prize update failed' }, { status: 400 });
+    }
+
+    // Reload canonical prize state
+    const { data: reloadedPrizes } = await service
+      .from('promo_prizes')
+      .select('*')
+      .eq('campaign_id', campaignId)
+      .order('sort_order');
+
+    return NextResponse.json({ campaign, prizes: reloadedPrizes || [] });
   }
 
   if (Object.keys(updates).length === 1) {

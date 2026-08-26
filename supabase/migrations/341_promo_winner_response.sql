@@ -292,7 +292,7 @@ RETURNS TRIGGER AS $$
 DECLARE v_locked BOOLEAN;
 BEGIN
   IF NEW.prize_instructions IS DISTINCT FROM OLD.prize_instructions THEN
-    SELECT integrity_locked INTO v_locked FROM promo_campaigns WHERE id = NEW.campaign_id;
+    SELECT integrity_locked INTO v_locked FROM promo_campaigns WHERE id = NEW.campaign_id FOR UPDATE;
     IF v_locked THEN
       RAISE EXCEPTION 'Cannot update prize_instructions: campaign is integrity_locked'
         USING ERRCODE = 'check_violation';
@@ -315,6 +315,72 @@ CREATE TRIGGER trg_guard_prize_instructions_integrity
 ALTER TABLE promo_campaigns ALTER COLUMN winner_message SET DEFAULT 'Congratulations! 🎉';
 
 -- ═══════════════════════════════════════════════════════
+-- D. Atomic prize-update RPC
+-- ═══════════════════════════════════════════════════════
+-- Replaces N independent UPDATE statements with a single atomic RPC
+-- that locks the campaign row to serialize against claim_promo_code.
+
+CREATE OR REPLACE FUNCTION update_prize_instructions(
+  p_campaign_id UUID,
+  p_business_id UUID,
+  p_actor_id UUID,
+  p_updates JSONB  -- array of {prize_id: UUID, prize_instructions: TEXT|null}
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_campaign RECORD;
+  v_update JSONB;
+  v_prize_id UUID;
+  v_instructions TEXT;
+  v_updated_count INT := 0;
+  v_updated_ids UUID[] := '{}';
+BEGIN
+  -- 1. Lock parent campaign FOR UPDATE (serializes against claim_promo_code and routing updates)
+  SELECT * INTO v_campaign FROM promo_campaigns
+    WHERE id = p_campaign_id AND business_id = p_business_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'campaign_not_found');
+  END IF;
+
+  -- 2. Check integrity_locked (after acquiring lock — race-safe)
+  IF v_campaign.integrity_locked THEN
+    RETURN jsonb_build_object('success', false, 'error', 'integrity_locked');
+  END IF;
+
+  -- 3. Validate and update each prize atomically
+  FOR v_update IN SELECT * FROM jsonb_array_elements(p_updates)
+  LOOP
+    v_prize_id := (v_update->>'prize_id')::UUID;
+    v_instructions := v_update->>'prize_instructions';
+
+    -- Validate length
+    IF v_instructions IS NOT NULL AND length(v_instructions) > 500 THEN
+      RAISE EXCEPTION 'prize_instructions exceeds 500 characters for prize %', v_prize_id;
+    END IF;
+
+    -- Verify prize belongs to this campaign
+    IF NOT EXISTS (SELECT 1 FROM promo_prizes WHERE id = v_prize_id AND campaign_id = p_campaign_id) THEN
+      RAISE EXCEPTION 'Prize % does not belong to campaign %', v_prize_id, p_campaign_id;
+    END IF;
+
+    -- Update
+    UPDATE promo_prizes SET prize_instructions = v_instructions WHERE id = v_prize_id AND campaign_id = p_campaign_id;
+    v_updated_count := v_updated_count + 1;
+    v_updated_ids := array_append(v_updated_ids, v_prize_id);
+  END LOOP;
+
+  RETURN jsonb_build_object('success', true, 'updated_count', v_updated_count, 'updated_ids', v_updated_ids);
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION update_prize_instructions(UUID, UUID, UUID, JSONB) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION update_prize_instructions(UUID, UUID, UUID, JSONB) FROM anon;
+REVOKE EXECUTE ON FUNCTION update_prize_instructions(UUID, UUID, UUID, JSONB) FROM authenticated;
+GRANT EXECUTE ON FUNCTION update_prize_instructions(UUID, UUID, UUID, JSONB) TO service_role;
+
+-- ═══════════════════════════════════════════════════════
 -- Runtime verification
 -- ═══════════════════════════════════════════════════════
 DO $$
@@ -332,6 +398,12 @@ BEGIN
   IF NOT v_has THEN RAISE EXCEPTION '341: service_role cannot execute claim_promo_code'; END IF;
   SELECT has_function_privilege('anon', 'claim_promo_code(uuid, uuid, text, text, text)', 'EXECUTE') INTO v_has;
   IF v_has THEN RAISE EXCEPTION '341: anon CAN execute claim_promo_code (should be revoked)'; END IF;
+
+  -- Verify update_prize_instructions RPC privileges
+  SELECT has_function_privilege('service_role', 'update_prize_instructions(uuid, uuid, uuid, jsonb)', 'EXECUTE') INTO v_has;
+  IF NOT v_has THEN RAISE EXCEPTION '341: service_role cannot execute update_prize_instructions'; END IF;
+  SELECT has_function_privilege('anon', 'update_prize_instructions(uuid, uuid, uuid, jsonb)', 'EXECUTE') INTO v_has;
+  IF v_has THEN RAISE EXCEPTION '341: anon CAN execute update_prize_instructions (should be revoked)'; END IF;
 
   RAISE NOTICE '341: winner response block migration passed all checks';
 END $$;
