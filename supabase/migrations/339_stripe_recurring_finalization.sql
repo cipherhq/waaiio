@@ -164,7 +164,7 @@ BEGIN
     flow_type, channel, payment_source, deposit_amount, deposit_status, status,
     total_amount, quantity, guest_name, guest_phone, confirmed_at, notes
   ) VALUES (
-    v_sub.business_id, v_sub.user_id, v_sub.service_id, v_today, v_time, 1,
+    v_sub.business_id, v_sub.user_id, v_sub.service_id, v_today, v_time::TIME, 1,
     'payment', 'api', 'subscription',
     v_amount, 'paid', 'confirmed',
     v_amount, 1,
