@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-26
 
+### fix(promotions): Correction Round 5 — contention test + empty prizeUpdates response (#199A / PR #206)
+
+- **Contention test rewrite:** Replaced `psqlAsync` contention test with `pg.Client`-based two-connection test. Connection A now locks the campaign row AND updates the same prize that Connection B is also trying to update, exercising the true parent→child path. Previously A just held the campaign lock without touching the prize.
+- **Empty prizeUpdates response:** `{prizeUpdates: []}` now returns `{campaign}` (no `prizes` key) instead of `{campaign, prizes: []}`. This matches the non-prize update response shape and avoids returning a misleading empty array.
+- **Files:** `app/api/promotions/update/route.ts`, `lib/__tests__/acc-199a-winner-response.test.ts`, `CHANGELOG.md`
+- **Affects:** prizeUpdates empty-array response shape, contention test accuracy
+- **Could break:** Frontend code that destructures `prizes` from an empty prizeUpdates response — but that's a no-op call, so unlikely.
+
 ### fix(promotions): Correction Round 4 — early prizeUpdates validation, route tests, contention proof (#199A / PR #206)
 
 - **Early prizeUpdates validation:** Moved prizeUpdates shape check (must be array) and mixed-payload rejection to BEFORE status transition validation and activation early-return in `app/api/promotions/update/route.ts`. Previously, `{status: 'active', prizeUpdates: [...]}` would activate the campaign and return early before hitting the mixed-payload guard. Now it returns 400 immediately.

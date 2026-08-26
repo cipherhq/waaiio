@@ -133,7 +133,7 @@ export async function PUT(request: NextRequest) {
     }
     // Empty array: no-op, return current campaign
     if (rawPrizeUpdates.length === 0) {
-      return NextResponse.json({ campaign, prizes: [] });
+      return NextResponse.json({ campaign });
     }
   }
 
