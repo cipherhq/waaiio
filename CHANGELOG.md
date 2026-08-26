@@ -7,9 +7,10 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-26
 
-### fix(payments): Stripe recurring finalization authority — single atomic writer (#177)
+### fix(payments): Stripe recurring finalization authority — single atomic writer (#177) [Correction Round 1]
 
 - **What:** Replaced 6 independent sequential writes in Stripe `invoice.paid` customer-recurring handling with a single atomic PostgreSQL RPC (`finalize_stripe_recurring_charge`). Eliminated the legacy duplicate customer-recurring writer block.
+- **Correction R1:** Fixed booking channel from invalid `'recurring'` enum value to `'api'`; hardened RPC input validation (prefix checks, null-safe comparisons, exact cents equality with no tolerance, NULL gateway/status/currency fail closed); hardened route to reject missing/malformed invoice data without defaults; strict RPC result validation requiring `success === true`, boolean `already_finalized`, and typed canonical fields; replaced fake-schema PG tests with repo-native migrations; added executable webhook-route tests; added CI PostgreSQL step.
 - **Root cause:** If the process crashed after the payment INSERT but before subscription_charges/platform_fees/subscription counter updates, Stripe redelivery saw the existing payment and skipped all remaining writes. This could permanently preserve partial accounting state.
 - **Architecture (Revision 7):**
   - Stripe Invoice ID is the durable billing-cycle/finalization identity (NOT PaymentIntent)

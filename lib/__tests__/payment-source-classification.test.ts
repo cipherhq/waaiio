@@ -224,17 +224,17 @@ describe('Source tagging at creation', () => {
 
   it('Stripe recurring sets payment_source=subscription (in atomic RPC migration)', () => {
     // #177: Stripe recurring booking creation moved to atomic PostgreSQL RPC
-    // The RPC in migration 339 creates bookings with payment_source='subscription'
+    // The RPC in migration 339 creates bookings with channel='api', payment_source='subscription'
     expect(stripeFinalizationMigrationCode).toContain("'subscription'");
-    expect(stripeFinalizationMigrationCode).toContain("'recurring'");
+    expect(stripeFinalizationMigrationCode).toContain("'api'");
   });
 
   it('channel and payment_source are independent concepts', () => {
     // Bot sets channel=whatsapp AND payment_source=payment_request
     expect(botPaymentCode).toContain("channel: 'whatsapp'");
     expect(botPaymentCode).toContain("payment_source: 'payment_request'");
-    // Stripe recurring: channel=recurring AND payment_source=subscription (in RPC migration)
-    expect(stripeFinalizationMigrationCode).toContain("'recurring'");
+    // Stripe recurring: channel=api AND payment_source=subscription (in RPC migration)
+    expect(stripeFinalizationMigrationCode).toContain("'api'");
     expect(stripeFinalizationMigrationCode).toContain("'subscription'");
   });
 });

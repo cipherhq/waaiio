@@ -373,11 +373,28 @@ export async function POST(request: NextRequest) {
         } else if (customerSub) {
           // ── Customer recurring: atomic finalization via RPC (#177) ──
 
-          // Step 3: Extract payment identity (version-tolerant)
-          const invoiceAmountCents = (data.amount_paid as number) || 0;
-          const invoiceCurrency = ((data.currency as string) || 'USD').toUpperCase();
+          // Step 3: Validate invoice fields — reject malformed data before RPC
           const stripeInvoiceId = data.id as string;
+          if (!stripeInvoiceId || typeof stripeInvoiceId !== 'string' || !stripeInvoiceId.startsWith('in_')) {
+            logger.error('[STRIPE RECURRING] Malformed invoice ID:', stripeInvoiceId);
+            return NextResponse.json({ error: 'Malformed invoice ID' }, { status: 500 });
+          }
 
+          const rawAmountPaid = data.amount_paid;
+          if (rawAmountPaid == null || typeof rawAmountPaid !== 'number' || !Number.isInteger(rawAmountPaid) || rawAmountPaid <= 0) {
+            logger.error('[STRIPE RECURRING] Malformed/missing amount_paid:', rawAmountPaid);
+            return NextResponse.json({ error: 'Malformed invoice amount' }, { status: 500 });
+          }
+          const invoiceAmountCents = rawAmountPaid;
+
+          const rawCurrency = data.currency;
+          if (!rawCurrency || typeof rawCurrency !== 'string' || rawCurrency.trim() === '') {
+            logger.error('[STRIPE RECURRING] Malformed/missing currency:', rawCurrency);
+            return NextResponse.json({ error: 'Malformed invoice currency' }, { status: 500 });
+          }
+          const invoiceCurrency = rawCurrency.toUpperCase();
+
+          // Extract payment identity (version-tolerant)
           const paymentIdentity = extractInvoicePaymentIdentity(data, invoiceAmountCents, invoiceCurrency);
           if ('error' in paymentIdentity) {
             logger.error('[STRIPE RECURRING] Payment identity extraction failed:', paymentIdentity);
@@ -412,13 +429,23 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Finalization malformed result' }, { status: 500 });
           }
 
-          // Explicit failure → fail closed, retryable 5xx
-          if (!finResult.success) {
-            logger.error('[STRIPE RECURRING] Finalization rejected:', finResult.reason);
+          // Accept only explicit success === true with boolean already_finalized
+          if (finResult.success !== true || typeof finResult.already_finalized !== 'boolean') {
+            logger.error('[STRIPE RECURRING] Finalization rejected or malformed:', finResult.reason ?? finResult);
             return NextResponse.json(
-              { error: `Finalization rejected: ${finResult.reason}` },
+              { error: `Finalization rejected: ${finResult.reason ?? 'malformed_success'}` },
               { status: 500 },
             );
+          }
+
+          // Validate canonical fields before Stage 3
+          if (typeof finResult.payment_id !== 'string' ||
+              typeof finResult.booking_id !== 'string' ||
+              typeof finResult.booking_ref !== 'string' ||
+              typeof finResult.amount !== 'number' ||
+              typeof finResult.currency !== 'string') {
+            logger.error('[STRIPE RECURRING] Finalization missing canonical fields:', finResult);
+            return NextResponse.json({ error: 'Finalization incomplete canonical result' }, { status: 500 });
           }
 
           // ── Step 5: Stage 3 — runs on BOTH fresh and replay finalization ──
@@ -426,7 +453,7 @@ export async function POST(request: NextRequest) {
             const confirmResult = await sendProactiveConfirmation(supabase, {
               id: finResult.payment_id,
               amount: finResult.amount,
-              booking_id: finResult.booking_id || null,
+              booking_id: finResult.booking_id,
               invoice_id: null,
               campaign_id: null,
               reservation_id: null,

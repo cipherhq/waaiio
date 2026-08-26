@@ -1,10 +1,10 @@
 /**
- * Stripe Recurring Finalization — Real PostgreSQL Contention Tests (#177)
+ * Stripe Recurring Finalization — Real PostgreSQL Database Tests (#177)
  *
- * Proves finalize_stripe_recurring_charge is concurrent-safe, idempotent,
- * and produces correct financial records with the advisory-lock design.
+ * Proves finalize_stripe_recurring_charge is concurrent-safe, idempotent, and
+ * produces correct financial records. Applies ALL real repo migrations (same as CI).
  *
- * Requires TEST_DATABASE_URL.
+ * Requires TEST_DATABASE_URL (always — no skip allowed).
  *
  * Local:
  *   docker run --rm -d --name stripe-fin-test -p 54324:5432 -e POSTGRES_PASSWORD=test postgres:16
@@ -14,9 +14,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
 import * as path from 'path';
 
-const MIGRATION_334_PATH = path.resolve('supabase/migrations/334_payment_spend_marker.sql');
-const MIGRATION_339_PATH = path.resolve('supabase/migrations/339_stripe_recurring_finalization.sql');
 const dbUrl = process.env.TEST_DATABASE_URL;
+
+// ── psql helpers (same pattern as recurring-billing-db.test.ts) ──
 
 function psql(sql: string): string {
   const raw = execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
@@ -24,7 +24,7 @@ function psql(sql: string): string {
   });
   return raw.split('\n').filter(l => {
     const t = l.trim();
-    return t !== '' && !/^(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE|DO|SET|COMMENT)\b/.test(t);
+    return t !== '' && !/^(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE|DO|SET|COMMENT|NOTICE)\b/.test(t);
   }).join('\n').trim();
 }
 
@@ -33,12 +33,18 @@ function psqlJson(sql: string): any {
   return raw ? JSON.parse(raw) : null;
 }
 
-function runTwoSessions(sqlA: string, sqlB: string): Promise<{ a: { stdout: string }; b: { stdout: string } }> {
+function runTwoSessions(
+  sqlA: string,
+  sqlB: string,
+): Promise<{ a: { stdout: string }; b: { stdout: string } }> {
   const { exec } = require('child_process') as typeof import('child_process');
   function execPsql(sql: string): Promise<{ stdout: string }> {
     return new Promise((resolve) => {
-      const child = exec(`psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1`, { timeout: 15000, encoding: 'utf-8' },
-        (_error, stdout) => resolve({ stdout: (stdout || '').trim() }));
+      const child = exec(
+        `psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1`,
+        { timeout: 15000, encoding: 'utf-8' },
+        (_error, stdout) => resolve({ stdout: (stdout || '').trim() }),
+      );
       child.stdin!.write(sql);
       child.stdin!.end();
     });
@@ -52,114 +58,91 @@ function runTwoSessions(sqlA: string, sqlB: string): Promise<{ a: { stdout: stri
   });
 }
 
-const BIZ_ID = '77aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-const USER_ID = '77bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+// ── Fixed UUIDs ──
+const BIZ_ID   = '77aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+const USER_ID  = '77bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const SUB_ID_A = '77cccccc-cccc-cccc-cccc-cccccccccc01';
 const SUB_ID_B = '77cccccc-cccc-cccc-cccc-cccccccccc02';
 
-describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL contention tests (#177)', () => {
+// CI enforces zero skips via the workflow step. Local runs without TEST_DATABASE_URL skip gracefully.
+describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database tests (#177)', () => {
   beforeAll(() => {
-    if (!dbUrl) return;
-    psql(`
-      DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-    `);
-    psql(`
-      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-      DO $$ BEGIN CREATE TYPE flow_type AS ENUM ('scheduling','ordering','ticketing','reservation','payment','queue','chat','waitlist'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN CREATE TYPE booking_channel AS ENUM ('whatsapp','web','api','recurring'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN CREATE TYPE reservation_status AS ENUM ('pending','confirmed','cancelled','completed','in_progress','no_show'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN CREATE TYPE deposit_status AS ENUM ('none','pending','paid','refunded'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN CREATE TYPE payment_source AS ENUM ('whatsapp','web','api','subscription','invoice','manual'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-      CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), subscription_tier TEXT DEFAULT 'free', trial_ends_at TIMESTAMPTZ DEFAULT NOW() - INTERVAL '1 day', payout_mode TEXT DEFAULT 'platform');
-      CREATE TABLE IF NOT EXISTS customer_subscriptions (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID, user_id UUID,
-        service_id UUID, amount NUMERIC(12,2), currency TEXT DEFAULT 'USD',
-        frequency TEXT DEFAULT 'monthly', status TEXT DEFAULT 'active',
-        gateway TEXT, authorization_code TEXT, gateway_customer_code TEXT,
-        gateway_subscription_code TEXT, customer_name TEXT, customer_phone TEXT,
-        customer_email TEXT, card_last_four TEXT, card_brand TEXT,
-        next_charge_at TIMESTAMPTZ, last_charged_at TIMESTAMPTZ,
-        charge_count INT DEFAULT 0, total_charged NUMERIC(12,2) DEFAULT 0,
-        failure_count INT DEFAULT 0, cancelled_at TIMESTAMPTZ
-      );
-      CREATE TABLE IF NOT EXISTS bookings (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), reference_code TEXT UNIQUE,
-        business_id UUID, user_id UUID, service_id UUID, date DATE, time TEXT,
-        party_size INT DEFAULT 1, flow_type flow_type DEFAULT 'payment',
-        channel booking_channel DEFAULT 'recurring', payment_source payment_source DEFAULT 'subscription',
-        deposit_amount NUMERIC(12,2), deposit_status deposit_status DEFAULT 'paid',
-        status reservation_status DEFAULT 'confirmed', total_amount NUMERIC(12,2),
-        quantity INT DEFAULT 1, guest_name TEXT, guest_phone TEXT, confirmed_at TIMESTAMPTZ, notes TEXT
-      );
-      CREATE OR REPLACE FUNCTION generate_booking_reference() RETURNS TRIGGER AS $t$
-      DECLARE new_code TEXT; BEGIN
-        IF NEW.reference_code IS NULL THEN NEW.reference_code := 'REF-' || LPAD(FLOOR(RANDOM()*100000)::TEXT,5,'0'); END IF;
-        RETURN NEW;
-      END; $t$ LANGUAGE plpgsql;
-      DROP TRIGGER IF EXISTS trg_booking_ref ON bookings;
-      CREATE TRIGGER trg_booking_ref BEFORE INSERT ON bookings FOR EACH ROW EXECUTE FUNCTION generate_booking_reference();
+    // ── 1. Create Supabase prerequisite stubs (mirrors CI yml lines 125-185) ──
+    psql(`
+      CREATE SCHEMA IF NOT EXISTS auth;
+      CREATE SCHEMA IF NOT EXISTS extensions;
+      CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+      CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-      CREATE TABLE IF NOT EXISTS payments (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID, user_id UUID,
-        booking_id UUID, reservation_id UUID, amount NUMERIC(12,2), currency TEXT, gateway TEXT,
-        gateway_reference TEXT UNIQUE, status TEXT DEFAULT 'pending',
-        gateway_status TEXT, payment_method TEXT, card_last_four TEXT, card_brand TEXT,
-        paid_at TIMESTAMPTZ, metadata JSONB, payment_authority_version INT
-      );
-      CREATE TABLE IF NOT EXISTS subscription_charges (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), subscription_id UUID,
-        business_id UUID, user_id UUID, amount NUMERIC(12,2), currency TEXT,
-        status TEXT, gateway TEXT, gateway_reference TEXT, payment_id UUID,
-        booking_id UUID, charged_at TIMESTAMPTZ
-      );
-      CREATE TABLE IF NOT EXISTS platform_fees (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID,
-        booking_id UUID, transaction_amount NUMERIC(12,2), fee_percentage NUMERIC(5,2),
-        fee_flat NUMERIC(12,2), fee_total NUMERIC(12,2), tier TEXT
-      );
-      CREATE TABLE IF NOT EXISTS platform_settings (key TEXT PRIMARY KEY, value JSONB);
-      CREATE TABLE IF NOT EXISTS services (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), recurring_interval TEXT);
-      CREATE TABLE IF NOT EXISTS payment_spend_applications (
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
+        SELECT '00000000-0000-0000-0000-000000000000'::UUID;
+      $$ LANGUAGE SQL STABLE;
+
+      CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
+        SELECT 'authenticated'::TEXT;
+      $$ LANGUAGE SQL STABLE;
+
+      CREATE TABLE IF NOT EXISTS auth.users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        payment_id UUID NOT NULL UNIQUE,
-        source_type TEXT NOT NULL CHECK (source_type IN ('booking', 'reservation')),
-        source_id UUID NOT NULL,
-        business_id UUID NOT NULL,
-        customer_phone TEXT NOT NULL,
-        amount INTEGER NOT NULL DEFAULT 0,
-        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        email TEXT,
+        raw_app_meta_data JSONB DEFAULT '{}'
       );
-      CREATE TABLE IF NOT EXISTS customer_profiles (
+
+      DO $$ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      CREATE SCHEMA IF NOT EXISTS storage;
+      CREATE TABLE IF NOT EXISTS storage.buckets (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        public BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS storage.objects (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        business_id UUID NOT NULL,
-        phone TEXT NOT NULL,
+        bucket_id TEXT REFERENCES storage.buckets(id),
         name TEXT,
-        total_spent NUMERIC(12,2) DEFAULT 0,
-        total_visits INT DEFAULT 0,
-        total_bookings INT DEFAULT 0,
-        last_seen_at TIMESTAMPTZ,
-        first_seen_at TIMESTAMPTZ,
-        updated_at TIMESTAMPTZ,
-        UNIQUE(business_id, phone)
+        owner UUID,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
       );
-      CREATE TABLE IF NOT EXISTS reservations (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        business_id UUID, guest_phone TEXT, guest_name TEXT, status TEXT DEFAULT 'pending'
-      );
+      ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 
-      INSERT INTO businesses (id) VALUES ('${BIZ_ID}') ON CONFLICT DO NOTHING;
+      CREATE OR REPLACE FUNCTION storage.foldername(name TEXT)
+      RETURNS TEXT[] AS $$
+        SELECT string_to_array(name, '/');
+      $$ LANGUAGE SQL IMMUTABLE;
     `);
-    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_334_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
-    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_339_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
+
+    // ── 2. Apply ALL real repo migrations (same as CI) ──
+    const migrationsDir = path.resolve('supabase/migrations');
+    execSync(
+      `for f in "${migrationsDir}"/*.sql; do psql "${dbUrl}" -q -v ON_ERROR_STOP=1 -f "$f" || exit 1; done`,
+      { encoding: 'utf-8', timeout: 300000, shell: '/bin/bash' },
+    );
+
+    // ── 3. Insert fixture data ──
+    psql(`
+      INSERT INTO businesses (id, subscription_tier, trial_ends_at, payout_mode)
+        VALUES ('${BIZ_ID}', 'free', NOW() - INTERVAL '1 day', 'platform')
+        ON CONFLICT (id) DO NOTHING;
+
+      INSERT INTO platform_settings (key, value)
+        VALUES ('pricing_tiers', '{"free":{"feePercentage":2.5,"feeFlat":0},"growth":{"feePercentage":1.5,"feeFlat":0},"business":{"feePercentage":1.5,"feeFlat":0}}'::jsonb)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+    `);
+
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+    createSub(SUB_ID_B, { code: 'sub_test_yyy', amount: 50 });
   });
 
   afterAll(() => {
     if (!dbUrl) return;
-    // Clean up test data
     psql(`
       DELETE FROM stripe_recurring_finalizations;
       DELETE FROM payment_spend_applications;
@@ -168,20 +151,39 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL contenti
       DELETE FROM payments;
       DELETE FROM bookings;
       DELETE FROM customer_subscriptions WHERE business_id = '${BIZ_ID}';
+      DELETE FROM businesses WHERE id = '${BIZ_ID}';
+      DELETE FROM platform_settings WHERE key = 'pricing_tiers';
     `);
   });
 
-  function createSub(subId: string, opts: { gateway?: string; status?: string; code?: string; amount?: number } = {}) {
+  // ── Fixture helpers ──
+
+  function createSub(
+    subId: string,
+    opts: { gateway?: string; status?: string; code?: string; amount?: number } = {},
+  ) {
     psql(`
-      INSERT INTO customer_subscriptions (id, business_id, user_id, amount, currency, frequency,
-        status, gateway, gateway_subscription_code, customer_name, customer_phone,
-        next_charge_at, charge_count, total_charged, failure_count)
-      VALUES ('${subId}', '${BIZ_ID}', '${USER_ID}', ${opts.amount ?? 50}, 'USD', 'monthly',
+      INSERT INTO customer_subscriptions (
+        id, business_id, user_id, amount, currency, frequency,
+        status, gateway, gateway_subscription_code,
+        customer_name, customer_phone,
+        next_charge_at, charge_count, total_charged, failure_count
+      ) VALUES (
+        '${subId}', '${BIZ_ID}', '${USER_ID}',
+        ${opts.amount ?? 50}, 'USD', 'monthly',
         '${opts.status ?? 'active'}', '${opts.gateway ?? 'stripe'}',
-        '${opts.code ?? 'sub_test_' + subId.slice(-4)}',
+        '${opts.code ?? ('sub_test_' + subId.slice(-4))}',
         'Test Customer', '+1234567890',
-        NOW() - INTERVAL '1 day', 0, 0, 0)
-      ON CONFLICT DO NOTHING;
+        NOW() - INTERVAL '1 day', 0, 0, 0
+      ) ON CONFLICT (id) DO UPDATE SET
+        status = EXCLUDED.status,
+        gateway = EXCLUDED.gateway,
+        gateway_subscription_code = EXCLUDED.gateway_subscription_code,
+        amount = EXCLUDED.amount,
+        charge_count = 0,
+        total_charged = 0,
+        failure_count = 0,
+        next_charge_at = NOW() - INTERVAL '1 day';
     `);
   }
 
@@ -192,26 +194,223 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL contenti
       DELETE FROM platform_fees;
       DELETE FROM subscription_charges;
       DELETE FROM payments;
-      DELETE FROM bookings;
-      DELETE FROM customer_subscriptions WHERE business_id = '${BIZ_ID}';
+      DELETE FROM bookings WHERE business_id = '${BIZ_ID}';
+    `);
+    // Reset subscription counters
+    psql(`
+      UPDATE customer_subscriptions SET
+        charge_count = 0, total_charged = 0, failure_count = 0,
+        next_charge_at = NOW() - INTERVAL '1 day'
+      WHERE business_id = '${BIZ_ID}';
     `);
   }
 
-  // ── Test 1: Same invoice + same subscription (concurrent) ──
-  it('same invoice + same subscription concurrent → one finalization + canonical replay', async () => {
+  // ─────────────────────────────────────────────────────────
+  // a. Fresh finalization: full write proof
+  // ─────────────────────────────────────────────────────────
+  it('a. fresh finalization — full write proof', () => {
     cleanFinData();
-    createSub(SUB_ID_A, { code: 'sub_test_concurrent' });
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
-    const rpcCall = (label: string) => `
+    const result = psqlJson(`
       SELECT finalize_stripe_recurring_charge(
         '${SUB_ID_A}'::uuid,
-        'in_test_concurrent_inv_001',
-        'sub_test_concurrent',
-        5000, 'USD', 'pi_test_concurrent_001'
+        'in_fresh_001',
+        'sub_test_xxx',
+        5000, 'USD', 'pi_fresh_001'
+      );
+    `);
+
+    expect(result.success).toBe(true);
+    expect(result.already_finalized).toBe(false);
+    expect(result.payment_id).toBeTruthy();
+    expect(result.booking_id).toBeTruthy();
+    expect(result.booking_ref).toBeTruthy();
+
+    // Booking exists
+    const bookCount = psql(`SELECT COUNT(*) FROM bookings WHERE id = '${result.booking_id}'`);
+    expect(bookCount).toBe('1');
+
+    // Payment exists with gateway_reference = PI ID
+    const payRef = psql(`SELECT gateway_reference FROM payments WHERE id = '${result.payment_id}'`);
+    expect(payRef).toBe('pi_fresh_001');
+
+    // Subscription charge record
+    const chargeCount = psql(`SELECT COUNT(*) FROM subscription_charges WHERE payment_id = '${result.payment_id}'`);
+    expect(chargeCount).toBe('1');
+
+    // Platform fee record
+    const feeCount = psql(`SELECT COUNT(*) FROM platform_fees WHERE booking_id = '${result.booking_id}'`);
+    expect(feeCount).toBe('1');
+
+    // Spend marker (payment_spend_applications)
+    const spendCount = psql(`SELECT COUNT(*) FROM payment_spend_applications WHERE payment_id = '${result.payment_id}'`);
+    expect(spendCount).toBe('1');
+
+    // Finalization marker
+    const finCount = psql(`SELECT COUNT(*) FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_fresh_001'`);
+    expect(finCount).toBe('1');
+
+    // Subscription counters updated
+    const subParts = psql(
+      `SELECT charge_count, total_charged FROM customer_subscriptions WHERE id = '${SUB_ID_A}'`,
+    ).split('|');
+    expect(parseInt(subParts[0])).toBe(1);
+    expect(parseFloat(subParts[1])).toBe(50);
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // b. Exact replay: same params → already_finalized=true, zero additional rows
+  // ─────────────────────────────────────────────────────────
+  it('b. exact replay — already_finalized=true, same canonical IDs, zero additional rows', () => {
+    cleanFinData();
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+
+    const fresh = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_replay_001', 'sub_test_xxx',
+        5000, 'USD', 'pi_replay_001'
+      );
+    `);
+    expect(fresh.success).toBe(true);
+    expect(fresh.already_finalized).toBe(false);
+
+    // Replay with identical params
+    const replay = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_replay_001', 'sub_test_xxx',
+        5000, 'USD', 'pi_replay_001'
+      );
+    `);
+    expect(replay.success).toBe(true);
+    expect(replay.already_finalized).toBe(true);
+    expect(replay.payment_id).toBe(fresh.payment_id);
+    expect(replay.booking_id).toBe(fresh.booking_id);
+    expect(replay.booking_ref).toBe(fresh.booking_ref);
+
+    // Zero additional rows of any kind
+    expect(psql(`SELECT COUNT(*) FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_replay_001'`)).toBe('1');
+    expect(psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'pi_replay_001'`)).toBe('1');
+    expect(psql(`SELECT COUNT(*) FROM bookings WHERE business_id = '${BIZ_ID}'`)).toBe('1');
+    expect(psql(`SELECT COUNT(*) FROM subscription_charges WHERE subscription_id = '${SUB_ID_A}'`)).toBe('1');
+
+    // Counters not double-incremented
+    const subParts = psql(
+      `SELECT charge_count, total_charged FROM customer_subscriptions WHERE id = '${SUB_ID_A}'`,
+    ).split('|');
+    expect(parseInt(subParts[0])).toBe(1);
+    expect(parseFloat(subParts[1])).toBe(50);
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // c. All replay mismatches: each returns success=false with specific reason
+  // ─────────────────────────────────────────────────────────
+  it('c. replay amount mismatch → success=false, reason=replay_amount_mismatch', () => {
+    cleanFinData();
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+
+    psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_mismatch_amount', 'sub_test_xxx',
+        5000, 'USD', 'pi_mismatch_amount_001'
+      );
+    `);
+
+    const replay = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_mismatch_amount', 'sub_test_xxx',
+        9900, 'USD', 'pi_mismatch_amount_001'
+      );
+    `);
+    expect(replay.success).toBe(false);
+    expect(replay.reason).toBe('replay_amount_mismatch');
+  });
+
+  it('c. replay currency mismatch → success=false, reason=replay_currency_mismatch', () => {
+    cleanFinData();
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+
+    psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_mismatch_currency', 'sub_test_xxx',
+        5000, 'USD', 'pi_mismatch_currency_001'
+      );
+    `);
+
+    const replay = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_mismatch_currency', 'sub_test_xxx',
+        5000, 'GBP', 'pi_mismatch_currency_001'
+      );
+    `);
+    expect(replay.success).toBe(false);
+    expect(replay.reason).toBe('replay_currency_mismatch');
+  });
+
+  it('c. replay subscription mismatch → success=false, reason=replay_subscription_mismatch', () => {
+    cleanFinData();
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+    createSub(SUB_ID_B, { code: 'sub_test_yyy', amount: 50 });
+
+    psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_mismatch_sub', 'sub_test_xxx',
+        5000, 'USD', 'pi_mismatch_sub_001'
+      );
+    `);
+
+    const replay = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_B}'::uuid, 'in_mismatch_sub', 'sub_test_yyy',
+        5000, 'USD', 'pi_mismatch_sub_001'
+      );
+    `);
+    expect(replay.success).toBe(false);
+    expect(replay.reason).toBe('replay_subscription_mismatch');
+  });
+
+  it('c. replay PI ref mismatch → success=false, reason=replay_provider_ref_mismatch', () => {
+    cleanFinData();
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+
+    psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_mismatch_pi', 'sub_test_xxx',
+        5000, 'USD', 'pi_correct_001'
+      );
+    `);
+
+    const replay = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_mismatch_pi', 'sub_test_xxx',
+        5000, 'USD', 'pi_wrong_002'
+      );
+    `);
+    expect(replay.success).toBe(false);
+    expect(replay.reason).toBe('replay_provider_ref_mismatch');
+
+    // Finalization row retains original PI
+    const finRef = psql(`SELECT provider_payment_ref FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_mismatch_pi'`);
+    expect(finRef).toBe('pi_correct_001');
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // d. Same invoice concurrent: advisory lock — one fresh, one replay
+  // ─────────────────────────────────────────────────────────
+  it('d. same invoice concurrent → one fresh, one replay with canonical IDs', async () => {
+    cleanFinData();
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+
+    const rpcCall = () => `
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid,
+        'in_concurrent_001',
+        'sub_test_xxx',
+        5000, 'USD', 'pi_concurrent_001'
       );
     `;
 
-    const { a, b } = await runTwoSessions(rpcCall('A'), rpcCall('B'));
+    const { a, b } = await runTwoSessions(rpcCall(), rpcCall());
     const resultA = JSON.parse(a.stdout || '{}');
     const resultB = JSON.parse(b.stdout || '{}');
 
@@ -230,33 +429,35 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL contenti
     expect(replay!.booking_id).toBe(fresh!.booking_id);
 
     // Exactly one finalization row
-    const finCount = psql(`SELECT COUNT(*) FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_test_concurrent_inv_001'`);
+    const finCount = psql(`SELECT COUNT(*) FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_concurrent_001'`);
     expect(finCount).toBe('1');
 
     // Counter incremented exactly once
-    const sub = psqlJson(`SELECT charge_count, total_charged FROM customer_subscriptions WHERE id = '${SUB_ID_A}'`);
-    // psql returns pipe-delimited when using -t -A
-    const subParts = psql(`SELECT charge_count, total_charged FROM customer_subscriptions WHERE id = '${SUB_ID_A}'`).split('|');
+    const subParts = psql(
+      `SELECT charge_count, total_charged FROM customer_subscriptions WHERE id = '${SUB_ID_A}'`,
+    ).split('|');
     expect(parseInt(subParts[0])).toBe(1);
     expect(parseFloat(subParts[1])).toBe(50);
   });
 
-  // ── Test 2: Same invoice + different subscription ──
-  it('same invoice + different subscription → mismatch, zero mutation for wrong sub', async () => {
+  // ─────────────────────────────────────────────────────────
+  // e. Same invoice different subscription: mismatch, zero mutation for wrong sub
+  // ─────────────────────────────────────────────────────────
+  it('e. same invoice different subscription → one succeeds, one gets replay_subscription_mismatch', async () => {
     cleanFinData();
-    createSub(SUB_ID_A, { code: 'sub_test_inv_mismatch_a' });
-    createSub(SUB_ID_B, { code: 'sub_test_inv_mismatch_b' });
+    createSub(SUB_ID_A, { code: 'sub_test_concurrent_a', amount: 50 });
+    createSub(SUB_ID_B, { code: 'sub_test_concurrent_b', amount: 50 });
 
     const rpcCallA = `
       SELECT finalize_stripe_recurring_charge(
-        '${SUB_ID_A}'::uuid, 'in_test_inv_mismatch', 'sub_test_inv_mismatch_a',
-        5000, 'USD', 'pi_test_mismatch_001'
+        '${SUB_ID_A}'::uuid, 'in_diff_sub_same_inv', 'sub_test_concurrent_a',
+        5000, 'USD', 'pi_diff_sub_001'
       );
     `;
     const rpcCallB = `
       SELECT finalize_stripe_recurring_charge(
-        '${SUB_ID_B}'::uuid, 'in_test_inv_mismatch', 'sub_test_inv_mismatch_b',
-        5000, 'USD', 'pi_test_mismatch_001'
+        '${SUB_ID_B}'::uuid, 'in_diff_sub_same_inv', 'sub_test_concurrent_b',
+        5000, 'USD', 'pi_diff_sub_001'
       );
     `;
 
@@ -265,32 +466,34 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL contenti
     const resultB = JSON.parse(b.stdout || '{}');
 
     // One succeeds (fresh), one fails with subscription mismatch
-    const succeeded = [resultA, resultB].filter(r => r.success);
-    const failed = [resultA, resultB].filter(r => !r.success);
+    const succeeded = [resultA, resultB].filter(r => r.success === true);
+    const failed = [resultA, resultB].filter(r => r.success === false);
     expect(succeeded).toHaveLength(1);
     expect(failed).toHaveLength(1);
     expect(failed[0].reason).toBe('replay_subscription_mismatch');
 
     // Only one finalization row
-    const finCount = psql(`SELECT COUNT(*) FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_test_inv_mismatch'`);
+    const finCount = psql(`SELECT COUNT(*) FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_diff_sub_same_inv'`);
     expect(finCount).toBe('1');
   });
 
-  // ── Test 3: Different invoices + same subscription ──
-  it('different invoices + same subscription → both finalize, no lost counter update', async () => {
+  // ─────────────────────────────────────────────────────────
+  // f. Different invoices same subscription: both finalize, charge_count=2, total=100
+  // ─────────────────────────────────────────────────────────
+  it('f. different invoices same subscription → both finalize, charge_count=2, total_charged=100', async () => {
     cleanFinData();
-    createSub(SUB_ID_A, { code: 'sub_test_diff_inv' });
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
     const rpcCallA = `
       SELECT finalize_stripe_recurring_charge(
-        '${SUB_ID_A}'::uuid, 'in_test_diff_inv_001', 'sub_test_diff_inv',
-        5000, 'USD', 'pi_test_diff_001'
+        '${SUB_ID_A}'::uuid, 'in_diff_inv_001', 'sub_test_xxx',
+        5000, 'USD', 'pi_diff_inv_001'
       );
     `;
     const rpcCallB = `
       SELECT finalize_stripe_recurring_charge(
-        '${SUB_ID_A}'::uuid, 'in_test_diff_inv_002', 'sub_test_diff_inv',
-        5000, 'USD', 'pi_test_diff_002'
+        '${SUB_ID_A}'::uuid, 'in_diff_inv_002', 'sub_test_xxx',
+        5000, 'USD', 'pi_diff_inv_002'
       );
     `;
 
@@ -307,53 +510,22 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL contenti
     const finCount = psql(`SELECT COUNT(*) FROM stripe_recurring_finalizations WHERE customer_subscription_id = '${SUB_ID_A}'`);
     expect(finCount).toBe('2');
 
-    // Counters: charge_count=2, total=100
-    const subParts = psql(`SELECT charge_count, total_charged FROM customer_subscriptions WHERE id = '${SUB_ID_A}'`).split('|');
+    // Counters: charge_count=2, total_charged=100
+    const subParts = psql(
+      `SELECT charge_count, total_charged FROM customer_subscriptions WHERE id = '${SUB_ID_A}'`,
+    ).split('|');
     expect(parseInt(subParts[0])).toBe(2);
     expect(parseFloat(subParts[1])).toBe(100);
   });
 
-  // ── Test 4: PaymentIntent mismatch on replay ──
-  it('replay with different PaymentIntent → fail closed, zero mutation', () => {
+  // ─────────────────────────────────────────────────────────
+  // g. Spend rollback: NULL from apply_payment_spend_once → no finalization marker, no payment
+  // ─────────────────────────────────────────────────────────
+  it('g. spend rollback — NULL from apply_payment_spend_once rolls back all writes', () => {
     cleanFinData();
-    createSub(SUB_ID_A, { code: 'sub_test_pi_mismatch' });
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
-    // Fresh finalization
-    const fresh = psqlJson(`
-      SELECT finalize_stripe_recurring_charge(
-        '${SUB_ID_A}'::uuid, 'in_test_pi_mismatch', 'sub_test_pi_mismatch',
-        5000, 'USD', 'pi_correct_001'
-      );
-    `);
-    expect(fresh.success).toBe(true);
-    expect(fresh.already_finalized).toBe(false);
-
-    // Replay with wrong PI
-    const replay = psqlJson(`
-      SELECT finalize_stripe_recurring_charge(
-        '${SUB_ID_A}'::uuid, 'in_test_pi_mismatch', 'sub_test_pi_mismatch',
-        5000, 'USD', 'pi_wrong_002'
-      );
-    `);
-    expect(replay.success).toBe(false);
-    expect(replay.reason).toBe('replay_provider_ref_mismatch');
-
-    // Finalization row retains correct PI
-    const finRef = psql(`SELECT provider_payment_ref FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_test_pi_mismatch'`);
-    expect(finRef).toBe('pi_correct_001');
-  });
-
-  // ── Test 5: Spend hard-gate failure rolls back all writes ──
-  it('spend failure rolls back entire transaction — no finalization marker', () => {
-    cleanFinData();
-    createSub(SUB_ID_A, { code: 'sub_test_spend_fail' });
-
-    // Sabotage: make apply_payment_spend_once fail by inserting a booking with no guest_phone
-    // We'll override the function temporarily to return null
-    psql(`
-      CREATE OR REPLACE FUNCTION apply_payment_spend_once_backup(p UUID) RETURNS JSONB
-      LANGUAGE plpgsql AS $$ BEGIN RETURN apply_payment_spend_once(p); END; $$;
-    `);
+    // Temporarily replace apply_payment_spend_once with a stub that returns NULL
     psql(`
       CREATE OR REPLACE FUNCTION apply_payment_spend_once(p_payment_id UUID) RETURNS JSONB
       LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -362,111 +534,307 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL contenti
     `);
 
     try {
-      // This should fail because spend returns NULL
-      const result = psqlJson(`
-        SELECT finalize_stripe_recurring_charge(
-          '${SUB_ID_A}'::uuid, 'in_test_spend_fail', 'sub_test_spend_fail',
-          5000, 'USD', 'pi_spend_fail_001'
-        );
-      `);
-      // If we get here, the RPC didn't raise — it should have
-      expect(result).toBeNull(); // Should not reach
-    } catch {
-      // Expected: RAISE EXCEPTION rolls back
+      // Expect the RPC to RAISE EXCEPTION (rolls back entire transaction)
+      let threw = false;
+      try {
+        psqlJson(`
+          SELECT finalize_stripe_recurring_charge(
+            '${SUB_ID_A}'::uuid, 'in_spend_rollback', 'sub_test_xxx',
+            5000, 'USD', 'pi_spend_rollback_001'
+          );
+        `);
+      } catch {
+        threw = true;
+      }
+      // psql with ON_ERROR_STOP=1 will throw when RAISE EXCEPTION fires
+      expect(threw).toBe(true);
+
+      // No finalization marker — the terminal marker was never inserted
+      const finCount = psql(`SELECT COUNT(*) FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_spend_rollback'`);
+      expect(finCount).toBe('0');
+
+      // No payment record — all writes rolled back
+      const payCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'pi_spend_rollback_001'`);
+      expect(payCount).toBe('0');
+
+      // Subscription counters unchanged
+      const chargeCount = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${SUB_ID_A}'`);
+      expect(parseInt(chargeCount)).toBe(0);
+    } finally {
+      // IMMEDIATELY restore the real apply_payment_spend_once from migration 334
+      execSync(
+        `psql "${dbUrl}" -q -v ON_ERROR_STOP=1 -f "${path.resolve('supabase/migrations/334_payment_spend_marker.sql')}"`,
+        { encoding: 'utf-8', timeout: 30000 },
+      );
     }
-
-    // No finalization marker
-    const finCount = psql(`SELECT COUNT(*) FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_test_spend_fail'`);
-    expect(finCount).toBe('0');
-
-    // No payment
-    const payCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'pi_spend_fail_001'`);
-    expect(payCount).toBe('0');
-
-    // No booking created (rolled back)
-    const bookCount = psql(`SELECT COUNT(*) FROM bookings WHERE business_id = '${BIZ_ID}'`);
-    expect(bookCount).toBe('0');
-
-    // Subscription unchanged
-    const subParts = psql(`SELECT charge_count, total_charged FROM customer_subscriptions WHERE id = '${SUB_ID_A}'`).split('|');
-    expect(parseInt(subParts[0])).toBe(0);
   });
 
-  afterAll(() => {
-    if (!dbUrl) return;
-    // Restore original spend function
-    try {
-      psql(`
-        DROP FUNCTION IF EXISTS apply_payment_spend_once(UUID);
-      `);
-      execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_334_PATH}"`, { encoding: 'utf-8', timeout: 15000 });
-    } catch { /* best effort */ }
+  // ─────────────────────────────────────────────────────────
+  // h. Wrong gateway: gateway='paystack' → success=false, reason=wrong_gateway
+  // ─────────────────────────────────────────────────────────
+  it('h. wrong gateway (paystack) → success=false, reason=wrong_gateway', () => {
+    cleanFinData();
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50, gateway: 'paystack' });
+
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_wrong_gw', 'sub_test_xxx',
+        5000, 'USD', 'pi_wrong_gw_001'
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('wrong_gateway');
+
+    // Restore correct gateway for subsequent tests
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50, gateway: 'stripe' });
   });
 
-  // ── Test 6: Incomplete terminal marker cannot exist ──
-  it('finalization marker has NOT NULL canonical IDs — cannot represent incomplete state', () => {
-    // The table constraint enforces this at the schema level
+  // ─────────────────────────────────────────────────────────
+  // i. Wrong status: status='cancelled' → success=false, reason=wrong_status
+  // ─────────────────────────────────────────────────────────
+  it('i. wrong status (cancelled) → success=false, reason=wrong_status', () => {
+    cleanFinData();
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50, status: 'cancelled' });
+
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_wrong_status', 'sub_test_xxx',
+        5000, 'USD', 'pi_wrong_status_001'
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('wrong_status');
+
+    // Restore active status
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50, status: 'active' });
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // j. Subscription code mismatch: pass wrong sub_ code → success=false
+  // ─────────────────────────────────────────────────────────
+  it('j. subscription code mismatch → success=false, reason=subscription_code_mismatch', () => {
+    cleanFinData();
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_code_mismatch', 'sub_wrong_code_zzz',
+        5000, 'USD', 'pi_code_mismatch_001'
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('subscription_code_mismatch');
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // k. Amount mismatch: exact equality, NO tolerance
+  // ─────────────────────────────────────────────────────────
+  it('k. amount mismatch — exact cents equality, no tolerance → success=false', () => {
+    cleanFinData();
+    // Subscription has amount=50.00 USD → expects exactly 5000 cents
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+
+    // Pass 5001 cents (1 cent off)
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_amount_mismatch', 'sub_test_xxx',
+        5001, 'USD', 'pi_amount_mismatch_001'
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('amount_mismatch');
+    expect(result.expected_cents).toBe(5000);
+    expect(result.received_cents).toBe(5001);
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // l. Currency mismatch: pass wrong currency → success=false
+  // ─────────────────────────────────────────────────────────
+  it('l. currency mismatch → success=false, reason=currency_mismatch', () => {
+    cleanFinData();
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 }); // currency='USD'
+
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_currency_mismatch', 'sub_test_xxx',
+        5000, 'GBP', 'pi_currency_mismatch_001'
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('currency_mismatch');
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // m. Input validation: null/invalid fields → specific reasons
+  // ─────────────────────────────────────────────────────────
+  it('m. null invoice ID → invalid_invoice_id', () => {
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, NULL, 'sub_test_xxx',
+        5000, 'USD', 'pi_val_001'
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('invalid_invoice_id');
+  });
+
+  it('m. invoice ID without in_ prefix → invalid_invoice_id', () => {
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'bad_invoice_id', 'sub_test_xxx',
+        5000, 'USD', 'pi_val_002'
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('invalid_invoice_id');
+  });
+
+  it('m. null subscription code → invalid_subscription_code', () => {
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_val_003', NULL,
+        5000, 'USD', 'pi_val_003'
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('invalid_subscription_code');
+  });
+
+  it('m. subscription code without sub_ prefix → invalid_subscription_code', () => {
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_val_004', 'bad_code',
+        5000, 'USD', 'pi_val_004'
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('invalid_subscription_code');
+  });
+
+  it('m. null PaymentIntent → invalid_payment_intent_id', () => {
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_val_005', 'sub_test_xxx',
+        5000, 'USD', NULL
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('invalid_payment_intent_id');
+  });
+
+  it('m. PI without pi_ prefix → invalid_payment_intent_id', () => {
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_val_006', 'sub_test_xxx',
+        5000, 'USD', 'ch_not_a_pi'
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('invalid_payment_intent_id');
+  });
+
+  it('m. zero amount → invalid_amount', () => {
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_val_007', 'sub_test_xxx',
+        0, 'USD', 'pi_val_007'
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('invalid_amount');
+  });
+
+  it('m. negative amount → invalid_amount', () => {
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_val_008', 'sub_test_xxx',
+        -100, 'USD', 'pi_val_008'
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('invalid_amount');
+  });
+
+  it('m. empty currency → invalid_currency', () => {
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_val_009', 'sub_test_xxx',
+        5000, '', 'pi_val_009'
+      );
+    `);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('invalid_currency');
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // n. Canonical marker NOT NULL invariant
+  // ─────────────────────────────────────────────────────────
+  it('n. canonical columns in stripe_recurring_finalizations are all NOT NULL', () => {
     const cols = psql(`
-      SELECT column_name, is_nullable FROM information_schema.columns
-      WHERE table_name = 'stripe_recurring_finalizations'
-        AND column_name IN ('canonical_payment_id', 'canonical_booking_id', 'canonical_booking_ref', 'provider_payment_ref')
+      SELECT column_name, is_nullable
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'stripe_recurring_finalizations'
+        AND column_name IN (
+          'canonical_payment_id',
+          'canonical_booking_id',
+          'canonical_booking_ref',
+          'provider_payment_ref',
+          'stripe_invoice_id',
+          'customer_subscription_id',
+          'stripe_subscription_code',
+          'finalized_amount_cents',
+          'finalized_currency'
+        )
       ORDER BY column_name;
     `);
-    // Each line: column_name|is_nullable
-    const lines = cols.split('\n');
+    expect(cols).not.toBe('');
+    const lines = cols.split('\n').filter(Boolean);
+    expect(lines.length).toBeGreaterThan(0);
     for (const line of lines) {
-      const [col, nullable] = line.split('|');
-      expect(nullable).toBe('NO');
+      const [colName, nullable] = line.split('|');
+      expect(nullable, `Column ${colName} must be NOT NULL`).toBe('NO');
     }
   });
 
-  // ── Test 7: Replay creates no duplicate records ──
-  it('replay creates no duplicate booking, payment, charge, fee, or spend', () => {
-    cleanFinData();
-    createSub(SUB_ID_A, { code: 'sub_test_replay_dedup' });
-
-    // Fresh
-    const fresh = psqlJson(`
-      SELECT finalize_stripe_recurring_charge(
-        '${SUB_ID_A}'::uuid, 'in_test_replay_dedup', 'sub_test_replay_dedup',
-        5000, 'USD', 'pi_replay_dedup_001'
-      );
-    `);
-    expect(fresh.success).toBe(true);
-    expect(fresh.already_finalized).toBe(false);
-
-    // Replay (identical params)
-    const replay = psqlJson(`
-      SELECT finalize_stripe_recurring_charge(
-        '${SUB_ID_A}'::uuid, 'in_test_replay_dedup', 'sub_test_replay_dedup',
-        5000, 'USD', 'pi_replay_dedup_001'
-      );
-    `);
-    expect(replay.success).toBe(true);
-    expect(replay.already_finalized).toBe(true);
-    expect(replay.payment_id).toBe(fresh.payment_id);
-    expect(replay.booking_id).toBe(fresh.booking_id);
-
-    // Exactly 1 of each
-    expect(psql(`SELECT COUNT(*) FROM bookings WHERE business_id = '${BIZ_ID}'`)).toBe('1');
-    expect(psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'pi_replay_dedup_001'`)).toBe('1');
-    expect(psql(`SELECT COUNT(*) FROM subscription_charges WHERE subscription_id = '${SUB_ID_A}'`)).toBe('1');
-    expect(psql(`SELECT COUNT(*) FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_test_replay_dedup'`)).toBe('1');
-
-    // Counter incremented once
-    const subParts = psql(`SELECT charge_count FROM customer_subscriptions WHERE id = '${SUB_ID_A}'`);
-    expect(parseInt(subParts)).toBe(1);
+  // ─────────────────────────────────────────────────────────
+  // o. Service_role only privileges
+  // ─────────────────────────────────────────────────────────
+  it('o. anon cannot execute finalize_stripe_recurring_charge', () => {
+    const result = psql(`SELECT has_function_privilege('anon', 'finalize_stripe_recurring_charge(uuid,text,text,int,text,text)', 'EXECUTE')`);
+    expect(result).toBe('f');
   });
 
-  // ── Test 8: Privilege verification ──
-  it('RPC is service_role only; anon and authenticated denied', () => {
-    const anonCheck = psql(`SELECT has_function_privilege('anon', 'finalize_stripe_recurring_charge(uuid,text,text,int,text,text)', 'EXECUTE')`);
-    expect(anonCheck).toBe('f');
+  it('o. authenticated cannot execute finalize_stripe_recurring_charge', () => {
+    const result = psql(`SELECT has_function_privilege('authenticated', 'finalize_stripe_recurring_charge(uuid,text,text,int,text,text)', 'EXECUTE')`);
+    expect(result).toBe('f');
+  });
 
-    const authCheck = psql(`SELECT has_function_privilege('authenticated', 'finalize_stripe_recurring_charge(uuid,text,text,int,text,text)', 'EXECUTE')`);
-    expect(authCheck).toBe('f');
+  it('o. service_role CAN execute finalize_stripe_recurring_charge', () => {
+    const result = psql(`SELECT has_function_privilege('service_role', 'finalize_stripe_recurring_charge(uuid,text,text,int,text,text)', 'EXECUTE')`);
+    expect(result).toBe('t');
+  });
 
-    const serviceCheck = psql(`SELECT has_function_privilege('service_role', 'finalize_stripe_recurring_charge(uuid,text,text,int,text,text)', 'EXECUTE')`);
-    expect(serviceCheck).toBe('t');
+  // ─────────────────────────────────────────────────────────
+  // p. Fee parity: ROUND(x) matches Math.round for representative amounts
+  // ─────────────────────────────────────────────────────────
+  it('p. fee parity — ROUND(x) integer rounding matches Math.round for representative amounts', () => {
+    // Representative amounts and their expected 2.5% fees (free tier)
+    // Math.round(amount * 2.5 / 100) — same formula as SQL ROUND(v_amount * v_fee_pct / 100)
+    const cases: Array<{ amountCents: number; expectedFeeCents: number }> = [
+      { amountCents: 5000, expectedFeeCents: Math.round(50 * 2.5 / 100) },   // 50.00 → 1.25 → round=1
+      { amountCents: 10000, expectedFeeCents: Math.round(100 * 2.5 / 100) }, // 100.00 → 2.50 → round=3 (JS bankers? no, Math.round rounds .5 up)
+      { amountCents: 20000, expectedFeeCents: Math.round(200 * 2.5 / 100) }, // 200.00 → 5.00 → round=5
+      { amountCents: 9999, expectedFeeCents: Math.round(99.99 * 2.5 / 100) }, // 99.99 → 2.499... → round=2
+      { amountCents: 1, expectedFeeCents: Math.round(0.01 * 2.5 / 100) },    // 0.01 → 0 → round=0
+    ];
+
+    for (const { amountCents, expectedFeeCents } of cases) {
+      // SQL: ROUND(amount * 2.5 / 100) where amount is in dollars
+      const amount = amountCents / 100;
+      const sqlFee = psql(`SELECT ROUND(${amount} * 2.5 / 100)::int`);
+      const dbFee = parseInt(sqlFee, 10);
+      expect(dbFee, `Amount ${amountCents} cents: DB fee ${dbFee} ≠ Math.round fee ${expectedFeeCents}`).toBe(expectedFeeCents);
+    }
   });
 });

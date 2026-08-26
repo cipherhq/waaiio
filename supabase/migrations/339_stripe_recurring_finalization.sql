@@ -66,6 +66,26 @@ DECLARE
   v_tier TEXT;
   v_spend_result JSONB;
 BEGIN
+  -- ── Input validation: reject null/malformed IDs before any locking ──
+  IF p_stripe_invoice_id IS NULL OR p_stripe_invoice_id !~ '^in_' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'invalid_invoice_id');
+  END IF;
+  IF p_stripe_subscription_code IS NULL OR p_stripe_subscription_code !~ '^sub_' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'invalid_subscription_code');
+  END IF;
+  IF p_payment_intent_id IS NULL OR p_payment_intent_id !~ '^pi_' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'invalid_payment_intent_id');
+  END IF;
+  IF p_subscription_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'null_subscription_id');
+  END IF;
+  IF p_amount_cents IS NULL OR p_amount_cents <= 0 THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'invalid_amount');
+  END IF;
+  IF p_currency IS NULL OR TRIM(p_currency) = '' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'invalid_currency');
+  END IF;
+
   -- ── Invoice-level advisory lock: serializes ALL concurrent callers for this invoice ──
   -- This prevents the race where two workers both see "no finalization marker"
   -- and both attempt to insert (which would cause a unique violation instead
@@ -77,14 +97,14 @@ BEGIN
     WHERE stripe_invoice_id = p_stripe_invoice_id;
 
   IF FOUND THEN
-    -- Validate replay identity: all fields must match
-    IF v_existing.finalized_amount_cents != p_amount_cents THEN
+    -- Validate replay identity: all fields must match (null-safe)
+    IF v_existing.finalized_amount_cents IS DISTINCT FROM p_amount_cents THEN
       RETURN jsonb_build_object('success', false, 'reason', 'replay_amount_mismatch');
     END IF;
-    IF UPPER(v_existing.finalized_currency) != UPPER(p_currency) THEN
+    IF UPPER(v_existing.finalized_currency) IS DISTINCT FROM UPPER(p_currency) THEN
       RETURN jsonb_build_object('success', false, 'reason', 'replay_currency_mismatch');
     END IF;
-    IF v_existing.customer_subscription_id != p_subscription_id THEN
+    IF v_existing.customer_subscription_id IS DISTINCT FROM p_subscription_id THEN
       RETURN jsonb_build_object('success', false, 'reason', 'replay_subscription_mismatch');
     END IF;
     IF v_existing.provider_payment_ref IS DISTINCT FROM p_payment_intent_id THEN
@@ -108,29 +128,29 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'reason', 'subscription_not_found');
   END IF;
 
-  -- ── Validate DB authority ──
-  IF v_sub.gateway != 'stripe' THEN
+  -- ── Validate DB authority (null-safe: NULL gateway/status/code must fail closed) ──
+  IF v_sub.gateway IS NULL OR v_sub.gateway != 'stripe' THEN
     RETURN jsonb_build_object('success', false, 'reason', 'wrong_gateway',
       'expected', 'stripe', 'actual', v_sub.gateway);
   END IF;
 
-  IF v_sub.status NOT IN ('active', 'past_due') THEN
+  IF v_sub.status IS NULL OR v_sub.status NOT IN ('active', 'past_due') THEN
     RETURN jsonb_build_object('success', false, 'reason', 'wrong_status',
       'status', v_sub.status);
   END IF;
 
   IF v_sub.gateway_subscription_code IS NULL OR
-     v_sub.gateway_subscription_code != p_stripe_subscription_code THEN
+     v_sub.gateway_subscription_code IS DISTINCT FROM p_stripe_subscription_code THEN
     RETURN jsonb_build_object('success', false, 'reason', 'subscription_code_mismatch');
   END IF;
 
-  -- Amount validation: Stripe sends cents, DB stores major units
-  IF ABS(p_amount_cents - ROUND(v_sub.amount * 100)::int) > 1 THEN
+  -- Amount validation: exact cents equality, no tolerance
+  IF v_sub.amount IS NULL OR p_amount_cents IS DISTINCT FROM ROUND(v_sub.amount * 100)::int THEN
     RETURN jsonb_build_object('success', false, 'reason', 'amount_mismatch',
-      'expected_cents', ROUND(v_sub.amount * 100)::int, 'received_cents', p_amount_cents);
+      'expected_cents', ROUND(COALESCE(v_sub.amount, 0) * 100)::int, 'received_cents', p_amount_cents);
   END IF;
 
-  IF UPPER(p_currency) != UPPER(COALESCE(v_sub.currency, 'USD')) THEN
+  IF v_sub.currency IS NULL OR UPPER(p_currency) IS DISTINCT FROM UPPER(v_sub.currency) THEN
     RETURN jsonb_build_object('success', false, 'reason', 'currency_mismatch');
   END IF;
 
@@ -145,7 +165,7 @@ BEGIN
     total_amount, quantity, guest_name, guest_phone, confirmed_at, notes
   ) VALUES (
     v_sub.business_id, v_sub.user_id, v_sub.service_id, v_today, v_time, 1,
-    'payment', 'recurring', 'subscription',
+    'payment', 'api', 'subscription',
     v_amount, 'paid', 'confirmed',
     v_amount, 1,
     COALESCE(v_sub.customer_name, ''), COALESCE(v_sub.customer_phone, ''),
@@ -159,7 +179,7 @@ BEGIN
     card_last_four, card_brand, paid_at, metadata
   ) VALUES (
     v_sub.business_id, v_sub.user_id, v_booking_id,
-    v_amount, COALESCE(v_sub.currency, 'USD'), 'stripe',
+    v_amount, v_sub.currency, 'stripe',
     p_payment_intent_id, 'success', 'success', 'card',
     v_sub.card_last_four, v_sub.card_brand, v_now,
     jsonb_build_object('recurring', true, 'subscription_id', v_sub.id,
@@ -179,7 +199,7 @@ BEGIN
     status, gateway, gateway_reference, payment_id, booking_id, charged_at
   ) VALUES (
     v_sub.id, v_sub.business_id, v_sub.user_id,
-    v_amount, COALESCE(v_sub.currency, 'USD'),
+    v_amount, v_sub.currency,
     'success', 'stripe', p_payment_intent_id, v_payment_id, v_booking_id, v_now
   );
 
@@ -244,7 +264,7 @@ BEGIN
   RETURN jsonb_build_object('success', true, 'already_finalized', false,
     'subscription_id', v_sub.id, 'booking_id', v_booking_id,
     'booking_ref', v_booking_ref, 'payment_id', v_payment_id,
-    'amount', v_amount, 'currency', COALESCE(v_sub.currency, 'USD'),
+    'amount', v_amount, 'currency', v_sub.currency,
     'business_id', v_sub.business_id,
     'customer_phone', v_sub.customer_phone,
     'customer_name', v_sub.customer_name);
