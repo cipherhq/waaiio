@@ -66,65 +66,53 @@ const SUB_ID_B = '77cccccc-cccc-cccc-cccc-cccccccccc02';
 
 // CI enforces zero skips via the workflow step. Local runs without TEST_DATABASE_URL skip gracefully.
 describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database tests (#177)', () => {
-  // Applying all migrations can take 30+ seconds in CI — increase hookTimeout
   beforeAll(() => {
-    // ── 1. Create Supabase prerequisite stubs (mirrors CI yml lines 125-185) ──
-    psql(`
-      CREATE SCHEMA IF NOT EXISTS auth;
-      CREATE SCHEMA IF NOT EXISTS extensions;
-      CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-      CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
-      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
-        SELECT '00000000-0000-0000-0000-000000000000'::UUID;
-      $$ LANGUAGE SQL STABLE;
-
-      CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
-        SELECT 'authenticated'::TEXT;
-      $$ LANGUAGE SQL STABLE;
-
-      CREATE TABLE IF NOT EXISTS auth.users (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        email TEXT,
-        raw_app_meta_data JSONB DEFAULT '{}'
+    // ── 1 & 2. Apply schema stubs + all migrations ──
+    // In CI, MIGRATIONS_PRE_APPLIED=1 is set by the workflow step (which applies
+    // stubs + all migrations via bash before invoking vitest — faster and avoids
+    // vitest hookTimeout issues with synchronous execSync blocking 60+ seconds).
+    // Locally, we apply everything here.
+    if (!process.env.MIGRATIONS_PRE_APPLIED) {
+      psql(`
+        CREATE SCHEMA IF NOT EXISTS auth;
+        CREATE SCHEMA IF NOT EXISTS extensions;
+        CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+        CREATE EXTENSION IF NOT EXISTS pgcrypto;
+        CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
+          SELECT '00000000-0000-0000-0000-000000000000'::UUID;
+        $$ LANGUAGE SQL STABLE;
+        CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
+          SELECT 'authenticated'::TEXT;
+        $$ LANGUAGE SQL STABLE;
+        CREATE TABLE IF NOT EXISTS auth.users (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT,
+          raw_app_meta_data JSONB DEFAULT '{}'
+        );
+        DO $$ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
+        DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        CREATE SCHEMA IF NOT EXISTS storage;
+        CREATE TABLE IF NOT EXISTS storage.buckets (
+          id TEXT PRIMARY KEY, name TEXT NOT NULL, public BOOLEAN DEFAULT false,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS storage.objects (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(), bucket_id TEXT REFERENCES storage.buckets(id),
+          name TEXT, owner UUID, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+        CREATE OR REPLACE FUNCTION storage.foldername(name TEXT) RETURNS TEXT[] AS $$
+          SELECT string_to_array(name, '/');
+        $$ LANGUAGE SQL IMMUTABLE;
+      `);
+      const migrationsDir = path.resolve('supabase/migrations');
+      execSync(
+        `for f in "${migrationsDir}"/*.sql; do psql "${dbUrl}" -q -v ON_ERROR_STOP=1 -f "$f" || exit 1; done`,
+        { encoding: 'utf-8', timeout: 300000, shell: '/bin/bash' },
       );
-
-      DO $$ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-      DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-      CREATE SCHEMA IF NOT EXISTS storage;
-      CREATE TABLE IF NOT EXISTS storage.buckets (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        public BOOLEAN DEFAULT false,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE TABLE IF NOT EXISTS storage.objects (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        bucket_id TEXT REFERENCES storage.buckets(id),
-        name TEXT,
-        owner UUID,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
-
-      CREATE OR REPLACE FUNCTION storage.foldername(name TEXT)
-      RETURNS TEXT[] AS $$
-        SELECT string_to_array(name, '/');
-      $$ LANGUAGE SQL IMMUTABLE;
-    `);
-
-    // ── 2. Apply ALL real repo migrations (same as CI) ──
-    const migrationsDir = path.resolve('supabase/migrations');
-    execSync(
-      `for f in "${migrationsDir}"/*.sql; do psql "${dbUrl}" -q -v ON_ERROR_STOP=1 -f "$f" || exit 1; done`,
-      { encoding: 'utf-8', timeout: 300000, shell: '/bin/bash' },
-    );
+    }
 
     // ── 3. Insert fixture data (requires auth.users + profiles for NOT NULL FKs) ──
     psql(`
