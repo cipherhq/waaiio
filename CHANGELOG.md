@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-26
 
+### fix(tests): fix CI seed SQL + add privilege tests for ACC-199A (#199A / PR #206)
+
+- **businesses INSERT:** Replaced `(id, name, owner_id, category, country)` with full NOT NULL column list including `country_code` (not `country`). CI's `businesses` table does not have a `country` column.
+- **Privilege tests:** Added `update_prize_instructions` privilege assertion tests: service_role can execute, anon cannot, authenticated cannot.
+- **Files:** `lib/__tests__/acc-199a-winner-response.test.ts`, `CHANGELOG.md`
+- **Affects:** CI test reliability — DB integration tests now use correct column names for CI PostgreSQL.
+- **Could break:** Nothing — test-only changes.
+
 ### fix(promotions): Correction Round 3 — atomic RPC, race tests, mixed payload rejection (#199A / #201 / PR #206)
 
 - **Atomic prize-update RPC:** Added `update_prize_instructions` RPC to migration 341. Locks campaign row `FOR UPDATE` before checking `integrity_locked`, serializing against `claim_promo_code`. Replaces N independent UPDATE calls with one atomic batch.

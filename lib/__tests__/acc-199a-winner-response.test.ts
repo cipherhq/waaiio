@@ -479,8 +479,8 @@ describe.skipIf(!canRunDb)('claim_promo_code replay parity (real DB)', () => {
 
     // Create business
     psql(`
-      INSERT INTO businesses (id, name, owner_id, category, country)
-      VALUES ('${BIZ_ID}', 'Replay Test Biz', '${USER_ID}', 'retail', 'NG');
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)
+      VALUES ('${BIZ_ID}', 'Replay Test Biz', 'replay-test-biz-199a', '${USER_ID}', '1 Test', 'Lagos', 'VI', '+0001990002', 'active', 'manual', 'NG', 'basic');
     `);
 
     // Create campaign (active)
@@ -622,8 +622,8 @@ describe.skipIf(!canRunDb)('prize_instructions integrity locking (real DB)', () 
       ON CONFLICT (id) DO NOTHING;
     `);
     psql(`
-      INSERT INTO businesses (id, name, owner_id, category, country)
-      VALUES ('${BIZ_ID}', 'Lock Test Biz', '${USER_ID}', 'retail', 'NG');
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)
+      VALUES ('${BIZ_ID}', 'Lock Test Biz', 'lock-test-biz-199a', '${USER_ID}', '2 Test', 'Lagos', 'VI', '+0001990003', 'active', 'manual', 'NG', 'basic');
     `);
     psql(`
       INSERT INTO promo_campaigns (id, business_id, name, status, integrity_locked, winner_message, try_again_message, invalid_message, already_used_message, expired_message, created_by)
@@ -781,8 +781,8 @@ describe.skipIf(!canRunDb)('Two-connection race tests: prize update vs claim_pro
       ON CONFLICT (id) DO NOTHING;
     `);
     psql(`
-      INSERT INTO businesses (id, name, owner_id, category, country)
-      VALUES ('${BIZ_ID}', 'Race Test Biz', '${USER_ID}', 'retail', 'NG');
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)
+      VALUES ('${BIZ_ID}', 'Race Test Biz', 'race-test-biz-199a', '${USER_ID}', '3 Test', 'Lagos', 'VI', '+0001990004', 'active', 'manual', 'NG', 'basic');
     `);
     psql(`
       INSERT INTO promo_campaigns (id, business_id, name, status, integrity_locked,
@@ -952,5 +952,83 @@ describe.skipIf(!canRunDb)('Two-connection race tests: prize update vs claim_pro
     // Verify instructions unchanged
     const instructions = psql(`SELECT prize_instructions FROM promo_prizes WHERE id = '${RACE_PRIZE_ID}';`);
     expect(instructions).toBe('Original instructions');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// G. Privilege assertions for update_prize_instructions (real DB)
+// ═══════════════════════════════════════════════════════
+describe.skipIf(!canRunDb)('update_prize_instructions privilege assertions (real DB)', () => {
+  it('service_role can execute update_prize_instructions', () => {
+    // Service role (default psql connection) should be able to call the function
+    // We just need a valid campaign — reuse setup from race tests
+    psql(`
+      DELETE FROM promo_prizes WHERE campaign_id = '${CAMP_ID}';
+      DELETE FROM promo_campaigns WHERE id = '${CAMP_ID}';
+      DELETE FROM businesses WHERE id = '${BIZ_ID}';
+      DELETE FROM profiles WHERE id = '${USER_ID}';
+      DELETE FROM auth.users WHERE id = '${USER_ID}';
+    `);
+    psql(`ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone TEXT;`);
+    psql(`INSERT INTO auth.users (id, phone) VALUES ('${USER_ID}', '+0001990001') ON CONFLICT (id) DO NOTHING;`);
+    psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)
+      VALUES ('${BIZ_ID}', 'Priv Test Biz', 'priv-test-biz-199a', '${USER_ID}', '4 Test', 'Lagos', 'VI', '+0001990005', 'active', 'manual', 'NG', 'basic');
+    `);
+    psql(`
+      INSERT INTO promo_campaigns (id, business_id, name, status, integrity_locked, winner_message, try_again_message, invalid_message, already_used_message, expired_message, created_by)
+      VALUES ('${CAMP_ID}', '${BIZ_ID}', 'Priv Test Camp', 'draft', false, 'W', 'T', 'I', 'A', 'E', '${USER_ID}');
+    `);
+    psql(`
+      INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity, allocated_count, prize_instructions)
+      VALUES ('${PRIZE_ID}', '${CAMP_ID}', 'Priv Prize', 'product', 10, 0, 'Original');
+    `);
+
+    const result = psql(`
+      SELECT update_prize_instructions(
+        '${CAMP_ID}', '${BIZ_ID}', '${USER_ID}',
+        '[{"prize_id": "${PRIZE_ID}", "prize_instructions": "Updated by service_role"}]'::jsonb
+      );
+    `);
+    expect(result).toContain('"success" : true');
+
+    // Cleanup
+    psql(`
+      DELETE FROM promo_prizes WHERE id = '${PRIZE_ID}';
+      DELETE FROM promo_campaigns WHERE id = '${CAMP_ID}';
+      DELETE FROM businesses WHERE id = '${BIZ_ID}';
+      DELETE FROM profiles WHERE id = '${USER_ID}';
+      DELETE FROM auth.users WHERE id = '${USER_ID}';
+    `);
+  });
+
+  it('anon role cannot execute update_prize_instructions', () => {
+    expect(() => {
+      psql(`
+        SET ROLE anon;
+        SELECT update_prize_instructions(
+          '00000000-0000-0000-0000-000000000000',
+          '00000000-0000-0000-0000-000000000000',
+          '00000000-0000-0000-0000-000000000000',
+          '[]'::jsonb
+        );
+      `);
+    }).toThrow();
+    psql(`RESET ROLE;`);
+  });
+
+  it('authenticated role cannot execute update_prize_instructions', () => {
+    expect(() => {
+      psql(`
+        SET ROLE authenticated;
+        SELECT update_prize_instructions(
+          '00000000-0000-0000-0000-000000000000',
+          '00000000-0000-0000-0000-000000000000',
+          '00000000-0000-0000-0000-000000000000',
+          '[]'::jsonb
+        );
+      `);
+    }).toThrow();
+    psql(`RESET ROLE;`);
   });
 });
