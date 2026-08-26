@@ -452,6 +452,14 @@ export async function POST(request: NextRequest) {
                   log.debug(`[META-WEBHOOK] Payment delivery status advanced: ${advanceResult.previous} -> ${newStatus}`);
                 }
                 // wamid_not_found_recorded_unmatched is expected during normal race — not an error
+
+                // Opportunistic cleanup of expired unmatched callbacks (cheap, bounded)
+                // cleanup_expired_unmatched_statuses is defined in migration 343
+                try {
+                  await supabase.rpc('cleanup_expired_unmatched_statuses');
+                } catch {
+                  // Non-fatal — cleanup is best-effort
+                }
               } catch (pcdErr) {
                 // Non-fatal — delivery tracking should not block webhook processing
                 log.withContext({ op: 'delivery-status.payment-advance' }).warn('[META-WEBHOOK] Payment delivery status advance failed (non-fatal)');

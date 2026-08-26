@@ -16,6 +16,7 @@ import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { stripPlus } from '@/lib/utils/phone';
 import { safeLogErrorContext } from '@/lib/errors';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 export type StaleRecoveryOutcome =
   | { type: 'confirmed'; referenceCode: string; amount: number; countryCode: CountryCode; message: string }
@@ -110,14 +111,17 @@ export async function recoverGeneric(
     candidates = data || [];
   }
 
-  // Legacy fallback: orders with NULL user_id matched by phone only
+  // Legacy fallback: orders with NULL user_id matched by phone at DB level
   // This is a separate bounded path for genuinely identity-less legacy rows
   if (candidates.length === 0) {
+    const safePlus = sanitizeFilterValue(phonePlus);
+    const safeNoPlus = sanitizeFilterValue(phoneNoPlus);
     const { data: legacyCandidates, error: legacyErr } = await supabase
       .from('orders')
       .select('id, reference_code, status, user_id, delivery_phone, total_amount, business_id')
       .eq('business_id', businessId)
       .is('user_id', null)
+      .or(`delivery_phone.eq.${safePlus},delivery_phone.eq.${safeNoPlus}`)
       .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
       .order('created_at', { ascending: false })
       .limit(10);
@@ -128,12 +132,7 @@ export async function recoverGeneric(
       return { type: 'error', message: 'Something went wrong. Please try again.' };
     }
 
-    // Filter by phone match
-    candidates = (legacyCandidates || []).filter(o => {
-      if (!o.delivery_phone) return false;
-      const dp = stripPlus(o.delivery_phone);
-      return dp === stripPlus(phone);
-    });
+    candidates = legacyCandidates || [];
   }
 
   if (candidates.length === 0) {

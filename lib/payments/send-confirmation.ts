@@ -535,7 +535,7 @@ export async function sendProactiveConfirmation(
               if (completeErr || !completeResult?.completed) {
                 // Retry once — idempotent for same attempt/WAMID
                 logSafeError(logPrefix, 'complete-send-rpc-attempt1', completeErr || completeResult);
-                const { error: retryErr } = await supabase.rpc('complete_confirmation_send', {
+                const { data: retryResult, error: retryErr } = await supabase.rpc('complete_confirmation_send', {
                   p_attempt_id: attemptId,
                   p_claim_token: deliveryToken,
                   p_meta_message_id: wamid,
@@ -550,6 +550,13 @@ export async function sendProactiveConfirmation(
                   // Meta accepted the message but we can't attach WAMID.
                   // The attempt stays 'sending' — future claims are blocked.
                   // Callbacks will go to unmatched store. Manual resolution needed.
+                } else if (!retryResult?.completed) {
+                  // Retry returned non-error but semantic failure — treat as uncertain
+                  logSafeError(logPrefix, 'complete-send-rpc-attempt2-semantic', retryResult);
+                  Sentry.captureException(
+                    new Error(`WAMID attachment semantic failure after retry: payment=${payment.id} wamid=${wamid} reason=${retryResult?.reason || 'unknown'}`),
+                    { tags: { component: 'send-confirmation', operation: 'wamid-attach-semantic-failed' } },
+                  );
                 }
               }
               customerMessageSent = true;
@@ -573,10 +580,11 @@ export async function sendProactiveConfirmation(
             // ECONNRESET, fetch failed, DNS, TLS, abort) must be 'indeterminate' because
             // Meta may have accepted the request despite the local failure.
             const sendErrorDescription = sendErr instanceof Error ? sendErr.message : String(sendErr);
-            const isExplicitProviderRejection = sendErr instanceof Error
-              && 'statusCode' in sendErr // Meta API returns structured errors with status codes
-              && typeof (sendErr as Record<string, unknown>).statusCode === 'number'
-              && (sendErr as Record<string, unknown>).statusCode !== undefined;
+            // #197: Only explicit provider rejection (Meta 4xx error response) can be
+            // known 'failed'. 5xx/transport/timeout/DNS/ECONNRESET = indeterminate
+            // because Meta may have accepted the request despite the local failure.
+            const { MetaApiError } = await import('@/lib/channels/meta-api-error');
+            const isExplicitProviderRejection = sendErr instanceof MetaApiError && sendErr.httpStatus < 500;
             const failureType = isExplicitProviderRejection ? 'failed' : 'indeterminate';
 
             await supabase.rpc('fail_confirmation_send', {
