@@ -3,70 +3,14 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
-import { decryptPromoCode } from '@/lib/promotions/crypto';
-import { formatPromoCode, isRoutablePromoCode } from '@/lib/promotions/normalize';
+import { resolveRedeemedCode } from '@/lib/promotions/resolve-winner-code';
+import type { CodeJoin } from '@/lib/promotions/resolve-winner-code';
 
 function maskPhone(phone: string): string {
   if (!phone || phone.length < 4) return phone;
   const last4 = phone.slice(-4);
   return `••••••${last4}`;
 }
-
-/**
- * Resolve the redeemed printed code for a claimed winning redemption.
- *
- * Defense-in-depth: decryption is only permitted when ALL of these
- * integrity conditions are proven from durable database rows:
- *   1. Caller passed capability/business authorization (checked before this function).
- *   2. Redemption belongs to the authorized business/campaign (checked before this function).
- *   3. Redemption outcome is 'winner' (query filter + re-checked here).
- *   4. promo_code_id is non-null and resolves to an existing promo_campaign_codes row.
- *   5. Code row campaign_id matches the redemption campaign_id.
- *   6. Code row status is durably 'claimed'.
- *   7. Code row outcome is 'winner' (not just trusting the redemption outcome).
- *   8. Only then is encrypted_code decrypted.
- *
- * If any condition fails, returns null. Never exposes ciphertext, hash,
- * or winner-allocation metadata.
- */
-function resolveRedeemedCode(
-  codeRow: CodeJoin | CodeJoin[] | null,
-  redemptionCampaignId: string,
-): string | null {
-  if (!codeRow) return null;
-  const code = Array.isArray(codeRow) ? (codeRow[0] ?? null) : codeRow;
-  if (!code) return null;
-
-  // Check 5: code belongs to same campaign as the redemption
-  if (code.campaign_id !== redemptionCampaignId) return null;
-  // Check 6: code is durably claimed
-  if (code.status !== 'claimed') return null;
-  // Check 7: code outcome is winner (don't trust redemption outcome alone)
-  if (code.outcome !== 'winner') return null;
-  // Check 8: decrypt and validate result looks like a real promo code
-  if (!code.encrypted_code) return null;
-  try {
-    const decrypted = decryptPromoCode(code.encrypted_code);
-    // Validate the decrypted value is a valid normalized promo code.
-    // decryptToken returns the input as-is for non-encrypted strings,
-    // so this guards against corrupt/plaintext-passthrough values.
-    if (!isRoutablePromoCode(decrypted)) return null;
-    return formatPromoCode(decrypted);
-  } catch (err) {
-    logger.error('[PROMOTIONS] winner code decryption failed', {
-      redemptionCampaignId,
-      codeStatus: code.status,
-    });
-    return null;
-  }
-}
-
-type CodeJoin = {
-  encrypted_code: string | null;
-  campaign_id: string;
-  status: string;
-  outcome: string;
-};
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
