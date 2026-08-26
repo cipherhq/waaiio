@@ -31,6 +31,7 @@ interface CampaignDetail extends PromoCampaign {
 interface Winner {
   id: string;
   phone_e164: string;
+  redeemed_code: string | null;
   prize_id: string | null;
   claim_reference: string;
   claimed_at: string;
@@ -1298,10 +1299,11 @@ export default function PromotionDetailPage() {
             </div>
           ) : (
             <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-x-auto">
-              <table className="w-full min-w-[700px] text-sm">
+              <table className="w-full min-w-[850px] text-sm">
                 <thead className="border-b border-gray-50 dark:border-gray-700">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Participant</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Redeemed Code</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Prize</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Claim Ref</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Claimed At</th>
@@ -1318,6 +1320,9 @@ export default function PromotionDetailPage() {
                     <tr key={winner.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/20">
                       <td className="px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300">
                         {winner.phone_e164}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300">
+                        {winner.redeemed_code || '—'}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                         {winner.prize_name || '—'}

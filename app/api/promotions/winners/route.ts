@@ -3,6 +3,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
+import { resolveRedeemedCode } from '@/lib/promotions/resolve-winner-code';
+import type { CodeJoin } from '@/lib/promotions/resolve-winner-code';
 
 function maskPhone(phone: string): string {
   if (!phone || phone.length < 4) return phone;
@@ -33,6 +35,7 @@ export async function GET(request: NextRequest) {
 
   const service = createServiceClient();
 
+  // Check 1: Caller passed capability/business authorization
   const guard = await requireCapability(supabase, service, {
     businessId,
     userId: user.id,
@@ -41,7 +44,7 @@ export async function GET(request: NextRequest) {
   });
   if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-  // Verify campaign belongs to this business
+  // Check 2: Campaign belongs to this business
   const { data: campaign, error: campaignError } = await service
     .from('promo_campaigns')
     .select('id')
@@ -53,14 +56,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
   }
 
-  // Build query — join redemptions with prizes for prize name/type
+  // Build query — join redemptions with prizes AND codes for redeemed-code recovery
   const offset = (page - 1) * limit;
 
+  // Check 3: Only winner redemptions (outcome='winner')
+  // Check 4: promo_code_id FK join fetches the linked code row
   let query = service
     .from('promo_redemptions')
     .select(
       `id,
        phone_e164,
+       campaign_id,
        claim_reference,
        claimed_at,
        fulfillment_status,
@@ -70,6 +76,7 @@ export async function GET(request: NextRequest) {
        verification_mode,
        verification_status,
        verified_at,
+       promo_campaign_codes!promo_code_id ( encrypted_code, campaign_id, status, outcome ),
        promo_prizes ( name, prize_type )`,
       { count: 'exact' },
     )
@@ -94,6 +101,7 @@ export async function GET(request: NextRequest) {
   type RedemptionRow = {
     id: string;
     phone_e164: string;
+    campaign_id: string;
     claim_reference: string;
     claimed_at: string;
     fulfillment_status: string;
@@ -103,6 +111,7 @@ export async function GET(request: NextRequest) {
     verification_mode: string;
     verification_status: string;
     verified_at: string | null;
+    promo_campaign_codes: CodeJoin | CodeJoin[] | null;
     promo_prizes: PrizeJoin | PrizeJoin[] | null;
   };
 
@@ -111,9 +120,11 @@ export async function GET(request: NextRequest) {
     return Array.isArray(raw) ? (raw[0] ?? null) : raw;
   }
 
+  // Checks 5-8 happen inside resolveRedeemedCode for each row
   const winners = ((redemptions as RedemptionRow[] | null) || []).map((r) => ({
     id: r.id,
     phone_e164: maskPhone(r.phone_e164),
+    redeemed_code: resolveRedeemedCode(r.promo_campaign_codes, r.campaign_id),
     prize_name: firstPrize(r.promo_prizes)?.name ?? null,
     prize_type: firstPrize(r.promo_prizes)?.prize_type ?? null,
     claim_reference: r.claim_reference,

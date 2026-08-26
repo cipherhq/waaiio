@@ -7,6 +7,18 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-25
 
+### feat(promotions): show redeemed winning code to business after claim (#190)
+
+- **What:** After a winning promo code is redeemed, the business can now see the exact printed code in the Winners dashboard tab.
+- **Before:** Winners tab showed participant phone (masked), prize, claim reference, and fulfillment status — but NOT the redeemed code itself.
+- **After:** New "Redeemed Code" column shows the formatted code (e.g. `K7PM-4XQ9-N2WF`) for each claimed winner.
+- **Security invariant preserved:** Unused winning codes remain indistinguishable from unused losing codes. The code is only decrypted server-side, only for redemptions where all 8 integrity checks pass (capability auth, campaign ownership, redemption outcome=winner, code FK resolves, code campaign matches, code status=claimed, code outcome=winner, decryption succeeds).
+- **Defense-in-depth:** `resolveRedeemedCode()` validates the linked code row's own `campaign_id`, `status`, and `outcome` independently — does not trust the redemption outcome alone. Decrypted value is validated as a routable promo code via `isRoutablePromoCode()`. Corrupt/invalid ciphertext returns `null` (fail closed).
+- **No migration needed:** Uses existing `promo_redemptions.promo_code_id` FK → `promo_campaign_codes.encrypted_code` via PostgREST JOIN.
+- **Files:** `app/api/promotions/winners/route.ts`, `app/dashboard/promotions/[id]/page.tsx`, `lib/__tests__/promo-winner-visibility.test.ts`
+- **Affects:** Winners API response, Winners dashboard tab display
+- **Could break:** Nothing — additive-only change. If decryption fails, `redeemed_code` returns `null` and renders as dash.
+
 ### fix(promotions): claim_promo_code crypto schema resolution (#188)
 
 - **Root cause:** `claim_promo_code` RPC (migration 331) uses `gen_random_bytes(8)` for claim-reference generation, but the function has `SET search_path = public`. In Supabase production, pgcrypto lives in the `extensions` schema (platform prerequisite), so unqualified `gen_random_bytes()` fails with "function gen_random_bytes(integer) does not exist".
