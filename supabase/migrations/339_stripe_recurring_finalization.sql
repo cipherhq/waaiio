@@ -231,7 +231,7 @@ BEGIN
       v_fee_total := ROUND(v_amount * v_fee_pct / 100) + v_fee_flat;
     END IF;
     INSERT INTO platform_fees (business_id, booking_id, transaction_amount, fee_percentage, fee_flat, fee_total, tier)
-    VALUES (v_sub.business_id, v_booking_id, v_amount, v_fee_pct, v_fee_flat, v_fee_total, v_tier);
+    VALUES (v_sub.business_id, v_booking_id, v_amount, v_fee_pct, v_fee_flat, v_fee_total, v_tier::subscription_tier);
   END IF;
 
   -- ── Update subscription counters ──
