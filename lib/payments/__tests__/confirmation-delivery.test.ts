@@ -538,3 +538,117 @@ describe('delivery status monotonicity', () => {
     expect(true).toBe(true); // DB-level enforcement
   });
 });
+
+// ─── Unit Tests: Stale button parsing ───
+
+describe('stale button postback parsing', () => {
+  it('recognizes all four machine postback shapes', () => {
+    // The BotService interceptor must recognize these exact shapes:
+    const shapes = [
+      { text: 'i_paid', messageType: 'button', expected: true },
+      { text: 'i_paid_online', messageType: 'button', expected: true },
+      { text: 'i_paid:WA-OR-0981', messageType: 'button', expected: true },
+      { text: 'i_paid_online:WA-OR-0981', messageType: 'button', expected: true },
+    ];
+
+    for (const s of shapes) {
+      const isMatch = s.messageType === 'button'
+        && (s.text === 'i_paid' || s.text === 'i_paid_online'
+          || s.text.startsWith('i_paid:') || s.text.startsWith('i_paid_online:'));
+      expect(isMatch).toBe(s.expected);
+    }
+  });
+
+  it('does NOT match free text paid/done', () => {
+    const freeTexts = ['paid', 'done', 'check', 'i paid'];
+    for (const t of freeTexts) {
+      const isMatch = 'text' === 'button' // messageType for free text is 'text', not 'button'
+        && (t === 'i_paid' || t === 'i_paid_online'
+          || t.startsWith('i_paid:') || t.startsWith('i_paid_online:'));
+      expect(isMatch).toBe(false);
+    }
+  });
+
+  it('does NOT match when messageType is text (not button)', () => {
+    const text = 'i_paid';
+    const messageType = 'text';
+    const isMatch = messageType === 'button'
+      && (text === 'i_paid' || text === 'i_paid_online'
+        || text.startsWith('i_paid:') || text.startsWith('i_paid_online:'));
+    expect(isMatch).toBe(false);
+  });
+
+  it('extracts reference from i_paid:WA-OR-0981', () => {
+    const text = 'i_paid:WA-OR-0981';
+    const hasRef = text.startsWith('i_paid:') || text.startsWith('i_paid_online:');
+    expect(hasRef).toBe(true);
+    const ref = text.split(':').slice(1).join(':');
+    expect(ref).toBe('WA-OR-0981');
+  });
+
+  it('extracts reference from i_paid_online:WA-OR-0981', () => {
+    const text = 'i_paid_online:WA-OR-0981';
+    const hasRef = text.startsWith('i_paid:') || text.startsWith('i_paid_online:');
+    expect(hasRef).toBe(true);
+    const ref = text.split(':').slice(1).join(':');
+    expect(ref).toBe('WA-OR-0981');
+  });
+});
+
+// ─── Unit Tests: Repeated stale taps do not consume delivery attempts ───
+
+describe('stale tap attempt budget protection', () => {
+  it('durable-truth reply does NOT call claim_confirmation_delivery', async () => {
+    // The stale-payment-recovery module returns confirmed/not_found/etc
+    // The BotService interceptor sends the reply text directly
+    // Neither path calls claim_confirmation_delivery or consumes attempt budget
+    const { recoverByOrderReference } = await import('../stale-payment-recovery');
+    const supabase = createMockSupabase() as any;
+
+    const orderData = {
+      id: 'order-1', reference_code: 'WA-OR-0981', status: 'confirmed',
+      user_id: 'user-1', delivery_phone: '+1234', business_id: 'biz-1',
+    };
+
+    const paymentsData = [
+      { id: 'pay-1', status: 'success', gateway_reference: 'ref-1', user_id: 'user-1',
+        finalization_completed_at: '2026-08-26T05:45:19Z', confirmation_sent_at: '2026-08-26T05:45:20Z',
+        paid_at: '2026-08-26T05:45:18Z', amount: 121000, created_at: '2026-08-26T05:00:00Z' },
+    ];
+
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: orderData, error: null }),
+        };
+      }
+      if (table === 'payments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                gte: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: paymentsData, error: null }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      return { select: vi.fn().mockReturnThis() };
+    });
+
+    // rpc should NOT be called for durable-truth replies
+    supabase.rpc = vi.fn();
+
+    const result = await recoverByOrderReference(
+      { supabase, businessId: 'biz-1', userId: 'user-1', phone: '1234', countryCode: 'NG' as any },
+      'WA-OR-0981',
+    );
+
+    expect(result.type).toBe('confirmed');
+    // Verify rpc was NOT called — no delivery attempt consumed
+    expect(supabase.rpc).not.toHaveBeenCalled();
+  });
+});

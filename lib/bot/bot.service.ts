@@ -2068,12 +2068,14 @@ export class BotService {
     }
 
     // ── #197: Stale "I've Paid" button recovery ──
-    // Intercept exact machine postback IDs (i_paid, i_paid_online, or i_paid:<ref>)
-    // with messageType='button' when the session is NOT at a legitimate payment step.
+    // Intercept exact machine postback IDs with messageType='button' when the session
+    // is NOT at a legitimate payment step. Recognized shapes:
+    //   i_paid, i_paid_online, i_paid:<order-ref>, i_paid_online:<order-ref>
     // Free text "paid"/"done" is NEVER intercepted here.
     const paymentWaitingSteps = ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking', 'reservation_payment', 'await_invoice_payment', 'await_donation_payment'];
     const isStalePaymentButton = messageType === 'button'
-      && (text === 'i_paid' || text === 'i_paid_online' || text.startsWith('i_paid:'))
+      && (text === 'i_paid' || text === 'i_paid_online'
+        || text.startsWith('i_paid:') || text.startsWith('i_paid_online:'))
       && session.business_id
       && !paymentWaitingSteps.includes(step);
 
@@ -2095,12 +2097,14 @@ export class BotService {
         };
 
         let result;
-        if (text.startsWith('i_paid:')) {
-          // Exact reference: i_paid:WA-OR-0981
-          const ref = text.split(':').slice(1).join(':'); // handle : in ref
+        // Parse ref-bearing shapes: i_paid:<ref> or i_paid_online:<ref>
+        const hasRef = text.startsWith('i_paid:') || text.startsWith('i_paid_online:');
+        if (hasRef) {
+          // Extract reference after the first colon
+          const ref = text.split(':').slice(1).join(':');
           result = await recoverByOrderReference(recoveryCtx, ref);
         } else {
-          // Generic i_paid — candidate search
+          // Generic i_paid or i_paid_online — candidate search
           result = await recoverGeneric(recoveryCtx);
         }
 

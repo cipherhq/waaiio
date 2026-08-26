@@ -205,10 +205,10 @@ async function inspectOrderPayments(
     const payment = successful[0];
     const amount = payment.amount || 0;
 
-    // Optionally attempt idempotent delivery retry (bounded, no financial effects)
-    if (payment.finalization_completed_at) {
-      await attemptRecoveryDelivery(supabase, payment.id, logPrefix);
-    }
+    // #197: Durable-truth reply only — do NOT consume delivery attempt budget.
+    // The BotService interceptor sends the confirmation text directly.
+    // If a bounded delivery retry is needed, the caller must execute the
+    // full claim→begin→send→complete/fail/indeterminate lifecycle.
 
     return {
       type: 'confirmed',
@@ -276,41 +276,6 @@ async function inspectOrderPayments(
   };
 }
 
-/**
- * Attempt an idempotent delivery retry for an already-confirmed payment.
- * Uses the same payment-wide delivery claim authority — will be blocked
- * if an active/delivered attempt already exists.
- * NO financial side effects. Only sends a simple confirmation text.
- */
-async function attemptRecoveryDelivery(
-  supabase: SupabaseClient,
-  paymentId: string,
-  logPrefix: string,
-): Promise<void> {
-  try {
-    const { data: claim } = await supabase.rpc('claim_confirmation_delivery', {
-      p_payment_id: paymentId,
-      p_attempt_source: 'ive_paid_recovery',
-    });
-
-    if (!claim?.claimed) {
-      // Already delivered, active, or max exceeded — fine, skip
-      return;
-    }
-
-    // We have a claim but the actual send will be handled by the caller
-    // Release the claim since we're not sending from here
-    await supabase.rpc('fail_confirmation_send', {
-      p_attempt_id: claim.attempt_id,
-      p_claim_token: claim.claim_token,
-      p_failure_type: 'failed',
-      p_failure_reason: 'recovery_delivery_deferred',
-    });
-  } catch (err) {
-    logger.withContext({ op: 'stale-recovery.delivery-attempt', ...safeLogErrorContext(err) })
-      .warn(`${logPrefix} Recovery delivery attempt failed (non-critical)`);
-  }
-}
 
 /**
  * Authorize identity for an order. Order-first: orders.user_id governs

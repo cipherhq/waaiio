@@ -525,11 +525,26 @@ $$;
 -- ═══════════════════════════════════════════════════════
 
 DO $$ BEGIN
+  -- Revoke from PUBLIC, anon, and authenticated (defense in depth)
   REVOKE ALL ON FUNCTION claim_confirmation_delivery(UUID, TEXT) FROM PUBLIC;
   REVOKE ALL ON FUNCTION begin_confirmation_send(UUID, UUID) FROM PUBLIC;
   REVOKE ALL ON FUNCTION complete_confirmation_send(UUID, UUID, TEXT, TIMESTAMPTZ) FROM PUBLIC;
   REVOKE ALL ON FUNCTION fail_confirmation_send(UUID, UUID, TEXT, TEXT, TEXT) FROM PUBLIC;
   REVOKE ALL ON FUNCTION advance_delivery_status(TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT) FROM PUBLIC;
+
+  EXECUTE 'REVOKE ALL ON FUNCTION claim_confirmation_delivery(UUID, TEXT) FROM anon';
+  EXECUTE 'REVOKE ALL ON FUNCTION begin_confirmation_send(UUID, UUID) FROM anon';
+  EXECUTE 'REVOKE ALL ON FUNCTION complete_confirmation_send(UUID, UUID, TEXT, TIMESTAMPTZ) FROM anon';
+  EXECUTE 'REVOKE ALL ON FUNCTION fail_confirmation_send(UUID, UUID, TEXT, TEXT, TEXT) FROM anon';
+  EXECUTE 'REVOKE ALL ON FUNCTION advance_delivery_status(TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT) FROM anon';
+
+  EXECUTE 'REVOKE ALL ON FUNCTION claim_confirmation_delivery(UUID, TEXT) FROM authenticated';
+  EXECUTE 'REVOKE ALL ON FUNCTION begin_confirmation_send(UUID, UUID) FROM authenticated';
+  EXECUTE 'REVOKE ALL ON FUNCTION complete_confirmation_send(UUID, UUID, TEXT, TIMESTAMPTZ) FROM authenticated';
+  EXECUTE 'REVOKE ALL ON FUNCTION fail_confirmation_send(UUID, UUID, TEXT, TEXT, TEXT) FROM authenticated';
+  EXECUTE 'REVOKE ALL ON FUNCTION advance_delivery_status(TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT) FROM authenticated';
+
+  -- Grant only to service_role
   EXECUTE 'GRANT EXECUTE ON FUNCTION claim_confirmation_delivery(UUID, TEXT) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION begin_confirmation_send(UUID, UUID) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION complete_confirmation_send(UUID, UUID, TEXT, TIMESTAMPTZ) TO service_role';

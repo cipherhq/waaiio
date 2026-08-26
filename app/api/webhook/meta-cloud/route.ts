@@ -424,12 +424,14 @@ export async function POST(request: NextRequest) {
             // Uses advance_delivery_status RPC with advisory lock for WAMID race safety
             if (newStatus in statusOrder) {
               try {
-                // Parse provider timestamp (same pattern as OTP above)
+                // Parse provider timestamp — NEVER fabricate with application NOW()
+                // Invalid/missing timestamps are passed as null; the RPC handles null gracefully
                 const pcdTsNum = Number(status.timestamp);
                 const pcdParsed = new Date(pcdTsNum * 1000);
-                let pcdTimestamp: string;
+                let pcdTimestamp: string | null;
                 if (!Number.isFinite(pcdTsNum) || pcdTsNum <= 0 || Number.isNaN(pcdParsed.getTime())) {
-                  pcdTimestamp = new Date().toISOString();
+                  pcdTimestamp = null; // Do NOT substitute application time
+                  log.withContext({ op: 'delivery-status.payment-timestamp' }).warn('[META-WEBHOOK] Invalid/missing payment delivery timestamp — passing null');
                 } else {
                   pcdTimestamp = pcdParsed.toISOString();
                 }
