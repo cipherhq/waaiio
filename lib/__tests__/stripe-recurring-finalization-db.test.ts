@@ -66,8 +66,8 @@ const SUB_ID_B = '77cccccc-cccc-cccc-cccc-cccccccccc02';
 
 // CI enforces zero skips via the workflow step. Local runs without TEST_DATABASE_URL skip gracefully.
 describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database tests (#177)', () => {
+  // Applying all migrations can take 30+ seconds in CI — increase hookTimeout
   beforeAll(() => {
-
     // ── 1. Create Supabase prerequisite stubs (mirrors CI yml lines 125-185) ──
     psql(`
       CREATE SCHEMA IF NOT EXISTS auth;
@@ -151,7 +151,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
 
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
     createSub(SUB_ID_B, { code: 'sub_test_yyy', amount: 50 });
-  });
+  }, 120000); // Migration application can take 30+ seconds in CI
 
   afterAll(() => {
     if (!dbUrl) return;
