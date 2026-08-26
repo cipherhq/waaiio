@@ -7,51 +7,36 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-26
 
-### fix(payments): Stripe recurring finalization authority — single atomic writer (#177) [Correction Round 3]
+### fix(promotions): PR #205 review corrections — migration abort, confirm dialog, stale response, test coverage (#198)
 
-- **What:** Replaced 6 independent sequential writes in Stripe `invoice.paid` customer-recurring handling with a single atomic PostgreSQL RPC (`finalize_stripe_recurring_charge`). Eliminated the legacy duplicate customer-recurring writer block.
-- **Correction R3:** Moved business existence check BEFORE financial writes in migration 339 so orphaned subscriptions get a clean RAISE EXCEPTION instead of an FK violation on the bookings INSERT. Fixed test q: `businesses.trial_ends_at` is NOT NULL (migration 002) — changed from impossible `trial_ends_at = NULL` to boundary `trial_ends_at = NOW()` proving strict `>` comparison. Fixed test u: FK cascade trigger for `ON DELETE CASCADE` lives on the parent (businesses) table, not the child (customer_subscriptions) — disabled triggers on businesses to properly orphan the subscription.
-- **Correction R2:** Fixed composite row `v_business IS NOT NULL` predicate that suppressed `platform_fees` insert when `trial_ends_at` is NULL. PostgreSQL `row IS NOT NULL` returns true only when ALL fields are non-null, so a valid business with `trial_ends_at = NULL` (common production case) silently skipped the entire fee block. Now uses explicit `IF NOT FOUND THEN RAISE EXCEPTION` for business existence (fail closed) and `COALESCE(trial_ends_at > v_now, false)` for null-safe trial check. Added 5 regression tests: null trial → fee, expired trial → fee, active trial → zero fee, direct_split → no fee, missing business → rollback.
-- **Correction R1:** Fixed booking channel from invalid `'recurring'` enum value to `'api'`; hardened RPC input validation (prefix checks, null-safe comparisons, exact cents equality with no tolerance, NULL gateway/status/currency fail closed); hardened route to reject missing/malformed invoice data without defaults; strict RPC result validation requiring `success === true`, boolean `already_finalized`, and typed canonical fields; replaced fake-schema PG tests with repo-native migrations; added executable webhook-route tests; added CI PostgreSQL step.
-- **Root cause:** If the process crashed after the payment INSERT but before subscription_charges/platform_fees/subscription counter updates, Stripe redelivery saw the existing payment and skipped all remaining writes. This could permanently preserve partial accounting state.
-- **Architecture (Revision 7):**
-  - Stripe Invoice ID is the durable billing-cycle/finalization identity (NOT PaymentIntent)
-  - PaymentIntent ID remains `payments.gateway_reference` for refund compatibility
-  - `pg_advisory_xact_lock(hashtext(invoice_id))` serializes concurrent deliveries
-  - One atomic RPC covers: booking, payment, `apply_payment_spend_once`, subscription_charges, platform_fee, subscription counters, finalization marker
-  - Terminal `stripe_recurring_finalizations` marker inserted ONLY at end of successful transaction (NOT NULL canonical IDs)
-  - Matching replay returns canonical IDs without financial mutation
-  - Replay validates subscription, amount, currency, and PaymentIntent reference; any mismatch fails closed
-  - `apply_payment_spend_once` must return `applied === true`; anything else raises and rolls back
-  - Version-tolerant Stripe invoice extractors: tri-state subscription classifier + payment identity extractor supporting both legacy and modern (Basil 2025-03-31) Stripe API shapes
-  - Stage 3 (sendProactiveConfirmation) runs after committed finalization for BOTH fresh and valid replay
-  - Stage 3 terminal/nonterminal outcomes follow Payment Authority semantics
-  - Error-aware platform/customer role resolution (fail closed on DB errors, conflicts)
-  - Service-role-only RPC; anon/authenticated denied
-- **Fee parity:** Preserves existing Stripe fee behavior — `ROUND(x)` integer rounding, strict `feeFlat / amount > 0.10` rule. Exactly 10% is NOT waived. Does not normalize to Paystack `ROUND(x, 2)`.
-- **Files:** `supabase/migrations/339_stripe_recurring_finalization.sql`, `lib/payments/stripe-invoice-extractors.ts`, `app/api/payments/stripe-webhook/route.ts`, `lib/__tests__/stripe-invoice-extractors.test.ts`, `lib/__tests__/stripe-recurring-finalization-db.test.ts`
-- **Affects:** Stripe customer recurring payment processing, subscription charge recording, platform fee calculation, subscription counter updates
-- **Could break:** Nothing — all existing Stripe customer subscriptions are cancelled. New renewals will use the atomic path. Platform subscription handling unchanged.
+- **Migration 340:** Legacy `both`/`keyword` rows with NULL keyword now ABORT the migration instead of silently converting to `bare_code`. Fail-closed with actionable error message including count of affected rows.
+- **Dashboard:** Routing changes on active/paused campaigns now require explicit `window.confirm()` before saving. Draft/scheduled campaigns skip confirmation.
+- **API update route:** After routing RPC succeeds, if routing was the only change, the campaign is reloaded from DB before returning (prevents stale pre-RPC object in response).
+- **Tests (DB):** Added: atomic audit-write verification, sequential concurrency proof, unrelated unique_violation re-raise contract, privilege assertions for anon/authenticated roles on all 3 RPC functions, CHECK constraint rejection for NULL keyword in keyword/both modes, scheduled bare-code conflict detection.
+- **Tests (unit):** Added: update route validation logic execution tests (mode conflict detection, integrity lock blocking, RPC error-to-status mapping, isRoutingChange detection, routing-only reload condition), create route normalization and derivation tests.
+- **Files:** `supabase/migrations/340_promo_routing_consistency.sql`, `app/dashboard/promotions/[id]/page.tsx`, `app/api/promotions/update/route.ts`, `lib/__tests__/acc-198-promo-routing-db.test.ts`, `lib/__tests__/acc-198-promo-routing.test.ts`
+- **Affects:** Migration safety, dashboard UX for live campaigns, API response freshness, test coverage
+- **Could break:** Migration will now fail (by design) if any keyword/both campaigns have NULL keyword — requires manual repair before re-running.
 
 ### feat(promotions): safe routing/keyword edits and deterministic activation-conflict handling (#198)
 
 - **What:** Promo campaign routing fields (code_entry_mode, keyword, accept_bare_codes) are now validated, normalized, and conflict-checked atomically via a new `update_promo_campaign_routing` RPC.
-- **Migration 340:**
+- **Migration 339:**
   - Keyword normalization trigger (uppercase + trim on INSERT/UPDATE)
   - Legacy data repair (deterministic fix for inconsistent keyword/bare-code states)
-  - Collision guard (aborts migration if repair created active/scheduled conflicts — fail-closed)
+  - Collision guard (aborts migration if repair created active/scheduled conflicts)
   - New `chk_routing_consistency` CHECK constraint replaces old `chk_keyword_or_bare` (stricter: enforces full 3-way consistency)
   - `validate_promo_campaign_activation` now checks keyword AND bare-code conflicts including scheduled campaigns, with conflict campaign name in error
   - `activate_promo_campaign` now has constraint-specific unique_violation handling
   - New `update_promo_campaign_routing` SECURITY DEFINER RPC: atomic routing update with preflight conflict check, audit logging for active/paused campaigns, integrity_locked enforcement
   - Privilege reassertion for all promo lifecycle functions
 - **API changes:**
-  - `PUT /api/promotions/update`: Routing changes now go through `update_promo_campaign_routing` RPC. Keyword normalized on input. Contradictory accept_bare_codes rejected with 400. Conflict errors return 409 with conflicting campaign name. Activation + routing mutation rejected with 400.
+  - `PUT /api/promotions/update`: Routing changes now go through `update_promo_campaign_routing` RPC. Keyword normalized on input. Contradictory accept_bare_codes rejected with 400. Conflict errors return 409 with conflicting campaign name.
   - `POST /api/promotions/create`: Keyword normalized to uppercase. `accept_bare_codes` derived from `code_entry_mode`. Contradictions rejected with 400.
 - **Dashboard:** Settings tab now shows Campaign Routing section with entry mode selector and keyword input. `accept_bare_codes` is derived (not shown). Integrity-locked fields disabled with explanation. Active/paused campaigns show warning about immediate effect.
-- **Files:** `supabase/migrations/340_promo_routing_consistency.sql`, `app/api/promotions/update/route.ts`, `app/api/promotions/create/route.ts`, `app/dashboard/promotions/[id]/page.tsx`, `lib/__tests__/acc-198-promo-routing.test.ts`, `lib/__tests__/acc-198-promo-routing-db.test.ts`
+- **Files:** `supabase/migrations/339_promo_routing_consistency.sql`, `app/api/promotions/update/route.ts`, `app/api/promotions/create/route.ts`, `app/dashboard/promotions/[id]/page.tsx`, `lib/__tests__/acc-198-promo-routing.test.ts`, `lib/__tests__/acc-198-promo-routing-db.test.ts`
 - **Affects:** Promo campaign creation, editing, activation, bot keyword/bare-code routing
-- **Could break:** Old API clients sending contradictory `accept_bare_codes` will get 400. Old `chk_keyword_or_bare` constraint replaced with stricter `chk_routing_consistency`. Campaigns with inconsistent routing state cause migration abort for manual resolution.
+- **Could break:** Old API clients sending contradictory `accept_bare_codes` will get 400. Old `chk_keyword_or_bare` constraint replaced with stricter `chk_routing_consistency`. Campaigns with inconsistent routing state are repaired by migration.
 
 ---
 

@@ -288,7 +288,16 @@ export async function PUT(request: NextRequest) {
   }
 
   if (Object.keys(updates).length === 1) {
-    // Only updated_at — nothing to update
+    // Only updated_at — nothing else to update via direct UPDATE.
+    // If routing changed via RPC, reload to return canonical post-RPC state.
+    if (isRoutingChange) {
+      const { data: reloaded } = await service
+        .from('promo_campaigns')
+        .select('*')
+        .eq('id', campaignId)
+        .single();
+      return NextResponse.json({ campaign: reloaded || campaign });
+    }
     return NextResponse.json({ campaign }, { status: 200 });
   }
 

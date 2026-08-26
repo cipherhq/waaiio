@@ -40,11 +40,19 @@ UPDATE promo_campaigns SET accept_bare_codes = false WHERE code_entry_mode = 'ke
 -- bare_code mode: force bare=true, clear keyword
 UPDATE promo_campaigns SET accept_bare_codes = true, keyword = NULL WHERE code_entry_mode = 'bare_code' AND (accept_bare_codes = false OR keyword IS NOT NULL);
 
--- both mode with no keyword: downgrade to bare_code (fail-closed, don't invent keyword)
-UPDATE promo_campaigns SET code_entry_mode = 'bare_code', accept_bare_codes = true WHERE code_entry_mode = 'both' AND keyword IS NULL;
-
--- both mode: force bare=true
+-- both mode: force bare=true (before the abort check so we only abort on genuinely unfixable rows)
 UPDATE promo_campaigns SET accept_bare_codes = true WHERE code_entry_mode = 'both' AND accept_bare_codes = false;
+
+-- both or keyword mode with no keyword after normalization: ABORT
+DO $$
+DECLARE v_missing_keyword_count INTEGER;
+BEGIN
+  SELECT count(*) INTO v_missing_keyword_count FROM promo_campaigns
+    WHERE code_entry_mode IN ('keyword', 'both') AND keyword IS NULL;
+  IF v_missing_keyword_count > 0 THEN
+    RAISE EXCEPTION 'Migration blocked: % campaign(s) with keyword/both mode have no keyword after normalization. Manual repair required.', v_missing_keyword_count;
+  END IF;
+END $$;
 
 -- ── C. Collision guard (abort if repair created conflicts) ──
 

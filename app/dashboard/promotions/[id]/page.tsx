@@ -663,6 +663,18 @@ export default function PromotionDetailPage() {
     setSettingsError('');
     setSettingsSuccess(false);
 
+    // Routing change on active/paused campaign: require explicit confirmation
+    const isRoutingChange = settingsForm.code_entry_mode !== campaign.code_entry_mode || settingsForm.keyword !== campaign.keyword;
+    if (isRoutingChange && (campaign.status === 'active' || campaign.status === 'paused')) {
+      const confirmed = window.confirm(
+        'Changing routing takes effect immediately. The old keyword will stop working. Are you sure?'
+      );
+      if (!confirmed) {
+        setSettingsSaving(false);
+        return;
+      }
+    }
+
     // Validate max_wins_per_participant — do NOT parseInt-truncate fractions
     if (settingsForm.max_wins_per_participant !== null && settingsForm.max_wins_per_participant !== undefined) {
       const mw = Number(settingsForm.max_wins_per_participant);
