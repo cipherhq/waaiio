@@ -568,8 +568,9 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
   // Proves migration 340 aborts (RAISE EXCEPTION) when both-mode campaigns have NULL keyword.
   // Uses SAVEPOINT to simulate running the migration on pre-340 state without permanent damage.
   it('migration 340 aborts on both-mode campaign with NULL keyword (pre-340 harness)', () => {
-    // 1. Drop the current (post-340) CHECK constraint so we can insert invalid data
+    // 1. Drop post-340 objects so migration can be re-run
     psql(`ALTER TABLE promo_campaigns DROP CONSTRAINT IF EXISTS chk_routing_consistency`);
+    psql(`DROP TRIGGER IF EXISTS trg_normalize_promo_keyword ON promo_campaigns`);
 
     // 2. Re-create the OLD weak CHECK constraint (pre-340: only checks keyword when mode=keyword)
     psql(`
@@ -624,12 +625,19 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
           (code_entry_mode = 'both'      AND keyword IS NOT NULL AND accept_bare_codes = true)
         )
       `);
+      psql(`DROP TRIGGER IF EXISTS trg_normalize_promo_keyword ON promo_campaigns`);
+      psql(`
+        CREATE TRIGGER trg_normalize_promo_keyword
+          BEFORE INSERT OR UPDATE OF keyword ON promo_campaigns
+          FOR EACH ROW EXECUTE FUNCTION normalize_promo_keyword()
+      `);
     }
   });
 
   it('migration 340 aborts on keyword-mode campaign with NULL keyword (pre-340 harness)', () => {
     // Same pattern, but for keyword mode with NULL keyword
     psql(`ALTER TABLE promo_campaigns DROP CONSTRAINT IF EXISTS chk_routing_consistency`);
+    psql(`DROP TRIGGER IF EXISTS trg_normalize_promo_keyword ON promo_campaigns`);
     psql(`
       ALTER TABLE promo_campaigns ADD CONSTRAINT chk_keyword_or_bare CHECK (
         (code_entry_mode = 'keyword' AND keyword IS NOT NULL) OR
@@ -674,6 +682,12 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
           (code_entry_mode = 'bare_code' AND keyword IS NULL     AND accept_bare_codes = true)  OR
           (code_entry_mode = 'both'      AND keyword IS NOT NULL AND accept_bare_codes = true)
         )
+      `);
+      psql(`DROP TRIGGER IF EXISTS trg_normalize_promo_keyword ON promo_campaigns`);
+      psql(`
+        CREATE TRIGGER trg_normalize_promo_keyword
+          BEFORE INSERT OR UPDATE OF keyword ON promo_campaigns
+          FOR EACH ROW EXECUTE FUNCTION normalize_promo_keyword()
       `);
     }
   });
