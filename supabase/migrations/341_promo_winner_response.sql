@@ -281,6 +281,32 @@ REVOKE EXECUTE ON FUNCTION claim_promo_code(UUID, UUID, TEXT, TEXT, TEXT) FROM a
 GRANT EXECUTE ON FUNCTION claim_promo_code(UUID, UUID, TEXT, TEXT, TEXT) TO service_role;
 
 -- ═══════════════════════════════════════════════════════
+-- B2. DB-level guard: prevent prize_instructions edits on integrity-locked campaigns
+-- ═══════════════════════════════════════════════════════
+-- Application-level check alone is race-prone: a concurrent update could modify
+-- prize_instructions while the first redemption sets integrity_locked = true.
+-- This trigger makes it DB-authoritative.
+
+CREATE OR REPLACE FUNCTION guard_prize_instructions_integrity()
+RETURNS TRIGGER AS $$
+DECLARE v_locked BOOLEAN;
+BEGIN
+  IF NEW.prize_instructions IS DISTINCT FROM OLD.prize_instructions THEN
+    SELECT integrity_locked INTO v_locked FROM promo_campaigns WHERE id = NEW.campaign_id;
+    IF v_locked THEN
+      RAISE EXCEPTION 'Cannot update prize_instructions: campaign is integrity_locked'
+        USING ERRCODE = 'check_violation';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_guard_prize_instructions_integrity
+  BEFORE UPDATE OF prize_instructions ON promo_prizes
+  FOR EACH ROW EXECUTE FUNCTION guard_prize_instructions_integrity();
+
+-- ═══════════════════════════════════════════════════════
 -- C. Update default winner_message for new campaigns
 -- ═══════════════════════════════════════════════════════
 -- The old default was "Congratulations! ... Our team will contact you with the next steps"

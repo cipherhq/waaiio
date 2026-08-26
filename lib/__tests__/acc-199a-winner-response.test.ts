@@ -247,36 +247,43 @@ describe('verifyPromoCode integration', () => {
     expect(response.prizeName).toBe('Gold Watch');
   });
 
-  it('replay winner: returns identical claim block', async () => {
-    mockRpc.mockResolvedValue({
-      data: {
-        success: true,
-        result: 'winner',
-        claim_reference: 'WAA-AAAA-BBBB-CCCC-DDDD',
-        redemption_id: 'red-001',
-        prize_name: 'Gold Watch',
-        prize_type: 'product',
-        prize_value: 500,
-        prize_currency: 'NGN',
-        verification_mode: 'standard',
-        verification_status: 'phone_verified',
-        prize_instructions: null,
-        idempotent_replay: true,
-      },
-      error: null,
-    });
+  it('first-claim and replay produce byte-for-byte identical messages through verifyPromoCode', async () => {
+    const sharedRpcData = {
+      success: true,
+      result: 'winner',
+      claim_reference: 'WAA-AAAA-BBBB-CCCC-DDDD',
+      redemption_id: 'red-001',
+      prize_name: 'Gold Watch',
+      prize_type: 'product',
+      prize_value: 500,
+      prize_currency: 'NGN',
+      verification_mode: 'standard',
+      verification_status: 'phone_verified',
+      prize_instructions: 'Collect from Store #5',
+    };
 
-    const response = await verifyPromoCode({
+    // First claim
+    mockRpc.mockResolvedValue({ data: sharedRpcData, error: null });
+    const firstResponse = await verifyPromoCode({
       businessId: 'biz-001',
       rawCode: 'TEST-CODE-123',
       phoneE164: '+2349000000001',
       inboundMessageId: 'msg-001',
     });
 
-    expect(response.result).toBe('winner');
-    expect(response.message).toContain('WAA-AAAA-BBBB-CCCC-DDDD');
-    expect(response.message).toContain('Campaign: *Summer Giveaway*');
-    expect(response.message).toContain('Verification: Standard (claim reference)');
+    // Replay — same data but with idempotent_replay flag
+    mockRpc.mockResolvedValue({ data: { ...sharedRpcData, idempotent_replay: true }, error: null });
+    const replayResponse = await verifyPromoCode({
+      businessId: 'biz-001',
+      rawCode: 'TEST-CODE-123',
+      phoneE164: '+2349000000001',
+      inboundMessageId: 'msg-001',
+    });
+
+    // Exact string equality — proves the system block is byte-for-byte identical
+    expect(firstResponse.message).toBe(replayResponse.message);
+    expect(firstResponse.result).toBe('winner');
+    expect(replayResponse.result).toBe('winner');
   });
 
   it('standard verification: correct wording', async () => {
@@ -398,6 +405,14 @@ describe('verifyPromoCode integration', () => {
 // C. Replay parity tests (real DB)
 // ═══════════════════════════════════════════════════════
 import { execSync } from 'child_process';
+
+// CI guard: if running in CI, TEST_DATABASE_URL must be set
+// so DB tests are never silently skipped.
+if (process.env.CI) {
+  it('CI requires TEST_DATABASE_URL', () => {
+    expect(process.env.TEST_DATABASE_URL).toBeTruthy();
+  });
+}
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRunDb = dbUrl.length > 0;
@@ -527,6 +542,107 @@ describe.skipIf(!canRunDb)('claim_promo_code replay parity (real DB)', () => {
     `);
     const claim = (result as Record<string, unknown>).claim_promo_code as Record<string, unknown> ?? result;
     expect(claim.prize_instructions).toBe('Collect from Store #5 between 9am-5pm');
+  });
+
+  it('first-claim and replay return identical prize_instructions (parity proof)', () => {
+    // First claim
+    const firstResult = psqlJson(`
+      SELECT claim_promo_code('${BIZ_ID}', '${CAMP_ID}', 'testhash199a', '${PHONE}', '${MSG_ID}');
+    `);
+    const firstClaim = (firstResult as Record<string, unknown>).claim_promo_code as Record<string, unknown> ?? firstResult;
+
+    // Replay
+    const replayResult = psqlJson(`
+      SELECT claim_promo_code('${BIZ_ID}', '${CAMP_ID}', 'testhash199a', '${PHONE}', '${MSG_ID}');
+    `);
+    const replayClaim = (replayResult as Record<string, unknown>).claim_promo_code as Record<string, unknown> ?? replayResult;
+
+    // Parity: both return the same prize_instructions
+    expect(firstClaim.prize_instructions).toBe('Collect from Store #5 between 9am-5pm');
+    expect(replayClaim.prize_instructions).toBe(firstClaim.prize_instructions);
+
+    // Both produce identical system claim blocks
+    const firstBlock = buildClaimBlock({
+      businessName: 'Replay Test Biz',
+      campaignName: 'Replay Test Camp',
+      prizeName: firstClaim.prize_name as string,
+      claimReference: firstClaim.claim_reference as string,
+      verificationMode: firstClaim.verification_mode as string,
+      prizeInstructions: firstClaim.prize_instructions as string | null,
+    });
+    const replayBlock = buildClaimBlock({
+      businessName: 'Replay Test Biz',
+      campaignName: 'Replay Test Camp',
+      prizeName: replayClaim.prize_name as string,
+      claimReference: replayClaim.claim_reference as string,
+      verificationMode: replayClaim.verification_mode as string,
+      prizeInstructions: replayClaim.prize_instructions as string | null,
+    });
+    expect(firstBlock).toBe(replayBlock);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// C2. prize_instructions integrity locking (real DB)
+// ═══════════════════════════════════════════════════════
+describe.skipIf(!canRunDb)('prize_instructions integrity locking (real DB)', () => {
+  const LOCK_CAMP_ID = '00000000-0000-4000-c199-bbbbbbbbbbbb';
+  const LOCK_PRIZE_ID = '00000000-0000-4000-9199-bbbbbbbbbbbb';
+
+  beforeEach(() => {
+    psql(`
+      DELETE FROM promo_prizes WHERE id = '${LOCK_PRIZE_ID}';
+      DELETE FROM promo_campaigns WHERE id = '${LOCK_CAMP_ID}';
+      DELETE FROM businesses WHERE id = '${BIZ_ID}';
+      DELETE FROM profiles WHERE id = '${USER_ID}';
+      DELETE FROM auth.users WHERE id = '${USER_ID}';
+    `);
+
+    psql(`ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone TEXT;`);
+    psql(`
+      INSERT INTO auth.users (id, phone) VALUES ('${USER_ID}', '+0001990001')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    psql(`
+      INSERT INTO businesses (id, name, owner_id, category, country)
+      VALUES ('${BIZ_ID}', 'Lock Test Biz', '${USER_ID}', 'retail', 'NG');
+    `);
+    psql(`
+      INSERT INTO promo_campaigns (id, business_id, name, status, integrity_locked, winner_message, try_again_message, invalid_message, already_used_message, expired_message, created_by)
+      VALUES ('${LOCK_CAMP_ID}', '${BIZ_ID}', 'Lock Test Camp', 'active', false,
+        'You won!', 'Try again', 'Invalid', 'Already used', 'Expired', '${USER_ID}');
+    `);
+    psql(`
+      INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity, allocated_count, prize_instructions)
+      VALUES ('${LOCK_PRIZE_ID}', '${LOCK_CAMP_ID}', 'Test Prize', 'product', 10, 0, 'Original instructions');
+    `);
+  });
+
+  it('integrity_locked = true blocks prize_instructions updates (check_violation)', () => {
+    // Lock the campaign
+    psql(`UPDATE promo_campaigns SET integrity_locked = true WHERE id = '${LOCK_CAMP_ID}';`);
+
+    // Attempt to update prize_instructions — should fail
+    expect(() => {
+      psql(`UPDATE promo_prizes SET prize_instructions = 'New instructions' WHERE id = '${LOCK_PRIZE_ID}';`);
+    }).toThrow(/integrity_locked/);
+  });
+
+  it('integrity_locked = false allows prize_instructions updates', () => {
+    // Campaign is not locked (default from beforeEach)
+    psql(`UPDATE promo_prizes SET prize_instructions = 'Updated instructions' WHERE id = '${LOCK_PRIZE_ID}';`);
+
+    const result = psql(`SELECT prize_instructions FROM promo_prizes WHERE id = '${LOCK_PRIZE_ID}';`);
+    expect(result).toBe('Updated instructions');
+  });
+
+  it('non-prize_instructions columns can still be updated when locked', () => {
+    psql(`UPDATE promo_campaigns SET integrity_locked = true WHERE id = '${LOCK_CAMP_ID}';`);
+
+    // Updating name (not prize_instructions) should succeed even when locked
+    psql(`UPDATE promo_prizes SET name = 'Renamed Prize' WHERE id = '${LOCK_PRIZE_ID}';`);
+    const result = psql(`SELECT name FROM promo_prizes WHERE id = '${LOCK_PRIZE_ID}';`);
+    expect(result).toBe('Renamed Prize');
   });
 });
 

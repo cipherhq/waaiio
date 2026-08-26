@@ -114,7 +114,7 @@ interface WizardState {
 }
 
 const DEFAULT_WINNER_MESSAGE =
-  'Congratulations! You won {prize_name}. Your claim reference is {claim_ref}. We will contact you shortly with next steps.';
+  'Congratulations! \uD83C\uDF89';
 const DEFAULT_TRY_AGAIN_MESSAGE =
   'Sorry, not a winner this time. Better luck next round! Keep participating for more chances to win.';
 const DEFAULT_INVALID_MESSAGE =

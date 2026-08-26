@@ -7,6 +7,16 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-26
 
+### fix(promotions): Correction Round 2 — integrity locking, test parity, stale default (#199A / #201 / PR #206)
+
+- **DB-level integrity guard:** Added `guard_prize_instructions_integrity` trigger on `promo_prizes` in migration 341. Prevents `prize_instructions` updates when parent campaign is `integrity_locked = true`. Raises `check_violation`. This makes the lock race-safe (was application-level only).
+- **CI guard test:** Added test ensuring `TEST_DATABASE_URL` is set when `CI=true`, so DB tests are never silently skipped in CI.
+- **First/replay instruction parity proof (DB):** New test calls `claim_promo_code` twice, asserts both return identical `prize_instructions`, and builds identical claim blocks via `buildClaimBlock`.
+- **Exact string equality through verifyPromoCode:** Replaced "contains" assertions with `firstResponse.message === replayResponse.message` (byte-for-byte equality proof).
+- **Dashboard stale default fixed:** Changed `DEFAULT_WINNER_MESSAGE` in `app/dashboard/promotions/create/page.tsx` from the old "We will contact you shortly with next steps" to `'Congratulations! 🎉'` matching the DB default.
+- **Files:** `supabase/migrations/341_promo_winner_response.sql`, `lib/__tests__/acc-199a-winner-response.test.ts`, `app/dashboard/promotions/create/page.tsx`, `CHANGELOG.md`
+- **Could break:** Nothing — trigger is additive; dashboard default change only affects new campaign form initial values.
+
 ### feat(promotions): Winner response block + recipient instructions (#199A / #201)
 
 - **What:** When a customer wins a promo prize, the system now appends a structured claim block after the custom winner message with prize name, campaign name, claim reference, verification method, and actionable collection instructions based on the verification mode (standard vs secure_pickup).
