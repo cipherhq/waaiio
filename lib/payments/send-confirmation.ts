@@ -551,7 +551,7 @@ export async function sendProactiveConfirmation(
 
         if (ownerNotifBooking && ownerNotifBooking.flow_type === 'payment') {
           // Payment/Giving: awaited in-app notification (not dependent on resolved)
-          const svc = ownerNotifBooking.services as { name: string } | null;
+          const svc = ownerNotifBooking.services as unknown as { name: string } | null;
           try {
             const { error: notifErr } = await supabase.from('notifications').insert({
               business_id: businessId,
