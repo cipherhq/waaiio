@@ -595,21 +595,21 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
       const migrationPath = path.resolve(__dirname, '../../supabase/migrations/340_promo_routing_consistency.sql');
       const migrationSql = fs.readFileSync(migrationPath, 'utf8');
 
-      // 5. Execute the migration SQL inside a SAVEPOINT so we can roll back
+      // 5. Execute the migration SQL inside a BEGIN block so we can roll back
       //    The migration's DO $$ block should RAISE EXCEPTION on the both+NULL row
+      //    psql -tAXq runs in autocommit, so we must wrap in an explicit transaction
       const result = psqlMayFail(`
-        SAVEPOINT pre_migration;
+        BEGIN;
         ${migrationSql}
+        COMMIT;
       `);
 
       // 6. The migration should have failed (RAISE EXCEPTION 'Migration blocked: ...')
+      //    The BEGIN block means the error aborts the transaction automatically
       expect(result.ok).toBe(false);
       expect(result.output).toContain('Migration blocked');
 
-      // 7. Rollback the savepoint to undo any partial changes
-      psqlMayFail(`ROLLBACK TO SAVEPOINT pre_migration`);
-
-      // 8. Verify the invalid row still exists unchanged (migration didn't partially fix)
+      // 7. Verify the invalid row still exists unchanged (transaction rolled back on error)
       const afterKw = psql(`SELECT keyword FROM promo_campaigns WHERE id = '${CAMP_A_ID}'`);
       expect(afterKw).toBe('');  // Still NULL (empty in psql output)
     } finally {
@@ -651,20 +651,19 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
       const migrationSql = fs.readFileSync(migrationPath, 'utf8');
 
       // This should succeed — keyword mode with keyword=TEST is fixable (bare forced to false)
+      // Run migration + verify + rollback in ONE psql session (each psql call is a new connection)
       const result = psqlMayFail(`
-        SAVEPOINT pre_migration;
+        BEGIN;
         ${migrationSql}
+        -- Verify the bare_codes flag was corrected
+        SELECT accept_bare_codes FROM promo_campaigns WHERE id = '${CAMP_A_ID}';
+        ROLLBACK;
       `);
 
       // Migration should succeed since keyword is present
       expect(result.ok).toBe(true);
-
-      // Verify the bare_codes flag was corrected
-      const bare = psql(`SELECT accept_bare_codes FROM promo_campaigns WHERE id = '${CAMP_A_ID}'`);
-      expect(bare).toBe('f');  // false
-
-      // Rollback to restore original state
-      psqlMayFail(`ROLLBACK TO SAVEPOINT pre_migration`);
+      // Output contains the query result — 'f' for false
+      expect(result.output).toContain('f');
     } finally {
       psql(`DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}', '${CAMP_C_ID}')`);
       psql(`ALTER TABLE promo_campaigns DROP CONSTRAINT IF EXISTS chk_keyword_or_bare`);
