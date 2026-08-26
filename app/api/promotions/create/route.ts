@@ -189,8 +189,13 @@ export async function POST(request: NextRequest) {
     if (typeof p.quantity !== 'number' || p.quantity < 1 || !Number.isInteger(p.quantity)) {
       return NextResponse.json({ error: `prizes[${i}].quantity must be a positive integer` }, { status: 400 });
     }
-    if (p.prize_instructions && typeof p.prize_instructions === 'string' && p.prize_instructions.length > 500) {
-      return NextResponse.json({ error: `prizes[${i}].prize_instructions must be at most 500 characters` }, { status: 400 });
+    if (p.prize_instructions !== undefined && p.prize_instructions !== null) {
+      if (typeof p.prize_instructions !== 'string') {
+        return NextResponse.json({ error: `prizes[${i}].prize_instructions must be a string` }, { status: 400 });
+      }
+      if (p.prize_instructions.trim().length > 500) {
+        return NextResponse.json({ error: `prizes[${i}].prize_instructions must be at most 500 characters` }, { status: 400 });
+      }
     }
   }
 

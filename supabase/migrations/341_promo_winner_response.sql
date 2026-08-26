@@ -1,4 +1,4 @@
--- Migration 339: Winner response block + recipient instructions
+-- Migration 341: Winner response block + recipient instructions
 --
 -- Issue: #199A (GitHub #201) — Winner response block
 --
@@ -63,7 +63,7 @@ BEGIN
   );
 
   -- ── Idempotency: existing redemption ──
-  -- FIX (339): Add verification_mode, verification_status, prize_instructions
+  -- FIX (341): Add verification_mode, verification_status, prize_instructions
   -- to the replay SELECT + return for parity with the first-claim branch.
   IF p_inbound_message_id IS NOT NULL THEN
     SELECT r.id, r.outcome, r.claim_reference, r.prize_id,
@@ -299,13 +299,13 @@ BEGIN
     SELECT 1 FROM information_schema.columns
     WHERE table_name = 'promo_prizes' AND column_name = 'prize_instructions'
   ) INTO v_col_exists;
-  IF NOT v_col_exists THEN RAISE EXCEPTION '339: promo_prizes.prize_instructions column missing'; END IF;
+  IF NOT v_col_exists THEN RAISE EXCEPTION '341: promo_prizes.prize_instructions column missing'; END IF;
 
   -- Verify function privileges
   SELECT has_function_privilege('service_role', 'claim_promo_code(uuid, uuid, text, text, text)', 'EXECUTE') INTO v_has;
-  IF NOT v_has THEN RAISE EXCEPTION '339: service_role cannot execute claim_promo_code'; END IF;
+  IF NOT v_has THEN RAISE EXCEPTION '341: service_role cannot execute claim_promo_code'; END IF;
   SELECT has_function_privilege('anon', 'claim_promo_code(uuid, uuid, text, text, text)', 'EXECUTE') INTO v_has;
-  IF v_has THEN RAISE EXCEPTION '339: anon CAN execute claim_promo_code (should be revoked)'; END IF;
+  IF v_has THEN RAISE EXCEPTION '341: anon CAN execute claim_promo_code (should be revoked)'; END IF;
 
-  RAISE NOTICE '339: winner response block migration passed all checks';
+  RAISE NOTICE '341: winner response block migration passed all checks';
 END $$;

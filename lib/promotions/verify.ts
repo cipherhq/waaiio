@@ -13,6 +13,7 @@
  * - Formatting the response message
  */
 import { createServiceClient } from '@/lib/supabase/service';
+import { logger } from '@/lib/logger';
 import { normalizePromoCode } from './normalize';
 import { hashPromoCode } from './crypto';
 import type { PromoClaimResult, PromoCampaign, PromoAttemptResult } from './types';
@@ -52,8 +53,15 @@ export function buildClaimBlock(params: {
     '',  // blank line separator
     '\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501',
     `\uD83C\uDFC6 *${params.prizeName}*`,
+    `\uD83C\uDFAF Campaign: *${params.campaignName}*`,
     `\uD83D\uDCCB Claim Reference: *${params.claimReference}*`,
   ];
+
+  if (params.verificationMode === 'secure_pickup') {
+    lines.push('\uD83D\uDD13 Verification: Secure Pickup (OTP required)');
+  } else {
+    lines.push('\uD83D\uDD13 Verification: Standard (claim reference)');
+  }
 
   if (params.prizeInstructions) {
     lines.push(`\uD83D\uDCDD ${params.prizeInstructions}`);
@@ -64,7 +72,7 @@ export function buildClaimBlock(params: {
     lines.push(`\uD83D\uDD10 A verification code will be sent to this number when your prize is ready for collection. Keep the code private until pickup \u2014 only provide it to ${params.businessName} when collecting your prize.`);
   } else {
     lines.push('');
-    lines.push(`\u2705 Show this claim reference to ${params.businessName} to collect your prize.`);
+    lines.push(`\u2705 Present this reference to ${params.businessName} to look up your claim and collect your prize.`);
   }
 
   lines.push('\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501');
@@ -213,6 +221,11 @@ export async function verifyPromoCode(input: VerificationInput): Promise<Verific
       .select('name')
       .eq('id', input.businessId)
       .single();
+
+    if (!business?.name) {
+      // Business must exist if we got this far — this is a data integrity issue
+      logger.warn('promo.verify', 'Business name not found for claim block', { businessId: input.businessId });
+    }
 
     message += buildClaimBlock({
       businessName: business?.name || 'the business',

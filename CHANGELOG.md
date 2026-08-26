@@ -9,12 +9,12 @@ If something breaks, check this log to find what changed and when.
 
 ### feat(promotions): Winner response block + recipient instructions (#199A / #201)
 
-- **What:** When a customer wins a promo prize, the system now appends a structured claim block after the custom winner message with prize name, claim reference, and actionable collection instructions based on the verification mode (standard vs secure_pickup).
-- **Migration 339:** Added `prize_instructions` column to `promo_prizes`; updated `claim_promo_code` replay branch to return `redemption_id`, `verification_mode`, `verification_status`, and `prize_instructions` (parity with first-claim branch); changed default `winner_message` to `'Congratulations! 🎉'` for new campaigns only.
-- **Application layer:** Added `buildClaimBlock()` to `lib/promotions/verify.ts` — generates the non-editable system claim block appended after the business's custom winner message. Appended for both first-claim and replay (idempotent) scenarios. NOT appended for try-again outcomes.
-- **API routes:** `app/api/promotions/create/route.ts` now accepts `prize_instructions` on prizes (max 500 chars). `app/api/promotions/update/route.ts` now supports `prizeUpdates` array for updating `prize_instructions`, gated by `integrity_locked`.
-- **Types:** Added `prize_instructions` to `PromoPrize` and `PromoClaimResult` interfaces.
-- **Files:** `supabase/migrations/339_promo_winner_response.sql`, `lib/promotions/verify.ts`, `lib/promotions/types.ts`, `app/api/promotions/create/route.ts`, `app/api/promotions/update/route.ts`, `lib/__tests__/acc-199a-winner-response.test.ts`
+- **What:** When a customer wins a promo prize, the system now appends a structured claim block after the custom winner message with prize name, campaign name, claim reference, verification method, and actionable collection instructions based on the verification mode (standard vs secure_pickup).
+- **Migration 341:** (renumbered from 339 to avoid collision with PRs #196/#205) Added `prize_instructions` column to `promo_prizes`; updated `claim_promo_code` replay branch to return `redemption_id`, `verification_mode`, `verification_status`, and `prize_instructions` (parity with first-claim branch); changed default `winner_message` to `'Congratulations! 🎉'` for new campaigns only.
+- **Application layer:** `buildClaimBlock()` in `lib/promotions/verify.ts` now renders campaign name, explicit verification method label (Standard/Secure Pickup), and uses "look up your claim" wording for standard mode (not bearer-proof language). Business name lookup failure logged via `logger.warn` before fallback.
+- **API routes:** `app/api/promotions/create/route.ts` validates `prize_instructions` type (must be string) before `.trim()`. `app/api/promotions/update/route.ts` already had proper type checking.
+- **Tests:** Added real `verifyPromoCode` integration tests with mocked Supabase: first-claim winner, replay winner, standard vs secure_pickup wording, try-again (no claim block), business name failure (logged warning + fallback).
+- **Files:** `supabase/migrations/341_promo_winner_response.sql`, `lib/promotions/verify.ts`, `lib/promotions/types.ts`, `app/api/promotions/create/route.ts`, `app/api/promotions/update/route.ts`, `lib/__tests__/acc-199a-winner-response.test.ts`
 - **Affects:** Winner message display in WhatsApp, promo prize creation/update, claim_promo_code replay returns
 - **Could break:** Nothing — additive only. Existing campaigns keep their stored winner_message. Claim block is appended programmatically, not stored.
 
