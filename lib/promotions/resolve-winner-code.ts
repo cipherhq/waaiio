@@ -38,7 +38,14 @@ export function resolveRedeemedCode(
   redemptionCampaignId: string,
 ): string | null {
   if (!codeRow) return null;
-  const code = Array.isArray(codeRow) ? (codeRow[0] ?? null) : codeRow;
+  // Fail closed on unexpected cardinality: a promo_code_id FK should
+  // resolve to exactly one code row. Multiple rows indicate a schema
+  // anomaly — do not arbitrarily trust the first element.
+  if (Array.isArray(codeRow)) {
+    if (codeRow.length !== 1) return null;
+    return resolveRedeemedCode(codeRow[0], redemptionCampaignId);
+  }
+  const code = codeRow;
   if (!code) return null;
 
   // Check 5: code belongs to same campaign as the redemption
