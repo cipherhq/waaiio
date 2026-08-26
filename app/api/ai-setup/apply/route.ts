@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
+import { buildAiSetupServiceRow } from '@/lib/services/payload-builders';
 
 interface ServiceItem {
   name: string;
@@ -86,16 +87,10 @@ export async function POST(request: NextRequest) {
 
         let sortOrder = (lastService?.sort_order ?? -1) + 1;
 
-        const rows = newServices.map((s) => ({
-          business_id,
-          name: String(s.name).trim().slice(0, 200),
-          price: Math.max(0, Math.min(Number(s.price) || 0, 99999999)),
-          duration_minutes: Math.max(0, Math.min(Number(s.duration_minutes) || 30, 1440)),
-          deposit_amount: Math.max(0, Math.min(Number(s.deposit_amount) || 0, 99999999)),
-          description: s.description ? String(s.description).slice(0, 1000) : null,
-          price_is_variable: false,
-          is_active: true,
-          sort_order: sortOrder++,
+        const rows = newServices.map((s) => buildAiSetupServiceRow({
+          businessId: business_id, name: s.name, price: s.price,
+          duration_minutes: s.duration_minutes, deposit_amount: s.deposit_amount,
+          description: s.description, sortOrder: sortOrder++,
         }));
 
         const { data: created, error } = await service.from('services').insert(rows).select('id, name');

@@ -12,6 +12,7 @@ import { captureProductEvent } from '@/lib/observability/product-events';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { buildServicePayload } from '@/lib/services/payload-builders';
 
 interface Service {
   id: string;
@@ -298,42 +299,23 @@ export default function ServicesPage() {
     setSaving(true);
     const supabase = createClient();
 
-    const payload = {
-      business_id: business.id,
-      name: form.name.trim(),
-      description: form.description?.trim() || null,
-      price: Math.round(form.price),
-      price_is_variable: form.price_is_variable,
-      duration_minutes: form.duration_minutes,
-      buffer_minutes: form.buffer_minutes || 0,
-      deposit_amount: Math.round(form.deposit_amount),
-      is_active: form.status === 'active',
-      sort_order: form.sort_order,
-      status: form.status,
-      billing_type: form.billing_type,
-      recurring_interval: form.billing_type === 'recurring' ? form.recurring_interval : null,
-      is_featured: form.is_featured,
-      image_url: form.image_url,
-      cancellation_policy: form.cancellation_policy?.trim() || null,
-      available_days: form.available_days,
-      available_from: form.available_from || null,
-      available_to: form.available_to || null,
-      requires_staff: form.requires_staff,
-      staff_ids: form.requires_staff ? form.staff_ids : [],
-      allow_staff_selection: form.requires_staff && form.staff_ids.length > 0 ? form.allow_staff_selection : false,
-      is_package: form.is_package,
-      included_service_ids: form.is_package ? form.included_service_ids : [],
-      gallery_urls: form.gallery_urls || [],
-      quote_enabled: form.quote_enabled,
-      is_class: form.is_class,
-      class_schedule: form.is_class ? form.class_schedule : [],
-      max_capacity: (form as unknown as Record<string, unknown>).max_capacity as number || null,
-      metadata: {
-        ...(form.metadata || {}),
-        collect_venue: (form.metadata || {}).collect_venue || false,
-        multi_day: (form.metadata || {}).multi_day || false,
-      },
-    };
+    const payload = buildServicePayload({
+      businessId: business.id, name: form.name, description: form.description,
+      price: form.price, price_is_variable: form.price_is_variable,
+      duration_minutes: form.duration_minutes || 0, buffer_minutes: form.buffer_minutes,
+      deposit_amount: form.deposit_amount, status: form.status, sort_order: form.sort_order,
+      billing_type: form.billing_type, recurring_interval: form.recurring_interval,
+      is_featured: form.is_featured, image_url: form.image_url,
+      cancellation_policy: form.cancellation_policy, available_days: form.available_days,
+      available_from: form.available_from, available_to: form.available_to,
+      requires_staff: form.requires_staff, staff_ids: form.staff_ids,
+      allow_staff_selection: form.allow_staff_selection, is_package: form.is_package,
+      included_service_ids: form.included_service_ids, gallery_urls: form.gallery_urls,
+      quote_enabled: form.quote_enabled, is_class: form.is_class,
+      class_schedule: form.class_schedule,
+      max_capacity: (form as unknown as Record<string, unknown>).max_capacity as number,
+      metadata: form.metadata,
+    });
 
     if (view === 'add') {
       const { data: inserted } = await supabase.from('services').insert(payload).select('id').single();
