@@ -206,11 +206,19 @@ BEGIN
   -- ── Platform fee: preserves active Stripe fee semantics exactly ──
   -- Uses ROUND(x) = integer rounding to match Math.round in getPlatformFees
   -- Uses strict > 0.10 micro-tx guard (exactly 10% is NOT waived)
+  -- NOTE: Must NOT use composite "v_business IS NOT NULL" — in PostgreSQL,
+  -- row IS NOT NULL is true only when ALL fields are non-null. A valid business
+  -- with trial_ends_at = NULL would evaluate false, silently skipping fees.
   SELECT subscription_tier, trial_ends_at, payout_mode INTO v_business
     FROM businesses WHERE id = v_sub.business_id;
 
-  IF v_business IS NOT NULL AND COALESCE(v_business.payout_mode, 'platform') != 'direct_split' THEN
-    v_is_in_trial := v_business.trial_ends_at > v_now;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Business % not found for subscription %', v_sub.business_id, v_sub.id;
+  END IF;
+
+  IF COALESCE(v_business.payout_mode, 'platform') != 'direct_split' THEN
+    -- NULL trial_ends_at = not in trial (matches process-success.ts semantics)
+    v_is_in_trial := COALESCE(v_business.trial_ends_at > v_now, false);
     v_tier := COALESCE(v_business.subscription_tier, 'free');
     IF v_is_in_trial THEN
       v_fee_pct := 0; v_fee_flat := 0; v_fee_total := 0;

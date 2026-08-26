@@ -820,6 +820,176 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   });
 
   // ─────────────────────────────────────────────────────────
+  // Correction Round 2: nullable business fields + platform fee regressions
+  // ─────────────────────────────────────────────────────────
+
+  // q. trial_ends_at = NULL → not in trial → expected fee row with correct amount
+  it('q. trial_ends_at = NULL → finalization succeeds with expected platform_fees row', () => {
+    cleanFinData();
+    // Set trial_ends_at to NULL (the common production case for non-trial businesses)
+    psql(`UPDATE businesses SET trial_ends_at = NULL, payout_mode = 'platform', subscription_tier = 'free' WHERE id = '${BIZ_ID}'`);
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_null_trial_001', 'sub_test_xxx',
+        5000, 'USD', 'pi_null_trial_001'
+      );
+    `);
+
+    expect(result.success).toBe(true);
+    expect(result.already_finalized).toBe(false);
+
+    // Platform fee row MUST exist (null trial = not in trial = normal fee)
+    const feeRow = psql(`SELECT fee_percentage, fee_total, tier FROM platform_fees WHERE booking_id = '${result.booking_id}'`);
+    expect(feeRow).not.toBe('');
+    const [feePct, feeTotal, feeTier] = feeRow.split('|');
+    expect(parseFloat(feePct)).toBe(2.5);        // free tier default
+    expect(parseInt(feeTotal)).toBe(1);           // ROUND(50 * 2.5 / 100) = 1
+    expect(feeTier).toBe('free');
+
+    // Finalization marker committed
+    const finCount = psql(`SELECT COUNT(*) FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_null_trial_001'`);
+    expect(finCount).toBe('1');
+
+    // Restore trial_ends_at for other tests
+    psql(`UPDATE businesses SET trial_ends_at = NOW() - INTERVAL '1 day' WHERE id = '${BIZ_ID}'`);
+  });
+
+  // r. Expired trial → expected fee row (trial_ends_at in the past)
+  it('r. expired trial → finalization succeeds with expected platform_fees row', () => {
+    cleanFinData();
+    psql(`UPDATE businesses SET trial_ends_at = NOW() - INTERVAL '30 days', payout_mode = 'platform', subscription_tier = 'free' WHERE id = '${BIZ_ID}'`);
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_expired_trial_001', 'sub_test_xxx',
+        5000, 'USD', 'pi_expired_trial_001'
+      );
+    `);
+
+    expect(result.success).toBe(true);
+
+    // Platform fee exists (expired trial = not in trial = normal fee)
+    const feeCount = psql(`SELECT COUNT(*) FROM platform_fees WHERE booking_id = '${result.booking_id}'`);
+    expect(feeCount).toBe('1');
+
+    const feeTotal = psql(`SELECT fee_total FROM platform_fees WHERE booking_id = '${result.booking_id}'`);
+    expect(parseInt(feeTotal)).toBe(1);           // ROUND(50 * 2.5 / 100) = 1
+
+    // Restore
+    psql(`UPDATE businesses SET trial_ends_at = NOW() - INTERVAL '1 day' WHERE id = '${BIZ_ID}'`);
+  });
+
+  // s. Active trial → zero-fee semantics (trial_ends_at in the future)
+  it('s. active trial → finalization succeeds with zero platform_fees', () => {
+    cleanFinData();
+    psql(`UPDATE businesses SET trial_ends_at = NOW() + INTERVAL '30 days', payout_mode = 'platform', subscription_tier = 'free' WHERE id = '${BIZ_ID}'`);
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_active_trial_001', 'sub_test_xxx',
+        5000, 'USD', 'pi_active_trial_001'
+      );
+    `);
+
+    expect(result.success).toBe(true);
+
+    // Fee row exists but with zero amounts (active trial = no fees charged)
+    const feeRow = psql(`SELECT fee_percentage, fee_flat, fee_total FROM platform_fees WHERE booking_id = '${result.booking_id}'`);
+    expect(feeRow).not.toBe('');
+    const [feePct, feeFlat, feeTotal] = feeRow.split('|');
+    expect(parseFloat(feePct)).toBe(0);
+    expect(parseFloat(feeFlat)).toBe(0);
+    expect(parseFloat(feeTotal)).toBe(0);
+
+    // Restore
+    psql(`UPDATE businesses SET trial_ends_at = NOW() - INTERVAL '1 day' WHERE id = '${BIZ_ID}'`);
+  });
+
+  // t. direct_split → no platform_fees row
+  it('t. direct_split payout_mode → finalization succeeds with NO platform_fees row', () => {
+    cleanFinData();
+    psql(`UPDATE businesses SET payout_mode = 'direct_split', trial_ends_at = NOW() - INTERVAL '1 day', subscription_tier = 'free' WHERE id = '${BIZ_ID}'`);
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+
+    const result = psqlJson(`
+      SELECT finalize_stripe_recurring_charge(
+        '${SUB_ID_A}'::uuid, 'in_direct_split_001', 'sub_test_xxx',
+        5000, 'USD', 'pi_direct_split_001'
+      );
+    `);
+
+    expect(result.success).toBe(true);
+
+    // NO platform_fees row for direct_split
+    const feeCount = psql(`SELECT COUNT(*) FROM platform_fees WHERE booking_id = '${result.booking_id}'`);
+    expect(feeCount).toBe('0');
+
+    // But finalization marker IS committed
+    const finCount = psql(`SELECT COUNT(*) FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_direct_split_001'`);
+    expect(finCount).toBe('1');
+
+    // Restore
+    psql(`UPDATE businesses SET payout_mode = 'platform' WHERE id = '${BIZ_ID}'`);
+  });
+
+  // u. Missing business → full rollback (no finalization marker, no payment)
+  // FK constraint business_id → businesses(id) ON DELETE CASCADE normally prevents
+  // orphan subscriptions. This test disables FK triggers to simulate a data anomaly
+  // and prove the RPC fails closed with RAISE EXCEPTION + full rollback.
+  it('u. missing business → RAISE EXCEPTION, full rollback, no finalization marker', () => {
+    cleanFinData();
+    const GHOST_SUB = '77eeeeee-eeee-eeee-eeee-eeeeeeeeee01';
+
+    // Insert subscription then orphan it by deleting business with triggers disabled
+    createSub(GHOST_SUB, { code: 'sub_ghost_001', amount: 50 });
+    psql(`
+      ALTER TABLE customer_subscriptions DISABLE TRIGGER ALL;
+      DELETE FROM businesses WHERE id = '${BIZ_ID}';
+      ALTER TABLE customer_subscriptions ENABLE TRIGGER ALL;
+    `);
+
+    let threw = false;
+    try {
+      psqlJson(`
+        SELECT finalize_stripe_recurring_charge(
+          '${GHOST_SUB}'::uuid, 'in_missing_biz_001', 'sub_ghost_001',
+          5000, 'USD', 'pi_missing_biz_001'
+        );
+      `);
+    } catch {
+      threw = true;
+    }
+
+    // Must throw (RAISE EXCEPTION → full rollback)
+    expect(threw).toBe(true);
+
+    // No finalization marker (transaction rolled back)
+    const finCount = psql(`SELECT COUNT(*) FROM stripe_recurring_finalizations WHERE stripe_invoice_id = 'in_missing_biz_001'`);
+    expect(finCount).toBe('0');
+
+    // No payment record
+    const payCount = psql(`SELECT COUNT(*) FROM payments WHERE gateway_reference = 'pi_missing_biz_001'`);
+    expect(payCount).toBe('0');
+
+    // Restore the business for subsequent tests
+    psql(`
+      INSERT INTO businesses (id, owner_id, name, slug, address, city, neighborhood, phone,
+        status, subscription_tier, trial_ends_at, payout_mode, country_code)
+        VALUES ('${BIZ_ID}', '${USER_ID}', 'Stripe Fin Test Biz', 'stripe-fin-test-177',
+          '1 Test St', 'Lagos', 'VI', '+10000000000',
+          'active', 'free', NOW() - INTERVAL '1 day', 'platform', 'US')
+        ON CONFLICT (id) DO NOTHING;
+    `);
+
+    // Clean up ghost subscription
+    psql(`DELETE FROM customer_subscriptions WHERE id = '${GHOST_SUB}'`);
+  });
+
+  // ─────────────────────────────────────────────────────────
   // p. Fee parity: ROUND(x) matches Math.round for representative amounts
   // ─────────────────────────────────────────────────────────
   it('p. fee parity — ROUND(x) integer rounding matches Math.round for representative amounts', () => {
