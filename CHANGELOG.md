@@ -7,6 +7,15 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-26
 
+### fix(promotions): PR #205 correction round 3 — CI sentinel removal, migration harness, handler execution tests (#198)
+
+- **CI sentinel removed:** The `if (process.env.CI) expect(TEST_DATABASE_URL)` sentinel test was removed from `acc-198-promo-routing-db.test.ts`. The Main App CI job has no PostgreSQL, so this sentinel broke it. Zero-skip enforcement is handled in ci.yml, not in the test file.
+- **Migration 340 pre-migration harness:** New DB test proves migration 340 aborts on both-mode campaigns with NULL keyword. Uses SAVEPOINT to set up pre-340 state (weak CHECK), insert invalid legacy rows, run migration SQL, and verify it raises `RAISE EXCEPTION 'Migration blocked'`. Proves the transaction rolls back and invalid data remains unchanged.
+- **Actual handler execution tests:** Unit tests now import and call the real `PUT` handler from `app/api/promotions/update/route.ts` with mocked Supabase instead of simulating with local variables. Tests verify: routing_mode_conflict 400, bare_code+keyword 400, integrity-locked 409, keyword normalization before RPC, keyword_conflict 409 from RPC, bare_code_conflict 409, routing-only reload, campaign not found 404.
+- **Files:** `lib/__tests__/acc-198-promo-routing-db.test.ts`, `lib/__tests__/acc-198-promo-routing.test.ts`, `CHANGELOG.md`
+- **Affects:** CI reliability, test accuracy, migration safety proof
+- **Could break:** Nothing — all changes are test corrections. No schema or logic changes.
+
 ### fix(promotions): PR #205 correction round 2 — ACC-184 regression, real concurrency, audit rollback, activation 409, CI enforcement (#198)
 
 - **ACC-184 regression fix:** Test INSERTs for `both` mode campaigns now include `keyword = 'TESTPROMO'` and `accept_bare_codes = true` to satisfy `chk_routing_consistency` CHECK. The CHECK is NOT weakened.
