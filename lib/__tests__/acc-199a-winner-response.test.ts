@@ -990,7 +990,7 @@ describe.skipIf(!canRunDb)('update_prize_instructions privilege assertions (real
         '[{"prize_id": "${PRIZE_ID}", "prize_instructions": "Updated by service_role"}]'::jsonb
       );
     `);
-    expect(result).toContain('"success" : true');
+    expect(JSON.parse(result).success).toBe(true);
 
     // Cleanup
     psql(`
