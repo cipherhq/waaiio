@@ -185,7 +185,7 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
     const result = psql(`
       SELECT update_promo_campaign_routing('${CAMP_A_ID}', '${BIZ_ID}', '${USER_ID}', 'keyword', 'NEWKW', NULL);
     `);
-    expect(result).toContain('"success" : true');
+    expect(JSON.parse(result).success).toBe(true);
 
     // Verify the update
     const kw = psql(`SELECT keyword FROM promo_campaigns WHERE id = '${CAMP_A_ID}'`);
@@ -277,7 +277,7 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
     const result = psql(`
       SELECT update_promo_campaign_routing('${CAMP_A_ID}', '${BIZ_ID}', '${USER_ID}', 'keyword', 'ATOMNEW', 'test audit atomicity');
     `);
-    expect(result).toContain('"success" : true');
+    expect(JSON.parse(result).success).toBe(true);
 
     // Verify the routing UPDATE landed
     const kw = psql(`SELECT keyword FROM promo_campaigns WHERE id = '${CAMP_A_ID}'`);
@@ -370,9 +370,9 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
 
     // Both should succeed (serialized by FOR UPDATE)
     expect(resultA.ok).toBe(true);
-    expect(resultA.stdout).toContain('"success" : true');
+    expect(JSON.parse(resultA.stdout).success).toBe(true);
     expect(resultB.ok).toBe(true);
-    expect(resultB.stdout).toContain('"success" : true');
+    expect(JSON.parse(resultB.stdout).success).toBe(true);
 
     // The last writer wins — B waited for A's lock, then ran after A committed.
     // Since both succeed and B ran after A, the final value should be THIRD.
