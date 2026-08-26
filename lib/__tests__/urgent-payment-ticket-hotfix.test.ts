@@ -28,7 +28,7 @@ function readSrc(relPath: string) {
 describe('Payment confirmation schema', () => {
   it('selects duration_minutes from services', () => {
     const src = readSrc('../payments/send-confirmation.ts');
-    expect(src).toContain('services(name, duration_minutes)');
+    expect(src).toContain('services(name, duration_minutes, service_type)');
     expect(src).not.toMatch(/services\(name,\s*duration\)/);
   });
   it('logs booking lookup error', () => {

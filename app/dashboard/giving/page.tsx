@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { PageHeader } from '@/components/dashboard/PageHeader';
 import { PAGE_TOOLTIPS } from '@/lib/tooltips';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { buildGivingServicePayload } from '@/lib/services/payload-builders';
 
 interface GivingCategory {
   id: string;
@@ -63,19 +64,9 @@ export default function GivingPage() {
     if (!name.trim()) return;
     setSaving(true);
     const supabase = createClient();
-    const payload = {
-      business_id: business.id,
-      name: name.trim(),
-      description: description.trim() || null,
-      price: fixedAmount ? price : 0,
-      price_is_variable: !fixedAmount,
-      duration_minutes: 0,
-      deposit_amount: 0,
-      billing_type: isRecurring ? 'recurring' : 'one_time',
-      recurring_interval: isRecurring ? interval : null,
-      is_active: true,
-      service_type: 'giving',
-    };
+    const payload = buildGivingServicePayload({
+      businessId: business.id, name, description, fixedAmount, price, isRecurring, interval,
+    });
 
     if (formId) {
       const { error } = await supabase.from('services').update(payload).eq('id', formId);

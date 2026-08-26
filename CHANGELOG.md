@@ -7,6 +7,15 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-25
 
+### fix(loyalty): Direct Giving no longer earns loyalty points (#167)
+
+- **Root cause:** `sendProactiveConfirmation` (Stage 3) called `handlePostCompletion` without `skipLoyalty` for all booking-backed payments, including Direct Giving.
+- **Fix:** Two-dimensional classifier: `flow_type === 'payment' AND service_type === 'giving'` → `skipLoyalty=true`. Fail-closed for ambiguous payment-family transactions. Non-payment flows unchanged.
+- **No migration needed.** Added `service_type` to existing `services(...)` JOIN select.
+- **Files:** `lib/payments/send-confirmation.ts`, `lib/payments/__tests__/giving-loyalty-gap.test.ts`
+- **Affects:** Loyalty awarding for Direct Giving and recurring Giving renewals
+- **Could break:** Nothing — existing non-giving loyalty preserved. Ambiguous payments fail closed.
+
 ### feat(promotions): show redeemed winning code to business after claim (#190)
 
 - **What:** After a winning promo code is redeemed, the business can now see the exact printed code in the Winners dashboard tab.

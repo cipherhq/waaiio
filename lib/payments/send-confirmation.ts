@@ -184,12 +184,14 @@ export async function sendProactiveConfirmation(
   let balanceRemaining = 0;
   let balanceBookingId: string | null = null;
   let balanceReservationId: string | null = null;
+  let bookingFlowType: string | undefined;
+  let bookingServiceType: string | undefined;
 
   // ── 1. Resolve customer + business from booking ──
   if (payment.booking_id) {
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
-      .select('guest_phone, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration_minutes)')
+      .select('guest_phone, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration_minutes, service_type)')
       .eq('id', payment.booking_id)
       .single();
 
@@ -202,7 +204,9 @@ export async function sendProactiveConfirmation(
       businessId = booking.business_id;
       referenceCode = booking.reference_code || '';
       const biz = booking.businesses as unknown as { name: string; country_code?: string; address?: string; payment_gateway?: string } | null;
-      const svc = booking.services as unknown as { name: string; duration_minutes?: number } | null;
+      const svc = booking.services as unknown as { name: string; duration_minutes?: number; service_type?: string } | null;
+      bookingFlowType = booking.flow_type || undefined;
+      bookingServiceType = svc?.service_type || undefined;
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
       if (svc?.name) serviceName = svc.name;
@@ -514,6 +518,13 @@ export async function sendProactiveConfirmation(
         const isReservationPayment = !!payment.reservation_id;
         const isCampaignPayment = !!payment.campaign_id;
         const isInvoicePayment = !!payment.invoice_id;
+        // #167: Two-dimensional Giving classifier (fail-closed for ambiguous payment)
+        const isPaymentFamily = bookingFlowType === 'payment';
+        const isGivingPayment = isPaymentFamily && bookingServiceType === 'giving';
+        const isAmbiguousPayment = isPaymentFamily && bookingServiceType !== 'booking' && bookingServiceType !== 'giving';
+        if (isAmbiguousPayment) {
+          logger.warn(`${logPrefix} Ambiguous payment classification: flow_type=payment, service_type=${bookingServiceType ?? 'null'}, booking_id=${payment.booking_id}`);
+        }
         await handlePostCompletion({
           supabase, businessId, customerPhone, customerName,
           // Entity-correct serviceType: reservation uses booking semantics (#173)
@@ -526,6 +537,8 @@ export async function sendProactiveConfirmation(
           // Only booking/reservation: suppress legacy additive spend (Stage 2 owns it).
           // Orders: do NOT set skipCustomerSpend — existing amountPaid=0 behavior is unchanged.
           skipCustomerSpend: isBookingPayment || isReservationPayment,
+          // #167: Direct Giving skips loyalty; ambiguous payment-family fails closed
+          skipLoyalty: isGivingPayment || isAmbiguousPayment,
           serviceName, referenceCode,
         });
       } catch (pcErr) {
