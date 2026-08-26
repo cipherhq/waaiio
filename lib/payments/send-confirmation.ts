@@ -544,18 +544,48 @@ export async function sendProactiveConfirmation(
     // ── 7. Owner notification ──
     sideEffectsMayHaveOccurred = true; // owner WhatsApp + email
     try {
-      if (payment.booking_id && resolved) {
-        const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
-        const { data: booking } = await supabase.from('bookings')
-          .select('date, time, party_size, guest_name')
+      if (payment.booking_id) {
+        const { data: ownerNotifBooking } = await supabase.from('bookings')
+          .select('date, time, party_size, guest_name, flow_type, services(name)')
           .eq('id', payment.booking_id).single();
 
-        if (booking) {
+        if (ownerNotifBooking && ownerNotifBooking.flow_type === 'payment') {
+          // Payment/Giving: awaited in-app notification (not dependent on resolved)
+          const svc = ownerNotifBooking.services as unknown as { name: string } | null;
+          try {
+            const { error: notifErr } = await supabase.from('notifications').insert({
+              business_id: businessId,
+              booking_id: payment.booking_id,
+              type: 'payment_received',
+              channel: 'whatsapp',
+              body: `Payment received: ${svc?.name || 'Payment'} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}`,
+              status: 'delivered',
+              delivered_at: new Date().toISOString(),
+            });
+            if (notifErr) {
+              logSafeError(logPrefix, 'payment-in-app-notification-insert', notifErr);
+            }
+          } catch (notifEx) {
+            logSafeError(logPrefix, 'payment-in-app-notification', notifEx);
+          }
+
+          // Payment/Giving: external owner notification (requires resolved)
+          if (resolved) {
+            const { notifyOwnerNewPayment } = await import('@/lib/bot/flows/shared/notify-owner');
+            await notifyOwnerNewPayment({
+              supabase, sender: resolved.sender, businessId, businessName, countryCode,
+              referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer',
+              amount: payment.amount, categoryName: svc?.name || 'Payment',
+            });
+          }
+        } else if (ownerNotifBooking && resolved) {
+          // Scheduling/Appointment/Ticketing: existing behavior unchanged
+          const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
           await notifyOwnerNewBooking({
             supabase, sender: resolved.sender, businessId, businessName, countryCode,
-            referenceCode, customerName: booking.guest_name || 'Customer',
-            date: booking.date, time: booking.time,
-            quantity: booking.party_size || 1, quantityLabel: 'guest(s)',
+            referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer',
+            date: ownerNotifBooking.date, time: ownerNotifBooking.time,
+            quantity: ownerNotifBooking.party_size || 1, quantityLabel: 'guest(s)',
             amount: payment.amount,
           });
         }
