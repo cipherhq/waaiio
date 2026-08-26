@@ -110,9 +110,38 @@ const mockBusinessSelect = vi.fn();
 const mockCampaignQuery = vi.fn();
 const mockLoggerWarn = vi.fn();
 
+/** Default campaign object returned by service mock for route tests */
+const ROUTE_MOCK_CAMPAIGN = {
+  id: 'camp-001',
+  business_id: 'biz-001',
+  name: 'Test Campaign',
+  status: 'draft',
+  integrity_locked: false,
+  winner_message: 'You won!',
+  try_again_message: 'Try again',
+  invalid_message: 'Invalid',
+  already_used_message: 'Already used',
+  expired_message: 'Expired',
+};
+
+/** Build a chainable mock that resolves to data at any terminal method */
+function buildChainMock(data: unknown = ROUTE_MOCK_CAMPAIGN): Record<string, unknown> {
+  const chain: Record<string, unknown> = {};
+  const self = () => chain;
+  chain.select = self;
+  chain.eq = self;
+  chain.ilike = self;
+  chain.limit = self;
+  chain.order = self;
+  chain.update = self;
+  chain.single = () => Promise.resolve({ data, error: null });
+  chain.maybeSingle = () => Promise.resolve({ data, error: null });
+  return chain;
+}
+
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
-    rpc: mockRpc,
+    rpc: (...args: unknown[]) => mockRpc(...args),
     from: (table: string) => {
       if (table === 'businesses') {
         return {
@@ -124,7 +153,14 @@ vi.mock('@/lib/supabase/service', () => ({
         };
       }
       if (table === 'promo_campaigns') {
-        return mockCampaignQuery();
+        // If mockCampaignQuery is set up (for verifyPromoCode tests), use it
+        // Otherwise fall through to chain mock for route tests
+        const queryResult = mockCampaignQuery();
+        if (queryResult) return queryResult;
+        return buildChainMock();
+      }
+      if (table === 'promo_prizes') {
+        return buildChainMock([]);
       }
       return {
         select: () => ({
@@ -154,6 +190,8 @@ vi.mock('@/lib/logger', () => ({
 // Mock normalize and crypto since they are pure functions
 vi.mock('@/lib/promotions/normalize', () => ({
   normalizePromoCode: (code: string) => code.toUpperCase().replace(/[\s\-._]/g, ''),
+  validatePrefix: () => ({ valid: true }),
+  validateGeneratedEntropy: () => ({ valid: true }),
 }));
 
 vi.mock('@/lib/promotions/crypto', () => ({
@@ -1030,5 +1068,205 @@ describe.skipIf(!canRunDb)('update_prize_instructions privilege assertions (real
       `);
     }).toThrow();
     psql(`RESET ROLE;`);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// H. Route execution tests — prizeUpdates early validation
+// ═══════════════════════════════════════════════════════
+
+// Track whether any RPC was called through the service mock
+const routeRpcCalled = { value: false };
+
+// We need separate mocks for the route's dependencies
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: () => Promise.resolve({
+    auth: {
+      getUser: () => Promise.resolve({ data: { user: { id: 'test-user-id' } } }),
+    },
+  }),
+}));
+
+vi.mock('@/lib/capabilities/api-guard', () => ({
+  requireCapability: () => Promise.resolve({ allowed: true }),
+}));
+
+// The service client mock is already set up above — we augment the mock
+// to track RPC calls from the route by wrapping at test level.
+
+// Import the route handler (uses already-mocked modules)
+const { PUT } = await import('@/app/api/promotions/update/route');
+
+/** Build a NextRequest-like object for the route */
+function buildRouteRequest(body: Record<string, unknown>): Request {
+  return new Request('http://localhost:3000/api/promotions/update', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+describe('route: prizeUpdates early validation (before activation/mutations)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    routeRpcCalled.value = false;
+    // Reset mockCampaignQuery so the route falls through to buildChainMock
+    mockCampaignQuery.mockReturnValue(undefined);
+    // Track RPC calls
+    mockRpc.mockImplementation((..._args: unknown[]) => {
+      routeRpcCalled.value = true;
+      return Promise.resolve({ data: { success: true }, error: null });
+    });
+  });
+
+  it('mixed payload: status=active + prizeUpdates → 400, zero RPC calls', async () => {
+    const req = buildRouteRequest({
+      businessId: 'biz-001',
+      campaignId: 'camp-001',
+      status: 'active',
+      prizeUpdates: [{ prizeId: 'p1', prize_instructions: 'test' }],
+    });
+    const res = await PUT(req as unknown as import('next/server').NextRequest);
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain('prizeUpdates cannot be combined');
+    expect(routeRpcCalled.value).toBe(false);
+  });
+
+  it('mixed payload: codeEntryMode + keyword + prizeUpdates → 400, zero RPC calls', async () => {
+    const req = buildRouteRequest({
+      businessId: 'biz-001',
+      campaignId: 'camp-001',
+      codeEntryMode: 'keyword',
+      keyword: 'X',
+      prizeUpdates: [{ prizeId: 'p1', prize_instructions: 'test' }],
+    });
+    const res = await PUT(req as unknown as import('next/server').NextRequest);
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain('prizeUpdates cannot be combined');
+    expect(routeRpcCalled.value).toBe(false);
+  });
+
+  it('mixed payload: name + prizeUpdates → 400, zero RPC calls', async () => {
+    const req = buildRouteRequest({
+      businessId: 'biz-001',
+      campaignId: 'camp-001',
+      name: 'New Name',
+      prizeUpdates: [{ prizeId: 'p1', prize_instructions: 'test' }],
+    });
+    const res = await PUT(req as unknown as import('next/server').NextRequest);
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain('prizeUpdates cannot be combined');
+    expect(routeRpcCalled.value).toBe(false);
+  });
+
+  it('prizeUpdates = "not-an-array" → 400', async () => {
+    const req = buildRouteRequest({
+      businessId: 'biz-001',
+      campaignId: 'camp-001',
+      prizeUpdates: 'not-an-array',
+    });
+    const res = await PUT(req as unknown as import('next/server').NextRequest);
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain('prizeUpdates must be an array');
+    expect(routeRpcCalled.value).toBe(false);
+  });
+
+  it('prizeUpdates = 123 → 400', async () => {
+    const req = buildRouteRequest({
+      businessId: 'biz-001',
+      campaignId: 'camp-001',
+      prizeUpdates: 123,
+    });
+    const res = await PUT(req as unknown as import('next/server').NextRequest);
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain('prizeUpdates must be an array');
+    expect(routeRpcCalled.value).toBe(false);
+  });
+
+  it('prizeUpdates = [] → 200 with empty prizes (no-op)', async () => {
+    const req = buildRouteRequest({
+      businessId: 'biz-001',
+      campaignId: 'camp-001',
+      prizeUpdates: [],
+    });
+    const res = await PUT(req as unknown as import('next/server').NextRequest);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.prizes).toEqual([]);
+    expect(routeRpcCalled.value).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// I. Direct UPDATE contention test — no deadlock (real DB)
+// ═══════════════════════════════════════════════════════
+const CONT_CAMP_ID = '00000000-0000-4000-c199-eeeeeeeeeeee';
+const CONT_PRIZE_ID = '00000000-0000-4000-9199-eeeeeeeeeeee';
+
+describe.skipIf(!canRunDb)('direct UPDATE vs update_prize_instructions RPC — no deadlock (real DB)', () => {
+  beforeEach(() => {
+    psql(`
+      DELETE FROM promo_prizes WHERE campaign_id = '${CONT_CAMP_ID}';
+      DELETE FROM promo_campaigns WHERE id = '${CONT_CAMP_ID}';
+      DELETE FROM businesses WHERE id = '${BIZ_ID}';
+      DELETE FROM profiles WHERE id = '${USER_ID}';
+      DELETE FROM auth.users WHERE id = '${USER_ID}';
+    `);
+    psql(`ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone TEXT;`);
+    psql(`INSERT INTO auth.users (id, phone) VALUES ('${USER_ID}', '+0001990001') ON CONFLICT (id) DO NOTHING;`);
+    psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)
+      VALUES ('${BIZ_ID}', 'Contention Test Biz', 'contention-test-199a', '${USER_ID}', '5 Test', 'Lagos', 'VI', '+0001990006', 'active', 'manual', 'NG', 'basic');
+    `);
+    psql(`
+      INSERT INTO promo_campaigns (id, business_id, name, status, integrity_locked, code_entry_mode, accept_bare_codes,
+        winner_message, try_again_message, invalid_message, already_used_message, expired_message, created_by)
+      VALUES ('${CONT_CAMP_ID}', '${BIZ_ID}', 'Contention Test Camp', 'active', false, 'bare_code', true,
+        'W', 'T', 'I', 'A', 'E', '${USER_ID}');
+    `);
+    psql(`
+      INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity, allocated_count, prize_instructions)
+      VALUES ('${CONT_PRIZE_ID}', '${CONT_CAMP_ID}', 'Contention Prize', 'product', 10, 0, 'Original');
+    `);
+  });
+
+  it('Connection A holds campaign lock, Connection B direct-UPDATE blocks (not deadlocks), then completes', async () => {
+    // Connection A: RPC-style campaign lock — hold it for 2 seconds
+    const connA = psqlAsync(`
+      SET statement_timeout = '10s';
+      BEGIN;
+      SELECT * FROM promo_campaigns WHERE id = '${CONT_CAMP_ID}' FOR UPDATE;
+      SELECT pg_sleep(2);
+      COMMIT;
+    `);
+
+    // Small delay so A acquires lock first
+    await new Promise(r => setTimeout(r, 300));
+
+    // Connection B: direct prize UPDATE — trigger does SELECT ... FOR UPDATE on campaign
+    // Should BLOCK waiting for A, not deadlock (B holds prize row lock, A doesn't need it)
+    const connB = psqlAsync(`
+      SET statement_timeout = '5s';
+      UPDATE promo_prizes SET prize_instructions = 'direct-write' WHERE id = '${CONT_PRIZE_ID}';
+    `, 10000);
+
+    const [resultA, resultB] = await Promise.all([connA, connB]);
+
+    // A should succeed (just held lock and committed)
+    expect(resultA.ok).toBe(true);
+
+    // B should complete without deadlock — either succeeds or fails due to integrity_locked
+    // (campaign is NOT integrity_locked here, so B should succeed)
+    expect(resultB.ok).toBe(true);
+    expect(resultB.stderr).not.toContain('deadlock');
+
+    // Verify the direct write actually persisted
+    const instructions = psql(`SELECT prize_instructions FROM promo_prizes WHERE id = '${CONT_PRIZE_ID}';`);
+    expect(instructions).toBe('direct-write');
   });
 });

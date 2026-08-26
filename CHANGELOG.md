@@ -7,6 +7,16 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-26
 
+### fix(promotions): Correction Round 4 — early prizeUpdates validation, route tests, contention proof (#199A / PR #206)
+
+- **Early prizeUpdates validation:** Moved prizeUpdates shape check (must be array) and mixed-payload rejection to BEFORE status transition validation and activation early-return in `app/api/promotions/update/route.ts`. Previously, `{status: 'active', prizeUpdates: [...]}` would activate the campaign and return early before hitting the mixed-payload guard. Now it returns 400 immediately.
+- **Empty array no-op:** `{prizeUpdates: []}` returns 200 with `{campaign, prizes: []}` immediately — no mutations.
+- **Route execution tests (6):** Tests that call the actual PUT handler with mocked Supabase, verifying: mixed payloads with status/name/codeEntryMode all return 400 with zero RPC calls; non-array prizeUpdates (string, number) return 400; empty array returns 200 no-op.
+- **Direct-UPDATE contention test (1):** Two-connection test proving no deadlock when Connection A holds campaign row lock (RPC-style) while Connection B does a direct `UPDATE promo_prizes SET prize_instructions = ...` (hitting the trigger's `SELECT ... FOR UPDATE`). B blocks, A commits, B completes.
+- **Files:** `app/api/promotions/update/route.ts`, `lib/__tests__/acc-199a-winner-response.test.ts`, `CHANGELOG.md`
+- **Affects:** prizeUpdates + activation race, prizeUpdates input validation
+- **Could break:** Nothing — validation is stricter (rejects invalid combos earlier), all existing valid payloads still work.
+
 ### fix(tests): fix CI seed SQL + add privilege tests for ACC-199A (#199A / PR #206)
 
 - **businesses INSERT:** Replaced `(id, name, owner_id, category, country)` with full NOT NULL column list including `country_code` (not `country`). CI's `businesses` table does not have a `country` column.

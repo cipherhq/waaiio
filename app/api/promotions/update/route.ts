@@ -108,6 +108,35 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
   }
 
+  // ── prizeUpdates: validate shape and reject mixed payloads early ──
+  const rawPrizeUpdates = body.prizeUpdates;
+  if (rawPrizeUpdates !== undefined) {
+    // Must be an array
+    if (!Array.isArray(rawPrizeUpdates)) {
+      return NextResponse.json({ error: 'prizeUpdates must be an array' }, { status: 400 });
+    }
+    // Mixed payload check: prizeUpdates cannot be combined with ANY campaign mutation
+    const campaignMutationFields = [
+      'name', 'description', 'winnerMessage', 'tryAgainMessage', 'invalidMessage',
+      'alreadyUsedMessage', 'expiredMessage', 'eligibilityPrompt', 'status',
+      'startAt', 'endAt', 'timezone', 'codeEntryMode', 'keyword', 'acceptBareCodes',
+      'codeFormat', 'codeLength', 'codePrefix', 'maxAttemptsPerPhone',
+      'rateLimitWindowMinutes', 'rateLimitMaxAttempts', 'eligibilityMode',
+      'eligibilityMinAge', 'maxWinsPerParticipant',
+    ];
+    const hasCampaignMutation = campaignMutationFields.some(f => f in body);
+    if (hasCampaignMutation) {
+      return NextResponse.json(
+        { error: 'prizeUpdates cannot be combined with campaign mutations in one request' },
+        { status: 400 },
+      );
+    }
+    // Empty array: no-op, return current campaign
+    if (rawPrizeUpdates.length === 0) {
+      return NextResponse.json({ campaign, prizes: [] });
+    }
+  }
+
   // If integrity_locked, reject changes to locked fields
   if (campaign.integrity_locked) {
     const lockedFieldsAttempted = INTEGRITY_LOCKED_FIELDS.filter((f) => f in body && body[f] !== undefined);
@@ -304,29 +333,11 @@ export async function PUT(request: NextRequest) {
     }
   }
 
-  // ── Prize updates ──
-  // Supports updating prize_instructions on individual prizes.
-  // Uses atomic RPC that locks the campaign row to serialize against claim_promo_code.
-  const prizeUpdates = body.prizeUpdates as Array<{ prizeId: string; prize_instructions?: string | null }> | undefined;
+  // ── Prize updates (shape already validated above; rawPrizeUpdates is a non-empty array if we reach here) ──
   let updatedPrizes: unknown[] | undefined;
 
-  if (Array.isArray(prizeUpdates) && prizeUpdates.length > 0) {
-    // Reject mixed payloads: prizeUpdates cannot be combined with campaign mutations
-    const campaignMutationFields = [
-      'name', 'description', 'winnerMessage', 'tryAgainMessage', 'invalidMessage',
-      'alreadyUsedMessage', 'expiredMessage', 'eligibilityPrompt', 'status',
-      'startAt', 'endAt', 'timezone', 'codeEntryMode', 'keyword', 'acceptBareCodes',
-      'codeFormat', 'codeLength', 'codePrefix', 'maxAttemptsPerPhone',
-      'rateLimitWindowMinutes', 'rateLimitMaxAttempts', 'eligibilityMode',
-      'eligibilityMinAge', 'maxWinsPerParticipant',
-    ];
-    const hasCampaignMutation = campaignMutationFields.some(f => f in body);
-    if (hasCampaignMutation) {
-      return NextResponse.json(
-        { error: 'prizeUpdates cannot be combined with campaign mutations in one request' },
-        { status: 400 },
-      );
-    }
+  if (Array.isArray(rawPrizeUpdates) && rawPrizeUpdates.length > 0) {
+    const prizeUpdates = rawPrizeUpdates as Array<{ prizeId: string; prize_instructions?: string | null }>;
 
     // Validate types before calling RPC
     for (let i = 0; i < prizeUpdates.length; i++) {
