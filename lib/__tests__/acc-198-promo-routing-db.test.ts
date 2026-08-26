@@ -635,9 +635,12 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
   });
 
   it('migration 340 aborts on active/scheduled keyword collision after normalization (pre-340 harness)', () => {
-    // Drop post-340 objects
+    // Drop ALL post-340 objects: CHECK, trigger, AND the unique indexes
+    // The unique indexes prevent inserting pre-collision data
     psql(`ALTER TABLE promo_campaigns DROP CONSTRAINT IF EXISTS chk_routing_consistency`);
     psql(`DROP TRIGGER IF EXISTS trg_normalize_promo_keyword ON promo_campaigns`);
+    psql(`DROP INDEX IF EXISTS idx_promo_campaigns_keyword_unique`);
+    psql(`DROP INDEX IF EXISTS idx_promo_campaigns_bare_code_active`);
     psql(`ALTER TABLE promo_campaigns ADD CONSTRAINT chk_keyword_or_bare CHECK (
       (code_entry_mode = 'keyword' AND keyword IS NOT NULL) OR code_entry_mode IN ('bare_code', 'both')
     )`);
@@ -671,6 +674,9 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
         (code_entry_mode = 'bare_code' AND keyword IS NULL AND accept_bare_codes = true) OR
         (code_entry_mode = 'both' AND keyword IS NOT NULL AND accept_bare_codes = true)
       )`);
+      // Restore unique indexes
+      psql(`CREATE UNIQUE INDEX IF NOT EXISTS idx_promo_campaigns_keyword_unique ON promo_campaigns (business_id, lower(keyword)) WHERE status IN ('active', 'scheduled') AND keyword IS NOT NULL`);
+      psql(`CREATE UNIQUE INDEX IF NOT EXISTS idx_promo_campaigns_bare_code_active ON promo_campaigns (business_id) WHERE accept_bare_codes = true AND status IN ('active', 'scheduled')`);
       psql(`DROP TRIGGER IF EXISTS trg_normalize_promo_keyword ON promo_campaigns`);
       psql(`CREATE TRIGGER trg_normalize_promo_keyword BEFORE INSERT OR UPDATE OF keyword ON promo_campaigns FOR EACH ROW EXECUTE FUNCTION normalize_promo_keyword()`);
     }
