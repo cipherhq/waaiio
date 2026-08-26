@@ -9,21 +9,24 @@
  * execute with zero relevant skips.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import pg from 'pg';
 
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
 
 const describeDb = TEST_DB_URL ? describe : describe.skip;
 
+// pg types — imported dynamically to avoid top-level import failure when pg is not installed
+type PgClient = { query: (sql: string, values?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>; connect: () => Promise<void>; end: () => Promise<void> };
+
 /** Create a pg Client connected to TEST_DATABASE_URL */
-async function createDbClient(): Promise<pg.Client> {
-  const client = new pg.Client({ connectionString: TEST_DB_URL });
+async function createDbClient(): Promise<PgClient> {
+  const { Client } = await import('pg');
+  const client = new Client({ connectionString: TEST_DB_URL });
   await client.connect();
-  return client;
+  return client as unknown as PgClient;
 }
 
 /** Helper to call RPCs via SQL */
-async function rpc(client: pg.Client, fn: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function rpc(client: PgClient, fn: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
   const keys = Object.keys(params);
   const placeholders = keys.map((k, i) => `p_${k} := $${i + 1}`).join(', ');
   const values = keys.map(k => params[k]);
