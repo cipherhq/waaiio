@@ -485,8 +485,8 @@ describe.skipIf(!canRunDb)('claim_promo_code replay parity (real DB)', () => {
 
     // Create campaign (active)
     psql(`
-      INSERT INTO promo_campaigns (id, business_id, name, status, winner_message, try_again_message, invalid_message, already_used_message, expired_message, created_by)
-      VALUES ('${CAMP_ID}', '${BIZ_ID}', 'Replay Test Camp', 'active',
+      INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, accept_bare_codes, winner_message, try_again_message, invalid_message, already_used_message, expired_message, created_by)
+      VALUES ('${CAMP_ID}', '${BIZ_ID}', 'Replay Test Camp', 'active', 'bare_code', true,
         'You won!', 'Try again', 'Invalid code', 'Already used', 'Expired', '${USER_ID}');
     `);
 
@@ -626,8 +626,8 @@ describe.skipIf(!canRunDb)('prize_instructions integrity locking (real DB)', () 
       VALUES ('${BIZ_ID}', 'Lock Test Biz', 'lock-test-biz-199a', '${USER_ID}', '2 Test', 'Lagos', 'VI', '+0001990003', 'active', 'manual', 'NG', 'basic');
     `);
     psql(`
-      INSERT INTO promo_campaigns (id, business_id, name, status, integrity_locked, winner_message, try_again_message, invalid_message, already_used_message, expired_message, created_by)
-      VALUES ('${LOCK_CAMP_ID}', '${BIZ_ID}', 'Lock Test Camp', 'active', false,
+      INSERT INTO promo_campaigns (id, business_id, name, status, integrity_locked, code_entry_mode, accept_bare_codes, winner_message, try_again_message, invalid_message, already_used_message, expired_message, created_by)
+      VALUES ('${LOCK_CAMP_ID}', '${BIZ_ID}', 'Lock Test Camp', 'active', false, 'bare_code', true,
         'You won!', 'Try again', 'Invalid', 'Already used', 'Expired', '${USER_ID}');
     `);
     psql(`
@@ -785,9 +785,9 @@ describe.skipIf(!canRunDb)('Two-connection race tests: prize update vs claim_pro
       VALUES ('${BIZ_ID}', 'Race Test Biz', 'race-test-biz-199a', '${USER_ID}', '3 Test', 'Lagos', 'VI', '+0001990004', 'active', 'manual', 'NG', 'basic');
     `);
     psql(`
-      INSERT INTO promo_campaigns (id, business_id, name, status, integrity_locked,
+      INSERT INTO promo_campaigns (id, business_id, name, status, integrity_locked, code_entry_mode, accept_bare_codes,
         winner_message, try_again_message, invalid_message, already_used_message, expired_message, created_by)
-      VALUES ('${RACE_CAMP_ID}', '${BIZ_ID}', 'Race Test Camp', 'active', false,
+      VALUES ('${RACE_CAMP_ID}', '${BIZ_ID}', 'Race Test Camp', 'active', false, 'bare_code', true,
         'You won!', 'Try again', 'Invalid', 'Already used', 'Expired', '${USER_ID}');
     `);
     psql(`
@@ -976,8 +976,8 @@ describe.skipIf(!canRunDb)('update_prize_instructions privilege assertions (real
       VALUES ('${BIZ_ID}', 'Priv Test Biz', 'priv-test-biz-199a', '${USER_ID}', '4 Test', 'Lagos', 'VI', '+0001990005', 'active', 'manual', 'NG', 'basic');
     `);
     psql(`
-      INSERT INTO promo_campaigns (id, business_id, name, status, integrity_locked, winner_message, try_again_message, invalid_message, already_used_message, expired_message, created_by)
-      VALUES ('${CAMP_ID}', '${BIZ_ID}', 'Priv Test Camp', 'draft', false, 'W', 'T', 'I', 'A', 'E', '${USER_ID}');
+      INSERT INTO promo_campaigns (id, business_id, name, status, integrity_locked, code_entry_mode, accept_bare_codes, winner_message, try_again_message, invalid_message, already_used_message, expired_message, created_by)
+      VALUES ('${CAMP_ID}', '${BIZ_ID}', 'Priv Test Camp', 'draft', false, 'bare_code', true, 'W', 'T', 'I', 'A', 'E', '${USER_ID}');
     `);
     psql(`
       INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity, allocated_count, prize_instructions)
