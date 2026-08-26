@@ -89,22 +89,54 @@ export async function recoverGeneric(
   const phonePlus = phone.startsWith('+') ? phone : `+${phone}`;
   const phoneNoPlus = phone.startsWith('+') ? phone.slice(1) : phone;
 
-  // Find eligible orders with recent ordering payments
-  const { data: candidates, error: candidateErr } = await supabase
-    .from('orders')
-    .select('id, reference_code, status, user_id, delivery_phone, total_amount, business_id')
-    .eq('business_id', businessId)
-    .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-    .order('created_at', { ascending: false })
-    .limit(10);
+  // Primary path: query by durable user identity (covers most active users)
+  let candidates: Array<{ id: string; reference_code: string; status: string; user_id: string | null; delivery_phone: string | null; total_amount: number; business_id: string }> = [];
 
-  if (candidateErr) {
-    logger.withContext({ op: 'stale-recovery.candidates', ...safeLogErrorContext(candidateErr) })
-      .error(`${logPrefix} Candidate lookup failed`);
-    return { type: 'error', message: 'Something went wrong. Please try again.' };
+  if (userId) {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('id, reference_code, status, user_id, delivery_phone, total_amount, business_id')
+      .eq('business_id', businessId)
+      .eq('user_id', userId)
+      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (error) {
+      logger.withContext({ op: 'stale-recovery.candidates-user', ...safeLogErrorContext(error) })
+        .error(`${logPrefix} User-identity candidate lookup failed`);
+      return { type: 'error', message: 'Something went wrong. Please try again.' };
+    }
+    candidates = data || [];
   }
 
-  if (!candidates || candidates.length === 0) {
+  // Legacy fallback: orders with NULL user_id matched by phone only
+  // This is a separate bounded path for genuinely identity-less legacy rows
+  if (candidates.length === 0) {
+    const { data: legacyCandidates, error: legacyErr } = await supabase
+      .from('orders')
+      .select('id, reference_code, status, user_id, delivery_phone, total_amount, business_id')
+      .eq('business_id', businessId)
+      .is('user_id', null)
+      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (legacyErr) {
+      logger.withContext({ op: 'stale-recovery.candidates-phone', ...safeLogErrorContext(legacyErr) })
+        .error(`${logPrefix} Legacy phone candidate lookup failed`);
+      return { type: 'error', message: 'Something went wrong. Please try again.' };
+    }
+
+    // Filter by phone match
+    candidates = (legacyCandidates || []).filter(o => {
+      if (!o.delivery_phone) return false;
+      const dp = stripPlus(o.delivery_phone);
+      return dp === stripPlus(phone);
+    });
+  }
+
+  if (candidates.length === 0) {
     return { type: 'not_found', message: 'No recent payment found for this business. Type *order* to start a new order.' };
   }
 
@@ -180,11 +212,21 @@ async function inspectOrderPayments(
     return { type: 'error', message: 'Something went wrong checking your payment. Please try again.' };
   }
 
-  // Cross-check payment identity
+  // Cross-check payment identity — if ANY payment has durable user_id, it governs.
+  // Phone fallback is allowed only when durable identity genuinely does not exist.
   for (const p of payments) {
-    if (p.user_id && userId && p.user_id !== userId) {
-      logger.error(`${logPrefix} Payment ${p.id} user_id mismatch: payment=${p.user_id} session=${userId}`);
-      return { type: 'integrity_error', message: 'Something went wrong. Please type *my orders* or contact support.' };
+    if (p.user_id) {
+      // This payment has durable user identity
+      if (!userId) {
+        // Session has no user_id but payment does — fail closed
+        logger.error(`${logPrefix} Payment ${p.id} has user_id=${p.user_id} but session has no user_id`);
+        return { type: 'integrity_error', message: 'Something went wrong. Please type *my orders* or contact support.' };
+      }
+      if (p.user_id !== userId) {
+        // Durable identity mismatch
+        logger.error(`${logPrefix} Payment ${p.id} user_id mismatch: payment=${p.user_id} session=${userId}`);
+        return { type: 'integrity_error', message: 'Something went wrong. Please type *my orders* or contact support.' };
+      }
     }
   }
 

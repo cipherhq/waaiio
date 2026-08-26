@@ -2068,18 +2068,14 @@ export class BotService {
     }
 
     // ── #197: Stale "I've Paid" button recovery ──
-    // Intercept exact machine postback IDs with messageType='button' when the session
-    // is NOT at a legitimate payment step. Recognized shapes:
-    //   i_paid, i_paid_online, i_paid:<order-ref>, i_paid_online:<order-ref>
+    // Uses canonical strict parser — only exact machine postback shapes with messageType='button'.
     // Free text "paid"/"done" is NEVER intercepted here.
-    const paymentWaitingSteps = ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking', 'reservation_payment', 'await_invoice_payment', 'await_donation_payment'];
-    const isStalePaymentButton = messageType === 'button'
-      && (text === 'i_paid' || text === 'i_paid_online'
-        || text.startsWith('i_paid:') || text.startsWith('i_paid_online:'))
-      && session.business_id
-      && !paymentWaitingSteps.includes(step);
+    const { parseStalePaymentButton } = await import('@/lib/payments/stale-button-parser');
+    const staleButton = session.business_id
+      ? parseStalePaymentButton(text, messageType, step)
+      : { isStalePaymentButton: false } as ReturnType<typeof parseStalePaymentButton>;
 
-    if (isStalePaymentButton) {
+    if (staleButton.isStalePaymentButton) {
       try {
         const { recoverByOrderReference, recoverGeneric } = await import('@/lib/payments/stale-payment-recovery');
 
@@ -2090,21 +2086,16 @@ export class BotService {
 
         const recoveryCtx = {
           supabase: this.supabase,
-          businessId: session.business_id!, // guarded by isStalePaymentButton check above
+          businessId: session.business_id!,
           userId: session.user_id || null,
           phone: from,
           countryCode: cc,
         };
 
         let result;
-        // Parse ref-bearing shapes: i_paid:<ref> or i_paid_online:<ref>
-        const hasRef = text.startsWith('i_paid:') || text.startsWith('i_paid_online:');
-        if (hasRef) {
-          // Extract reference after the first colon
-          const ref = text.split(':').slice(1).join(':');
-          result = await recoverByOrderReference(recoveryCtx, ref);
+        if (staleButton.hasReference && staleButton.reference) {
+          result = await recoverByOrderReference(recoveryCtx, staleButton.reference);
         } else {
-          // Generic i_paid or i_paid_online — candidate search
           result = await recoverGeneric(recoveryCtx);
         }
 

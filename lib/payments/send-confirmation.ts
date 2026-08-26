@@ -523,12 +523,35 @@ export async function sendProactiveConfirmation(
 
             if (wamid) {
               // Record Meta acceptance with WAMID (sending → accepted)
-              await supabase.rpc('complete_confirmation_send', {
+              // Retry once on DB write failure — losing the WAMID attachment creates
+              // a permanently uncorrelated attempt (#197 WAMID-race contract)
+              const { data: completeResult, error: completeErr } = await supabase.rpc('complete_confirmation_send', {
                 p_attempt_id: attemptId,
                 p_claim_token: deliveryToken,
                 p_meta_message_id: wamid,
                 p_accepted_at: new Date().toISOString(),
               });
+
+              if (completeErr || !completeResult?.completed) {
+                // Retry once — idempotent for same attempt/WAMID
+                logSafeError(logPrefix, 'complete-send-rpc-attempt1', completeErr || completeResult);
+                const { error: retryErr } = await supabase.rpc('complete_confirmation_send', {
+                  p_attempt_id: attemptId,
+                  p_claim_token: deliveryToken,
+                  p_meta_message_id: wamid,
+                  p_accepted_at: new Date().toISOString(),
+                });
+                if (retryErr) {
+                  logSafeError(logPrefix, 'complete-send-rpc-attempt2', retryErr);
+                  Sentry.captureException(
+                    new Error(`WAMID attachment failed after retry: payment=${payment.id} wamid=${wamid}`),
+                    { tags: { component: 'send-confirmation', operation: 'wamid-attach-failed' } },
+                  );
+                  // Meta accepted the message but we can't attach WAMID.
+                  // The attempt stays 'sending' — future claims are blocked.
+                  // Callbacks will go to unmatched store. Manual resolution needed.
+                }
+              }
               customerMessageSent = true;
             } else {
               // No WAMID returned but no error thrown — indeterminate
@@ -545,16 +568,25 @@ export async function sendProactiveConfirmation(
             }
           } catch (sendErr) {
             sideEffectsMayHaveOccurred = true;
-            const isTimeout = sendErr instanceof Error &&
-              (sendErr.message.includes('timeout') || sendErr.message.includes('ETIMEDOUT') || sendErr.message.includes('ECONNRESET'));
+            // #197: Only explicit provider rejection (Meta error response with code/title)
+            // can be known 'failed'. All ambiguous transport/network errors (timeout,
+            // ECONNRESET, fetch failed, DNS, TLS, abort) must be 'indeterminate' because
+            // Meta may have accepted the request despite the local failure.
+            const sendErrorDescription = sendErr instanceof Error ? sendErr.message : String(sendErr);
+            const isExplicitProviderRejection = sendErr instanceof Error
+              && 'statusCode' in sendErr // Meta API returns structured errors with status codes
+              && typeof (sendErr as Record<string, unknown>).statusCode === 'number'
+              && (sendErr as Record<string, unknown>).statusCode !== undefined;
+            const failureType = isExplicitProviderRejection ? 'failed' : 'indeterminate';
+
             await supabase.rpc('fail_confirmation_send', {
               p_attempt_id: attemptId,
               p_claim_token: deliveryToken,
-              p_failure_type: isTimeout ? 'indeterminate' : 'failed',
-              p_failure_reason: sendErr instanceof Error ? sendErr.message.slice(0, 500) : 'unknown',
+              p_failure_type: failureType,
+              p_failure_reason: sendErrorDescription.slice(0, 500),
             });
-            if (isTimeout) {
-              Sentry.captureException(sendErr, { tags: { component: 'send-confirmation', operation: 'indeterminate-timeout' } });
+            if (failureType === 'indeterminate') {
+              Sentry.captureException(sendErr, { tags: { component: 'send-confirmation', operation: 'indeterminate-send-error' } });
             }
           }
         }

@@ -279,7 +279,13 @@ BEGIN
     RETURN jsonb_build_object('completed', false, 'reason', 'attempt_not_found');
   END IF;
 
+  -- Idempotent for same-attempt/same-WAMID retry (DB write/response loss recovery)
   IF v_attempt.delivery_status != 'sending' THEN
+    -- If already accepted with the same WAMID, treat as idempotent success
+    IF v_attempt.delivery_status IN ('accepted', 'sent', 'delivered', 'read')
+       AND EXISTS (SELECT 1 FROM payment_confirmation_deliveries WHERE id = p_attempt_id AND meta_message_id = p_meta_message_id) THEN
+      RETURN jsonb_build_object('completed', true, 'already_completed', true);
+    END IF;
     RETURN jsonb_build_object('completed', false, 'reason', 'not_in_sending_state');
   END IF;
 

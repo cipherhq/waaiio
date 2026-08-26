@@ -539,59 +539,70 @@ describe('delivery status monotonicity', () => {
   });
 });
 
-// ─── Unit Tests: Stale button parsing ───
+// ─── Unit Tests: Canonical stale button parser ───
 
-describe('stale button postback parsing', () => {
-  it('recognizes all four machine postback shapes', () => {
-    // The BotService interceptor must recognize these exact shapes:
-    const shapes = [
-      { text: 'i_paid', messageType: 'button', expected: true },
-      { text: 'i_paid_online', messageType: 'button', expected: true },
-      { text: 'i_paid:WA-OR-0981', messageType: 'button', expected: true },
-      { text: 'i_paid_online:WA-OR-0981', messageType: 'button', expected: true },
-    ];
+describe('parseStalePaymentButton (canonical parser)', () => {
+  let parseStalePaymentButton: typeof import('../../payments/stale-button-parser').parseStalePaymentButton;
 
-    for (const s of shapes) {
-      const isMatch = s.messageType === 'button'
-        && (s.text === 'i_paid' || s.text === 'i_paid_online'
-          || s.text.startsWith('i_paid:') || s.text.startsWith('i_paid_online:'));
-      expect(isMatch).toBe(s.expected);
+  beforeEach(async () => {
+    const mod = await import('../../payments/stale-button-parser');
+    parseStalePaymentButton = mod.parseStalePaymentButton;
+  });
+
+  it('recognizes generic i_paid from non-payment step', () => {
+    const r = parseStalePaymentButton('i_paid', 'button', 'select_capability');
+    expect(r.isStalePaymentButton).toBe(true);
+    expect(r.hasReference).toBe(false);
+    expect(r.reference).toBeNull();
+  });
+
+  it('recognizes generic i_paid_online from non-payment step', () => {
+    const r = parseStalePaymentButton('i_paid_online', 'button', 'select_capability');
+    expect(r.isStalePaymentButton).toBe(true);
+    expect(r.hasReference).toBe(false);
+  });
+
+  it('recognizes ref-bearing i_paid:WA-OR-0981', () => {
+    const r = parseStalePaymentButton('i_paid:WA-OR-0981', 'button', 'select_capability');
+    expect(r.isStalePaymentButton).toBe(true);
+    expect(r.hasReference).toBe(true);
+    expect(r.reference).toBe('WA-OR-0981');
+  });
+
+  it('recognizes ref-bearing i_paid_online:WA-OR-0981', () => {
+    const r = parseStalePaymentButton('i_paid_online:WA-OR-0981', 'button', 'select_capability');
+    expect(r.isStalePaymentButton).toBe(true);
+    expect(r.hasReference).toBe(true);
+    expect(r.reference).toBe('WA-OR-0981');
+  });
+
+  it('rejects malformed empty ref i_paid: (trailing colon)', () => {
+    const r = parseStalePaymentButton('i_paid:', 'button', 'select_capability');
+    expect(r.isStalePaymentButton).toBe(false);
+  });
+
+  it('rejects malformed empty ref i_paid_online:', () => {
+    const r = parseStalePaymentButton('i_paid_online:', 'button', 'select_capability');
+    expect(r.isStalePaymentButton).toBe(false);
+  });
+
+  it('rejects free text paid/done (messageType=text)', () => {
+    for (const t of ['paid', 'done', 'check', 'i paid', 'i_paid']) {
+      const r = parseStalePaymentButton(t, 'text', 'select_capability');
+      expect(r.isStalePaymentButton).toBe(false);
     }
   });
 
-  it('does NOT match free text paid/done', () => {
-    const freeTexts = ['paid', 'done', 'check', 'i paid'];
-    for (const t of freeTexts) {
-      const isMatch = 'text' === 'button' // messageType for free text is 'text', not 'button'
-        && (t === 'i_paid' || t === 'i_paid_online'
-          || t.startsWith('i_paid:') || t.startsWith('i_paid_online:'));
-      expect(isMatch).toBe(false);
+  it('does NOT match at legitimate payment-waiting step', () => {
+    const r = parseStalePaymentButton('i_paid', 'button', 'await_order_payment');
+    expect(r.isStalePaymentButton).toBe(false);
+  });
+
+  it('does NOT match at other payment-waiting steps', () => {
+    for (const step of ['payment', 'await_payment', 'await_ticket_payment', 'reservation_payment']) {
+      const r = parseStalePaymentButton('i_paid', 'button', step);
+      expect(r.isStalePaymentButton).toBe(false);
     }
-  });
-
-  it('does NOT match when messageType is text (not button)', () => {
-    const text = 'i_paid';
-    const messageType = 'text';
-    const isMatch = messageType === 'button'
-      && (text === 'i_paid' || text === 'i_paid_online'
-        || text.startsWith('i_paid:') || text.startsWith('i_paid_online:'));
-    expect(isMatch).toBe(false);
-  });
-
-  it('extracts reference from i_paid:WA-OR-0981', () => {
-    const text = 'i_paid:WA-OR-0981';
-    const hasRef = text.startsWith('i_paid:') || text.startsWith('i_paid_online:');
-    expect(hasRef).toBe(true);
-    const ref = text.split(':').slice(1).join(':');
-    expect(ref).toBe('WA-OR-0981');
-  });
-
-  it('extracts reference from i_paid_online:WA-OR-0981', () => {
-    const text = 'i_paid_online:WA-OR-0981';
-    const hasRef = text.startsWith('i_paid:') || text.startsWith('i_paid_online:');
-    expect(hasRef).toBe(true);
-    const ref = text.split(':').slice(1).join(':');
-    expect(ref).toBe('WA-OR-0981');
   });
 });
 
