@@ -6,10 +6,11 @@
  * and migration repair scenarios.
  *
  * Requires TEST_DATABASE_URL environment variable.
- * Skips gracefully if no connection is available.
+ * Skips gracefully in local dev if no DB connection.
+ * CI MUST provide TEST_DATABASE_URL — a sentinel test enforces this.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync, execFile } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
@@ -22,6 +23,32 @@ function psql(sql: string): string {
   }).trim();
 }
 
+function psqlMayFail(sql: string): { ok: boolean; output: string } {
+  try {
+    const out = execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
+      input: sql, encoding: 'utf-8', timeout: 15000,
+    }).toString().trim();
+    return { ok: true, output: out };
+  } catch (e: unknown) {
+    return { ok: false, output: String((e as { stderr?: string }).stderr || e) };
+  }
+}
+
+/** Run SQL in a separate process (independent connection) — returns promise */
+function psqlAsync(sql: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+      timeout: 15000,
+    }, (err, stdout, stderr) => {
+      resolve({
+        ok: !err,
+        stdout: (stdout || '').trim(),
+        stderr: (stderr || '').trim(),
+      });
+    }).stdin?.end(sql);
+  });
+}
+
 const USER_ID = '00000000-0000-4000-f198-000000000001';
 const BIZ_ID = '00000000-0000-4000-a198-aaaaaaaaaaaa';
 const BIZ_B_ID = '00000000-0000-4000-a198-bbbbbbbbbbbb';
@@ -29,10 +56,18 @@ const CAMP_A_ID = '00000000-0000-4000-c198-aaaaaaaaaaaa';
 const CAMP_B_ID = '00000000-0000-4000-c198-bbbbbbbbbbbb';
 const CAMP_C_ID = '00000000-0000-4000-c198-cccccccccccc';
 
+// Sentinel: CI must never silently skip DB tests
+it('CI must provide TEST_DATABASE_URL', () => {
+  if (process.env.CI) {
+    expect(process.env.TEST_DATABASE_URL).toBeTruthy();
+  }
+});
+
 describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated schema)', () => {
   beforeAll(() => {
     // Cleanup any prior run
     psql(`
+      DELETE FROM admin_audit_logs WHERE entity_id IN ('${CAMP_A_ID}', '${CAMP_B_ID}', '${CAMP_C_ID}');
       DELETE FROM promo_campaign_codes WHERE campaign_id IN ('${CAMP_A_ID}', '${CAMP_B_ID}', '${CAMP_C_ID}');
       DELETE FROM promo_code_batches WHERE campaign_id IN ('${CAMP_A_ID}', '${CAMP_B_ID}', '${CAMP_C_ID}');
       DELETE FROM promo_prizes WHERE campaign_id IN ('${CAMP_A_ID}', '${CAMP_B_ID}', '${CAMP_C_ID}');
@@ -268,32 +303,77 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
     `);
   });
 
-  // ── B. Two-session concurrency test ──
-  // NOTE: True two-session concurrency (interleaved SELECT FOR UPDATE) requires
-  // two separate database connections with controlled transaction timing, which
-  // cannot be reliably orchestrated via single-threaded psql calls.
-  // This test verifies the serialization contract: the FOR UPDATE lock in
-  // update_promo_campaign_routing ensures that two rapid sequential calls both
-  // succeed without data corruption (last-writer-wins under serialization).
-  it('two sequential routing updates both succeed (serialized by FOR UPDATE)', () => {
+  // ── A2. Audit-write failure proves routing rollback (same transaction) ──
+  it('audit-write failure rolls back the routing update (transaction atomicity proof)', () => {
+    psql(`
+      INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, keyword, accept_bare_codes, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
+      VALUES ('${CAMP_A_ID}', '${BIZ_ID}', 'Rollback Test', 'active', 'keyword', 'ROLLOLD', false, 'w', 't', 'i', 'a', 'e');
+    `);
+
+    // Make admin_audit_logs temporarily unwritable with a CHECK that always fails
+    psql(`ALTER TABLE admin_audit_logs ADD CONSTRAINT temp_block_audit CHECK (false) NOT VALID;`);
+
+    try {
+      // The RPC runs in a single transaction: routing UPDATE + audit INSERT.
+      // The audit INSERT will fail due to the CHECK constraint, which should
+      // roll back the entire transaction including the routing UPDATE.
+      const result = psqlMayFail(`
+        SELECT update_promo_campaign_routing('${CAMP_A_ID}', '${BIZ_ID}', '${USER_ID}', 'keyword', 'ROLLNEW', 'test rollback');
+      `);
+
+      // The RPC should have failed (audit INSERT blocked)
+      expect(result.ok).toBe(false);
+
+      // Verify routing was NOT updated (rolled back)
+      const kw = psql(`SELECT keyword FROM promo_campaigns WHERE id = '${CAMP_A_ID}'`);
+      expect(kw).toBe('ROLLOLD');
+    } finally {
+      // Clean up the blocking constraint
+      psql(`ALTER TABLE admin_audit_logs DROP CONSTRAINT IF EXISTS temp_block_audit;`);
+      psql(`
+        DELETE FROM admin_audit_logs WHERE entity_id = '${CAMP_A_ID}';
+        DELETE FROM promo_campaigns WHERE id = '${CAMP_A_ID}';
+      `);
+    }
+  });
+
+  // ── B. Two-connection concurrency test ──
+  // Uses independent psql child processes (separate PostgreSQL connections)
+  // to prove FOR UPDATE serialization.
+  it('two concurrent routing updates: one blocks until the other commits (FOR UPDATE)', async () => {
     psql(`
       INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, keyword, accept_bare_codes, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
       VALUES ('${CAMP_A_ID}', '${BIZ_ID}', 'Concurrency Test', 'draft', 'keyword', 'FIRST', false, 'w', 't', 'i', 'a', 'e');
     `);
 
-    // First update
-    const r1 = psql(`
+    // Connection A: BEGIN, lock the row with FOR UPDATE via the RPC (which internally does SELECT ... FOR UPDATE),
+    // then sleep to hold the lock, then COMMIT
+    const sqlA = `
+      BEGIN;
       SELECT update_promo_campaign_routing('${CAMP_A_ID}', '${BIZ_ID}', '${USER_ID}', 'keyword', 'SECOND', NULL);
-    `);
-    expect(r1).toContain('"success" : true');
+      SELECT pg_sleep(2);
+      COMMIT;
+    `;
 
-    // Second update
-    const r2 = psql(`
+    // Connection B: attempt same RPC concurrently — it will block on FOR UPDATE until A commits
+    const sqlB = `
       SELECT update_promo_campaign_routing('${CAMP_A_ID}', '${BIZ_ID}', '${USER_ID}', 'keyword', 'THIRD', NULL);
-    `);
-    expect(r2).toContain('"success" : true');
+    `;
 
-    // Last writer wins
+    // Launch both concurrently via separate child processes (separate connections)
+    const [resultA, resultB] = await Promise.all([
+      psqlAsync(sqlA),
+      psqlAsync(sqlB),
+    ]);
+
+    // Both should succeed (serialized by FOR UPDATE)
+    expect(resultA.ok).toBe(true);
+    expect(resultA.stdout).toContain('"success" : true');
+    expect(resultB.ok).toBe(true);
+    expect(resultB.stdout).toContain('"success" : true');
+
+    // The last writer wins — B waited for A's lock, then ran after A committed.
+    // Since both succeed and B ran after A, the final value should be THIRD.
     const kw = psql(`SELECT keyword FROM promo_campaigns WHERE id = '${CAMP_A_ID}'`);
     expect(kw).toBe('THIRD');
 
@@ -303,32 +383,63 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
   // ── C. Unrelated unique_violation re-raise ──
   // The EXCEPTION handler in update_promo_campaign_routing only catches
   // idx_promo_campaigns_keyword_unique and idx_promo_campaigns_bare_code_active.
-  // Any OTHER unique_violation (e.g. on the name column if such a constraint existed)
-  // hits the ELSE → RAISE branch, re-raising the original exception.
-  // This is verified by code inspection of the ELSE branch in the exception handler.
-  // A true test would require a unique constraint on another column that we can trigger,
-  // which doesn't exist in the current schema and would be artificial.
-  it('documents unrelated unique_violation re-raise contract', () => {
-    // Verify the RPC function exists and the ELSE RAISE pattern is in the migration
-    // by confirming the function handles known constraints correctly
+  // Any OTHER unique_violation hits the ELSE -> RAISE branch.
+  // We prove this by creating a temporary unique constraint on `name` and triggering it.
+  it('unrelated unique_violation is re-raised as raw error (not mapped to keyword/bare_code conflict)', () => {
+    // Create two campaigns with different names
     psql(`
       INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, keyword, accept_bare_codes, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
-      VALUES ('${CAMP_A_ID}', '${BIZ_ID}', 'ReRaise Test', 'draft', 'keyword', 'RERAISE', false, 'w', 't', 'i', 'a', 'e');
+      VALUES ('${CAMP_A_ID}', '${BIZ_ID}', 'UniqueNameA', 'draft', 'keyword', 'UNQA', false, 'w', 't', 'i', 'a', 'e');
     `);
-
-    // A known constraint (keyword conflict) is caught and returned as JSON, not re-raised
     psql(`
       INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, keyword, accept_bare_codes, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
-      VALUES ('${CAMP_B_ID}', '${BIZ_ID}', 'Conflict Camp', 'active', 'keyword', 'CONFLICT', false, 'w', 't', 'i', 'a', 'e');
+      VALUES ('${CAMP_B_ID}', '${BIZ_ID}', 'UniqueNameB', 'draft', 'keyword', 'UNQB', false, 'w', 't', 'i', 'a', 'e');
     `);
 
-    // This should return JSON error, NOT throw (it's caught by the handler)
-    const result = psql(`
-      SELECT update_promo_campaign_routing('${CAMP_A_ID}', '${BIZ_ID}', '${USER_ID}', 'keyword', 'CONFLICT', NULL);
+    // Create a trigger that forces a unique_violation on an unrelated constraint
+    // when we try to update routing. This simulates an unexpected unique_violation
+    // that is NOT idx_promo_campaigns_keyword_unique or idx_promo_campaigns_bare_code_active.
+    psql(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_temp_promo_name_unique ON promo_campaigns (business_id, name);
     `);
-    expect(result).toContain('keyword_conflict');
 
-    psql(`DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}')`);
+    try {
+      // Now rename CAMP_B to have the same name as CAMP_A, then try routing update.
+      // The routing update itself does not change name, so we use a trigger to force the conflict.
+      psql(`
+        CREATE OR REPLACE FUNCTION trg_force_name_collision() RETURNS TRIGGER AS $fn$
+        BEGIN
+          NEW.name := 'UniqueNameA';
+          RETURN NEW;
+        END;
+        $fn$ LANGUAGE plpgsql;
+
+        CREATE TRIGGER trg_acc198_force_collision
+          BEFORE UPDATE OF code_entry_mode ON promo_campaigns
+          FOR EACH ROW
+          WHEN (OLD.id = '${CAMP_B_ID}')
+          EXECUTE FUNCTION trg_force_name_collision();
+      `);
+
+      // Call routing update on CAMP_B — it will trigger the name collision
+      const result = psqlMayFail(`
+        SELECT update_promo_campaign_routing('${CAMP_B_ID}', '${BIZ_ID}', '${USER_ID}', 'bare_code', NULL, NULL);
+      `);
+
+      // The error should be a raw PostgreSQL error (re-raised), NOT a mapped keyword/bare_code conflict
+      expect(result.ok).toBe(false);
+      expect(result.output).toContain('idx_temp_promo_name_unique');
+      // Must NOT contain our mapped error codes
+      expect(result.output).not.toContain('keyword_conflict');
+      expect(result.output).not.toContain('bare_code_conflict');
+    } finally {
+      psql(`
+        DROP TRIGGER IF EXISTS trg_acc198_force_collision ON promo_campaigns;
+        DROP FUNCTION IF EXISTS trg_force_name_collision();
+        DROP INDEX IF EXISTS idx_temp_promo_name_unique;
+      `);
+      psql(`DELETE FROM promo_campaigns WHERE id IN ('${CAMP_A_ID}', '${CAMP_B_ID}')`);
+    }
   });
 
   // ── D. Privilege assertions ──

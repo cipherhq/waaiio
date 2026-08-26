@@ -142,9 +142,17 @@ export async function PUT(request: NextRequest) {
       p_actor_role: 'business',
     });
     if (actError || !activation?.success) {
+      // Check for conflict-specific errors from the RPC
+      const rpcError = activation?.error;
+      if (rpcError === 'keyword_conflict' || rpcError === 'bare_code_conflict') {
+        return NextResponse.json({
+          error: rpcError,
+          conflicting_campaign: activation?.conflicting_campaign,
+        }, { status: 409 });
+      }
       return NextResponse.json({
         error: 'Campaign cannot be activated',
-        validation_errors: activation?.validation_errors || [activation?.error || actError?.message || 'Activation failed'],
+        validation_errors: activation?.validation_errors || [rpcError || actError?.message || 'Activation failed'],
       }, { status: 422 });
     }
     // Activation handled atomically — return early
