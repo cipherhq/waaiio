@@ -64,10 +64,15 @@ describe('PostgreSQL delivery lifecycle (#197)', () => {
       DELETE FROM payments WHERE id = '${TEST_PAY_ID}';
       DELETE FROM businesses WHERE id = '${TEST_BIZ_ID}';
       DELETE FROM profiles WHERE id = '${TEST_OWNER_ID}';
+      DELETE FROM auth.users WHERE id = '${TEST_OWNER_ID}';
     `);
 
-    // Create a test profile for owner_id (businesses.owner_id is NOT NULL)
+    // Create a test auth user + profile for owner_id (businesses.owner_id is NOT NULL)
+    // profiles references auth.users(id), and businesses.address is NOT NULL
     runSQL(`
+      INSERT INTO auth.users (id, instance_id, email, encrypted_password, aud, role, created_at, updated_at, confirmation_token, email_confirmed_at)
+      VALUES ('${TEST_OWNER_ID}', '00000000-0000-0000-0000-000000000000', 'test197@waaiio.test', '', 'authenticated', 'authenticated', NOW(), NOW(), '', NOW())
+      ON CONFLICT (id) DO NOTHING;
       INSERT INTO profiles (id, email, phone)
       VALUES ('${TEST_OWNER_ID}', 'test197@waaiio.test', '+10000000197')
       ON CONFLICT (id) DO NOTHING;
@@ -75,8 +80,8 @@ describe('PostgreSQL delivery lifecycle (#197)', () => {
 
     // Create test business
     const bizResult = runSQL(`
-      INSERT INTO businesses (id, owner_id, name, slug, status, country_code)
-      VALUES ('${TEST_BIZ_ID}', '${TEST_OWNER_ID}', 'Test Biz Delivery 197', '${TEST_BIZ_SLUG}', 'active', 'NG')
+      INSERT INTO businesses (id, owner_id, name, slug, status, country_code, address)
+      VALUES ('${TEST_BIZ_ID}', '${TEST_OWNER_ID}', 'Test Biz Delivery 197', '${TEST_BIZ_SLUG}', 'active', 'NG', '123 Test St')
       ON CONFLICT (id) DO NOTHING;
     `);
     if (bizResult.exitCode !== 0) {
@@ -108,6 +113,7 @@ describe('PostgreSQL delivery lifecycle (#197)', () => {
       DELETE FROM payments WHERE id = '${TEST_PAY_ID}';
       DELETE FROM businesses WHERE id = '${TEST_BIZ_ID}';
       DELETE FROM profiles WHERE id = '${TEST_OWNER_ID}';
+      DELETE FROM auth.users WHERE id = '${TEST_OWNER_ID}';
     `);
   }, 15000);
 
