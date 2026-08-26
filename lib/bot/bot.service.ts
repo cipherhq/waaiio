@@ -2067,6 +2067,79 @@ export class BotService {
       if (promoResult.handled) return;
     }
 
+    // ── #197: Stale "I've Paid" button recovery ──
+    // Intercept exact machine postback IDs (i_paid, i_paid_online, or i_paid:<ref>)
+    // with messageType='button' when the session is NOT at a legitimate payment step.
+    // Free text "paid"/"done" is NEVER intercepted here.
+    const paymentWaitingSteps = ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking', 'reservation_payment', 'await_invoice_payment', 'await_donation_payment'];
+    const isStalePaymentButton = messageType === 'button'
+      && (text === 'i_paid' || text === 'i_paid_online' || text.startsWith('i_paid:'))
+      && session.business_id
+      && !paymentWaitingSteps.includes(step);
+
+    if (isStalePaymentButton) {
+      try {
+        const { recoverByOrderReference, recoverGeneric } = await import('@/lib/payments/stale-payment-recovery');
+
+        // Determine country code for formatting
+        const { data: recBiz } = await this.supabase.from('businesses')
+          .select('country_code').eq('id', session.business_id).single();
+        const cc = (recBiz?.country_code || 'NG') as import('@/lib/constants').CountryCode;
+
+        const recoveryCtx = {
+          supabase: this.supabase,
+          businessId: session.business_id!, // guarded by isStalePaymentButton check above
+          userId: session.user_id || null,
+          phone: from,
+          countryCode: cc,
+        };
+
+        let result;
+        if (text.startsWith('i_paid:')) {
+          // Exact reference: i_paid:WA-OR-0981
+          const ref = text.split(':').slice(1).join(':'); // handle : in ref
+          result = await recoverByOrderReference(recoveryCtx, ref);
+        } else {
+          // Generic i_paid — candidate search
+          result = await recoverGeneric(recoveryCtx);
+        }
+
+        switch (result.type) {
+          case 'confirmed':
+          case 'reconciling':
+          case 'not_found':
+          case 'integrity_error':
+          case 'error':
+            await this.sendText(from, result.message);
+            return;
+
+          case 'disambiguation': {
+            // Render bounded button list with i_paid:<ref> IDs
+            const buttons = result.orders.slice(0, 3).map(o => ({
+              id: `i_paid:${o.referenceCode}`,
+              title: o.referenceCode,
+            }));
+            const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
+            const resolver = new ChannelResolver(this.supabase);
+            const resolved = await resolver.resolveByBusinessId(session.business_id!);
+            if (resolved) {
+              await resolved.sender.sendButtons({
+                to: from,
+                body: result.message,
+                buttons,
+              });
+            } else {
+              await this.sendText(from, result.message);
+            }
+            return;
+          }
+        }
+      } catch (recoveryErr) {
+        logger.error('[BOT] Stale payment recovery error (non-fatal):', recoveryErr);
+        // Fall through to normal flow — better than crashing
+      }
+    }
+
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
     // Only fire on non-free-text steps
     const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin'].includes(step);
