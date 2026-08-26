@@ -44,6 +44,7 @@ function runSQL(sql: string, role?: string): { stdout: string; stderr: string; e
 
 // ── Fixed UUIDs for test data ────────────────────────────────────────────────
 
+const TEST_OWNER_ID = 'cd197000-0000-0000-0000-000000000000';
 const TEST_BIZ_ID  = 'cd197000-0000-0000-0000-000000000001';
 const TEST_PAY_ID  = 'cd197000-0000-0000-0000-000000000002';
 // Slug must be unique in businesses
@@ -62,12 +63,20 @@ describe('PostgreSQL delivery lifecycle (#197)', () => {
       DELETE FROM unmatched_delivery_statuses WHERE meta_message_id LIKE 'wamid.test197%';
       DELETE FROM payments WHERE id = '${TEST_PAY_ID}';
       DELETE FROM businesses WHERE id = '${TEST_BIZ_ID}';
+      DELETE FROM profiles WHERE id = '${TEST_OWNER_ID}';
+    `);
+
+    // Create a test profile for owner_id (businesses.owner_id is NOT NULL)
+    runSQL(`
+      INSERT INTO profiles (id, email, phone)
+      VALUES ('${TEST_OWNER_ID}', 'test197@waaiio.test', '+10000000197')
+      ON CONFLICT (id) DO NOTHING;
     `);
 
     // Create test business
     const bizResult = runSQL(`
-      INSERT INTO businesses (id, name, slug, status, country_code)
-      VALUES ('${TEST_BIZ_ID}', 'Test Biz Delivery 197', '${TEST_BIZ_SLUG}', 'active', 'NG')
+      INSERT INTO businesses (id, owner_id, name, slug, status, country_code)
+      VALUES ('${TEST_BIZ_ID}', '${TEST_OWNER_ID}', 'Test Biz Delivery 197', '${TEST_BIZ_SLUG}', 'active', 'NG')
       ON CONFLICT (id) DO NOTHING;
     `);
     if (bizResult.exitCode !== 0) {
@@ -98,6 +107,7 @@ describe('PostgreSQL delivery lifecycle (#197)', () => {
       DELETE FROM unmatched_delivery_statuses WHERE meta_message_id LIKE 'wamid.test197%';
       DELETE FROM payments WHERE id = '${TEST_PAY_ID}';
       DELETE FROM businesses WHERE id = '${TEST_BIZ_ID}';
+      DELETE FROM profiles WHERE id = '${TEST_OWNER_ID}';
     `);
   }, 15000);
 
