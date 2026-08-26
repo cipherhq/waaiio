@@ -28,11 +28,18 @@ if (!dbUrl) {
 function runSQL(sql: string, role?: string): { stdout: string; stderr: string; exitCode: number } {
   const fullSql = role ? `SET ROLE ${role};\n${sql}` : sql;
   try {
-    const stdout = execSync(
+    let stdout = execSync(
       `psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1`,
       { input: fullSql, encoding: 'utf-8', timeout: 15000 },
     );
-    return { stdout: stdout.trim(), stderr: '', exitCode: 0 };
+    // When SET ROLE is used, psql echoes "SET" before the result — strip it
+    stdout = stdout.trim();
+    if (role && stdout.startsWith('SET\n')) {
+      stdout = stdout.slice(4).trim();
+    } else if (role && stdout === 'SET') {
+      stdout = '';
+    }
+    return { stdout, stderr: '', exitCode: 0 };
   } catch (err: any) {
     return {
       stdout: err.stdout?.trim() || '',
