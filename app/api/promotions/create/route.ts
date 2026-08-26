@@ -13,6 +13,7 @@ interface PrizeInput {
   value?: number;
   currency?: string;
   fulfillment_instructions?: string | null;
+  prize_instructions?: string | null;
   verification_mode?: string;
   sort_order?: number;
 }
@@ -188,6 +189,9 @@ export async function POST(request: NextRequest) {
     if (typeof p.quantity !== 'number' || p.quantity < 1 || !Number.isInteger(p.quantity)) {
       return NextResponse.json({ error: `prizes[${i}].quantity must be a positive integer` }, { status: 400 });
     }
+    if (p.prize_instructions && typeof p.prize_instructions === 'string' && p.prize_instructions.length > 500) {
+      return NextResponse.json({ error: `prizes[${i}].prize_instructions must be at most 500 characters` }, { status: 400 });
+    }
   }
 
   // code_config determines whether to create a batch record
@@ -295,6 +299,7 @@ export async function POST(request: NextRequest) {
           value: p.value ?? null,
           currency: p.currency?.toUpperCase() || null,
           fulfillment_instructions: p.fulfillment_instructions?.trim() || null,
+          prize_instructions: p.prize_instructions?.trim() || null,
           verification_mode: p.verification_mode || 'standard',
           sort_order: p.sort_order ?? i,
         })),

@@ -304,6 +304,56 @@ export async function PUT(request: NextRequest) {
     }
   }
 
+  // ── Prize updates (initial — will be replaced by atomic RPC in later commits) ──
+  const prizeUpdates = body.prizeUpdates as Array<{ prizeId: string; prize_instructions?: string | null }> | undefined;
+  let updatedPrizes: unknown[] | undefined;
+
+  if (Array.isArray(prizeUpdates) && prizeUpdates.length > 0) {
+    if (campaign.integrity_locked) {
+      return NextResponse.json(
+        { error: 'Cannot update prize fields after redemptions have occurred (integrity_locked)' },
+        { status: 409 },
+      );
+    }
+
+    for (let i = 0; i < prizeUpdates.length; i++) {
+      const pu = prizeUpdates[i];
+      if (!pu.prizeId || typeof pu.prizeId !== 'string') {
+        return NextResponse.json({ error: `prizeUpdates[${i}].prizeId is required` }, { status: 400 });
+      }
+      if (pu.prize_instructions !== undefined && pu.prize_instructions !== null) {
+        if (typeof pu.prize_instructions !== 'string') {
+          return NextResponse.json({ error: `prizeUpdates[${i}].prize_instructions must be a string` }, { status: 400 });
+        }
+        if (pu.prize_instructions.length > 500) {
+          return NextResponse.json({ error: `prizeUpdates[${i}].prize_instructions must be at most 500 characters` }, { status: 400 });
+        }
+      }
+    }
+
+    updatedPrizes = [];
+    for (const pu of prizeUpdates) {
+      const prizeUpdate: Record<string, unknown> = {};
+      if ('prize_instructions' in pu) {
+        prizeUpdate.prize_instructions = pu.prize_instructions?.trim() || null;
+      }
+      if (Object.keys(prizeUpdate).length > 0) {
+        const { data: updatedPrize, error: prizeError } = await service
+          .from('promo_prizes')
+          .update(prizeUpdate)
+          .eq('id', pu.prizeId)
+          .eq('campaign_id', campaignId)
+          .select()
+          .single();
+        if (prizeError) {
+          logger.error('[PROMOTIONS] prize update error:', prizeError);
+          return NextResponse.json({ error: `Failed to update prize ${pu.prizeId}` }, { status: 500 });
+        }
+        updatedPrizes.push(updatedPrize);
+      }
+    }
+  }
+
   if (Object.keys(updates).length === 1) {
     // Only updated_at — nothing else to update via direct UPDATE.
     // If routing changed via RPC, reload to return canonical post-RPC state.
@@ -315,20 +365,29 @@ export async function PUT(request: NextRequest) {
         .single();
       return NextResponse.json({ campaign: reloaded || campaign });
     }
+    if (!updatedPrizes) {
+      // No routing, no prizes — nothing to do
     return NextResponse.json({ campaign }, { status: 200 });
   }
 
-  const { data: updated, error: updateError } = await service
-    .from('promo_campaigns')
-    .update(updates)
-    .eq('id', campaignId)
-    .select()
-    .single();
+  let updatedCampaign = campaign;
+  if (Object.keys(updates).length > 1) {
+    const { data: updated, error: updateError } = await service
+      .from('promo_campaigns')
+      .update(updates)
+      .eq('id', campaignId)
+      .select()
+      .single();
 
-  if (updateError) {
-    logger.error('[PROMOTIONS] update error:', updateError);
-    return NextResponse.json({ error: 'Failed to update campaign' }, { status: 500 });
+    if (updateError) {
+      logger.error('[PROMOTIONS] update error:', updateError);
+      return NextResponse.json({ error: 'Failed to update campaign' }, { status: 500 });
+    }
+    updatedCampaign = updated;
   }
 
-  return NextResponse.json({ campaign: updated });
+  return NextResponse.json({
+    campaign: updatedCampaign,
+    ...(updatedPrizes ? { prizes: updatedPrizes } : {}),
+  });
 }
