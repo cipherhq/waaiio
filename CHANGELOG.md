@@ -5,6 +5,33 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-08-26
+
+### fix(payments): Stripe recurring finalization authority — single atomic writer (#177)
+
+- **What:** Replaced 6 independent sequential writes in Stripe `invoice.paid` customer-recurring handling with a single atomic PostgreSQL RPC (`finalize_stripe_recurring_charge`). Eliminated the legacy duplicate customer-recurring writer block.
+- **Root cause:** If the process crashed after the payment INSERT but before subscription_charges/platform_fees/subscription counter updates, Stripe redelivery saw the existing payment and skipped all remaining writes. This could permanently preserve partial accounting state.
+- **Architecture (Revision 7):**
+  - Stripe Invoice ID is the durable billing-cycle/finalization identity (NOT PaymentIntent)
+  - PaymentIntent ID remains `payments.gateway_reference` for refund compatibility
+  - `pg_advisory_xact_lock(hashtext(invoice_id))` serializes concurrent deliveries
+  - One atomic RPC covers: booking, payment, `apply_payment_spend_once`, subscription_charges, platform_fee, subscription counters, finalization marker
+  - Terminal `stripe_recurring_finalizations` marker inserted ONLY at end of successful transaction (NOT NULL canonical IDs)
+  - Matching replay returns canonical IDs without financial mutation
+  - Replay validates subscription, amount, currency, and PaymentIntent reference; any mismatch fails closed
+  - `apply_payment_spend_once` must return `applied === true`; anything else raises and rolls back
+  - Version-tolerant Stripe invoice extractors: tri-state subscription classifier + payment identity extractor supporting both legacy and modern (Basil 2025-03-31) Stripe API shapes
+  - Stage 3 (sendProactiveConfirmation) runs after committed finalization for BOTH fresh and valid replay
+  - Stage 3 terminal/nonterminal outcomes follow Payment Authority semantics
+  - Error-aware platform/customer role resolution (fail closed on DB errors, conflicts)
+  - Service-role-only RPC; anon/authenticated denied
+- **Fee parity:** Preserves existing Stripe fee behavior — `ROUND(x)` integer rounding, strict `feeFlat / amount > 0.10` rule. Exactly 10% is NOT waived. Does not normalize to Paystack `ROUND(x, 2)`.
+- **Files:** `supabase/migrations/339_stripe_recurring_finalization.sql`, `lib/payments/stripe-invoice-extractors.ts`, `app/api/payments/stripe-webhook/route.ts`, `lib/__tests__/stripe-invoice-extractors.test.ts`, `lib/__tests__/stripe-recurring-finalization-db.test.ts`
+- **Affects:** Stripe customer recurring payment processing, subscription charge recording, platform fee calculation, subscription counter updates
+- **Could break:** Nothing — all existing Stripe customer subscriptions are cancelled. New renewals will use the atomic path. Platform subscription handling unchanged.
+
+---
+
 ## 2026-08-25
 
 ### fix(loyalty): Direct Giving no longer earns loyalty points (#167)
