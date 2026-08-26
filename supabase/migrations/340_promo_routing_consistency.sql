@@ -1,5 +1,5 @@
 -- ══════════════════════════════════════════════════════════════
--- Migration 339: Promo Routing Consistency
+-- Migration 340: Promo Routing Consistency
 -- ══════════════════════════════════════════════════════════════
 -- Issue: #198 — Safe routing/keyword edits and deterministic
 --   activation-conflict handling for promo campaigns.
