@@ -587,24 +587,71 @@ describe('Extended role denial matrix', () => {
     expect(res.status).toBe(403);
   });
 
-  it('admin with invited membership status is denied', async () => {
-    // Simulates admin member with status='invited' — .eq('status', 'active') excludes them
-    // The DB has a row with role='admin' but status='invited', so the active filter returns null
+  it('admin with invited membership status is denied (filter-aware)', async () => {
+    // Fixture: admin member with status='invited' exists in business_members
+    // resolveBusinessRole queries .eq('status', 'active'), which must filter this out
     mockBizOwnerQuery = { data: null, error: null };
-    mockMemberQuery = { data: null, error: null }; // .eq('status', 'active') filters out the invited row
+    const eqFilters: Array<[string, string]> = [];
+    const memberRow = { role: 'admin', status: 'invited' };
+    // Build a filter-aware chain that tracks .eq() calls
+    const filterChain: Record<string, any> = {};
+    ['select', 'neq', 'order', 'range', 'not', 'in'].forEach(
+      (m) => (filterChain[m] = vi.fn().mockReturnValue(filterChain)),
+    );
+    filterChain.eq = vi.fn().mockImplementation((col: string, val: string) => {
+      eqFilters.push([col, val]);
+      return filterChain;
+    });
+    filterChain.maybeSingle = vi.fn().mockImplementation(() => {
+      // If .eq('status', 'active') was called, the invited row doesn't match → null
+      const hasActiveFilter = eqFilters.some(([c, v]) => c === 'status' && v === 'active');
+      if (hasActiveFilter) return Promise.resolve({ data: null, error: null });
+      // Without the active filter, the admin row would be found
+      return Promise.resolve({ data: memberRow, error: null });
+    });
+    // Override business_members mock for this test
+    const origFrom = mockServiceFrom.getMockImplementation()!;
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'business_members') return filterChain;
+      return origFrom(table);
+    });
     const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
     const res = await winnersGET(req);
     expect(res.status).toBe(403);
+    // Verify .eq('status', 'active') was actually called
+    expect(eqFilters.some(([c, v]) => c === 'status' && v === 'active')).toBe(true);
+    // Restore
+    mockServiceFrom.mockImplementation(origFrom);
   });
 
-  it('admin with suspended membership status is denied', async () => {
-    // Simulates admin member with status='suspended' — .eq('status', 'active') excludes them
-    // The DB has a row with role='admin' but status='suspended', so the active filter returns null
+  it('admin with suspended membership status is denied (filter-aware)', async () => {
+    // Fixture: admin member with status='suspended' exists in business_members
     mockBizOwnerQuery = { data: null, error: null };
-    mockMemberQuery = { data: null, error: null }; // .eq('status', 'active') filters out the suspended row
+    const eqFilters: Array<[string, string]> = [];
+    const memberRow = { role: 'admin', status: 'suspended' };
+    const filterChain: Record<string, any> = {};
+    ['select', 'neq', 'order', 'range', 'not', 'in'].forEach(
+      (m) => (filterChain[m] = vi.fn().mockReturnValue(filterChain)),
+    );
+    filterChain.eq = vi.fn().mockImplementation((col: string, val: string) => {
+      eqFilters.push([col, val]);
+      return filterChain;
+    });
+    filterChain.maybeSingle = vi.fn().mockImplementation(() => {
+      const hasActiveFilter = eqFilters.some(([c, v]) => c === 'status' && v === 'active');
+      if (hasActiveFilter) return Promise.resolve({ data: null, error: null });
+      return Promise.resolve({ data: memberRow, error: null });
+    });
+    const origFrom = mockServiceFrom.getMockImplementation()!;
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'business_members') return filterChain;
+      return origFrom(table);
+    });
     const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
     const res = await winnersGET(req);
     expect(res.status).toBe(403);
+    expect(eqFilters.some(([c, v]) => c === 'status' && v === 'active')).toBe(true);
+    mockServiceFrom.mockImplementation(origFrom);
   });
 
   it('wrong business denied reveal', async () => {
