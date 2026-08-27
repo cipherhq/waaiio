@@ -3,6 +3,21 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #203: Corrections round 3 — failed finalization invalidation, actual migration harness, deterministic concurrency
+
+### What changed
+- **Migration 345**: `finalize_promo_pickup_delivery` now sets `invalidated_at = now()` when `p_status = 'failed'`. Previously failed finalization only set `delivery_status = 'failed'` without invalidating, leaving a dangling verification that `verify_promo_pickup` would still consider active.
+- **DB tests**: Added `finalize with sent` and `finalize with failed` tests proving sent_at/invalidated_at/delivered_at column states for each finalization outcome.
+- **DB tests**: Replaced inline backfill simulation with actual migration 345 artifact execution — drops post-345 columns/objects, inserts pre-345 historical row, runs the real `.sql` file, proves `delivered_at` moved to `sent_at` and `delivered_at` cleared.
+- **DB tests**: Replaced non-deterministic dual `psqlAsync` concurrent claim test with two-session contention pattern — Session A holds `FOR UPDATE` lock via `pg_sleep(2)`, Session B blocks until A commits, then deterministically gets cooldown.
+
+### Files changed
+- `supabase/migrations/345_promo_delivery_lifecycle.sql` — added `invalidated_at` to failed path in `finalize_promo_pickup_delivery`
+- `lib/__tests__/acc-203-delivery-lifecycle-db.test.ts` — new finalize tests, actual migration harness, deterministic concurrency
+
+### What could break
+- Failed finalization now sets `invalidated_at`, so any code that checked `invalidated_at IS NULL` on failed verifications will now see them as invalidated (correct behavior, but a semantic change)
+
 ## 2026-08-26 — #203: Corrections round 2 — readiness-before-issue, durable WAMID correlation, real DB proofs
 
 ### What changed

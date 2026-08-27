@@ -263,37 +263,102 @@ describe.skipIf(!canRun)('ACC-203 DB: Delivery lifecycle', () => {
       const deliveredAt = psql(`SELECT delivered_at IS NULL FROM promo_pickup_verifications WHERE id = '${VER_ID}';`);
       expect(deliveredAt).toBe('t');
     });
+
+    it('finalize with sent: sent_at set, invalidated_at NULL, delivered_at NULL', () => {
+      psql(`
+        DELETE FROM promo_pickup_verifications WHERE redemption_id = '${RED_ID}';
+        UPDATE promo_redemptions SET verification_status = 'phone_verified' WHERE id = '${RED_ID}';
+        INSERT INTO promo_pickup_verifications (id, business_id, redemption_id, phone_e164, token_hmac, expires_at, delivery_status)
+        VALUES ('${VER_ID}', '${BIZ_ID}', '${RED_ID}', '+2348012345678', 'hmac_sent_test', now() + interval '10 minutes', 'pending');
+      `);
+
+      const r = psqlJson(`SELECT finalize_promo_pickup_delivery('${VER_ID}', 'sent', 'wamid_sent_test') AS r;`);
+      expect(r.success).toBe(true);
+
+      const sentAt = psql(`SELECT sent_at IS NOT NULL FROM promo_pickup_verifications WHERE id = '${VER_ID}';`);
+      expect(sentAt).toBe('t');
+
+      const invalidatedAt = psql(`SELECT invalidated_at IS NULL FROM promo_pickup_verifications WHERE id = '${VER_ID}';`);
+      expect(invalidatedAt).toBe('t');
+
+      const deliveredAt2 = psql(`SELECT delivered_at IS NULL FROM promo_pickup_verifications WHERE id = '${VER_ID}';`);
+      expect(deliveredAt2).toBe('t');
+    });
+
+    it('finalize with failed: invalidated_at set, sent_at NULL, delivered_at NULL', () => {
+      psql(`
+        DELETE FROM promo_pickup_verifications WHERE redemption_id = '${RED_ID}';
+        UPDATE promo_redemptions SET verification_status = 'phone_verified' WHERE id = '${RED_ID}';
+        INSERT INTO promo_pickup_verifications (id, business_id, redemption_id, phone_e164, token_hmac, expires_at, delivery_status)
+        VALUES ('${VER_ID}', '${BIZ_ID}', '${RED_ID}', '+2348012345678', 'hmac_fail_test', now() + interval '10 minutes', 'pending');
+      `);
+
+      const r = psqlJson(`SELECT finalize_promo_pickup_delivery('${VER_ID}', 'failed') AS r;`);
+      expect(r.success).toBe(true);
+
+      const invalidatedAt = psql(`SELECT invalidated_at IS NOT NULL FROM promo_pickup_verifications WHERE id = '${VER_ID}';`);
+      expect(invalidatedAt).toBe('t');
+
+      const sentAt = psql(`SELECT sent_at IS NULL FROM promo_pickup_verifications WHERE id = '${VER_ID}';`);
+      expect(sentAt).toBe('t');
+
+      const deliveredAt2 = psql(`SELECT delivered_at IS NULL FROM promo_pickup_verifications WHERE id = '${VER_ID}';`);
+      expect(deliveredAt2).toBe('t');
+
+      const status = psql(`SELECT delivery_status FROM promo_pickup_verifications WHERE id = '${VER_ID}';`);
+      expect(status).toBe('failed');
+    });
   });
 
-  // ── Historical timestamp migration ──
+  // ── Historical timestamp migration (actual artifact execution) ──
 
-  describe('historical migration: sent_at backfill', () => {
-    it('historical delivered_at migrated to sent_at with exact timestamp', () => {
-      // Create a row that simulates pre-345 state: delivery_status='sent', delivered_at set, sent_at NULL
-      const testId = '00000000-0000-4000-a203-a00000000001';
-      const timestamp = '2026-08-01T12:00:00Z';
-
+  describe('historical migration: sent_at backfill via actual migration 345', () => {
+    it('actual migration 345 moves historical delivered_at to sent_at', () => {
+      // 1. Remove post-345 state so migration can be re-run
       psql(`
-        DELETE FROM promo_pickup_verifications WHERE id = '${testId}';
-        DELETE FROM promo_pickup_verifications WHERE redemption_id = '${RED_ID}';
-        INSERT INTO promo_pickup_verifications (id, business_id, redemption_id, phone_e164, token_hmac, expires_at, delivery_status, delivered_at, sent_at)
-        VALUES ('${testId}', '${BIZ_ID}', '${RED_ID}', '+2348012345678', 'hmac_hist', now() + interval '10 minutes', 'sent', '${timestamp}'::timestamptz, NULL);
+        ALTER TABLE promo_pickup_verifications DROP COLUMN IF EXISTS sent_at;
+        ALTER TABLE promo_pickup_verifications DROP COLUMN IF EXISTS read_at;
+        ALTER TABLE promo_pickup_verifications DROP COLUMN IF EXISTS invalidated_at;
+        ALTER TABLE promo_pickup_verifications DROP CONSTRAINT IF EXISTS promo_pickup_verifications_delivery_status_check;
+        ALTER TABLE promo_pickup_verifications ADD CONSTRAINT promo_pickup_verifications_delivery_status_check
+          CHECK (delivery_status IN ('pending', 'sent', 'failed'));
+        DROP TABLE IF EXISTS promo_winner_contacts CASCADE;
+        DROP FUNCTION IF EXISTS advance_promo_pickup_status(text, text, timestamptz);
+        DROP FUNCTION IF EXISTS advance_promo_winner_contact_status(text, text, timestamptz);
+        DROP FUNCTION IF EXISTS claim_winner_contact_send(uuid, uuid, uuid, uuid, text, int);
+        DROP FUNCTION IF EXISTS finalize_winner_contact_send(uuid, text, text);
       `);
 
-      // Run the same backfill logic as migration 345
-      psql(`
-        UPDATE promo_pickup_verifications SET sent_at = delivered_at WHERE delivery_status = 'sent' AND sent_at IS NULL AND id = '${testId}';
-        UPDATE promo_pickup_verifications SET delivered_at = NULL WHERE delivery_status = 'sent' AND delivered_at IS NOT NULL AND sent_at IS NOT NULL AND id = '${testId}';
-      `);
+      const timestamp = '2026-08-01T12:00:00+00';
 
-      // Verify exact timestamp moved
-      const sentAt = psql(`SELECT sent_at::text FROM promo_pickup_verifications WHERE id = '${testId}';`);
-      expect(sentAt).toContain('2026-08-01');
+      try {
+        // 2. Insert historical row: sent with old delivered_at (API acceptance)
+        psql(`
+          DELETE FROM promo_pickup_verifications WHERE redemption_id = '${RED_ID}';
+          INSERT INTO promo_pickup_verifications (id, business_id, redemption_id, phone_e164, token_hmac, expires_at, delivery_status, delivered_at)
+          VALUES ('${VER_ID}', '${BIZ_ID}', '${RED_ID}', '+2348012345678', 'hmac_migration', now() + interval '10 minutes', 'sent', '${timestamp}'::timestamptz);
+        `);
 
-      const deliveredAt = psql(`SELECT delivered_at IS NULL FROM promo_pickup_verifications WHERE id = '${testId}';`);
-      expect(deliveredAt).toBe('t');
+        // 3. Execute the actual migration 345 file
+        const fs = require('fs');
+        const path = require('path');
+        const migrationPath = path.resolve(__dirname, '../../supabase/migrations/345_promo_delivery_lifecycle.sql');
+        const migrationSql = fs.readFileSync(migrationPath, 'utf8');
 
-      psql(`DELETE FROM promo_pickup_verifications WHERE id = '${testId}';`);
+        const result = psqlMayFail(`BEGIN;\n${migrationSql}\nCOMMIT;`);
+        expect(result.ok).toBe(true);
+
+        // 4. Prove timestamp moved to sent_at
+        const sentAt = psql(`SELECT to_char(sent_at, 'YYYY-MM-DD"T"HH24:MI:SS') FROM promo_pickup_verifications WHERE id = '${VER_ID}'`);
+        expect(sentAt).toContain('2026-08-01');
+
+        // 5. Prove delivered_at IS NULL
+        const deliveredAt = psql(`SELECT delivered_at IS NULL FROM promo_pickup_verifications WHERE id = '${VER_ID}'`);
+        expect(deliveredAt).toBe('t');
+      } finally {
+        // Cleanup data — the migration should have re-created all post-345 objects
+        psql(`DELETE FROM promo_pickup_verifications WHERE id = '${VER_ID}'`);
+      }
     });
   });
 
@@ -372,28 +437,44 @@ describe.skipIf(!canRun)('ACC-203 DB: Delivery lifecycle', () => {
       psql(`DELETE FROM promo_winner_contacts WHERE provider_message_id = '${wamid}';`);
     });
 
-    it('two concurrent claims: one succeeds, other gets cooldown', async () => {
+    it('two-session contention: second claim blocked until first commits, then gets cooldown', async () => {
       psql(`DELETE FROM promo_winner_contacts WHERE redemption_id = '${RED_ID}';`);
 
-      // Both sessions try to claim simultaneously via independent connections
-      const connA = psqlAsync(`SELECT claim_winner_contact_send('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1');`);
-      const connB = psqlAsync(`SELECT claim_winner_contact_send('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1');`);
+      // Session A: BEGIN, call claim (which locks redemption row), sleep to hold lock, COMMIT
+      const connA = psqlAsync(`
+        SET statement_timeout = '10s';
+        BEGIN;
+        SELECT claim_winner_contact_send('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1');
+        SELECT pg_sleep(2);
+        COMMIT;
+      `, 15000);
+
+      // Small delay to ensure A acquires the lock first
+      await new Promise(r => setTimeout(r, 300));
+
+      // Session B: tries to claim the same redemption — blocks on redemption FOR UPDATE lock
+      const connB = psqlAsync(`
+        SET statement_timeout = '10s';
+        SELECT claim_winner_contact_send('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1');
+      `, 15000);
 
       const [a, b] = await Promise.all([connA, connB]);
 
-      // Both should succeed at the RPC level (no crashes)
       expect(a.ok).toBe(true);
       expect(b.ok).toBe(true);
 
-      // Parse results — exactly one success, one cooldown
-      const resultA = JSON.parse(a.stdout);
-      const resultB = JSON.parse(b.stdout);
+      // A should have succeeded
+      const resultA = JSON.parse(a.stdout.split('\n').find((l: string) => l.startsWith('{')) || '{}');
+      expect(resultA.success).toBe(true);
 
-      const successes = [resultA, resultB].filter(r => r.success === true);
-      const cooldowns = [resultA, resultB].filter(r => r.reason === 'cooldown');
+      // B should have gotten cooldown (A committed first, B sees the new row)
+      const resultB = JSON.parse(b.stdout.trim());
+      expect(resultB.success).toBe(false);
+      expect(resultB.reason).toBe('cooldown');
 
-      expect(successes.length).toBe(1);
-      expect(cooldowns.length).toBe(1);
+      // Only one claim row should exist
+      const count = psql(`SELECT count(*)::int FROM promo_winner_contacts WHERE redemption_id = '${RED_ID}'`);
+      expect(count).toBe('1');
 
       psql(`DELETE FROM promo_winner_contacts WHERE redemption_id = '${RED_ID}';`);
     });

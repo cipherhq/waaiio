@@ -236,6 +236,7 @@ BEGIN
     delivery_status = p_status,
     provider_message_id = COALESCE(p_provider_message_id, provider_message_id),
     sent_at = CASE WHEN p_status = 'sent' THEN now() ELSE NULL END,
+    invalidated_at = CASE WHEN p_status = 'failed' THEN now() ELSE NULL END,
     updated_at = now()
   WHERE id = p_verification_id AND delivery_status = 'pending';
 
