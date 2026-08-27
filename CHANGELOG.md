@@ -23,7 +23,12 @@ If something breaks, check this log to find what changed and when.
 ### What could break
 - If `claim_confirmation_delivery` RPC is unavailable, customer WhatsApp confirmations won't send (but payment/order finalization still completes)
 - Button ID change from `i_paid` to `i_paid:WA-OR-XXXX` means old cached buttons still work (backward compat in interceptor) but new buttons carry durable reference
-- `waaiio-177/` directory tests fail independently (unrelated — PR #196 worktree)
+
+### Correction round 5 — frozen test requirements resolved (PR #207 rebase)
+- **`stale-button-botservice.test.ts`**: Rewritten to call real `BotService.handleMessage()` with mocked dependencies (same pattern as cas-004-botservice-wiring.test.ts). Tests `i_paid`, `i_paid_online`, `i_paid:REF`, `i_paid_online:REF` buttons, negative cases (free text, malformed, legitimate step), all via actual handleMessage execution.
+- **`confirmation-delivery-db.test.ts` test 21**: Rewritten for genuine concurrent WAMID race. Uses two `psql` sessions launched via `Promise.all` — Session A wraps `complete_confirmation_send` in explicit transaction with `pg_sleep(1)` to hold the advisory lock, Session B calls `advance_delivery_status` and blocks on `pg_advisory_xact_lock(hashtext(wamid))` until A commits. Proves real lock contention, not sequential execution.
+- **CI**: Rebased onto main (54d785d2). Both #177 Stripe and #197 confirmation delivery CI blocks preserved.
+- **Files:** `lib/payments/__tests__/stale-button-botservice.test.ts`, `lib/payments/__tests__/confirmation-delivery-db.test.ts`, `.github/workflows/ci.yml`, `CHANGELOG.md`
 
 ---
 

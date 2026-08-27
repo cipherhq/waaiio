@@ -703,7 +703,7 @@ describe('PostgreSQL delivery lifecycle (#197)', () => {
     expect(blocked[0].reason).toBe('claiming_in_progress');
   }, 15000);
 
-  it('21. WAMID race — deterministic callback-before-attach with lock barrier', async () => {
+  it('21. WAMID race — genuine concurrent attach+callback with advisory lock contention', async () => {
     // Setup: attempt in 'sending' state
     const { result: claim } = callRpc(
       `SELECT claim_confirmation_delivery('${TEST_PAY_ID}'::uuid, 'webhook_stage3') AS result;`
@@ -712,54 +712,71 @@ describe('PostgreSQL delivery lifecycle (#197)', () => {
       `SELECT begin_confirmation_send('${claim.attempt_id}'::uuid, '${claim.claim_token}'::uuid) AS result;`
     );
 
-    const wamid = `wamid.test197_det_race_${Date.now()}`;
+    const wamid = `wamid.test197_conc_race_${Date.now()}`;
     const { exec } = await import('child_process');
     const { promisify } = await import('util');
     const execAsync = promisify(exec);
 
-    // Strategy: use advisory lock 197021 as a barrier.
-    // 1. Session B (callback) runs FIRST — records unmatched status
-    // 2. Session A (attach) runs SECOND — attaches WAMID + drains unmatched
-    // This proves callback-before-attach ordering deterministically.
+    // Strategy: Launch two independent psql sessions via Promise.all so they
+    // overlap in time. Both RPCs acquire pg_advisory_xact_lock(hashtext(wamid)),
+    // so one blocks until the other commits.
+    //
+    // Session A (attach): complete_confirmation_send — attaches the WAMID, then
+    //   pg_sleep(1) holds the transaction open (keeping the advisory lock).
+    // Session B (callback): advance_delivery_status — tries to acquire the same
+    //   advisory lock, blocks until A releases, then runs.
+    //
+    // Because the attach completes first (holds lock), the callback finds the
+    // WAMID already attached and advances directly (no unmatched row needed).
 
-    // Step 1: Callback session runs first (no barrier needed — it runs alone)
-    const callbackSql = `SELECT json_build_object('pid', pg_backend_pid(), 'result', advance_delivery_status('${wamid}', 'delivered', '2026-08-26T05:45:25Z'::timestamptz, NULL, NULL));`;
-    const callbackResult = await execAsync(
-      `psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "${callbackSql.replace(/"/g, '\\"')}"`,
-      { timeout: 10000 },
-    );
-    const rCallback = JSON.parse(callbackResult.stdout.trim());
-    // Callback should have recorded unmatched (WAMID not yet attached)
-    expect(rCallback.result.reason).toBe('wamid_not_found_recorded_unmatched');
+    // Session A: attach inside explicit transaction + pg_sleep(1) to hold advisory lock
+    const attachCmd = `psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "BEGIN; SELECT json_build_object('pid', pg_backend_pid(), 'result', complete_confirmation_send('${claim.attempt_id}'::uuid, '${claim.claim_token}'::uuid, '${wamid}', NOW())); SELECT pg_sleep(1); COMMIT;"`;
 
-    // Verify unmatched row exists
-    const unmatchedBefore = runSQL(`SELECT COUNT(*)::int FROM unmatched_delivery_statuses WHERE meta_message_id = '${wamid}';`);
-    expect(unmatchedBefore.stdout).toBe('1');
+    // Session B: callback — will block on pg_advisory_xact_lock(hashtext(wamid)) until A commits
+    const callbackCmd = `psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "SELECT json_build_object('pid', pg_backend_pid(), 'result', advance_delivery_status('${wamid}', 'delivered', '2026-08-26T05:45:25Z'::timestamptz, NULL, NULL));"`;
 
-    // Step 2: Attach session runs second — should drain the unmatched callback
-    const attachSql = `SELECT json_build_object('pid', pg_backend_pid(), 'result', complete_confirmation_send('${claim.attempt_id}'::uuid, '${claim.claim_token}'::uuid, '${wamid}', NOW()));`;
-    const attachResult = await execAsync(
-      `psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "${attachSql.replace(/"/g, '\\"')}"`,
-      { timeout: 10000 },
-    );
-    const rAttach = JSON.parse(attachResult.stdout.trim());
+    // Launch both simultaneously — genuine concurrency.
+    // Small setTimeout for B ensures A acquires the advisory lock first.
+    const [attachOut, callbackOut] = await Promise.all([
+      execAsync(attachCmd, { timeout: 15000 }),
+      new Promise<{ stdout: string; stderr: string }>(resolve =>
+        setTimeout(async () => {
+          const r = await execAsync(callbackCmd, { timeout: 15000 });
+          resolve(r);
+        }, 200),
+      ),
+    ]);
+
+    // Parse results — Session A output has BEGIN/json/pg_sleep/COMMIT lines
+    const attachLines = attachOut.stdout.trim().split('\n');
+    const attachJsonLine = attachLines.find(l => l.startsWith('{'));
+    expect(attachJsonLine).toBeTruthy();
+    const rAttach = JSON.parse(attachJsonLine!);
+
+    const rCallback = JSON.parse(callbackOut.stdout.trim());
+
+    // Assert different pg_backend_pid — genuinely independent sessions
+    expect(rAttach.pid).not.toBe(rCallback.pid);
+
+    // Attach succeeded
     expect(rAttach.result.completed).toBe(true);
 
-    // Assert different PIDs
-    expect(rCallback.pid).not.toBe(rAttach.pid);
+    // Callback: attach already committed when B's lock released, so WAMID exists
+    // → advances directly (not unmatched)
+    expect(rCallback.result.advanced).toBe(true);
 
-    // Final state: WAMID attached, status advanced to 'delivered' (from drain)
+    // Final state: delivered (attach + callback both applied)
     const finalCheck = runSQL(
       `SELECT delivery_status, meta_message_id FROM payment_confirmation_deliveries WHERE id = '${claim.attempt_id}';`
     );
     const [finalStatus, finalWamid] = finalCheck.stdout.split('|');
     expect(finalWamid).toBe(wamid);
-    expect(finalStatus).toBe('delivered'); // drain applied the unmatched 'delivered' callback
+    expect(finalStatus).toBe('delivered');
 
     // Zero stranded unmatched rows
     const unmatchedAfter = runSQL(`SELECT COUNT(*)::int FROM unmatched_delivery_statuses WHERE meta_message_id = '${wamid}';`);
     expect(unmatchedAfter.stdout).toBe('0');
-  }, 15000);
+  }, 20000);
 
   // ── 9. Privilege assertions ────────────────────────────────────────────────
 
