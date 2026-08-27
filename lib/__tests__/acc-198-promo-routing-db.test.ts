@@ -684,8 +684,8 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
 
   // ── H. Two-session distinct-campaign activation race test ──
   it('two distinct draft campaigns activating the same keyword: exactly one succeeds', async () => {
-    const RACE_A = '00000000-0000-4000-c198-race000000aa';
-    const RACE_B = '00000000-0000-4000-c198-race000000bb';
+    const RACE_A = '00000000-0000-4000-a198-000000000a01';
+    const RACE_B = '00000000-0000-4000-a198-000000000b02';
 
     // Create two draft campaigns with the same keyword
     psql(`
