@@ -406,7 +406,8 @@ export async function PUT(request: NextRequest) {
     }
     if (!updatedPrizes) {
       // No routing, no prizes — nothing to do
-    return NextResponse.json({ campaign }, { status: 200 });
+      return NextResponse.json({ campaign }, { status: 200 });
+    }
   }
 
   let updatedCampaign = campaign;
