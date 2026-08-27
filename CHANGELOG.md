@@ -3,6 +3,29 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #202: Winner Authorization — Role-based winner management
+
+### What changed
+- **`lib/capabilities/resolve-role.ts`** (NEW): Pure role resolver — checks businesses.owner_id then business_members for active membership. Returns typed BusinessRole.
+- **`lib/capabilities/api-guard.ts`**: Added `requireCapabilityWithRole()` — combines role resolution + capability check + business status enforcement in a single guard. Does NOT modify existing `requireCapability` or `requireAnyCapability`.
+- **`app/api/promotions/winners/route.ts`**: Switched from `requireCapability` (owner-only) to `requireCapabilityWithRole` with `allowedRoles: ['owner', 'admin', 'manager']`. Response now includes server-derived `permissions` object (`can_reveal_phone`, `can_contact_winner`, `can_manage_fulfillment`).
+- **`app/api/promotions/winners/reveal/route.ts`** (NEW): Owner/admin-only endpoint to reveal full phone_e164. Audit-before-disclosure (fail closed). No-store cache header.
+- **`app/api/promotions/winners/contact/route.ts`** (NEW): Owner/admin/manager shell endpoint. Returns 503 — no phone lookup, no Meta send. Template pending approval.
+- **`app/api/promotions/fulfillment/route.ts`**: Switched to `requireCapabilityWithRole` with `allowedRoles: ['owner', 'admin']`. Response SELECT now uses explicit column allowlist excluding phone_e164.
+- **Migration 344**: `transition_promo_fulfillment` updated with atomic audit INSERT into admin_audit_logs. Privilege reassertion for service_role only.
+- **`app/dashboard/promotions/[id]/page.tsx`**: Winners table now role-gated — Reveal button (owner/admin), Contact button (disabled, template pending), Fulfillment Update (owner/admin). Permissions driven by server response.
+
+### What it affects
+- Winners management is now multi-role instead of owner-only
+- phone_e164 is only disclosed via the reveal endpoint (audited)
+- Fulfillment response no longer leaks phone_e164
+- Manager role can view winners and will be able to contact (when template approved) but cannot reveal phone or update fulfillment
+
+### What could break
+- If business_members table has stale entries, users with suspended/invited status are correctly excluded (only 'active' members pass)
+- If admin_audit_logs INSERT fails inside transition_promo_fulfillment, the entire transaction rolls back — fulfillment update is rejected
+- Existing integrations that expect `select('*')` on fulfillment response will no longer receive phone_e164
+
 ## 2026-08-26 — #197: Payment confirmation delivery tracking + stale I've Paid recovery
 
 ### What changed

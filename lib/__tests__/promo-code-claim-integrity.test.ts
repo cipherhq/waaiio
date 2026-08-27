@@ -642,8 +642,8 @@ describe('Winner API/UI contract', () => {
   });
 
   it('phone not double-masked in winner table', () => {
-    // The table cell should use winner.phone_e164 directly (already masked by API)
-    expect(detailSrc).toContain('{winner.phone_e164}');
+    // The table cell uses winner.phone_e164 (already masked by API) with optional reveal
+    expect(detailSrc).toContain('winner.phone_e164');
     // Should NOT call maskPhone on already-masked phone in table
     expect(detailSrc).not.toContain('maskPhone(winner.phone_e164)');
   });

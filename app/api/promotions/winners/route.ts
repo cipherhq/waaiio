@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { requireCapability } from '@/lib/capabilities/api-guard';
+import { requireCapabilityWithRole } from '@/lib/capabilities/api-guard';
 import { resolveRedeemedCode } from '@/lib/promotions/resolve-winner-code';
 import type { CodeJoin } from '@/lib/promotions/resolve-winner-code';
 
@@ -35,12 +35,13 @@ export async function GET(request: NextRequest) {
 
   const service = createServiceClient();
 
-  // Check 1: Caller passed capability/business authorization
-  const guard = await requireCapability(supabase, service, {
+  // Check 1: Caller passed capability/business/role authorization
+  const guard = await requireCapabilityWithRole(service, {
     businessId,
     userId: user.id,
     capability: 'promo_verification',
     action: 'read_history',
+    allowedRoles: ['owner', 'admin', 'manager'],
   });
   if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
@@ -138,6 +139,14 @@ export async function GET(request: NextRequest) {
     verified_at: r.verified_at,
   }));
 
+  // Server-derived permissions based on resolved role
+  const isOwnerOrAdmin = guard.role === 'owner' || guard.role === 'admin';
+  const permissions = {
+    can_reveal_phone: isOwnerOrAdmin,
+    can_contact_winner: isOwnerOrAdmin || guard.role === 'manager',
+    can_manage_fulfillment: isOwnerOrAdmin,
+  };
+
   return NextResponse.json({
     winners,
     pagination: {
@@ -145,5 +154,6 @@ export async function GET(request: NextRequest) {
       limit,
       total: count ?? 0,
     },
+    permissions,
   });
 }
