@@ -3,6 +3,29 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #204: CLAIM/STATUS self-service + fulfillment notifications
+
+### What changed
+- **CLAIM/STATUS bot commands**: Winners can now text `CLAIM WAA-xxx` or `STATUS WAA-xxx` to check their claim status via WhatsApp. Only trusted provenance (pre_resolved, dedicated_number, restart) is accepted — fuzzy/returning_customer resolution falls through to normal routing. Response shows claim reference, prize name, fulfillment status, and (for secure_pickup) verification status. Never exposes phone, OTP, or internal notes.
+- **bizResolution passthrough**: `bot.service.ts` now passes `bizResolution` to `handlePromoVerification` so CLAIM/STATUS can gate on trusted provenance. The session-context call (line 2058) does NOT pass bizResolution — CLAIM/STATUS only works on first-message.
+- **Migration 346**: `promo_fulfillment_notification_intents` table + atomic intent creation inside `transition_promo_fulfillment` RPC. One notification intent per redemption per status transition (idempotent via UNIQUE constraint). Adds `advance_promo_fulfillment_notification_status` (monotonic delivery state machine) and `finalize_promo_fulfillment_notification` RPCs.
+- **Fulfillment notification dispatch**: After successful fulfillment RPC, the route checks for pending notification intents and dispatches a non-blocking WhatsApp template notification. Uses `ChannelResolver`, checks template readiness, sends `promo_fulfillment_status_v1` template. Failure never rolls back fulfillment.
+- **Tests**: `acc-204-claim-status.test.ts` (pattern matching, provenance gating, response content, rejection cases, status formatting). `acc-204-fulfillment-notification-db.test.ts` (atomic intent creation, idempotent dedup, finalize RPC, monotonic advance, privilege hardening).
+
+### Files changed
+- `lib/bot/bot.service.ts` — pass bizResolution to _handlePromoVerification (first-message call only)
+- `lib/bot/handlers/promo-verification.ts` — added bizResolution parameter, CLAIM/STATUS handler, formatFulfillmentStatus helper
+- `supabase/migrations/346_promo_fulfillment_notification_intent.sql` — new table, updated RPC, advance/finalize RPCs, privilege hardening
+- `app/api/promotions/fulfillment/route.ts` — notification intent query + non-blocking dispatch after RPC success
+- `lib/promotions/fulfillment-notification.ts` — new module: channel resolution, template check, send, finalize
+- `lib/__tests__/acc-204-claim-status.test.ts` — new unit tests
+- `lib/__tests__/acc-204-fulfillment-notification-db.test.ts` — new DB tests
+
+### What could break
+- `handlePromoVerification` signature now has an 8th parameter (bizResolution). The session-context call at line 2058 does NOT pass it — CLAIM/STATUS is first-message only. Any other callers must be updated.
+- `transition_promo_fulfillment` RPC now inserts into `promo_fulfillment_notification_intents` — requires migration 346 to run before the RPC is called.
+- Notification dispatch requires `promo_fulfillment_status_v1` template to be approved in Meta WABA. Until approved, intents will be created but notifications will fail gracefully.
+
 ## 2026-08-26 — #203: Corrections round 3 — failed finalization invalidation, actual migration harness, deterministic concurrency
 
 ### What changed

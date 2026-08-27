@@ -21,6 +21,18 @@ interface PromoHandlerResult {
   handled: boolean;
 }
 
+/** Format fulfillment_status for human display (no internal codes leaked). */
+function formatFulfillmentStatus(status: string): string {
+  switch (status) {
+    case 'pending': return 'Pending';
+    case 'processing': return 'Processing';
+    case 'fulfilled': return 'Fulfilled';
+    case 'rejected': return 'Rejected';
+    case 'cancelled': return 'Cancelled';
+    default: return 'Unknown';
+  }
+}
+
 export async function handlePromoVerification(
   _supabase: SupabaseClient, // kept for signature compat; we use service client for writes
   sendText: (to: string, text: string) => Promise<void>,
@@ -29,6 +41,7 @@ export async function handlePromoVerification(
   businessId: string,
   inboundMessageId?: string,
   effectiveCapabilities?: string[],
+  bizResolution?: string, // ACC-204: trusted provenance for CLAIM/STATUS self-service
 ): Promise<PromoHandlerResult> {
   const text = messageText.trim();
 
@@ -37,6 +50,83 @@ export async function handlePromoVerification(
   }
 
   const service = createServiceClient();
+
+  // 1.5. CLAIM/STATUS self-service commands (ACC-204)
+  const claimMatch = text.match(/^CLAIM\s+(WAA-[A-Z0-9-]+)$/i);
+  const statusMatch = text.match(/^STATUS\s+(WAA-[A-Z0-9-]+)$/i);
+
+  if (claimMatch || statusMatch) {
+    // Require trusted business provenance — fuzzy/returning_customer cannot self-service
+    const TRUSTED_PROVENANCES = new Set(['pre_resolved', 'dedicated_number', 'restart']);
+    if (!bizResolution || !TRUSTED_PROVENANCES.has(bizResolution)) {
+      return { handled: false };
+    }
+
+    const reference = (claimMatch?.[1] || statusMatch?.[1])!.toUpperCase();
+
+    const { data: redemption } = await service
+      .from('promo_redemptions')
+      .select('id, claim_reference, fulfillment_status, verification_mode, verification_status, campaign_id, promo_code_id')
+      .eq('claim_reference', reference)
+      .eq('phone_e164', from)
+      .eq('business_id', businessId)
+      .eq('outcome', 'winner')
+      .maybeSingle();
+
+    if (!redemption) {
+      await sendText(from, "We couldn't find that claim. Please check the reference and try again.");
+      return { handled: true };
+    }
+
+    // Verify campaign belongs to this business
+    const { data: campaign } = await service
+      .from('promo_campaigns')
+      .select('name')
+      .eq('id', redemption.campaign_id)
+      .eq('business_id', businessId)
+      .maybeSingle();
+
+    if (!campaign) {
+      await sendText(from, "We couldn't find that claim. Please check the reference and try again.");
+      return { handled: true };
+    }
+
+    // Fetch prize name via code -> prize_id
+    let prizeName = 'Prize';
+    if (redemption.promo_code_id) {
+      const { data: codeRow } = await service
+        .from('promo_campaign_codes')
+        .select('prize_id')
+        .eq('id', redemption.promo_code_id)
+        .maybeSingle();
+      if (codeRow?.prize_id) {
+        const { data: prize } = await service
+          .from('promo_prizes')
+          .select('name')
+          .eq('id', codeRow.prize_id)
+          .maybeSingle();
+        if (prize?.name) prizeName = prize.name;
+      }
+    }
+
+    // Build response (no sensitive data — no phone, OTP, or internal notes)
+    const lines = [
+      `📋 *Claim Reference:* ${redemption.claim_reference}`,
+      `🏆 *Prize:* ${prizeName}`,
+      `📊 *Status:* ${formatFulfillmentStatus(redemption.fulfillment_status)}`,
+    ];
+
+    if (redemption.verification_mode === 'secure_pickup') {
+      if (redemption.verification_status === 'verified') {
+        lines.push('✅ Verification: Complete');
+      } else {
+        lines.push('🔐 Verification: Pending (OTP required at pickup)');
+      }
+    }
+
+    await sendText(from, lines.join('\n'));
+    return { handled: true };
+  }
 
   // 1. Check if this is a campaign-specific eligibility acknowledgment or decline
   const isAck = /^(yes|agree|i agree|accept|confirm)$/i.test(text);

@@ -1182,6 +1182,7 @@ export class BotService {
         const promoResult = await _handlePromoVerification(
           this.supabase, this.sendText.bind(this), from, text,
           business.id, messageId, capabilities as string[],
+          bizResolution, // ACC-204: trusted provenance for CLAIM/STATUS self-service
         );
         if (promoResult.handled) {
           promoHandledFirstMessage = true;

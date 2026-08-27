@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapabilityWithRole } from '@/lib/capabilities/api-guard';
 import type { PromoFulfillmentStatus } from '@/lib/promotions/types';
+import { dispatchFulfillmentNotification } from '@/lib/promotions/fulfillment-notification';
 
 const ALL_FULFILLMENT_STATUSES: PromoFulfillmentStatus[] = [
   'pending',
@@ -91,6 +92,23 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Secure pickup verification is required before fulfillment', reason }, { status: 422 });
     }
     return NextResponse.json({ error: `Fulfillment transition failed: ${reason}`, ...result }, { status: 422 });
+  }
+
+  // ACC-204: Non-blocking fulfillment notification dispatch
+  // Check for pending notification intent created atomically by the RPC
+  const { data: intent } = await service
+    .from('promo_fulfillment_notification_intents')
+    .select('id, redemption_id, to_status, campaign_id')
+    .eq('redemption_id', redemptionId)
+    .eq('to_status', fulfillmentStatus)
+    .eq('delivery_status', 'pending')
+    .maybeSingle();
+
+  if (intent) {
+    // Non-blocking: notification failure must NEVER roll back fulfillment
+    dispatchFulfillmentNotification(service, intent, businessId).catch(err => {
+      logger.error('[FULFILLMENT] Notification dispatch failed (non-blocking):', err);
+    });
   }
 
   // Fetch updated redemption for response — explicit allowlist, no phone_e164
