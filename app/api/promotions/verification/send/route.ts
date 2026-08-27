@@ -132,6 +132,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'WhatsApp template delivery unavailable for this business' }, { status: 503 });
     }
 
+    // Check template readiness on the SAME resolved channel
+    if (!resolved.cloud) {
+      return NextResponse.json({ error: 'Template management not available on this channel' }, { status: 503 });
+    }
+
+    const templates = await resolved.cloud.getTemplates();
+    const v2Template = (templates.data || []).find(
+      (t: { name: string; language: string; status?: string }) => t.name === 'promo_pickup_verification_v2' && t.language === 'en_US'
+    );
+
+    if (!v2Template || v2Template.status !== 'APPROVED') {
+      return NextResponse.json({
+        error: 'template_not_ready',
+        detail: `promo_pickup_verification_v2 is ${v2Template?.status || 'missing'} on this WABA`,
+      }, { status: 503 });
+    }
+
     const phone = stripPlus(authoritativePhone);
     const result = await resolved.sender.sendTemplate({
       to: phone,

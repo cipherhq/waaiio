@@ -59,23 +59,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Winner not found' }, { status: 404 });
   }
 
-  // Rate limit: check for recent contact within 10 minutes for this redemption
-  const { data: recentContact } = await service
-    .from('promo_winner_contacts')
-    .select('id, created_at')
-    .eq('redemption_id', redemptionId)
-    .gte('created_at', new Date(Date.now() - RATE_LIMIT_MINUTES * 60 * 1000).toISOString())
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (recentContact) {
-    return NextResponse.json({
-      error: 'rate_limited',
-      message: `Winner was contacted recently. Please wait before contacting again.`,
-    }, { status: 429 });
-  }
-
   // Fetch business name
   const { data: bizRecord } = await service
     .from('businesses')
@@ -151,8 +134,37 @@ export async function POST(request: NextRequest) {
     }, { status: 503 });
   }
 
+  // Claim-before-send: INSERT pending row FIRST (rate limit via unique partial index)
+  const { data: claimRow, error: claimError } = await service
+    .from('promo_winner_contacts')
+    .insert({
+      redemption_id: redemptionId,
+      business_id: businessId,
+      campaign_id: campaignId,
+      actor_id: user.id,
+      template_name: WINNER_TEMPLATE_NAME,
+      provider_message_id: null,
+      delivery_status: 'pending',
+      sent_at: null,
+    })
+    .select('id')
+    .single();
+
+  if (claimError) {
+    // Unique partial index violation means rate limited
+    if (claimError.code === '23505') {
+      return NextResponse.json({
+        error: 'rate_limited',
+        message: 'Winner was contacted recently. Please wait before contacting again.',
+      }, { status: 429 });
+    }
+    logger.error('[PROMO-CONTACT] Failed to claim winner contact slot:', claimError);
+    return NextResponse.json({ error: 'Failed to initiate winner contact.' }, { status: 500 });
+  }
+
   // Send template message
   let messageId: string | undefined;
+  let sendFailed = false;
   try {
     const phone = stripPlus(redemption.phone_e164);
     const result = await resolved.sender.sendTemplate({
@@ -163,26 +175,25 @@ export async function POST(request: NextRequest) {
     messageId = result?.messageId;
   } catch (err) {
     logger.error('[PROMO-CONTACT] WhatsApp template delivery failed:', err);
-    return NextResponse.json({ error: 'Failed to send winner notification. Please try again.' }, { status: 503 });
+    sendFailed = true;
   }
 
-  // Record in promo_winner_contacts
-  const { error: insertError } = await service
+  // UPDATE the claimed row with delivery result
+  const { error: updateError } = await service
     .from('promo_winner_contacts')
-    .insert({
-      redemption_id: redemptionId,
-      business_id: businessId,
-      campaign_id: campaignId,
-      actor_id: user.id,
-      template_name: WINNER_TEMPLATE_NAME,
+    .update({
       provider_message_id: messageId || null,
-      delivery_status: messageId ? 'sent' : 'pending',
-      sent_at: messageId ? new Date().toISOString() : null,
-    });
+      delivery_status: sendFailed ? 'failed' : 'sent',
+      sent_at: sendFailed ? null : new Date().toISOString(),
+    })
+    .eq('id', claimRow.id);
 
-  if (insertError) {
-    logger.error('[PROMO-CONTACT] Failed to record winner contact:', insertError);
-    // Message was sent but recording failed — still report success to avoid double-send
+  if (updateError) {
+    logger.error('[PROMO-CONTACT] Failed to update winner contact delivery status:', updateError);
+  }
+
+  if (sendFailed) {
+    return NextResponse.json({ error: 'Failed to send winner notification. Please try again.' }, { status: 503 });
   }
 
   // Never return phone in response

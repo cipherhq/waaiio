@@ -3,6 +3,30 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #203: Corrections round 1 — delivered_at semantics, v2 gate, durable contacts, #202 scope
+
+### What changed
+- **Migration 345**: `finalize_promo_pickup_delivery` no longer sets `delivered_at` on 'sent' — only `sent_at`. Historical backfill clears false `delivered_at` for rows with `delivery_status = 'sent'`. Added unique indexes: `idx_promo_winner_contacts_rate_limit` (partial, 10-min window), `idx_promo_winner_contacts_wamid`, `idx_promo_pickup_wamid` for durable tracking.
+- **OTP Send route**: Added real v2 APPROVED gate — checks `resolved.cloud.getTemplates()` on the SAME resolved channel before calling `sendTemplate`. Returns 503 with `template_not_ready` if v2 is missing/PENDING/REJECTED.
+- **Contact Winner route**: Changed to claim-before-send — INSERT pending row first (unique index enforces rate limit), then send, then UPDATE with result. Prevents ghost sends and double-sends.
+- **DB tests**: Fixed finalize test to assert `delivered_at IS NULL` after 'sent'. Replaced placeholder historical migration test with real assertion. Added unique index enforcement tests (duplicate WAMID, rate limit collision).
+- **Unit tests**: OTP send tests now mock `getTemplates()` for missing/PENDING/REJECTED/no-cloud states and verify sendTemplate NOT called. Contact Winner rate limit test uses insert constraint violation. Added same-channel proof test.
+- **#202 tests**: Restored predicate-sensitive Contact Winner scope test with eqSpy tracking all predicates.
+
+### Files changed
+- `supabase/migrations/345_promo_delivery_lifecycle.sql` — fix finalize, add backfill cleanup, add unique indexes
+- `app/api/promotions/verification/send/route.ts` — real v2 APPROVED gate
+- `app/api/promotions/winners/contact/route.ts` — claim-before-send pattern
+- `lib/__tests__/acc-203-delivery-lifecycle-db.test.ts` — fixed + new tests
+- `lib/__tests__/acc-203-templates-delivery.test.ts` — real readiness tests
+- `lib/__tests__/acc-202-winner-authorization.test.ts` — predicate-sensitive scope test
+
+### What could break
+- `finalize_promo_pickup_delivery('sent')` no longer sets `delivered_at` — code relying on `delivered_at` being set after finalize will see NULL
+- OTP send now requires `resolved.cloud` to be present — channels without cloud support get 503 before template send
+- Contact Winner insert may fail on `idx_promo_winner_contacts_rate_limit` unique constraint — callers must handle 429
+- Existing `promo_winner_contacts` rows with duplicate `provider_message_id` will block migration 345
+
 ## 2026-08-26 — #203: Versioned Templates, Delivery Correlation, Contact Winner Activation
 
 ### What changed

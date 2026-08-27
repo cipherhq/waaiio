@@ -227,7 +227,7 @@ describe.skipIf(!canRun)('ACC-203 DB: Delivery lifecycle', () => {
   // ── finalize_promo_pickup_delivery with sent_at ──
 
   describe('finalize_promo_pickup_delivery sets sent_at', () => {
-    it('finalization sets both sent_at and delivered_at on success', () => {
+    it('finalization sets sent_at but NOT delivered_at on success', () => {
       // Create pending verification
       psql(`
         DELETE FROM promo_pickup_verifications WHERE redemption_id = '${RED_ID}';
@@ -242,7 +242,8 @@ describe.skipIf(!canRun)('ACC-203 DB: Delivery lifecycle', () => {
       const sentAt = psql(`SELECT sent_at IS NOT NULL FROM promo_pickup_verifications WHERE id = '${VER_ID}';`);
       expect(sentAt).toBe('t');
 
-      const deliveredAt = psql(`SELECT delivered_at IS NOT NULL FROM promo_pickup_verifications WHERE id = '${VER_ID}';`);
+      // delivered_at must NOT be set — only set when actual 'delivered' callback arrives
+      const deliveredAt = psql(`SELECT delivered_at IS NULL FROM promo_pickup_verifications WHERE id = '${VER_ID}';`);
       expect(deliveredAt).toBe('t');
     });
   });
@@ -250,12 +251,14 @@ describe.skipIf(!canRun)('ACC-203 DB: Delivery lifecycle', () => {
   // ── Historical timestamp migration ──
 
   describe('historical migration: sent_at backfill', () => {
-    it('old records with delivery_status=sent and no sent_at get backfilled', () => {
-      // The migration already ran during setup. We verify the logic by checking
-      // that our test verification with status=sent has sent_at populated after
-      // going through finalize_promo_pickup_delivery
-      // (This is covered by the finalize test above)
-      expect(true).toBe(true);
+    it('historical delivered_at migrated to sent_at', () => {
+      // Check that sent rows have sent_at populated and delivered_at cleared
+      // This verifies the migration backfill ran correctly
+      const result = psql(`
+        SELECT count(*) FROM promo_pickup_verifications
+        WHERE delivery_status = 'sent' AND delivered_at IS NOT NULL AND sent_at IS NOT NULL;
+      `);
+      expect(result).toBe('0'); // No rows should have both set for 'sent' status
     });
   });
 
@@ -309,6 +312,50 @@ describe.skipIf(!canRun)('ACC-203 DB: Delivery lifecycle', () => {
       const r = psqlJson(`SELECT advance_promo_winner_contact_status('wamid.nonexistent_wc', 'delivered', now()) AS r;`);
       expect(r.advanced).toBe(false);
       expect(r.reason).toBe('unknown_message');
+    });
+  });
+
+  // ── Durable tracking: unique index tests ──
+
+  describe('unique index enforcement', () => {
+    it('duplicate provider_message_id is rejected', () => {
+      const wamid = 'wamid.duptest203';
+      psql(`
+        DELETE FROM promo_winner_contacts WHERE provider_message_id = '${wamid}';
+        INSERT INTO promo_winner_contacts (redemption_id, business_id, campaign_id, actor_id, template_name, provider_message_id, delivery_status, sent_at)
+        VALUES ('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1', '${wamid}', 'sent', now());
+      `);
+
+      const r = psqlMayFail(`
+        INSERT INTO promo_winner_contacts (redemption_id, business_id, campaign_id, actor_id, template_name, provider_message_id, delivery_status, sent_at)
+        VALUES ('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1', '${wamid}', 'sent', now());
+      `);
+      expect(r.ok).toBe(false);
+      expect(r.output).toContain('idx_promo_winner_contacts_wamid');
+
+      // Cleanup
+      psql(`DELETE FROM promo_winner_contacts WHERE provider_message_id = '${wamid}';`);
+    });
+
+    it('two simultaneous inserts for rate limit — one fails', () => {
+      // First insert should succeed
+      const r1 = psqlMayFail(`
+        DELETE FROM promo_winner_contacts WHERE redemption_id = '${RED_ID}' AND delivery_status != 'failed';
+        INSERT INTO promo_winner_contacts (redemption_id, business_id, campaign_id, actor_id, template_name, delivery_status)
+        VALUES ('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1', 'pending');
+      `);
+      expect(r1.ok).toBe(true);
+
+      // Second insert for same redemption within rate limit window should fail
+      const r2 = psqlMayFail(`
+        INSERT INTO promo_winner_contacts (redemption_id, business_id, campaign_id, actor_id, template_name, delivery_status)
+        VALUES ('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1', 'pending');
+      `);
+      expect(r2.ok).toBe(false);
+      expect(r2.output).toContain('idx_promo_winner_contacts_rate_limit');
+
+      // Cleanup
+      psql(`DELETE FROM promo_winner_contacts WHERE redemption_id = '${RED_ID}';`);
     });
   });
 

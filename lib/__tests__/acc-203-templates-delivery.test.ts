@@ -99,7 +99,23 @@ const mockServiceFrom = vi.fn().mockImplementation((table: string) => {
   if (table === 'promo_campaigns') return makeChain(() => mockCampaignQuery);
   if (table === 'promo_winner_contacts') {
     const c = makeChain(() => mockWinnerContactQuery);
-    c.insert = vi.fn().mockImplementation(() => Promise.resolve(mockInsertResult));
+    c.insert = vi.fn().mockImplementation(() => {
+      if (mockInsertResult.error) {
+        return {
+          select: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({ data: null, error: mockInsertResult.error }),
+          }),
+        };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: { id: 'wc-new-1' }, error: null }),
+        }),
+      };
+    });
+    c.update = vi.fn().mockImplementation(() => ({
+      eq: vi.fn().mockResolvedValue({ error: null }),
+    }));
     return c;
   }
   return makeChain(() => ({ data: null, error: null }));
@@ -180,38 +196,85 @@ describe('OTP Send: v2 template with dynamic params', () => {
     }));
   });
 
-  it('v2 missing -> fail closed (no send, no v1 fallback)', async () => {
+  it('v2 missing -> 503, sendTemplate NOT called', async () => {
+    const sendFn = vi.fn();
     mockResolvedChannel = {
       channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
-      sender: { sendTemplate: vi.fn().mockRejectedValue(new Error('Template not found')) },
-      cloud: null,
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: vi.fn().mockResolvedValue({ data: [
+        { name: 'promo_pickup_verification', language: 'en_US', status: 'APPROVED' },
+      ] }) },
     };
     const res = await callSend();
-    // Without cloud, sendTemplate failure -> 503
     expect(res.status).toBe(503);
+    const json = await res.json();
+    expect(json.error).toBe('template_not_ready');
+    expect(json.detail).toContain('missing');
+    expect(sendFn).not.toHaveBeenCalled();
   });
 
-  it('v2 pending -> fail closed (template send fails)', async () => {
-    // Even if template exists on Meta side, if sendTemplate throws we get 503
-    mockSendTemplateFn = vi.fn().mockRejectedValue(new Error('Template not approved'));
+  it('v2 PENDING -> 503, sendTemplate NOT called', async () => {
+    const sendFn = vi.fn();
     mockResolvedChannel = {
       channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
-      sender: { sendTemplate: mockSendTemplateFn },
-      cloud: null,
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: vi.fn().mockResolvedValue({ data: [
+        { name: 'promo_pickup_verification_v2', language: 'en_US', status: 'PENDING' },
+      ] }) },
     };
     const res = await callSend();
     expect(res.status).toBe(503);
+    const json = await res.json();
+    expect(json.error).toBe('template_not_ready');
+    expect(json.detail).toContain('PENDING');
+    expect(sendFn).not.toHaveBeenCalled();
   });
 
-  it('v2 rejected -> fail closed', async () => {
-    mockSendTemplateFn = vi.fn().mockRejectedValue(new Error('Template rejected'));
+  it('v2 REJECTED -> 503, sendTemplate NOT called', async () => {
+    const sendFn = vi.fn();
     mockResolvedChannel = {
       channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
-      sender: { sendTemplate: mockSendTemplateFn },
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: vi.fn().mockResolvedValue({ data: [
+        { name: 'promo_pickup_verification_v2', language: 'en_US', status: 'REJECTED' },
+      ] }) },
+    };
+    const res = await callSend();
+    expect(res.status).toBe(503);
+    const json = await res.json();
+    expect(json.error).toBe('template_not_ready');
+    expect(json.detail).toContain('REJECTED');
+    expect(sendFn).not.toHaveBeenCalled();
+  });
+
+  it('no cloud -> 503 (template management unavailable)', async () => {
+    mockResolvedChannel = {
+      channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
+      sender: { sendTemplate: vi.fn() },
       cloud: null,
     };
     const res = await callSend();
     expect(res.status).toBe(503);
+    const json = await res.json();
+    expect(json.error).toBe('Template management not available on this channel');
+  });
+
+  it('readiness and send use the SAME resolved channel', async () => {
+    // The resolved channel's cloud.getTemplates and sender.sendTemplate must be from the same resolution
+    const getTemplatesFn = vi.fn().mockResolvedValue({ data: [
+      { name: 'promo_pickup_verification_v2', language: 'en_US', status: 'APPROVED' },
+    ] });
+    const sendFn = vi.fn().mockResolvedValue({ messageId: 'wamid.same-channel' });
+    mockResolvedChannel = {
+      channel: { id: 'ch-same', channel_type: 'shared', business_id: null },
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: getTemplatesFn },
+    };
+    const res = await callSend();
+    expect(res.status).toBe(200);
+    // Both getTemplates and sendTemplate were called on the same resolved channel object
+    expect(getTemplatesFn).toHaveBeenCalledTimes(1);
+    expect(sendFn).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -278,8 +341,9 @@ describe('Contact Winner', () => {
     expect(text).not.toContain('2348012345678');
   });
 
-  it('rate limited -> 429', async () => {
-    mockWinnerContactQuery = { data: { id: 'wc-1', created_at: new Date().toISOString() }, error: null };
+  it('rate limited -> 429 (unique index violation on insert)', async () => {
+    // Simulate unique partial index violation (23505) on claim insert
+    mockInsertResult = { error: { code: '23505', message: 'duplicate key value violates unique constraint "idx_promo_winner_contacts_rate_limit"' }, data: null };
     const res = await callContact();
     expect(res.status).toBe(429);
     const json = await res.json();

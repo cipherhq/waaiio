@@ -19,6 +19,9 @@ ALTER TABLE promo_pickup_verifications ADD COLUMN IF NOT EXISTS invalidated_at T
 -- Migrate historical: old delivered_at was set on API acceptance, move to sent_at
 UPDATE promo_pickup_verifications SET sent_at = delivered_at WHERE delivery_status = 'sent' AND sent_at IS NULL;
 
+-- Clear false delivered_at values that actually represented API acceptance
+UPDATE promo_pickup_verifications SET delivered_at = NULL WHERE delivery_status = 'sent' AND delivered_at IS NOT NULL AND sent_at IS NOT NULL;
+
 -- ═══════════════════════════════════════════════════════
 -- Step 2: Expand delivery_status CHECK
 -- ═══════════════════════════════════════════════════════
@@ -232,7 +235,6 @@ BEGIN
   UPDATE promo_pickup_verifications SET
     delivery_status = p_status,
     provider_message_id = COALESCE(p_provider_message_id, provider_message_id),
-    delivered_at = CASE WHEN p_status = 'sent' THEN now() ELSE NULL END,
     sent_at = CASE WHEN p_status = 'sent' THEN now() ELSE NULL END,
     updated_at = now()
   WHERE id = p_verification_id AND delivery_status = 'pending';
@@ -268,6 +270,11 @@ CREATE TABLE IF NOT EXISTS promo_winner_contacts (
 
 CREATE INDEX IF NOT EXISTS idx_promo_winner_contacts_redemption ON promo_winner_contacts(redemption_id);
 CREATE INDEX IF NOT EXISTS idx_promo_winner_contacts_provider_msg ON promo_winner_contacts(provider_message_id) WHERE provider_message_id IS NOT NULL;
+
+-- Unique indexes for durable tracking
+CREATE UNIQUE INDEX IF NOT EXISTS idx_promo_winner_contacts_rate_limit ON promo_winner_contacts (redemption_id) WHERE created_at > now() - interval '10 minutes' AND delivery_status != 'failed';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_promo_winner_contacts_wamid ON promo_winner_contacts (provider_message_id) WHERE provider_message_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_promo_pickup_wamid ON promo_pickup_verifications (provider_message_id) WHERE provider_message_id IS NOT NULL;
 
 ALTER TABLE promo_winner_contacts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY promo_winner_contacts_service ON promo_winner_contacts FOR ALL TO service_role USING (true);

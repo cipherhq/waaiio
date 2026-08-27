@@ -1150,14 +1150,53 @@ describe('Extended role denial matrix', () => {
     );
   });
 
-  it('contact query scopes by business_id and outcome=winner', async () => {
-    // The activated contact endpoint still enforces business_id and outcome=winner predicates.
-    // Verified by source contract: the route contains .eq('business_id'...).eq('outcome', 'winner')
-    const fs = require('fs');
-    const contactSrc = fs.readFileSync('app/api/promotions/winners/contact/route.ts', 'utf-8');
-    expect(contactSrc).toContain(".eq('business_id', businessId)");
-    expect(contactSrc).toContain(".eq('outcome', 'winner')");
-    expect(contactSrc).toContain(".eq('campaign_id', campaignId)");
+  it('contact query includes all scope predicates (predicate-sensitive)', async () => {
+    setOwner();
+    const eqSpy = vi.fn().mockReturnThis();
+    const winnerRow = { id: 'red-1', phone_e164: '+2348012345678', claim_reference: 'WAA-TEST-0001', promo_code_id: 'code-1' };
+    const redemptionChain = {
+      select: vi.fn().mockReturnValue({
+        eq: eqSpy,
+        maybeSingle: vi.fn().mockResolvedValue({ data: winnerRow, error: null }),
+      }),
+    };
+    eqSpy.mockImplementation(() => ({
+      eq: eqSpy,
+      maybeSingle: vi.fn().mockImplementation(() => {
+        // Return winner only when ALL predicates are present
+        const calls = eqSpy.mock.calls.map((c: unknown[]) => [c[0], c[1]]);
+        const hasBusiness = calls.some(([c, v]: [string, string]) => c === 'business_id' && v === 'biz-1');
+        const hasCampaign = calls.some(([c, v]: [string, string]) => c === 'campaign_id' && v === 'camp-1');
+        const hasOutcome = calls.some(([c, v]: [string, string]) => c === 'outcome' && v === 'winner');
+        if (hasBusiness && hasCampaign && hasOutcome) {
+          return Promise.resolve({ data: winnerRow, error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      }),
+    }));
+
+    const origFrom = mockServiceFrom.getMockImplementation()!;
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'promo_redemptions') return redemptionChain;
+      return origFrom(table);
+    });
+
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await contactPOST(req);
+    // Should NOT be 404 — all predicates matched
+    expect(res.status).not.toBe(404);
+
+    // Verify all three scope predicates were called
+    const eqCalls = eqSpy.mock.calls.map((c: unknown[]) => [c[0], c[1]]);
+    expect(eqCalls).toEqual(
+      expect.arrayContaining([
+        ['business_id', 'biz-1'],
+        ['campaign_id', 'camp-1'],
+        ['outcome', 'winner'],
+      ]),
+    );
+
+    mockServiceFrom.mockImplementation(origFrom);
   });
 
   // ── 2f. Contact Winner assertions ──
