@@ -376,6 +376,8 @@ export default function PromotionDetailPage() {
         start_at: data.campaign.start_at,
         end_at: data.campaign.end_at,
         timezone: data.campaign.timezone,
+        code_entry_mode: data.campaign.code_entry_mode,
+        keyword: data.campaign.keyword,
         winner_message: data.campaign.winner_message,
         try_again_message: data.campaign.try_again_message,
         invalid_message: data.campaign.invalid_message,
@@ -661,6 +663,18 @@ export default function PromotionDetailPage() {
     setSettingsError('');
     setSettingsSuccess(false);
 
+    // Routing change on active/paused campaign: require explicit confirmation
+    const isRoutingChange = settingsForm.code_entry_mode !== campaign.code_entry_mode || settingsForm.keyword !== campaign.keyword;
+    if (isRoutingChange && (campaign.status === 'active' || campaign.status === 'paused')) {
+      const confirmed = window.confirm(
+        'Changing routing takes effect immediately. The old keyword will stop working. Are you sure?'
+      );
+      if (!confirmed) {
+        setSettingsSaving(false);
+        return;
+      }
+    }
+
     // Validate max_wins_per_participant — do NOT parseInt-truncate fractions
     if (settingsForm.max_wins_per_participant !== null && settingsForm.max_wins_per_participant !== undefined) {
       const mw = Number(settingsForm.max_wins_per_participant);
@@ -683,6 +697,8 @@ export default function PromotionDetailPage() {
           startAt: settingsForm.start_at,
           endAt: settingsForm.end_at,
           timezone: settingsForm.timezone,
+          codeEntryMode: settingsForm.code_entry_mode,
+          keyword: settingsForm.keyword,
           winnerMessage: settingsForm.winner_message,
           tryAgainMessage: settingsForm.try_again_message,
           invalidMessage: settingsForm.invalid_message,
@@ -697,7 +713,15 @@ export default function PromotionDetailPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setSettingsError(data.error || 'Failed to save settings');
+        if (data.error === 'keyword_conflict') {
+          setSettingsError(`Keyword conflicts with campaign "${data.conflicting_campaign || 'another campaign'}". Change the keyword or deactivate the other campaign first.`);
+        } else if (data.error === 'bare_code_conflict') {
+          setSettingsError(`Bare-code mode conflicts with campaign "${data.conflicting_campaign || 'another campaign'}". Only one bare-code campaign can be active at a time.`);
+        } else if (data.error === 'integrity_locked') {
+          setSettingsError('Routing cannot be changed after codes have been redeemed.');
+        } else {
+          setSettingsError(data.error || 'Failed to save settings');
+        }
       } else {
         setSettingsSuccess(true);
         setCampaign(data.campaign);
@@ -1572,6 +1596,66 @@ export default function PromotionDetailPage() {
                 />
               </div>
             </div>
+          </div>
+
+          {/* Campaign Routing */}
+          <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 space-y-5">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Campaign Routing</h3>
+              {campaign.integrity_locked && (
+                <svg className="h-4 w-4 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                </svg>
+              )}
+            </div>
+
+            {campaign.integrity_locked && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Routing cannot be changed after codes have been redeemed.
+              </p>
+            )}
+
+            {!campaign.integrity_locked && (campaign.status === 'active' || campaign.status === 'paused') && (
+              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3 text-xs text-blue-700 dark:text-blue-400">
+                Changing routing takes effect immediately. The old keyword will stop working.
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Entry Mode</label>
+              <select
+                value={settingsForm.code_entry_mode || campaign.code_entry_mode}
+                onChange={(e) => setSettingsForm((f) => ({ ...f, code_entry_mode: e.target.value as PromoCampaign['code_entry_mode'] }))}
+                disabled={campaign.integrity_locked}
+                className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <option value="keyword">Keyword only</option>
+                <option value="bare_code">Bare code only</option>
+                <option value="both">Both (keyword + bare code)</option>
+              </select>
+              <p className="mt-0.5 text-xs text-gray-400">
+                {(settingsForm.code_entry_mode || campaign.code_entry_mode) === 'keyword'
+                  ? 'Users send: KEYWORD CODE (e.g. PROMO K7PM-4XQ9)'
+                  : (settingsForm.code_entry_mode || campaign.code_entry_mode) === 'bare_code'
+                    ? 'Users send the code directly (e.g. K7PM-4XQ9)'
+                    : 'Users can send KEYWORD CODE or just the code directly'}
+              </p>
+            </div>
+
+            {(settingsForm.code_entry_mode || campaign.code_entry_mode) !== 'bare_code' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Keyword</label>
+                <input
+                  type="text"
+                  value={settingsForm.keyword ?? campaign.keyword ?? ''}
+                  onChange={(e) => setSettingsForm((f) => ({ ...f, keyword: e.target.value.toUpperCase() }))}
+                  disabled={campaign.integrity_locked}
+                  placeholder="e.g. PROMO"
+                  className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand disabled:opacity-50 disabled:cursor-not-allowed uppercase"
+                />
+                <p className="mt-0.5 text-xs text-gray-400">The trigger word users type before their code.</p>
+              </div>
+            )}
           </div>
 
           {/* Messages */}

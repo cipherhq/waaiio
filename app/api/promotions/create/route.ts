@@ -125,6 +125,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `code_entry_mode must be one of: ${validEntryModes.join(', ')}` }, { status: 400 });
   }
 
+  // ── Routing consistency validation ──
+  // Derive accept_bare_codes from code_entry_mode; reject contradictions
+  const effectiveMode = code_entry_mode || 'both';
+  const derivedBare = effectiveMode === 'bare_code' || effectiveMode === 'both';
+  if (accept_bare_codes !== undefined && accept_bare_codes !== derivedBare) {
+    return NextResponse.json({ error: 'routing_mode_conflict' }, { status: 400 });
+  }
+  // bare_code mode with non-empty keyword is contradictory
+  if (effectiveMode === 'bare_code' && keyword?.trim()) {
+    return NextResponse.json({ error: 'bare_code mode cannot have a keyword' }, { status: 400 });
+  }
+  // keyword/both mode requires keyword
+  if ((effectiveMode === 'keyword' || effectiveMode === 'both') && !keyword?.trim()) {
+    return NextResponse.json({ error: 'keyword is required for ' + effectiveMode + ' mode' }, { status: 400 });
+  }
+
   const validEligibilityModes = ['none', 'age_confirmation', 'custom'];
   if (eligibility_mode && !validEligibilityModes.includes(eligibility_mode)) {
     return NextResponse.json(
@@ -236,9 +252,9 @@ export async function POST(request: NextRequest) {
       start_at: start_at || null,
       end_at: end_at || null,
       timezone: timezone || 'UTC',
-      code_entry_mode: code_entry_mode || 'both',
-      keyword: keyword?.trim() || null,
-      accept_bare_codes: accept_bare_codes ?? true,
+      code_entry_mode: effectiveMode,
+      keyword: keyword?.trim().toUpperCase() || null,
+      accept_bare_codes: derivedBare,
       code_length: effectiveLength,
       code_prefix: normalizedPrefix || null,
       max_attempts_per_phone: max_attempts_per_phone ?? 3,
