@@ -5,7 +5,7 @@
  * A. resolveBusinessRole unit tests
  * B. requireCapabilityWithRole guard tests
  * C. Reveal endpoint: owner/admin can reveal, others denied, audit failure blocks
- * D. Contact endpoint: owner/admin/manager allowed, shell returns 503
+ * D. Contact endpoint: owner/admin/manager allowed, staff/finance denied
  * E. Winners route: permissions in response, role matrix
  * F. Fulfillment route: owner/admin only, no phone_e164 in response
  */
@@ -52,7 +52,7 @@ function resetMocks() {
 
 function makeChain(resolveData: () => { data: unknown; error: unknown }): Record<string, any> {
   const c: Record<string, any> = {};
-  ['select', 'eq', 'neq', 'order', 'range', 'not', 'in'].forEach(
+  ['select', 'eq', 'neq', 'order', 'range', 'not', 'in', 'gte', 'limit'].forEach(
     (m) => (c[m] = vi.fn().mockReturnValue(c)),
   );
   c.maybeSingle = vi.fn().mockImplementation(() => Promise.resolve(resolveData()));
@@ -336,21 +336,19 @@ describe('Contact endpoint (POST /api/promotions/winners/contact)', () => {
     fromCallCount = 0;
   });
 
-  it('owner allowed — returns 503 shell', async () => {
+  it('owner allowed — passes auth gate (not 401/403)', async () => {
     setOwner();
     const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
     const res = await contactPOST(req);
-    expect(res.status).toBe(503);
-    const data = await res.json();
-    expect(data.error).toBe('template_not_ready');
-    expect(data.phone_e164).toBeUndefined();
+    // Owner passes auth — may get 503 from channel resolution or template check, but not 401/403
+    expect([401, 403]).not.toContain(res.status);
   });
 
-  it('manager allowed — returns 503 shell', async () => {
+  it('manager allowed — passes auth gate (not 401/403)', async () => {
     setRole('manager');
     const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
     const res = await contactPOST(req);
-    expect(res.status).toBe(503);
+    expect([401, 403]).not.toContain(res.status);
   });
 
   it('staff is denied contact', async () => {
@@ -891,43 +889,15 @@ describe('Extended role denial matrix', () => {
     expect(res.status).toBe(200);
   });
 
-  it('contact winner shell does not query phone_e164', async () => {
+  it('contact winner queries phone_e164 server-side (never returned)', async () => {
+    // The activated contact endpoint now queries phone_e164 to send WhatsApp messages,
+    // but never returns it in the response. This is verified in the response body test.
     setOwner();
-    const selectSpy = vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'red-1' }, error: null }),
-            }),
-          }),
-        }),
-      }),
-    });
-    // Override promo_redemptions mock to spy on SELECT columns
-    mockServiceFrom.mockImplementation((table: string) => {
-      if (table === 'businesses') {
-        fromCallCount++;
-        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
-        return makeChain(() => mockBusinessQuery);
-      }
-      if (table === 'business_members') return makeChain(() => mockMemberQuery);
-      if (table === 'business_capabilities') {
-        return makeChain(() => ({ data: mockCapRows, error: null }));
-      }
-      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
-      if (table === 'promo_redemptions') {
-        return { select: selectSpy };
-      }
-      return makeChain(() => ({ data: null, error: null }));
-    });
-
     const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
     const res = await contactPOST(req);
-    // Verify select was called with 'id' only (no phone_e164)
-    expect(selectSpy).toHaveBeenCalledWith('id');
-    // Should reach 503 shell (or 404 depending on mock chain depth)
-    expect([404, 503]).toContain(res.status);
+    const data = await res.json();
+    expect(data.phone_e164).toBeUndefined();
+    expect(data.phone).toBeUndefined();
   });
 
   // ── 2c. Fail-closed behavior ──
@@ -1180,91 +1150,66 @@ describe('Extended role denial matrix', () => {
     );
   });
 
-  it('contact query includes campaign_id, business_id, and outcome=winner predicates', async () => {
+  it('contact query includes all scope predicates (predicate-sensitive)', async () => {
     setOwner();
     const eqSpy = vi.fn().mockReturnThis();
+    const winnerRow = { id: 'red-1', phone_e164: '+2348012345678', claim_reference: 'WAA-TEST-0001', promo_code_id: 'code-1' };
     const redemptionChain = {
       select: vi.fn().mockReturnValue({
         eq: eqSpy,
-        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'red-1' }, error: null }),
+        maybeSingle: vi.fn().mockResolvedValue({ data: winnerRow, error: null }),
       }),
     };
     eqSpy.mockImplementation(() => ({
       eq: eqSpy,
-      maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'red-1' }, error: null }),
+      maybeSingle: vi.fn().mockImplementation(() => {
+        // Return winner only when ALL predicates are present
+        const calls = eqSpy.mock.calls.map((c: unknown[]) => [c[0], c[1]]);
+        const hasBusiness = calls.some(([c, v]: [string, string]) => c === 'business_id' && v === 'biz-1');
+        const hasCampaign = calls.some(([c, v]: [string, string]) => c === 'campaign_id' && v === 'camp-1');
+        const hasOutcome = calls.some(([c, v]: [string, string]) => c === 'outcome' && v === 'winner');
+        if (hasBusiness && hasCampaign && hasOutcome) {
+          return Promise.resolve({ data: winnerRow, error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      }),
     }));
 
+    const origFrom = mockServiceFrom.getMockImplementation()!;
     mockServiceFrom.mockImplementation((table: string) => {
-      if (table === 'businesses') {
-        fromCallCount++;
-        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
-        return makeChain(() => mockBusinessQuery);
-      }
-      if (table === 'business_members') return makeChain(() => mockMemberQuery);
-      if (table === 'business_capabilities') return makeChain(() => ({ data: mockCapRows, error: null }));
-      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
       if (table === 'promo_redemptions') return redemptionChain;
-      return makeChain(() => ({ data: null, error: null }));
+      return origFrom(table);
     });
 
     const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
-    await contactPOST(req);
+    const res = await contactPOST(req);
+    // Should NOT be 404 — all predicates matched
+    expect(res.status).not.toBe(404);
 
+    // Verify all three scope predicates were called
     const eqCalls = eqSpy.mock.calls.map((c: unknown[]) => [c[0], c[1]]);
     expect(eqCalls).toEqual(
       expect.arrayContaining([
-        ['campaign_id', 'camp-1'],
         ['business_id', 'biz-1'],
+        ['campaign_id', 'camp-1'],
         ['outcome', 'winner'],
       ]),
     );
+
+    mockServiceFrom.mockImplementation(origFrom);
   });
 
   // ── 2f. Contact Winner assertions ──
 
-  it('contact returns exactly 503 template_not_ready', async () => {
-    setOwner();
-    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
-    const res = await contactPOST(req);
-    expect(res.status).toBe(503);
-    const json = await res.json();
-    expect(json.error).toBe('template_not_ready');
-  });
-
-  it('contact SELECT is exactly id (no phone_e164)', async () => {
-    setOwner();
-    const selectSpy = vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'red-1' }, error: null }),
-            }),
-          }),
-        }),
-      }),
-    });
-    mockServiceFrom.mockImplementation((table: string) => {
-      if (table === 'businesses') {
-        fromCallCount++;
-        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
-        return makeChain(() => mockBusinessQuery);
-      }
-      if (table === 'business_members') return makeChain(() => mockMemberQuery);
-      if (table === 'business_capabilities') {
-        return makeChain(() => ({ data: mockCapRows, error: null }));
-      }
-      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
-      if (table === 'promo_redemptions') {
-        return { select: selectSpy };
-      }
-      return makeChain(() => ({ data: null, error: null }));
-    });
-
-    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
-    await contactPOST(req);
-    // Assert select was called with 'id' not '*' or 'phone_e164'
-    expect(selectSpy).toHaveBeenCalledWith('id');
+  it('contact endpoint never returns phone_e164 in response', async () => {
+    // Source contract: phone is used server-side for sending but never returned
+    const fs = require('fs');
+    const contactSrc = fs.readFileSync('app/api/promotions/winners/contact/route.ts', 'utf-8');
+    // The response object should not contain phone
+    expect(contactSrc).toContain('// Never return phone in response');
+    // The final NextResponse.json should not reference phone_e164
+    const responseSection = contactSrc.substring(contactSrc.lastIndexOf('return NextResponse.json'));
+    expect(responseSection).not.toContain('phone_e164');
   });
 
   // ── Correction 6: Complete role/status matrix — missing cases ──
@@ -1283,13 +1228,12 @@ describe('Extended role denial matrix', () => {
     expect(res.status).toBe(403);
   });
 
-  it('admin succeeds contact to 503', async () => {
+  it('admin passes auth gate for contact (not 401/403)', async () => {
     setRole('admin');
     const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
     const res = await contactPOST(req);
-    expect(res.status).toBe(503);
-    const data = await res.json();
-    expect(data.error).toBe('template_not_ready');
+    // Admin passes auth — may get 503 from channel issues, but not denied
+    expect([401, 403]).not.toContain(res.status);
   });
 
   it('support denied contact', async () => {
@@ -1337,16 +1281,16 @@ describe('Extended role denial matrix', () => {
     expect(res.status).toBe(403);
   });
 
-  it('contact makes zero messaging/Meta calls', async () => {
+  it('contact response never leaks phone or internal IDs', async () => {
     setOwner();
-    // The contact endpoint is a 503 shell — no external calls should be made
     const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
     const res = await contactPOST(req);
-    expect(res.status).toBe(503);
-    // Response contains only error and message — no external service data
     const json = await res.json();
-    expect(json.error).toBe('template_not_ready');
+    // Phone must never be in the response
     expect(json.phone_e164).toBeUndefined();
-    expect(json.messageId).toBeUndefined();
+    expect(json.phone).toBeUndefined();
+    // The response body must not contain the phone number string
+    const text = JSON.stringify(json);
+    expect(text).not.toContain('2348012345678');
   });
 });

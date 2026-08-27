@@ -3,6 +3,90 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #203: Corrections round 3 — failed finalization invalidation, actual migration harness, deterministic concurrency
+
+### What changed
+- **Migration 345**: `finalize_promo_pickup_delivery` now sets `invalidated_at = now()` when `p_status = 'failed'`. Previously failed finalization only set `delivery_status = 'failed'` without invalidating, leaving a dangling verification that `verify_promo_pickup` would still consider active.
+- **DB tests**: Added `finalize with sent` and `finalize with failed` tests proving sent_at/invalidated_at/delivered_at column states for each finalization outcome.
+- **DB tests**: Replaced inline backfill simulation with actual migration 345 artifact execution — drops post-345 columns/objects, inserts pre-345 historical row, runs the real `.sql` file, proves `delivered_at` moved to `sent_at` and `delivered_at` cleared.
+- **DB tests**: Replaced non-deterministic dual `psqlAsync` concurrent claim test with two-session contention pattern — Session A holds `FOR UPDATE` lock via `pg_sleep(2)`, Session B blocks until A commits, then deterministically gets cooldown.
+
+### Files changed
+- `supabase/migrations/345_promo_delivery_lifecycle.sql` — added `invalidated_at` to failed path in `finalize_promo_pickup_delivery`
+- `lib/__tests__/acc-203-delivery-lifecycle-db.test.ts` — new finalize tests, actual migration harness, deterministic concurrency
+
+### What could break
+- Failed finalization now sets `invalidated_at`, so any code that checked `invalidated_at IS NULL` on failed verifications will now see them as invalidated (correct behavior, but a semantic change)
+
+## 2026-08-26 — #203: Corrections round 2 — readiness-before-issue, durable WAMID correlation, real DB proofs
+
+### What changed
+- **OTP Send route**: Moved channel resolution + template readiness check BEFORE `issue_promo_pickup` RPC. If readiness fails, no verification is created and no cooldown is consumed. Previously a failed readiness check stranded a pending verification.
+- **OTP Send route**: Missing `messageId` (WAMID) after `sendTemplate` now finalizes as 'failed' and returns 502 instead of claiming success.
+- **Contact Winner route**: Missing `messageId` now finalizes as 'failed' and returns 502. Finalize RPC errors or `success:false` now block `{sent:true}` response (fail-closed).
+- **DB tests**: Replaced placeholder historical migration proof with real backfill simulation (INSERT pre-345 pattern, run same UPDATE logic, verify exact timestamp). Replaced sequential concurrency test with true `psqlAsync` dual-session proof. Added pickup WAMID uniqueness proof (`idx_promo_pickup_wamid`).
+- **DB tests**: Added privilege proofs for `claim_winner_contact_send` and `finalize_winner_contact_send` (service_role: EXECUTE, anon/authenticated: REVOKED).
+- **Unit tests**: OTP send missing/PENDING/REJECTED tests now assert zero `issue_promo_pickup` RPC calls. Added missing-messageId and finalize-error tests for both OTP send and Contact Winner.
+
+### Files changed
+- `app/api/promotions/verification/send/route.ts` — readiness before issue, WAMID-required finalization
+- `app/api/promotions/winners/contact/route.ts` — WAMID-required finalization, fail-closed on finalize error
+- `lib/__tests__/acc-203-delivery-lifecycle-db.test.ts` — real DB proofs + privilege proofs
+- `lib/__tests__/acc-203-templates-delivery.test.ts` — zero-RPC assertions + correlation tests
+
+### What could break
+- OTP send now returns 503 for template readiness failures WITHOUT creating a verification — callers that expected a verification_id in the error path will not get one
+- OTP send and Contact Winner now return 502 when `messageId` is missing — callers that accepted `{sent:true}` without WAMID correlation will now see errors
+- Contact Winner finalize errors now return 500 instead of silently succeeding — callers must handle this case
+
+## 2026-08-26 — #203: Corrections round 1 — delivered_at semantics, v2 gate, durable contacts, #202 scope
+
+### What changed
+- **Migration 345**: `finalize_promo_pickup_delivery` no longer sets `delivered_at` on 'sent' — only `sent_at`. Historical backfill clears false `delivered_at` for rows with `delivery_status = 'sent'`. Added unique indexes: `idx_promo_winner_contacts_rate_limit` (partial, 10-min window), `idx_promo_winner_contacts_wamid`, `idx_promo_pickup_wamid` for durable tracking.
+- **OTP Send route**: Added real v2 APPROVED gate — checks `resolved.cloud.getTemplates()` on the SAME resolved channel before calling `sendTemplate`. Returns 503 with `template_not_ready` if v2 is missing/PENDING/REJECTED.
+- **Contact Winner route**: Changed to claim-before-send — INSERT pending row first (unique index enforces rate limit), then send, then UPDATE with result. Prevents ghost sends and double-sends.
+- **DB tests**: Fixed finalize test to assert `delivered_at IS NULL` after 'sent'. Replaced placeholder historical migration test with real assertion. Added unique index enforcement tests (duplicate WAMID, rate limit collision).
+- **Unit tests**: OTP send tests now mock `getTemplates()` for missing/PENDING/REJECTED/no-cloud states and verify sendTemplate NOT called. Contact Winner rate limit test uses insert constraint violation. Added same-channel proof test.
+- **#202 tests**: Restored predicate-sensitive Contact Winner scope test with eqSpy tracking all predicates.
+
+### Files changed
+- `supabase/migrations/345_promo_delivery_lifecycle.sql` — fix finalize, add backfill cleanup, add unique indexes
+- `app/api/promotions/verification/send/route.ts` — real v2 APPROVED gate
+- `app/api/promotions/winners/contact/route.ts` — claim-before-send pattern
+- `lib/__tests__/acc-203-delivery-lifecycle-db.test.ts` — fixed + new tests
+- `lib/__tests__/acc-203-templates-delivery.test.ts` — real readiness tests
+- `lib/__tests__/acc-202-winner-authorization.test.ts` — predicate-sensitive scope test
+
+### What could break
+- `finalize_promo_pickup_delivery('sent')` no longer sets `delivered_at` — code relying on `delivered_at` being set after finalize will see NULL
+- OTP send now requires `resolved.cloud` to be present — channels without cloud support get 503 before template send
+- Contact Winner insert may fail on `idx_promo_winner_contacts_rate_limit` unique constraint — callers must handle 429
+- Existing `promo_winner_contacts` rows with duplicate `provider_message_id` will block migration 345
+
+## 2026-08-26 — #203: Versioned Templates, Delivery Correlation, Contact Winner Activation
+
+### What changed
+- **Migration 345**: Expanded `promo_pickup_verifications` with `sent_at`, `read_at`, `invalidated_at` columns. Expanded `delivery_status` CHECK to include `'delivered'` and `'read'`. Created `advance_promo_pickup_status` RPC for monotonic delivery state machine. Updated `verify_promo_pickup` to accept sent/delivered/read delivery statuses and reject invalidated tokens. Updated `finalize_promo_pickup_delivery` to set `sent_at`. Created `promo_winner_contacts` table with RLS (service-only). Created `advance_promo_winner_contact_status` RPC. All functions privilege-hardened.
+- **OTP Send route**: Changed template from `promo_pickup_verification` to `promo_pickup_verification_v2` with 4 params: `[businessName, prizeName, otp, expiryMinutes]`. No v1 fallback — fail closed if v2 not approved.
+- **Contact Winner route**: Activated from stub. Sends `promo_winner_status_v1` template to winner's WhatsApp. Owner/admin/manager only. Checks template readiness before sending. Records in `promo_winner_contacts`. Rate-limited (10 min per redemption). Phone never returned in response.
+- **Template Status route**: Now returns readiness for `promo_pickup_verification`, `promo_pickup_verification_v2`, and `promo_winner_status_v1` in a `templates` object. Backward-compatible top-level fields preserved.
+- **Webhook handler**: Added promo OTP delivery status correlation (`advance_promo_pickup_status`) and winner contact delivery status correlation (`advance_promo_winner_contact_status`). Unknown WAMIDs are safe no-ops.
+
+### Files changed
+- `supabase/migrations/345_promo_delivery_lifecycle.sql` — new migration
+- `app/api/promotions/verification/send/route.ts` — v2 template + dynamic params
+- `app/api/promotions/winners/contact/route.ts` — activated from stub
+- `app/api/promotions/template-status/route.ts` — multi-template status
+- `app/api/webhook/meta-cloud/route.ts` — promo delivery correlation
+- `lib/__tests__/acc-203-delivery-lifecycle-db.test.ts` — DB tests (24 tests)
+- `lib/__tests__/acc-203-templates-delivery.test.ts` — unit tests (13 tests)
+- `.github/workflows/ci.yml` — ACC-203 CI step
+
+### What could break
+- OTP send will fail if `promo_pickup_verification_v2` template is not APPROVED on the WABA — no v1 fallback
+- Contact Winner requires `promo_winner_status_v1` template to be APPROVED
+- `delivered_at` semantics changed: now means provider delivery evidence, not API acceptance (historical data migrated to `sent_at`)
+
 ## 2026-08-26 — #202: Winner Authorization — PR #208 corrections round 4
 
 ### Corrections applied (round 4)

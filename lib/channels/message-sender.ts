@@ -79,6 +79,7 @@ export interface MessageSender {
     templateName: string;
     templateParams: string[];
     buttonParams?: string[];
+    noRetry?: boolean;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendFlow?(msg: {
     to: string;
@@ -236,6 +237,8 @@ export class MetaCloudSender implements MessageSender {
     templateName: string;
     templateParams: string[];
     buttonParams?: string[];
+    /** Skip automatic retry for delivery-critical sends where ambiguous outcomes must not produce duplicate provider POSTs */
+    noRetry?: boolean;
   }) {
     const components: Array<{ type: 'body' | 'button'; parameters: Array<{ type: 'text'; text: string }>; sub_type?: string; index?: number }> = [{
       type: 'body' as const,
@@ -254,11 +257,12 @@ export class MetaCloudSender implements MessageSender {
       });
     }
 
-    const result = await withRetry(() => this.cloud.sendTemplate({
+    const templateCall = () => this.cloud.sendTemplate({
       to: msg.to,
       templateName: msg.templateName,
       components,
-    }));
+    });
+    const result = msg.noRetry ? await templateCall() : await withRetry(templateCall);
     return { success: true, messageId: result.messageId };
   }
 
