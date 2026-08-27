@@ -717,9 +717,9 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
              ('${BATCH_B}', '${RACE_B}', 1, 1, 'completed', 0);
     `);
     psql(`
-      INSERT INTO promo_campaign_codes (id, campaign_id, batch_id, prize_id, normalized_code_hash, display_code, outcome, status)
-      VALUES ('${CODE_A}', '${RACE_A}', '${BATCH_A}', '${PRIZE_A}', 'hash_race_a', 'RACE-A-CODE', 'winner', 'available'),
-             ('${CODE_B}', '${RACE_B}', '${BATCH_B}', '${PRIZE_B}', 'hash_race_b', 'RACE-B-CODE', 'winner', 'available');
+      INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, prize_id, normalized_code_hash, encrypted_code, display_suffix, outcome, status)
+      VALUES ('${CODE_A}', '${BIZ_ID}', '${RACE_A}', '${BATCH_A}', '${PRIZE_A}', 'hash_race_a', 'enc_ra', 'RA01', 'winner', 'available'),
+             ('${CODE_B}', '${BIZ_ID}', '${RACE_B}', '${BATCH_B}', '${PRIZE_B}', 'hash_race_b', 'enc_rb', 'RB01', 'winner', 'available');
     `);
 
     // Both call activate_promo_campaign RPC concurrently
