@@ -197,7 +197,7 @@ describe.skipIf(!canRun)('ACC-202 DB: Fulfillment audit + privileges', () => {
       // Attempt fulfillment transition with values that would change all fields
       const result = psqlMayFail(`
         SELECT transition_promo_fulfillment(
-          '${BIZ_ID}'::uuid, '${RED_ID}'::uuid, 'processing',
+          '${BIZ_ID}'::uuid, '${RED_ID}'::uuid, 'fulfilled',
           '${USER_ID}'::uuid, 'REF-TEST-202', 'Test notes for rollback'
         );
       `);

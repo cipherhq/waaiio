@@ -588,17 +588,20 @@ describe('Extended role denial matrix', () => {
   });
 
   it('admin with invited membership status is denied', async () => {
-    // resolveBusinessRole queries .eq('status', 'active'), so an invited member returns null
-    // Mock: owner check fails (not owner), member query returns null (status != active)
-    setNoRole();
+    // Simulates admin member with status='invited' — .eq('status', 'active') excludes them
+    // The DB has a row with role='admin' but status='invited', so the active filter returns null
+    mockBizOwnerQuery = { data: null, error: null };
+    mockMemberQuery = { data: null, error: null }; // .eq('status', 'active') filters out the invited row
     const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
     const res = await winnersGET(req);
     expect(res.status).toBe(403);
   });
 
   it('admin with suspended membership status is denied', async () => {
-    // Same - resolveBusinessRole returns not_found because .eq('status', 'active') excludes them
-    setNoRole();
+    // Simulates admin member with status='suspended' — .eq('status', 'active') excludes them
+    // The DB has a row with role='admin' but status='suspended', so the active filter returns null
+    mockBizOwnerQuery = { data: null, error: null };
+    mockMemberQuery = { data: null, error: null }; // .eq('status', 'active') filters out the suspended row
     const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
     const res = await winnersGET(req);
     expect(res.status).toBe(403);
@@ -707,6 +710,140 @@ describe('Extended role denial matrix', () => {
     expect(res.status).toBe(200);
   });
 
+  // ── Correction 4: Role-aware capability matrix — 4 states × 2 actions ──
+  // canPerformAction for read_history/manage_existing always returns { allowed: true }
+  // regardless of effectiveCapabilities. These tests prove the guard passes in all states.
+
+  it('read_history allowed when only scheduling configured (no promo_verification)', async () => {
+    setOwner();
+    mockCapRows = [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }];
+    const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
+    const res = await winnersGET(req);
+    expect(res.status).toBe(200);
+  });
+
+  it('manage_existing allowed when only scheduling configured (no promo_verification)', async () => {
+    setOwner();
+    mockCapRows = [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }];
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') return makeChain(() => ({ data: mockCapRows, error: null }));
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') return makeChain(() => mockUpdateQuery);
+      return makeChain(() => ({ data: null, error: null }));
+    });
+    const req = makePutRequest({ businessId: 'biz-1', redemptionId: 'red-1', fulfillmentStatus: 'processing' });
+    const res = await fulfillmentPUT(req);
+    expect(res.status).toBe(200);
+  });
+
+  it('read_history allowed when promo_verification explicitly disabled', async () => {
+    setOwner();
+    mockCapRows = [{ capability: 'promo_verification', is_enabled: false, sort_order: 0 }];
+    const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
+    const res = await winnersGET(req);
+    expect(res.status).toBe(200);
+  });
+
+  it('manage_existing allowed when promo_verification explicitly disabled', async () => {
+    setOwner();
+    mockCapRows = [{ capability: 'promo_verification', is_enabled: false, sort_order: 0 }];
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') return makeChain(() => ({ data: mockCapRows, error: null }));
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') return makeChain(() => mockUpdateQuery);
+      return makeChain(() => ({ data: null, error: null }));
+    });
+    const req = makePutRequest({ businessId: 'biz-1', redemptionId: 'red-1', fulfillmentStatus: 'processing' });
+    const res = await fulfillmentPUT(req);
+    expect(res.status).toBe(200);
+  });
+
+  it('read_history allowed when promo_verification trial-blocked', async () => {
+    setOwner();
+    // Capability exists but trial expired — tier blocks it from being effective
+    mockCapRows = [{ capability: 'promo_verification', is_enabled: true, sort_order: 0 }];
+    mockBusinessQuery = {
+      data: { id: 'biz-1', status: 'active', subscription_tier: 'free', trial_ends_at: '2025-01-01T00:00:00Z', category: 'other' },
+      error: null,
+    };
+    const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
+    const res = await winnersGET(req);
+    expect(res.status).toBe(200);
+  });
+
+  it('manage_existing allowed when promo_verification trial-blocked', async () => {
+    setOwner();
+    mockCapRows = [{ capability: 'promo_verification', is_enabled: true, sort_order: 0 }];
+    mockBusinessQuery = {
+      data: { id: 'biz-1', status: 'active', subscription_tier: 'free', trial_ends_at: '2025-01-01T00:00:00Z', category: 'other' },
+      error: null,
+    };
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') return makeChain(() => ({ data: mockCapRows, error: null }));
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') return makeChain(() => mockUpdateQuery);
+      return makeChain(() => ({ data: null, error: null }));
+    });
+    const req = makePutRequest({ businessId: 'biz-1', redemptionId: 'red-1', fulfillmentStatus: 'processing' });
+    const res = await fulfillmentPUT(req);
+    expect(res.status).toBe(200);
+  });
+
+  it('read_history allowed when promo_verification tier-blocked (business tier)', async () => {
+    setOwner();
+    // promo_verification requires growth tier but business is on free
+    mockCapRows = [{ capability: 'promo_verification', is_enabled: true, sort_order: 0 }];
+    mockBusinessQuery = {
+      data: { id: 'biz-1', status: 'active', subscription_tier: 'free', trial_ends_at: null, category: 'other' },
+      error: null,
+    };
+    const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
+    const res = await winnersGET(req);
+    expect(res.status).toBe(200);
+  });
+
+  it('manage_existing allowed when promo_verification tier-blocked', async () => {
+    setOwner();
+    mockCapRows = [{ capability: 'promo_verification', is_enabled: true, sort_order: 0 }];
+    mockBusinessQuery = {
+      data: { id: 'biz-1', status: 'active', subscription_tier: 'free', trial_ends_at: null, category: 'other' },
+      error: null,
+    };
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') return makeChain(() => ({ data: mockCapRows, error: null }));
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') return makeChain(() => mockUpdateQuery);
+      return makeChain(() => ({ data: null, error: null }));
+    });
+    const req = makePutRequest({ businessId: 'biz-1', redemptionId: 'red-1', fulfillmentStatus: 'processing' });
+    const res = await fulfillmentPUT(req);
+    expect(res.status).toBe(200);
+  });
+
   it('contact winner shell does not query phone_e164', async () => {
     setOwner();
     const selectSpy = vi.fn().mockReturnValue({
@@ -752,6 +889,17 @@ describe('Extended role denial matrix', () => {
     // Mock resolveBusinessRole to return { ok: false, error: 'db_error' }
     mockBizOwnerQuery = { data: null, error: { message: 'timeout' } };
     mockMemberQuery = { data: null, error: null };
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await revealPOST(req);
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.reason).toBe('authority_read_error');
+  });
+
+  it('owner not found + member DB error returns 500 authority_read_error', async () => {
+    // Owner lookup returns no match (not the owner), member lookup returns DB error
+    mockBizOwnerQuery = { data: null, error: null };
+    mockMemberQuery = { data: null, error: { message: 'DB connection failed' } };
     const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
     const res = await revealPOST(req);
     expect(res.status).toBe(500);
@@ -851,7 +999,15 @@ describe('Extended role denial matrix', () => {
       error: null,
     };
 
+    // Winners GET
+    const winnersReq = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
+    const winnersRes = await winnersGET(winnersReq);
+    expect(winnersRes.status).toBe(403);
+    const winnersData = await winnersRes.json();
+    expect(winnersData.reason).toBe('business_suspended');
+
     // Reveal
+    fromCallCount = 0;
     const revealReq = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
     const revealRes = await revealPOST(revealReq);
     expect(revealRes.status).toBe(403);
@@ -932,6 +1088,91 @@ describe('Extended role denial matrix', () => {
     expect(auditInsertSpy).not.toHaveBeenCalled();
   });
 
+  // ── 2e-ii. Winner scope predicate assertions ──
+
+  it('reveal query includes campaign_id, business_id, and outcome=winner predicates', async () => {
+    setOwner();
+    const eqSpy = vi.fn().mockReturnThis();
+    const redemptionChain = {
+      select: vi.fn().mockReturnValue({
+        eq: eqSpy,
+        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'red-1', phone_e164: '+2348012345678' }, error: null }),
+      }),
+    };
+    // Chain .eq() calls — each returns the chain so subsequent .eq() and .maybeSingle() work
+    eqSpy.mockImplementation(() => ({
+      eq: eqSpy,
+      maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'red-1', phone_e164: '+2348012345678' }, error: null }),
+    }));
+
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') return makeChain(() => ({ data: mockCapRows, error: null }));
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') return redemptionChain;
+      if (table === 'admin_audit_logs') return makeChain(() => ({ data: null, error: null }));
+      return makeChain(() => ({ data: null, error: null }));
+    });
+
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    await revealPOST(req);
+
+    // Verify all three scope predicates were called
+    const eqCalls = eqSpy.mock.calls.map((c: unknown[]) => [c[0], c[1]]);
+    expect(eqCalls).toEqual(
+      expect.arrayContaining([
+        ['campaign_id', 'camp-1'],
+        ['business_id', 'biz-1'],
+        ['outcome', 'winner'],
+      ]),
+    );
+  });
+
+  it('contact query includes campaign_id, business_id, and outcome=winner predicates', async () => {
+    setOwner();
+    const eqSpy = vi.fn().mockReturnThis();
+    const redemptionChain = {
+      select: vi.fn().mockReturnValue({
+        eq: eqSpy,
+        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'red-1' }, error: null }),
+      }),
+    };
+    eqSpy.mockImplementation(() => ({
+      eq: eqSpy,
+      maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'red-1' }, error: null }),
+    }));
+
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') return makeChain(() => ({ data: mockCapRows, error: null }));
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') return redemptionChain;
+      return makeChain(() => ({ data: null, error: null }));
+    });
+
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    await contactPOST(req);
+
+    const eqCalls = eqSpy.mock.calls.map((c: unknown[]) => [c[0], c[1]]);
+    expect(eqCalls).toEqual(
+      expect.arrayContaining([
+        ['campaign_id', 'camp-1'],
+        ['business_id', 'biz-1'],
+        ['outcome', 'winner'],
+      ]),
+    );
+  });
+
   // ── 2f. Contact Winner assertions ──
 
   it('contact returns exactly 503 template_not_ready', async () => {
@@ -977,6 +1218,76 @@ describe('Extended role denial matrix', () => {
     await contactPOST(req);
     // Assert select was called with 'id' not '*' or 'phone_e164'
     expect(selectSpy).toHaveBeenCalledWith('id');
+  });
+
+  // ── Correction 6: Complete role/status matrix — missing cases ──
+
+  it('finance denied reveal', async () => {
+    setRole('finance');
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await revealPOST(req);
+    expect(res.status).toBe(403);
+  });
+
+  it('support denied reveal', async () => {
+    setRole('support');
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await revealPOST(req);
+    expect(res.status).toBe(403);
+  });
+
+  it('admin succeeds contact to 503', async () => {
+    setRole('admin');
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await contactPOST(req);
+    expect(res.status).toBe(503);
+    const data = await res.json();
+    expect(data.error).toBe('template_not_ready');
+  });
+
+  it('support denied contact', async () => {
+    setRole('support');
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await contactPOST(req);
+    expect(res.status).toBe(403);
+  });
+
+  it('finance denied fulfillment', async () => {
+    setRole('finance');
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') return makeChain(() => ({ data: mockCapRows, error: null }));
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') return makeChain(() => mockUpdateQuery);
+      return makeChain(() => ({ data: null, error: null }));
+    });
+    const req = makePutRequest({ businessId: 'biz-1', redemptionId: 'red-1', fulfillmentStatus: 'processing' });
+    const res = await fulfillmentPUT(req);
+    expect(res.status).toBe(403);
+  });
+
+  it('support denied fulfillment', async () => {
+    setRole('support');
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') return makeChain(() => ({ data: mockCapRows, error: null }));
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') return makeChain(() => mockUpdateQuery);
+      return makeChain(() => ({ data: null, error: null }));
+    });
+    const req = makePutRequest({ businessId: 'biz-1', redemptionId: 'red-1', fulfillmentStatus: 'processing' });
+    const res = await fulfillmentPUT(req);
+    expect(res.status).toBe(403);
   });
 
   it('contact makes zero messaging/Meta calls', async () => {

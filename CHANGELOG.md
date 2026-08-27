@@ -3,6 +3,23 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #202: Winner Authorization — PR #208 corrections round 4
+
+### Corrections applied (round 4)
+- **DB test rollback (`acc-202-winner-authorization-db.test.ts`)**: Changed rollback test transition from `'processing'` to `'fulfilled'` — more meaningful proof since it's the terminal state.
+- **Inactive membership tests**: Added explicit comments clarifying that mock returns `null` because `.eq('status', 'active')` filters out invited/suspended members. Semantically unchanged but now self-documenting.
+- **Owner not found + member DB error test**: New test proves that when owner lookup returns no match AND member lookup returns a DB error, the guard returns 500 `authority_read_error` (fail-closed).
+- **Capability matrix (4 states × 2 actions = 8 tests)**: New tests prove `read_history` and `manage_existing` pass regardless of capability state — when only another capability (scheduling) is configured, when promo_verification is explicitly disabled, when trial-blocked, and when tier-blocked.
+- **Winner scope predicates**: New tests for reveal and contact endpoints assert `.eq()` calls include `campaign_id`, `business_id`, and `outcome=winner` predicates.
+- **Complete role/status matrix**: Added finance/support denied reveal (403), admin contact 503, support denied contact (403), finance/support denied fulfillment (403), Winners GET denial for suspended business.
+
+### Files changed
+- `lib/__tests__/acc-202-winner-authorization-db.test.ts` — rollback transition changed to 'fulfilled'
+- `lib/__tests__/acc-202-winner-authorization.test.ts` — 18 new tests added, 2 tests improved
+
+### What could break
+- Nothing — test-only changes, no production code modified
+
 ## 2026-08-26 — #202: Winner Authorization — PR #208 corrections round 3
 
 ### Corrections applied (round 3)
