@@ -48,6 +48,7 @@ const testPrizeId = '00000000-0000-0000-0000-000000204003';
 const testCodeId = '00000000-0000-0000-0000-000000204004';
 const testRedemptionId = '00000000-0000-0000-0000-000000204005';
 const testUserId = '00000000-0000-0000-0000-000000204006';
+const testBatchId = '00000000-0000-0000-0000-000000204007';
 
 describe.skipIf(!canRun)('ACC-204: Fulfillment Notification Intent (DB)', () => {
   beforeAll(() => {
@@ -57,31 +58,41 @@ describe.skipIf(!canRun)('ACC-204: Fulfillment Notification Intent (DB)', () => 
       DELETE FROM admin_audit_logs WHERE entity_id = '${testRedemptionId}';
       DELETE FROM promo_redemptions WHERE id = '${testRedemptionId}';
       DELETE FROM promo_campaign_codes WHERE id = '${testCodeId}';
+      DELETE FROM promo_code_batches WHERE id = '${testBatchId}';
       DELETE FROM promo_prizes WHERE id = '${testPrizeId}';
       DELETE FROM promo_campaigns WHERE id = '${testCampaignId}';
       DELETE FROM businesses WHERE id = '${testBizId}';
+      DELETE FROM auth.users WHERE id = '${testUserId}';
     `);
 
-    // Create test fixtures
+    // Create test fixtures (CI-compatible column lists matching ACC-184 pattern)
     psql(`
-      INSERT INTO businesses (id, name, status, owner_id, subscription_tier, category)
-      VALUES ('${testBizId}', 'Test Biz 204', 'active', '${testUserId}', 'growth', 'other')
+      ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone TEXT;
+      INSERT INTO auth.users (id, phone) VALUES ('${testUserId}', '+0002040001')
       ON CONFLICT (id) DO NOTHING;
 
-      INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, code_format, code_length, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
-      VALUES ('${testCampaignId}', '${testBizId}', 'Test Campaign 204', 'active', 'keyword', 'alphanumeric', 8, 'You won!', 'Try again', 'Invalid', 'Already used', 'Expired')
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level, subscription_tier, category)
+      VALUES ('${testBizId}', 'Test Biz 204', 'test-biz-204', '${testUserId}', '1 Test', 'Lagos', 'VI', '+0002040002', 'active', 'manual', 'NG', 'basic', 'growth', 'other')
       ON CONFLICT (id) DO NOTHING;
 
-      INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity, allocated_count, sort_order)
-      VALUES ('${testPrizeId}', '${testCampaignId}', 'Gold Watch', 'product', 10, 1, 0)
+      INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, accept_bare_codes, max_attempts_per_phone, rate_limit_window_minutes, rate_limit_max_attempts, eligibility_mode, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
+      VALUES ('${testCampaignId}', '${testBizId}', 'Test Campaign 204', 'active', 'bare_code', true, 100, 60, 100, 'none', 'W', 'T', 'I', 'A', 'E')
       ON CONFLICT (id) DO NOTHING;
 
-      INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, display_suffix, outcome, prize_id, status)
-      VALUES ('${testCodeId}', '${testBizId}', '${testCampaignId}', gen_random_uuid(), 'hash204', '204X', 'winner', '${testPrizeId}', 'claimed')
+      INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity, allocated_count)
+      VALUES ('${testPrizeId}', '${testCampaignId}', 'Gold Watch', 'product', 10, 1)
       ON CONFLICT (id) DO NOTHING;
 
-      INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, prize_id, claim_reference, fulfillment_status, verification_mode, verification_status)
-      VALUES ('${testRedemptionId}', '${testBizId}', '${testCampaignId}', '${testCodeId}', '+2348012345678', 'winner', '${testPrizeId}', 'WAA-TEST-204', 'pending', 'standard', 'phone_verified')
+      INSERT INTO promo_code_batches (id, campaign_id, requested_count, generated_count, status, failed_count)
+      VALUES ('${testBatchId}', '${testCampaignId}', 1, 1, 'completed', 0)
+      ON CONFLICT (id) DO NOTHING;
+
+      INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+      VALUES ('${testCodeId}', '${testBizId}', '${testCampaignId}', '${testBatchId}', 'hash204', 'enc_204', '204X', 'winner', '${testPrizeId}', 'claimed')
+      ON CONFLICT (id) DO NOTHING;
+
+      INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
+      VALUES ('${testRedemptionId}', '${testBizId}', '${testCampaignId}', '${testCodeId}', '+2348012345678', 'winner', 'WAA-TEST-204', 'pending', 'standard', 'phone_verified')
       ON CONFLICT (id) DO NOTHING;
     `);
   });
@@ -92,9 +103,11 @@ describe.skipIf(!canRun)('ACC-204: Fulfillment Notification Intent (DB)', () => 
       DELETE FROM admin_audit_logs WHERE entity_id = '${testRedemptionId}';
       DELETE FROM promo_redemptions WHERE id = '${testRedemptionId}';
       DELETE FROM promo_campaign_codes WHERE id = '${testCodeId}';
+      DELETE FROM promo_code_batches WHERE id = '${testBatchId}';
       DELETE FROM promo_prizes WHERE id = '${testPrizeId}';
       DELETE FROM promo_campaigns WHERE id = '${testCampaignId}';
       DELETE FROM businesses WHERE id = '${testBizId}';
+      DELETE FROM auth.users WHERE id = '${testUserId}';
     `);
   });
 
