@@ -682,38 +682,77 @@ describe.skipIf(!canRun)('ACC-198 DB: Promo routing consistency (real migrated s
     }
   });
 
-  // ── H. Two-session distinct-campaign activation race test ──
-  it('two distinct draft campaigns activating the same keyword: exactly one succeeds', async () => {
+  // ── H. Two-session distinct-campaign activation race via activate_promo_campaign RPC ──
+  it('two distinct draft campaigns activating the same keyword via RPC: exactly one succeeds, loser gets keyword_conflict', async () => {
     const RACE_A = '00000000-0000-4000-a198-000000000a01';
     const RACE_B = '00000000-0000-4000-a198-000000000b02';
+    const PRIZE_A = '00000000-0000-4000-a198-0000000aa001';
+    const PRIZE_B = '00000000-0000-4000-a198-0000000bb001';
+    const BATCH_A = '00000000-0000-4000-a198-0000000ba001';
+    const BATCH_B = '00000000-0000-4000-a198-0000000ba002';
+    const CODE_A = '00000000-0000-4000-a198-00000000c001';
+    const CODE_B = '00000000-0000-4000-a198-00000000c002';
 
-    // Create two draft campaigns with the same keyword
+    // Create two draft campaigns with the same keyword — both must pass validation
     psql(`
-      INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, keyword, accept_bare_codes, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
-      VALUES ('${RACE_A}', '${BIZ_ID}', 'Race A', 'draft', 'keyword', 'RACEKEY', false, 'w', 't', 'i', 'a', 'e');
+      INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, keyword, accept_bare_codes,
+        code_length, max_attempts_per_phone, rate_limit_window_minutes, rate_limit_max_attempts, eligibility_mode,
+        winner_message, try_again_message, invalid_message, already_used_message, expired_message)
+      VALUES
+        ('${RACE_A}', '${BIZ_ID}', 'Race A', 'draft', 'keyword', 'RACEKEY', false,
+         12, 3, 60, 5, 'none', 'Winner!', 'Try again', 'Invalid', 'Already used', 'Expired'),
+        ('${RACE_B}', '${BIZ_ID}', 'Race B', 'draft', 'keyword', 'RACEKEY', false,
+         12, 3, 60, 5, 'none', 'Winner!', 'Try again', 'Invalid', 'Already used', 'Expired');
+    `);
+
+    // Each campaign needs: 1 prize (qty 1) + 1 completed batch + 1 winner code
+    psql(`
+      INSERT INTO promo_prizes (id, campaign_id, name, prize_type, quantity, allocated_count)
+      VALUES ('${PRIZE_A}', '${RACE_A}', 'Prize A', 'product', 1, 1),
+             ('${PRIZE_B}', '${RACE_B}', 'Prize B', 'product', 1, 1);
     `);
     psql(`
-      INSERT INTO promo_campaigns (id, business_id, name, status, code_entry_mode, keyword, accept_bare_codes, winner_message, try_again_message, invalid_message, already_used_message, expired_message)
-      VALUES ('${RACE_B}', '${BIZ_ID}', 'Race B', 'draft', 'keyword', 'RACEKEY', false, 'w', 't', 'i', 'a', 'e');
+      INSERT INTO promo_code_batches (id, campaign_id, requested_count, generated_count, status, failed_count)
+      VALUES ('${BATCH_A}', '${RACE_A}', 1, 1, 'completed', 0),
+             ('${BATCH_B}', '${RACE_B}', 1, 1, 'completed', 0);
+    `);
+    psql(`
+      INSERT INTO promo_campaign_codes (id, campaign_id, batch_id, prize_id, normalized_code_hash, display_code, outcome, status)
+      VALUES ('${CODE_A}', '${RACE_A}', '${BATCH_A}', '${PRIZE_A}', 'hash_race_a', 'RACE-A-CODE', 'winner', 'available'),
+             ('${CODE_B}', '${RACE_B}', '${BATCH_B}', '${PRIZE_B}', 'hash_race_b', 'RACE-B-CODE', 'winner', 'available');
     `);
 
-    // Both UPDATE to 'active' concurrently — the unique index on (business_id, lower(keyword))
-    // WHERE status IN ('active','scheduled') is the final authority: exactly one must fail.
+    // Both call activate_promo_campaign RPC concurrently
     const [a, b] = await Promise.all([
-      psqlAsync(`UPDATE promo_campaigns SET status = 'active' WHERE id = '${RACE_A}' RETURNING id;`),
-      psqlAsync(`UPDATE promo_campaigns SET status = 'active' WHERE id = '${RACE_B}' RETURNING id;`),
+      psqlAsync(`SELECT activate_promo_campaign('${RACE_A}', '${USER_ID}', 'business');`),
+      psqlAsync(`SELECT activate_promo_campaign('${RACE_B}', '${USER_ID}', 'business');`),
     ]);
 
-    const successCount = [a, b].filter(r => r.ok).length;
-    const failCount = [a, b].filter(r => !r.ok).length;
-    expect(successCount).toBe(1);
-    expect(failCount).toBe(1);
+    // Parse results
+    const resultA = a.ok ? JSON.parse(a.stdout) : null;
+    const resultB = b.ok ? JSON.parse(b.stdout) : null;
+
+    // Exactly one should succeed, one should get keyword_conflict
+    const winner = resultA?.success ? resultA : resultB?.success ? resultB : null;
+    const loser = resultA?.success ? resultB : resultA;
+
+    expect(winner).not.toBeNull();
+    expect(winner!.success).toBe(true);
+
+    // Loser must have keyword_conflict (not a generic error)
+    expect(loser).not.toBeNull();
+    expect(loser!.success).toBe(false);
+    expect(loser!.error).toBe('keyword_conflict');
 
     // Only one campaign should be active
     const activeCount = psql(`SELECT count(*) FROM promo_campaigns WHERE keyword = 'RACEKEY' AND status = 'active' AND business_id = '${BIZ_ID}'`);
     expect(activeCount).toBe('1');
 
     // Cleanup
+    psql(`DELETE FROM promo_campaign_codes WHERE campaign_id IN ('${RACE_A}', '${RACE_B}')`);
+    psql(`DELETE FROM promo_code_batches WHERE campaign_id IN ('${RACE_A}', '${RACE_B}')`);
+    psql(`DELETE FROM promo_prizes WHERE campaign_id IN ('${RACE_A}', '${RACE_B}')`);
+    psql(`DELETE FROM admin_audit_logs WHERE entity_id IN ('${RACE_A}', '${RACE_B}')`);
     psql(`DELETE FROM promo_campaigns WHERE id IN ('${RACE_A}', '${RACE_B}')`);
   });
 
