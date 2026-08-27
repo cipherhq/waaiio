@@ -194,7 +194,8 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     const path = require('path');
     const src = fs.readFileSync(path.resolve(__dirname, '../payments/send-confirmation.ts'), 'utf-8');
     // The flag must be set BEFORE sendText, not after
-    const flagIdx = src.indexOf('sideEffectsMayHaveOccurred = true; // Mark BEFORE attempt');
+    // #197: sendText is now inside the delivery-attempt lifecycle but the flag is still set before it
+    const flagIdx = src.indexOf('sideEffectsMayHaveOccurred = true;');
     const sendIdx = src.indexOf('resolved.sender.sendText');
     expect(flagIdx).toBeGreaterThan(-1);
     expect(sendIdx).toBeGreaterThan(flagIdx);

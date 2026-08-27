@@ -3,6 +3,33 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #197: Payment confirmation delivery tracking + stale I've Paid recovery
+
+### What changed
+- **Migration 342**: `payment_confirmation_deliveries` table + 5 RPCs (`claim_confirmation_delivery`, `begin_confirmation_send`, `complete_confirmation_send`, `fail_confirmation_send`, `advance_delivery_status`)
+- **Migration 343**: `unmatched_delivery_statuses` table for WAMID race resolution
+- **`send-confirmation.ts`**: Customer WhatsApp send now uses delivery-attempt authority (claim→send→complete lifecycle). Cross-business session channel fallback REMOVED. Durable `_inbound_channel_id` from payment metadata used instead.
+- **`bot.service.ts`**: Stale `i_paid`/`i_paid_online` button interceptor added before keyword matching. Routes to order-centric recovery for fresh sessions.
+- **`ordering.flow.ts`**: Button IDs now emit `i_paid:<order-reference>` for durable correlation. `_inbound_channel_id` persisted in payment metadata at initializePayment time. Validator accepts `i_paid:<ref>` pattern.
+- **`route.ts` (Meta webhook)**: Payment confirmation delivery status tracking added alongside existing contracts/OTP handlers. Uses `advance_delivery_status` RPC with validated provider timestamps.
+- **`stale-payment-recovery.ts`**: New module for order-centric recovery. Authorizes order by business+user identity. Success outranks pending. Multiple pending fail closed. Duplicate success = integrity alert, no financial mutation.
+
+### What it affects
+- Payment confirmation delivery is now tracked per-attempt with monotonic state machine
+- Stale "I've Paid" buttons from deactivated sessions now reach order-centric recovery
+- Cross-business channel fallback is removed (tenant isolation fix)
+- Payment Authority remains sole financial writer — recovery never replays Stage-3 effects
+
+### What could break
+- If `claim_confirmation_delivery` RPC is unavailable, customer WhatsApp confirmations won't send (but payment/order finalization still completes)
+- Button ID change from `i_paid` to `i_paid:WA-OR-XXXX` means old cached buttons still work (backward compat in interceptor) but new buttons carry durable reference
+
+### Correction round 5 — frozen test requirements resolved (PR #207 rebase)
+- **`stale-button-botservice.test.ts`**: Rewritten to call real `BotService.handleMessage()` with mocked dependencies (same pattern as cas-004-botservice-wiring.test.ts). Tests `i_paid`, `i_paid_online`, `i_paid:REF`, `i_paid_online:REF` buttons, negative cases (free text, malformed, legitimate step), all via actual handleMessage execution.
+- **`confirmation-delivery-db.test.ts` test 21**: Rewritten for genuine concurrent WAMID race. Uses two `psql` sessions launched via `Promise.all` — Session A wraps `complete_confirmation_send` in explicit transaction with `pg_sleep(1)` to hold the advisory lock, Session B calls `advance_delivery_status` and blocks on `pg_advisory_xact_lock(hashtext(wamid))` until A commits. Proves real lock contention, not sequential execution.
+- **CI**: Rebased onto main (54d785d2). Both #177 Stripe and #197 confirmation delivery CI blocks preserved.
+- **Files:** `lib/payments/__tests__/stale-button-botservice.test.ts`, `lib/payments/__tests__/confirmation-delivery-db.test.ts`, `.github/workflows/ci.yml`, `CHANGELOG.md`
+
 ---
 
 ## 2026-08-26

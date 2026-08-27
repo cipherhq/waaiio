@@ -9,6 +9,7 @@
  */
 
 import { logger } from '@/lib/logger';
+import { MetaApiError } from './meta-api-error';
 
 export interface MetaCloudCredentials {
   accessToken: string;
@@ -687,7 +688,7 @@ export class MetaCloudService {
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
       const errorMessage = errorData?.error?.message || `Cloud API error: ${res.status}`;
-      throw new Error(errorMessage);
+      throw new MetaApiError(errorMessage, res.status, errorData?.error?.code, errorData?.error?.error_subcode);
     }
 
     return res.json();

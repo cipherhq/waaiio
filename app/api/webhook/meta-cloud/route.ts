@@ -419,6 +419,52 @@ export async function POST(request: NextRequest) {
                 log.withContext({ op: 'delivery-status.insert', errorCode: statusErr.code }).warn('[META-WEBHOOK] Delivery status insert failed');
               }
             }
+
+            // #197: Payment confirmation delivery status tracking
+            // Uses advance_delivery_status RPC with advisory lock for WAMID race safety
+            if (newStatus in statusOrder) {
+              try {
+                // Parse provider timestamp — NEVER fabricate with application NOW()
+                // Invalid/missing timestamps are passed as null; the RPC handles null gracefully
+                const pcdTsNum = Number(status.timestamp);
+                const pcdParsed = new Date(pcdTsNum * 1000);
+                let pcdTimestamp: string | null;
+                if (!Number.isFinite(pcdTsNum) || pcdTsNum <= 0 || Number.isNaN(pcdParsed.getTime())) {
+                  pcdTimestamp = null; // Do NOT substitute application time
+                  log.withContext({ op: 'delivery-status.payment-timestamp' }).warn('[META-WEBHOOK] Invalid/missing payment delivery timestamp — passing null');
+                } else {
+                  pcdTimestamp = pcdParsed.toISOString();
+                }
+
+                const failedErr = isFailed && status.errors?.[0]
+                  ? { code: String(status.errors[0].code), reason: status.errors[0].title || 'unknown' }
+                  : { code: null, reason: null };
+
+                const { data: advanceResult } = await supabase.rpc('advance_delivery_status', {
+                  p_meta_message_id: wamid,
+                  p_new_status: newStatus,
+                  p_provider_timestamp: pcdTimestamp,
+                  p_error_code: failedErr.code,
+                  p_error_reason: failedErr.reason,
+                });
+
+                if (advanceResult?.advanced) {
+                  log.debug(`[META-WEBHOOK] Payment delivery status advanced: ${advanceResult.previous} -> ${newStatus}`);
+                }
+                // wamid_not_found_recorded_unmatched is expected during normal race — not an error
+
+                // Opportunistic cleanup of expired unmatched callbacks (cheap, bounded)
+                // cleanup_expired_unmatched_statuses is defined in migration 343
+                try {
+                  await supabase.rpc('cleanup_expired_unmatched_statuses');
+                } catch {
+                  // Non-fatal — cleanup is best-effort
+                }
+              } catch (pcdErr) {
+                // Non-fatal — delivery tracking should not block webhook processing
+                log.withContext({ op: 'delivery-status.payment-advance' }).warn('[META-WEBHOOK] Payment delivery status advance failed (non-fatal)');
+              }
+            }
           }
         }
 

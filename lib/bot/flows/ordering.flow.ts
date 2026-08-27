@@ -2729,6 +2729,21 @@ export const orderingFlow: FlowDefinition = {
           if (paymentResult) {
             d.payment_reference = paymentResult.reference;
 
+            // #197: Persist inbound channel ID in payment metadata for durable channel resolution
+            const inboundChId = ctx.session.session_data._inbound_channel_id as string | undefined;
+            if (inboundChId && paymentResult.reference) {
+              const { data: payRec } = await ctx.supabase
+                .from('payments')
+                .select('id, metadata')
+                .eq('gateway_reference', paymentResult.reference)
+                .maybeSingle();
+              if (payRec) {
+                const meta = (payRec.metadata || {}) as Record<string, unknown>;
+                meta._inbound_channel_id = inboundChId;
+                await ctx.supabase.from('payments').update({ metadata: meta }).eq('id', payRec.id);
+              }
+            }
+
             if (bankAccount) {
               // Dual-option: online + bank transfer
               const transferRef = await createPendingTransfer(ctx.supabase, {
@@ -2808,7 +2823,7 @@ export const orderingFlow: FlowDefinition = {
                 type: 'buttons',
                 body: "🔔 Completed payment? Return here and tap *I've Paid* to confirm:",
                 buttons: [
-                  { id: 'i_paid', title: "I've Paid" },
+                  { id: `i_paid:${order.reference_code}`, title: "I've Paid" },
                   { id: 'retry_payment', title: 'Get New Link' },
                   { id: 'go_back', title: 'Cancel' },
                 ],
@@ -3008,7 +3023,7 @@ export const orderingFlow: FlowDefinition = {
             type: 'buttons',
             body: "Complete your payment using the link or bank transfer above.\n\nTap below after paying:",
             buttons: [
-              { id: 'i_paid_online', title: "I've Paid Online" },
+              { id: `i_paid_online:${d.reference_code || ''}`, title: "I've Paid Online" },
               { id: 'sent_transfer', title: "I've Sent Transfer" },
               { id: 'go_back', title: 'Cancel' },
             ],
@@ -3018,7 +3033,7 @@ export const orderingFlow: FlowDefinition = {
           type: 'buttons',
           body: "Your confirmation will arrive automatically after payment. If it doesn't, tap below:",
           buttons: [
-            { id: 'i_paid', title: "I've Paid" },
+            { id: `i_paid:${d.reference_code || ''}`, title: "I've Paid" },
             { id: 'retry_payment', title: 'Get New Link' },
             { id: 'go_back', title: 'Cancel' },
           ],
@@ -3131,7 +3146,7 @@ export const orderingFlow: FlowDefinition = {
           return { valid: true, data: { _action: 'transfer_proof_sent' } };
         }
 
-        if (text === 'i_paid' || text === 'i_paid_online' || text === 'paid' || text === 'done') {
+        if (text === 'i_paid' || text === 'i_paid_online' || text.startsWith('i_paid:') || text.startsWith('i_paid_online:') || text === 'paid' || text === 'done') {
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 

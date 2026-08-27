@@ -460,39 +460,163 @@ export async function sendProactiveConfirmation(
     const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
     const resolver = new ChannelResolver(supabase);
 
-    // Prefer the channel the customer was chatting on
-    // Check active, inactive, and ANY session for this phone (not just this business)
+    // Prefer the channel the customer was chatting on (same-business only, #197)
     let resolved = null;
     let inboundChId: string | undefined;
 
     // Only look up WhatsApp sessions if we have a customer phone
     if (customerPhone) {
-      // 1. Try session for this phone + business (active or recently inactive)
-      const { data: bizSession } = await supabase
-        .from('bot_sessions').select('session_data')
-        .eq('whatsapp_number', customerPhone).eq('business_id', businessId)
-        .order('created_at', { ascending: false }).limit(1).maybeSingle();
-      inboundChId = (bizSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
+      // 1. Try durable channel from payment metadata (persisted at initializePayment time)
+      const { data: payChMeta } = await supabase.from('payments').select('metadata').eq('id', payment.id).single();
+      inboundChId = (payChMeta?.metadata as Record<string, unknown>)?._inbound_channel_id as string | undefined;
 
-      // 2. Fallback: any recent session for this phone (may be on a different business)
+      // 2. Fallback: same-business session channel only (no cross-business #197)
       if (!inboundChId) {
-        const { data: anySession } = await supabase
+        const { data: bizSession } = await supabase
           .from('bot_sessions').select('session_data')
-          .eq('whatsapp_number', customerPhone)
-          .not('session_data->_inbound_channel_id', 'is', null)
+          .eq('whatsapp_number', customerPhone).eq('business_id', businessId)
           .order('created_at', { ascending: false }).limit(1).maybeSingle();
-        inboundChId = (anySession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
+        inboundChId = (bizSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
       }
+      // Cross-business session fallback REMOVED (#197) — never borrow another business's channel
     }
 
     if (inboundChId) resolved = await resolver.resolveByChannelId(inboundChId);
     if (!resolved) resolved = await resolver.resolveByBusinessId(businessId);
 
-    // Send WhatsApp confirmation if channel is available and we have a phone
+    // ── Customer WhatsApp delivery via delivery-attempt authority (#197) ──
+    // The delivery-attempt table owns ONLY the customer WhatsApp send effect.
+    // Stage-3 master claim (claim_payment_confirmation) still owns the full lifecycle.
+    let customerMessageSent = false;
     if (resolved && customerPhone) {
-      sideEffectsMayHaveOccurred = true; // Mark BEFORE attempt — timeout/disconnect after provider accepts is indeterminate
       const phone = stripPlus(customerPhone);
-      await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
+
+      // Check/claim delivery attempt (payment-wide, source is provenance only)
+      const { data: deliveryClaim, error: deliveryClaimErr } = await supabase.rpc('claim_confirmation_delivery', {
+        p_payment_id: payment.id,
+        p_attempt_source: 'webhook_stage3',
+      });
+
+      if (deliveryClaimErr) {
+        logSafeError(logPrefix, 'delivery-claim-rpc', deliveryClaimErr);
+      }
+
+      if (deliveryClaim?.claimed) {
+        const attemptId = deliveryClaim.attempt_id as string;
+        const deliveryToken = deliveryClaim.claim_token as string;
+
+        // Authorize send (claiming → sending)
+        const { data: sendAuth, error: sendAuthErr } = await supabase.rpc('begin_confirmation_send', {
+          p_attempt_id: attemptId,
+          p_claim_token: deliveryToken,
+        });
+
+        if (sendAuthErr) {
+          logSafeError(logPrefix, 'begin-send-rpc', sendAuthErr);
+        }
+
+        if (sendAuth?.authorized) {
+          sideEffectsMayHaveOccurred = true;
+          try {
+            const sendResult = await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
+            const wamid = sendResult?.messageId;
+
+            if (wamid) {
+              // Record Meta acceptance with WAMID (sending → accepted)
+              // Retry once on DB write failure — losing the WAMID attachment creates
+              // a permanently uncorrelated attempt (#197 WAMID-race contract)
+              const { data: completeResult, error: completeErr } = await supabase.rpc('complete_confirmation_send', {
+                p_attempt_id: attemptId,
+                p_claim_token: deliveryToken,
+                p_meta_message_id: wamid,
+                p_accepted_at: new Date().toISOString(),
+              });
+
+              if (completeErr || !completeResult?.completed) {
+                // Retry once — idempotent for same attempt/WAMID
+                logSafeError(logPrefix, 'complete-send-rpc-attempt1', completeErr || completeResult);
+                const { data: retryResult, error: retryErr } = await supabase.rpc('complete_confirmation_send', {
+                  p_attempt_id: attemptId,
+                  p_claim_token: deliveryToken,
+                  p_meta_message_id: wamid,
+                  p_accepted_at: new Date().toISOString(),
+                });
+                if (retryErr || !retryResult?.completed) {
+                  logSafeError(logPrefix, 'complete-send-rpc-attempt2', retryErr || retryResult);
+                  // #197: Automatic WAMID recovery via recover_wamid_attachment RPC.
+                  // Uses the same advisory-lock + atomic drain semantics as complete_confirmation_send.
+                  // Does NOT bypass the approved DB authority or skip unmatched-callback drain.
+                  const { data: recoveryResult, error: recoveryErr } = await supabase.rpc('recover_wamid_attachment', {
+                    p_attempt_id: attemptId,
+                    p_meta_message_id: wamid,
+                    p_accepted_at: new Date().toISOString(),
+                  });
+                  if (recoveryErr || !recoveryResult?.recovered) {
+                    // Truly unrecoverable — emit high-severity alert
+                    logSafeError(logPrefix, 'wamid-recovery-rpc', recoveryErr || recoveryResult);
+                    Sentry.captureException(
+                      new Error(`WAMID attachment permanently failed: payment=${payment.id} wamid=${wamid}`),
+                      { tags: { component: 'send-confirmation', operation: 'wamid-attach-permanent-failure' } },
+                    );
+                  } else {
+                    logger.info(`${logPrefix} WAMID recovery succeeded for payment ${payment.id} (already_attached=${recoveryResult.already_attached})`);
+                  }
+                }
+              }
+              customerMessageSent = true;
+            } else {
+              // No WAMID returned but no error thrown — indeterminate
+              await supabase.rpc('fail_confirmation_send', {
+                p_attempt_id: attemptId,
+                p_claim_token: deliveryToken,
+                p_failure_type: 'indeterminate',
+                p_failure_reason: 'no_wamid_in_response',
+              });
+              Sentry.captureException(
+                new Error(`Confirmation send returned no WAMID for payment ${payment.id}`),
+                { tags: { component: 'send-confirmation', operation: 'indeterminate-no-wamid' } },
+              );
+            }
+          } catch (sendErr) {
+            sideEffectsMayHaveOccurred = true;
+            // #197: Only explicit provider rejection (Meta error response with code/title)
+            // can be known 'failed'. All ambiguous transport/network errors (timeout,
+            // ECONNRESET, fetch failed, DNS, TLS, abort) must be 'indeterminate' because
+            // Meta may have accepted the request despite the local failure.
+            const sendErrorDescription = sendErr instanceof Error ? sendErr.message : String(sendErr);
+            // #197: Only explicit provider rejection (Meta 4xx error response) can be
+            // known 'failed'. 5xx/transport/timeout/DNS/ECONNRESET = indeterminate
+            // because Meta may have accepted the request despite the local failure.
+            const { MetaApiError } = await import('@/lib/channels/meta-api-error');
+            const isExplicitProviderRejection = sendErr instanceof MetaApiError && sendErr.httpStatus < 500;
+            const failureType = isExplicitProviderRejection ? 'failed' : 'indeterminate';
+
+            await supabase.rpc('fail_confirmation_send', {
+              p_attempt_id: attemptId,
+              p_claim_token: deliveryToken,
+              p_failure_type: failureType,
+              p_failure_reason: sendErrorDescription.slice(0, 500),
+            });
+            if (failureType === 'indeterminate') {
+              Sentry.captureException(sendErr, { tags: { component: 'send-confirmation', operation: 'indeterminate-send-error' } });
+            }
+          }
+        }
+        // else: send not authorized (expired claim) — skip customer send
+      } else if (deliveryClaim?.reason === 'already_delivered') {
+        customerMessageSent = true; // Already delivered — skip send, continue Stage-3 work
+        logger.info(`${logPrefix} Customer message already delivered for payment ${payment.id}`);
+      } else if (deliveryClaim?.reason?.startsWith('active_delivery_')) {
+        // sending/accepted/sent/indeterminate exists — DO NOT resend
+        customerMessageSent = true; // Treat as "send effect handled" — continue remaining Stage-3 work
+        logger.info(`${logPrefix} Active delivery exists (${deliveryClaim.reason}) for payment ${payment.id} — skipping resend`);
+      } else if (deliveryClaim?.reason === 'max_attempts_exceeded') {
+        // Delivery exhausted — customer delivery terminally failed
+        // Allow Stage-3 to complete remaining safe work and finalize master claim
+        customerMessageSent = true;
+        logger.warn(`${logPrefix} Customer delivery exhausted (max attempts) for payment ${payment.id}`);
+      }
+      // else: other claim failure — customerMessageSent stays false
     } else {
       logger.info(`${logPrefix} No WhatsApp channel resolved — will attempt email-only confirmation`);
     }
