@@ -543,30 +543,23 @@ export async function sendProactiveConfirmation(
                 });
                 if (retryErr || !retryResult?.completed) {
                   logSafeError(logPrefix, 'complete-send-rpc-attempt2', retryErr || retryResult);
-                  // #197: Automatic WAMID recovery fallback.
-                  // Both RPC attempts failed but Meta accepted the message with this WAMID.
-                  // Fall back to direct UPDATE to persist the WAMID on the attempt row.
-                  // This ensures status callbacks can correlate to the payment attempt
-                  // without requiring manual Sentry-based resolution.
-                  try {
-                    await supabase
-                      .from('payment_confirmation_deliveries')
-                      .update({
-                        meta_message_id: wamid,
-                        delivery_status: 'accepted',
-                        accepted_at: new Date().toISOString(),
-                        claim_token: null,
-                        updated_at: new Date().toISOString(),
-                      })
-                      .eq('id', attemptId);
-                    logger.info(`${logPrefix} WAMID recovery fallback succeeded for payment ${payment.id}`);
-                  } catch (fallbackErr) {
+                  // #197: Automatic WAMID recovery via recover_wamid_attachment RPC.
+                  // Uses the same advisory-lock + atomic drain semantics as complete_confirmation_send.
+                  // Does NOT bypass the approved DB authority or skip unmatched-callback drain.
+                  const { data: recoveryResult, error: recoveryErr } = await supabase.rpc('recover_wamid_attachment', {
+                    p_attempt_id: attemptId,
+                    p_meta_message_id: wamid,
+                    p_accepted_at: new Date().toISOString(),
+                  });
+                  if (recoveryErr || !recoveryResult?.recovered) {
                     // Truly unrecoverable — emit high-severity alert
-                    logSafeError(logPrefix, 'wamid-recovery-fallback', fallbackErr);
+                    logSafeError(logPrefix, 'wamid-recovery-rpc', recoveryErr || recoveryResult);
                     Sentry.captureException(
                       new Error(`WAMID attachment permanently failed: payment=${payment.id} wamid=${wamid}`),
                       { tags: { component: 'send-confirmation', operation: 'wamid-attach-permanent-failure' } },
                     );
+                  } else {
+                    logger.info(`${logPrefix} WAMID recovery succeeded for payment ${payment.id} (already_attached=${recoveryResult.already_attached})`);
                   }
                 }
               }

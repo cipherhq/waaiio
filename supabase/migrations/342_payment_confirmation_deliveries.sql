@@ -527,6 +527,110 @@ END;
 $$;
 
 -- ═══════════════════════════════════════════════════════
+-- RPC: recover_wamid_attachment
+-- Emergency fallback when complete_confirmation_send fails.
+-- Reuses the same advisory-lock + atomic drain semantics.
+-- Only transitions 'sending' → 'accepted'. Requires non-blank WAMID.
+-- ═══════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION recover_wamid_attachment(
+  p_attempt_id UUID,
+  p_meta_message_id TEXT,
+  p_accepted_at TIMESTAMPTZ
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_attempt RECORD;
+  v_unmatched RECORD;
+  v_rank_current INT;
+  v_rank_new INT;
+BEGIN
+  IF p_meta_message_id IS NULL OR TRIM(p_meta_message_id) = '' THEN
+    RETURN jsonb_build_object('recovered', false, 'reason', 'blank_wamid');
+  END IF;
+
+  SELECT id, delivery_status, meta_message_id
+  INTO v_attempt
+  FROM payment_confirmation_deliveries
+  WHERE id = p_attempt_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('recovered', false, 'reason', 'attempt_not_found');
+  END IF;
+
+  -- Idempotent: if WAMID is already attached with this same value, succeed
+  IF v_attempt.meta_message_id = p_meta_message_id THEN
+    RETURN jsonb_build_object('recovered', true, 'already_attached', true);
+  END IF;
+
+  -- Only recover from 'sending' state (the state where WAMID attachment failed)
+  IF v_attempt.delivery_status != 'sending' THEN
+    RETURN jsonb_build_object('recovered', false, 'reason', 'not_in_sending_state');
+  END IF;
+
+  -- Take advisory lock keyed on WAMID (same serialization as complete_confirmation_send)
+  PERFORM pg_advisory_xact_lock(hashtext(p_meta_message_id));
+
+  -- Attach WAMID and transition to accepted
+  UPDATE payment_confirmation_deliveries
+  SET delivery_status = 'accepted',
+      meta_message_id = p_meta_message_id,
+      accepted_at = p_accepted_at,
+      claim_token = NULL,
+      updated_at = NOW()
+  WHERE id = p_attempt_id;
+
+  -- Drain any unmatched status callbacks for this WAMID (same logic as complete_confirmation_send)
+  FOR v_unmatched IN
+    SELECT id, status, provider_timestamp, error_code, error_reason
+    FROM unmatched_delivery_statuses
+    WHERE meta_message_id = p_meta_message_id
+    ORDER BY received_at ASC
+    FOR UPDATE
+  LOOP
+    SELECT CASE delivery_status
+      WHEN 'accepted' THEN 2 WHEN 'sent' THEN 3
+      WHEN 'delivered' THEN 4 WHEN 'read' THEN 5
+      ELSE -1 END
+    INTO v_rank_current
+    FROM payment_confirmation_deliveries WHERE id = p_attempt_id;
+
+    v_rank_new := CASE v_unmatched.status
+      WHEN 'sent' THEN 3 WHEN 'delivered' THEN 4
+      WHEN 'read' THEN 5 ELSE -1 END;
+
+    IF v_unmatched.status = 'failed' THEN
+      IF v_rank_current <= 3 THEN
+        UPDATE payment_confirmation_deliveries
+        SET delivery_status = 'failed',
+            failure_code = v_unmatched.error_code,
+            failure_reason = v_unmatched.error_reason,
+            failed_at = v_unmatched.provider_timestamp,
+            updated_at = NOW()
+        WHERE id = p_attempt_id;
+      END IF;
+    ELSIF v_rank_new > v_rank_current THEN
+      UPDATE payment_confirmation_deliveries
+      SET delivery_status = v_unmatched.status,
+          sent_at = CASE WHEN v_unmatched.status = 'sent' AND sent_at IS NULL
+                         THEN v_unmatched.provider_timestamp ELSE sent_at END,
+          delivered_at = CASE WHEN v_unmatched.status = 'delivered' AND delivered_at IS NULL
+                              THEN v_unmatched.provider_timestamp ELSE delivered_at END,
+          read_at = CASE WHEN v_unmatched.status = 'read' AND read_at IS NULL
+                         THEN v_unmatched.provider_timestamp ELSE read_at END,
+          updated_at = NOW()
+      WHERE id = p_attempt_id;
+    END IF;
+
+    DELETE FROM unmatched_delivery_statuses WHERE id = v_unmatched.id;
+  END LOOP;
+
+  RETURN jsonb_build_object('recovered', true, 'already_attached', false);
+END;
+$$;
+
+-- ═══════════════════════════════════════════════════════
 -- Privilege restrictions (proven pattern from migration 307)
 -- ═══════════════════════════════════════════════════════
 
@@ -537,18 +641,21 @@ DO $$ BEGIN
   REVOKE ALL ON FUNCTION complete_confirmation_send(UUID, UUID, TEXT, TIMESTAMPTZ) FROM PUBLIC;
   REVOKE ALL ON FUNCTION fail_confirmation_send(UUID, UUID, TEXT, TEXT, TEXT) FROM PUBLIC;
   REVOKE ALL ON FUNCTION advance_delivery_status(TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION recover_wamid_attachment(UUID, TEXT, TIMESTAMPTZ) FROM PUBLIC;
 
   EXECUTE 'REVOKE ALL ON FUNCTION claim_confirmation_delivery(UUID, TEXT) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION begin_confirmation_send(UUID, UUID) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION complete_confirmation_send(UUID, UUID, TEXT, TIMESTAMPTZ) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION fail_confirmation_send(UUID, UUID, TEXT, TEXT, TEXT) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION advance_delivery_status(TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT) FROM anon';
+  EXECUTE 'REVOKE ALL ON FUNCTION recover_wamid_attachment(UUID, TEXT, TIMESTAMPTZ) FROM anon';
 
   EXECUTE 'REVOKE ALL ON FUNCTION claim_confirmation_delivery(UUID, TEXT) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION begin_confirmation_send(UUID, UUID) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION complete_confirmation_send(UUID, UUID, TEXT, TIMESTAMPTZ) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION fail_confirmation_send(UUID, UUID, TEXT, TEXT, TEXT) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION advance_delivery_status(TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT) FROM authenticated';
+  EXECUTE 'REVOKE ALL ON FUNCTION recover_wamid_attachment(UUID, TEXT, TIMESTAMPTZ) FROM authenticated';
 
   -- Grant only to service_role
   EXECUTE 'GRANT EXECUTE ON FUNCTION claim_confirmation_delivery(UUID, TEXT) TO service_role';
@@ -556,5 +663,6 @@ DO $$ BEGIN
   EXECUTE 'GRANT EXECUTE ON FUNCTION complete_confirmation_send(UUID, UUID, TEXT, TIMESTAMPTZ) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION fail_confirmation_send(UUID, UUID, TEXT, TEXT, TEXT) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION advance_delivery_status(TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT) TO service_role';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION recover_wamid_attachment(UUID, TEXT, TIMESTAMPTZ) TO service_role';
 EXCEPTION WHEN undefined_object THEN NULL;
 END $$;
