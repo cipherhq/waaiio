@@ -17,6 +17,7 @@ const paymentsPageCode = readFileSync('app/dashboard/payments/page.tsx', 'utf-8'
 const sendRouteCode = readFileSync('app/api/payment-request/send/route.ts', 'utf-8');
 const botPaymentCode = readFileSync('lib/bot/flows/payment.flow.ts', 'utf-8');
 const stripeWebhookCode = readFileSync('app/api/payments/stripe-webhook/route.ts', 'utf-8');
+const stripeFinalizationMigrationCode = readFileSync('supabase/migrations/339_stripe_recurring_finalization.sql', 'utf-8');
 const migrationCode = readFileSync('supabase/migrations/244_payment_source_classification.sql', 'utf-8');
 const sidebarCode = readFileSync('components/dashboard/Sidebar.tsx', 'utf-8');
 
@@ -221,19 +222,20 @@ describe('Source tagging at creation', () => {
     expect(botPaymentCode).toContain("payment_source: 'payment_request'");
   });
 
-  it('Stripe recurring webhook sets payment_source=subscription', () => {
-    const matches = stripeWebhookCode.match(/payment_source: 'subscription'/g);
-    expect(matches).not.toBeNull();
-    expect(matches!.length).toBeGreaterThanOrEqual(2);
+  it('Stripe recurring sets payment_source=subscription (in atomic RPC migration)', () => {
+    // #177: Stripe recurring booking creation moved to atomic PostgreSQL RPC
+    // The RPC in migration 339 creates bookings with channel='api', payment_source='subscription'
+    expect(stripeFinalizationMigrationCode).toContain("'subscription'");
+    expect(stripeFinalizationMigrationCode).toContain("'api'");
   });
 
   it('channel and payment_source are independent concepts', () => {
     // Bot sets channel=whatsapp AND payment_source=payment_request
     expect(botPaymentCode).toContain("channel: 'whatsapp'");
     expect(botPaymentCode).toContain("payment_source: 'payment_request'");
-    // Stripe sets channel=recurring AND payment_source=subscription
-    expect(stripeWebhookCode).toContain("channel: 'recurring'");
-    expect(stripeWebhookCode).toContain("payment_source: 'subscription'");
+    // Stripe recurring: channel=api AND payment_source=subscription (in RPC migration)
+    expect(stripeFinalizationMigrationCode).toContain("'api'");
+    expect(stripeFinalizationMigrationCode).toContain("'subscription'");
   });
 });
 

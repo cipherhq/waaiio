@@ -54,13 +54,13 @@ describe('Yearly next_charge_at calculation', () => {
     expect(next.getDate()).toBe(15);
   });
 
-  it('Stripe webhook yearly renewal uses +1 year', async () => {
+  it('Stripe recurring yearly renewal uses +1 year (in atomic RPC migration)', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const source = fs.readFileSync(path.resolve(__dirname, '../../../app/api/payments/stripe-webhook/route.ts'), 'utf-8');
-    // Both renewal blocks must have yearly branch
-    const blocks = source.match(/frequency === 'yearly'/g) || [];
-    expect(blocks.length).toBeGreaterThanOrEqual(2);
+    // #177: Stripe recurring next_charge_at calculation moved to atomic PostgreSQL RPC
+    const source = fs.readFileSync(path.resolve(__dirname, '../../../supabase/migrations/339_stripe_recurring_finalization.sql'), 'utf-8');
+    expect(source).toContain("INTERVAL '1 year'");
+    expect(source).toContain("v_sub.frequency = 'yearly'");
   });
 
   it('process_recurring_charge RPC yearly uses +1 year', async () => {

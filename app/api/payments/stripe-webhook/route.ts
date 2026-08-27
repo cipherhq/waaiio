@@ -2,16 +2,14 @@ import { NextResponse, type NextRequest } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
-import { getPlatformFees } from '@/lib/getPlatformFees';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { sendEmail } from '@/lib/email/client';
 import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
-import type { SubscriptionTier } from '@/lib/constants';
-import { processSuccessfulPayment } from '@/lib/payments/process-success';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { notifyCustomerChargeFailed } from '@/lib/payments/notify-charge-failed';
+import { classifyInvoiceSubscription, extractInvoicePaymentIdentity } from '@/lib/payments/stripe-invoice-extractors';
 
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 
@@ -248,29 +246,68 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ── Platform subscription recurring billing events ──
-
-    // Flag to prevent double-processing of invoice.paid events
-    // The first invoice.paid block handles both platform AND customer recurring subscriptions.
-    // The second block (below) is a legacy duplicate for customer recurring — skip if already handled.
-    let invoicePaidHandled = false;
+    // ── invoice.paid — unified subscription role resolution (#177) ──
 
     // Check if a Stripe subscription ID belongs to a platform subscription
     async function findPlatformSubscription(stripeSubId: string) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('subscriptions')
         .select('id, business_id, plan, status, amount, currency')
         .eq('stripe_subscription_id', stripeSubId)
         .maybeSingle();
-      return data;
+      return { data, error };
     }
 
-    // Platform subscription: invoice.paid (renewal)
     if (event === 'invoice.paid') {
-      const subscriptionId = data.subscription as string;
-      if (subscriptionId) {
-        const platformSub = await findPlatformSubscription(subscriptionId);
+      // ── Step 1: Tri-state subscription classification ──
+      const subClass = classifyInvoiceSubscription(data);
+
+      if (subClass.type === 'malformed_or_conflicting') {
+        logger.error('[STRIPE WEBHOOK] Subscription classification failed:', subClass);
+        return NextResponse.json(
+          { error: `Subscription: ${subClass.error}` },
+          { status: 500 },
+        );
+      }
+
+      if (subClass.type === 'not_subscription') {
+        // Not a subscription invoice — skip recurring processing entirely.
+        // Falls through to normal event marking.
+        logger.info(`[STRIPE WEBHOOK] Non-subscription invoice.paid: ${subClass.reason}`);
+      }
+
+      if (subClass.type === 'subscription') {
+        const subscriptionId = subClass.subscriptionId;
+
+        // ── Step 2: Error-aware role resolution ──
+        const { data: platformSub, error: platformErr } = await findPlatformSubscription(subscriptionId);
+
+        if (platformErr) {
+          logger.error('[STRIPE WEBHOOK] Platform subscription lookup error:', platformErr);
+          return NextResponse.json({ error: 'Role resolution failed' }, { status: 500 });
+        }
+
+        const { data: customerSub, error: customerErr } = await supabase
+          .from('customer_subscriptions')
+          .select('*')
+          .eq('gateway_subscription_code', subscriptionId)
+          .eq('gateway', 'stripe')
+          .in('status', ['active', 'past_due'])
+          .maybeSingle();
+
+        if (customerErr) {
+          logger.error('[STRIPE WEBHOOK] Customer subscription lookup error:', customerErr);
+          return NextResponse.json({ error: 'Role resolution failed' }, { status: 500 });
+        }
+
+        // Conflict: both tables match the same subscription ID
+        if (platformSub && customerSub) {
+          logger.error('[STRIPE WEBHOOK] CONFLICT: subscription matches both platform and customer:', subscriptionId);
+          return NextResponse.json({ error: 'Ambiguous subscription role' }, { status: 500 });
+        }
+
         if (platformSub) {
+          // ── Platform subscription renewal (unchanged behavior) ──
           const periodStart = data.period_start
             ? new Date((data.period_start as number) * 1000).toISOString()
             : new Date().toISOString();
@@ -333,171 +370,120 @@ export async function POST(request: NextRequest) {
           }
 
           logger.info(`[STRIPE WEBHOOK] Platform subscription renewed: ${subscriptionId} for business ${platformSub.business_id}`);
-          invoicePaidHandled = true;
-        } else {
-          // Not a platform subscription — check if it's a customer recurring subscription
-          const { data: customerSub } = await supabase
-            .from('customer_subscriptions')
-            .select('*')
-            .eq('gateway_subscription_code', subscriptionId)
-            .eq('gateway', 'stripe')
-            .in('status', ['active', 'past_due'])
-            .maybeSingle();
+        } else if (customerSub) {
+          // ── Customer recurring: atomic finalization via RPC (#177) ──
 
-          if (customerSub) {
-            // Dedup: check if a payment with this gateway_reference already exists
-            const recurringRef = (data.payment_intent as string) || (data.id as string);
-            if (recurringRef) {
-              const { data: existingRecurring } = await supabase
-                .from('payments')
-                .select('id')
-                .eq('gateway_reference', recurringRef)
-                .eq('status', 'success')
-                .maybeSingle();
+          // Step 3: Validate invoice fields — reject malformed data before RPC
+          const stripeInvoiceId = data.id as string;
+          if (!stripeInvoiceId || typeof stripeInvoiceId !== 'string' || !stripeInvoiceId.startsWith('in_')) {
+            logger.error('[STRIPE RECURRING] Malformed invoice ID:', stripeInvoiceId);
+            return NextResponse.json({ error: 'Malformed invoice ID' }, { status: 500 });
+          }
 
-              if (existingRecurring) {
-                logger.info(`[STRIPE WEBHOOK] Skipping duplicate customer recurring charge: ${recurringRef}`);
-                invoicePaidHandled = true;
-                // Fall through to event marking at the bottom
-              }
-            }
+          const rawAmountPaid = data.amount_paid;
+          if (rawAmountPaid == null || typeof rawAmountPaid !== 'number' || !Number.isInteger(rawAmountPaid) || rawAmountPaid <= 0) {
+            logger.error('[STRIPE RECURRING] Malformed/missing amount_paid:', rawAmountPaid);
+            return NextResponse.json({ error: 'Malformed invoice amount' }, { status: 500 });
+          }
+          const invoiceAmountCents = rawAmountPaid;
 
-            if (!invoicePaidHandled) {
-            const chargeAmount = (data.amount_paid as number) / 100;
-            const now = new Date().toISOString();
+          const rawCurrency = data.currency;
+          if (!rawCurrency || typeof rawCurrency !== 'string' || rawCurrency.trim() === '') {
+            logger.error('[STRIPE RECURRING] Malformed/missing currency:', rawCurrency);
+            return NextResponse.json({ error: 'Malformed invoice currency' }, { status: 500 });
+          }
+          const invoiceCurrency = rawCurrency.toUpperCase();
 
-            // Create booking record for the recurring charge
-            const { data: booking } = await supabase
-              .from('bookings')
-              .insert({
-                business_id: customerSub.business_id,
-                user_id: customerSub.user_id,
-                service_id: customerSub.service_id,
-                date: new Date().toISOString().split('T')[0],
-                time: new Date().toTimeString().split(' ')[0].slice(0, 5),
-                party_size: 1,
-                flow_type: 'payment',
-                channel: 'recurring',
-                payment_source: 'subscription',
-                deposit_amount: chargeAmount,
-                deposit_status: 'paid',
-                status: 'confirmed',
-                total_amount: chargeAmount,
-                quantity: 1,
-                guest_name: customerSub.customer_name || '',
-                guest_phone: customerSub.customer_phone || '',
-                confirmed_at: now,
-                notes: `Recurring ${customerSub.frequency} charge (Stripe)`,
-              })
-              .select('id, reference_code')
-              .single();
+          // Extract payment identity (version-tolerant)
+          const paymentIdentity = extractInvoicePaymentIdentity(data, invoiceAmountCents, invoiceCurrency);
+          if ('error' in paymentIdentity) {
+            logger.error('[STRIPE RECURRING] Payment identity extraction failed:', paymentIdentity);
+            return NextResponse.json(
+              { error: `Unsupported invoice payment shape: ${paymentIdentity.error}` },
+              { status: 500 },
+            );
+          }
 
-            // Create payment record
-            const { data: stripePayment } = await supabase
-              .from('payments')
-              .insert({
-                business_id: customerSub.business_id,
-                user_id: customerSub.user_id,
-                booking_id: booking?.id || null,
-                amount: chargeAmount,
-                currency: customerSub.currency || 'USD',
-                gateway: 'stripe',
-                gateway_reference: (data.payment_intent as string) || (data.id as string),
-                status: 'success',
-                gateway_status: 'success',
-                payment_method: 'card',
-                card_last_four: customerSub.card_last_four,
-                card_brand: customerSub.card_brand,
-                paid_at: now,
-                metadata: { recurring: true, subscription_id: customerSub.id },
-              })
-              .select('id')
-              .single();
+          const { paymentIntentId } = paymentIdentity;
 
-            // Log the charge
-            await supabase.from('subscription_charges').insert({
-              subscription_id: customerSub.id,
-              business_id: customerSub.business_id,
-              user_id: customerSub.user_id,
-              amount: chargeAmount,
-              currency: customerSub.currency || 'USD',
-              status: 'success',
-              gateway: 'stripe',
-              gateway_reference: (data.payment_intent as string) || (data.id as string),
-              payment_id: stripePayment?.id || null,
-              booking_id: booking?.id || null,
-              charged_at: now,
+          // Step 4: Atomic finalization RPC
+          const { data: finResult, error: finErr } = await supabase.rpc(
+            'finalize_stripe_recurring_charge', {
+              p_subscription_id: customerSub.id,
+              p_stripe_invoice_id: stripeInvoiceId,
+              p_stripe_subscription_code: subscriptionId,
+              p_amount_cents: invoiceAmountCents,
+              p_currency: invoiceCurrency,
+              p_payment_intent_id: paymentIntentId,
             });
 
-            // Record platform fee
-            if (booking?.id) {
-              const { data: recBiz } = await supabase
-                .from('businesses')
-                .select('subscription_tier, trial_ends_at, payout_mode')
-                .eq('id', customerSub.business_id)
-                .single();
-
-              if (recBiz && recBiz.payout_mode !== 'direct_split') {
-                const recIsInTrial = new Date(recBiz.trial_ends_at) > new Date();
-                const recTier = (recBiz.subscription_tier || 'free') as SubscriptionTier;
-                const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(chargeAmount, recTier, recIsInTrial);
-
-                await supabase.from('platform_fees').insert({
-                  business_id: customerSub.business_id,
-                  booking_id: booking.id,
-                  transaction_amount: chargeAmount,
-                  fee_percentage: feePercentage,
-                  fee_flat: feeFlat,
-                  fee_total: feeTotal,
-                  tier: recTier,
-                });
-              }
-            }
-
-            // Update subscription stats
-            const nextCharge = new Date();
-            if (customerSub.frequency === 'weekly') {
-              nextCharge.setDate(nextCharge.getDate() + 7);
-            } else if (customerSub.frequency === 'yearly') {
-              nextCharge.setFullYear(nextCharge.getFullYear() + 1);
-            } else {
-              nextCharge.setMonth(nextCharge.getMonth() + 1);
-            }
-
-            await supabase
-              .from('customer_subscriptions')
-              .update({
-                charge_count: (customerSub.charge_count || 0) + 1,
-                total_charged: parseFloat(customerSub.total_charged || '0') + chargeAmount,
-                last_charged_at: now,
-                next_charge_at: nextCharge.toISOString(),
-                failure_count: 0,
-                status: 'active',
-              })
-              .eq('id', customerSub.id);
-
-            // Send confirmation
-            if (stripePayment) {
-              try {
-                await sendProactiveConfirmation(supabase, {
-                  id: stripePayment.id,
-                  amount: chargeAmount,
-                  booking_id: booking?.id || null,
-                  invoice_id: null,
-                  campaign_id: null,
-                  reservation_id: null,
-                  order_id: null,
-                }, '[STRIPE RECURRING]');
-              } catch (confirmErr) {
-                logger.error('[STRIPE RECURRING] Confirmation error:', confirmErr);
-              }
-            }
-
-            logger.info(`[STRIPE WEBHOOK] Customer recurring charge processed: ${subscriptionId}, amount: ${chargeAmount}`);
-            invoicePaidHandled = true;
-            } // end if (!invoicePaidHandled) dedup guard
+          // Transport/DB error → retryable 5xx
+          if (finErr) {
+            logger.error('[STRIPE RECURRING] Finalization RPC transport error:', finErr);
+            return NextResponse.json({ error: 'Finalization transport error' }, { status: 500 });
           }
+
+          // Missing/malformed result → retryable 5xx
+          if (!finResult || typeof finResult !== 'object') {
+            logger.error('[STRIPE RECURRING] Finalization returned malformed result:', finResult);
+            return NextResponse.json({ error: 'Finalization malformed result' }, { status: 500 });
+          }
+
+          // Accept only explicit success === true with boolean already_finalized
+          if (finResult.success !== true || typeof finResult.already_finalized !== 'boolean') {
+            logger.error('[STRIPE RECURRING] Finalization rejected or malformed:', finResult.reason ?? finResult);
+            return NextResponse.json(
+              { error: `Finalization rejected: ${finResult.reason ?? 'malformed_success'}` },
+              { status: 500 },
+            );
+          }
+
+          // Validate canonical fields before Stage 3
+          if (typeof finResult.payment_id !== 'string' ||
+              typeof finResult.booking_id !== 'string' ||
+              typeof finResult.booking_ref !== 'string' ||
+              typeof finResult.amount !== 'number' ||
+              typeof finResult.currency !== 'string') {
+            logger.error('[STRIPE RECURRING] Finalization missing canonical fields:', finResult);
+            return NextResponse.json({ error: 'Finalization incomplete canonical result' }, { status: 500 });
+          }
+
+          // ── Step 5: Stage 3 — runs on BOTH fresh and replay finalization ──
+          try {
+            const confirmResult = await sendProactiveConfirmation(supabase, {
+              id: finResult.payment_id,
+              amount: finResult.amount,
+              booking_id: finResult.booking_id,
+              invoice_id: null,
+              campaign_id: null,
+              reservation_id: null,
+              order_id: null,
+            }, '[STRIPE RECURRING]');
+
+            // Terminal outcomes: safe to mark event processed
+            if (confirmResult.status === 'completed' ||
+                confirmResult.status === 'already_completed' ||
+                confirmResult.status === 'not_deliverable') {
+              // Stage 3 terminal — proceed to event marking
+            } else {
+              // 'processing' or 'retryable_failed' — leave event retryable
+              logger.warn('[STRIPE RECURRING] Stage 3 not terminal:', confirmResult.status);
+              return NextResponse.json(
+                { error: 'Confirmation pending' },
+                { status: 500 },
+              );
+            }
+          } catch (confirmErr) {
+            logger.error('[STRIPE RECURRING] Stage 3 error:', confirmErr);
+            return NextResponse.json(
+              { error: 'Confirmation error' },
+              { status: 500 },
+            );
+          }
+
+          logger.info(`[STRIPE WEBHOOK] Customer recurring charge ${finResult.already_finalized ? 'replayed' : 'finalized'}: ${subscriptionId}, invoice: ${stripeInvoiceId}`);
         }
+        // else: no Waaiio-managed subscription match — skip safely (reads succeeded)
       }
     }
 
@@ -505,7 +491,7 @@ export async function POST(request: NextRequest) {
     if (event === 'invoice.payment_failed') {
       const subscriptionId = data.subscription as string;
       if (subscriptionId) {
-        const platformSub = await findPlatformSubscription(subscriptionId);
+        const { data: platformSub } = await findPlatformSubscription(subscriptionId);
         if (platformSub) {
           await supabase
             .from('subscriptions')
@@ -553,7 +539,7 @@ export async function POST(request: NextRequest) {
     if (event === 'customer.subscription.deleted') {
       const stripeSubId = data.id as string;
       if (stripeSubId) {
-        const platformSub = await findPlatformSubscription(stripeSubId);
+        const { data: platformSub } = await findPlatformSubscription(stripeSubId);
         if (platformSub) {
           await supabase
             .from('subscriptions')
@@ -610,7 +596,7 @@ export async function POST(request: NextRequest) {
       const stripeSubId = data.id as string;
       const stripeStatus = data.status as string;
       if (stripeSubId && stripeStatus) {
-        const platformSub = await findPlatformSubscription(stripeSubId);
+        const { data: platformSub } = await findPlatformSubscription(stripeSubId);
         if (platformSub) {
           const statusMap: Record<string, string> = {
             active: 'active',
@@ -626,214 +612,6 @@ export async function POST(request: NextRequest) {
               .eq('id', platformSub.id);
 
             logger.info(`[STRIPE WEBHOOK] Platform subscription status updated: ${stripeSubId} → ${mappedStatus}`);
-          }
-        }
-      }
-    }
-
-    // ── Recurring customer subscription events ──
-
-    // Stripe recurring invoice paid (skip if already handled by the platform subscription block above)
-    if (event === 'invoice.paid' && !invoicePaidHandled) {
-      const subscriptionId = data.subscription as string;
-      const amountPaid = (data.amount_paid as number) / 100; // cents to dollars
-      const currency = (data.currency as string)?.toUpperCase() || 'USD';
-      const invoiceGatewayRef = (data.payment_intent as string) || (data.id as string);
-
-      if (subscriptionId) {
-        // Dedup: check if a payment with this gateway_reference already exists (prevents double-charge on Stripe retries)
-        if (invoiceGatewayRef) {
-          const { data: existingPayment } = await supabase
-            .from('payments')
-            .select('id')
-            .eq('gateway_reference', invoiceGatewayRef)
-            .eq('status', 'success')
-            .maybeSingle();
-
-          if (existingPayment) {
-            logger.info(`[STRIPE WEBHOOK] Skipping duplicate recurring invoice.paid: ${invoiceGatewayRef}`);
-            // Still mark event as processed below, but skip creating records
-            if (eventId) {
-              await supabase
-                .from('processed_webhook_events')
-                .upsert(
-                  { event_id: `stripe-${eventId}`, gateway: 'stripe', event_type: `stripe_${event}`, processed_at: new Date().toISOString() },
-                  { onConflict: 'event_id', ignoreDuplicates: true },
-                );
-            }
-            return NextResponse.json({ received: true, duplicate: true });
-          }
-        }
-
-        // Check if subscription is paused — skip processing if so
-        const { data: pausedSub } = await supabase
-          .from('customer_subscriptions')
-          .select('id')
-          .eq('gateway_subscription_code', subscriptionId)
-          .eq('status', 'paused')
-          .maybeSingle();
-
-        if (pausedSub) {
-          logger.info(`[STRIPE WEBHOOK] Skipping charge for paused subscription: ${subscriptionId}`);
-        }
-
-        const { data: subs } = await supabase
-          .from('customer_subscriptions')
-          .select('*')
-          .eq('gateway_subscription_code', subscriptionId)
-          .in('status', ['active', 'past_due']); // NOT pending — unactivated subscriptions must not enter renewal processing
-
-        const sub = subs?.[0];
-        if (sub) {
-          const now = new Date().toISOString();
-
-          // Create booking record
-          const { data: booking } = await supabase
-            .from('bookings')
-            .insert({
-              business_id: sub.business_id,
-              user_id: sub.user_id,
-              service_id: sub.service_id,
-              date: new Date().toISOString().split('T')[0],
-              time: new Date().toTimeString().split(' ')[0].slice(0, 5),
-              party_size: 1,
-              flow_type: 'payment',
-              channel: 'recurring',
-              payment_source: 'subscription',
-              deposit_amount: amountPaid,
-              deposit_status: 'paid',
-              status: 'confirmed',
-              total_amount: amountPaid,
-              quantity: 1,
-              guest_name: sub.customer_name || '',
-              guest_phone: sub.customer_phone || '',
-              confirmed_at: now,
-              notes: `Recurring ${sub.frequency} charge`,
-            })
-            .select('id, reference_code')
-            .single();
-
-          // Create payment record
-          const { data: payment } = await supabase
-            .from('payments')
-            .insert({
-              business_id: sub.business_id,
-              user_id: sub.user_id,
-              booking_id: booking?.id || null,
-              amount: amountPaid,
-              currency,
-              gateway: 'stripe',
-              gateway_reference: (data.payment_intent as string) || (data.id as string),
-              status: 'success',
-              gateway_status: 'paid',
-              payment_method: 'card',
-              paid_at: now,
-              metadata: { recurring: true, subscription_id: sub.id },
-            })
-            .select('id')
-            .single();
-
-          // Fetch actual Stripe fee for recurring charge
-          let recurringGatewayFee = 0;
-          try {
-            const recurringPiId = (data.payment_intent as string);
-            if (recurringPiId && process.env.STRIPE_SECRET_KEY) {
-              const piRes = await fetch(
-                `https://api.stripe.com/v1/payment_intents/${recurringPiId}?expand[]=latest_charge.balance_transaction`,
-                {
-                  headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` },
-                  signal: AbortSignal.timeout(10000),
-                },
-              );
-              if (piRes.ok) {
-                const pi = await piRes.json();
-                const bt = pi.latest_charge?.balance_transaction;
-                if (bt && typeof bt === 'object' && bt.fee) {
-                  recurringGatewayFee = Math.round(bt.fee) / 100;
-                }
-              }
-            }
-          } catch (err) {
-            logger.withContext({ op: 'stripe-recurring.gateway-fee', ...safeLogErrorContext(err) }).warn('[STRIPE RECURRING] Failed to fetch gateway fee');
-          }
-
-          // Log subscription charge
-          await supabase.from('subscription_charges').insert({
-            subscription_id: sub.id,
-            business_id: sub.business_id,
-            user_id: sub.user_id,
-            amount: amountPaid,
-            currency,
-            status: 'success',
-            gateway: 'stripe',
-            gateway_reference: (data.payment_intent as string) || (data.id as string),
-            payment_id: payment?.id || null,
-            booking_id: booking?.id || null,
-            charged_at: now,
-          });
-
-          // Record platform fee for recurring payment
-          if (booking?.id) {
-            const { data: recBusiness } = await supabase
-              .from('businesses')
-              .select('subscription_tier, trial_ends_at, payout_mode')
-              .eq('id', sub.business_id)
-              .single();
-
-            if (recBusiness && recBusiness.payout_mode !== 'direct_split') {
-              const recIsInTrial = new Date(recBusiness.trial_ends_at) > new Date();
-              const recTier = (recBusiness.subscription_tier || 'free') as SubscriptionTier;
-              const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(amountPaid, recTier, recIsInTrial);
-
-              await supabase.from('platform_fees').insert({
-                business_id: sub.business_id,
-                booking_id: booking.id,
-                transaction_amount: amountPaid,
-                fee_percentage: feePercentage,
-                fee_flat: feeFlat,
-                fee_total: feeTotal,
-                gateway_fee: recurringGatewayFee,
-                tier: recTier,
-              });
-            }
-          }
-
-          // Update subscription totals
-          const nextCharge = new Date();
-          if (sub.frequency === 'weekly') {
-            nextCharge.setDate(nextCharge.getDate() + 7);
-          } else if (sub.frequency === 'yearly') {
-            nextCharge.setFullYear(nextCharge.getFullYear() + 1);
-          } else {
-            nextCharge.setMonth(nextCharge.getMonth() + 1);
-          }
-
-          await supabase
-            .from('customer_subscriptions')
-            .update({
-              charge_count: (sub.charge_count || 0) + 1,
-              total_charged: parseFloat(sub.total_charged || '0') + amountPaid,
-              last_charged_at: now,
-              next_charge_at: nextCharge.toISOString(),
-              failure_count: 0,
-            })
-            .eq('id', sub.id);
-
-          // Send WhatsApp + email confirmation to customer
-          if (payment) {
-            try {
-              await sendProactiveConfirmation(supabase, {
-                id: payment.id,
-                amount: amountPaid,
-                booking_id: booking?.id || null,
-                invoice_id: null,
-                campaign_id: null,
-                reservation_id: null,
-                order_id: null,
-              }, '[STRIPE RECURRING]');
-            } catch (confirmErr) {
-              logger.error('[STRIPE RECURRING] Confirmation error:', confirmErr);
-            }
           }
         }
       }
