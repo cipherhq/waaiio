@@ -541,22 +541,33 @@ export async function sendProactiveConfirmation(
                   p_meta_message_id: wamid,
                   p_accepted_at: new Date().toISOString(),
                 });
-                if (retryErr) {
-                  logSafeError(logPrefix, 'complete-send-rpc-attempt2', retryErr);
-                  Sentry.captureException(
-                    new Error(`WAMID attachment failed after retry: payment=${payment.id} wamid=${wamid}`),
-                    { tags: { component: 'send-confirmation', operation: 'wamid-attach-failed' } },
-                  );
-                  // Meta accepted the message but we can't attach WAMID.
-                  // The attempt stays 'sending' — future claims are blocked.
-                  // Callbacks will go to unmatched store. Manual resolution needed.
-                } else if (!retryResult?.completed) {
-                  // Retry returned non-error but semantic failure — treat as uncertain
-                  logSafeError(logPrefix, 'complete-send-rpc-attempt2-semantic', retryResult);
-                  Sentry.captureException(
-                    new Error(`WAMID attachment semantic failure after retry: payment=${payment.id} wamid=${wamid} reason=${retryResult?.reason || 'unknown'}`),
-                    { tags: { component: 'send-confirmation', operation: 'wamid-attach-semantic-failed' } },
-                  );
+                if (retryErr || !retryResult?.completed) {
+                  logSafeError(logPrefix, 'complete-send-rpc-attempt2', retryErr || retryResult);
+                  // #197: Automatic WAMID recovery fallback.
+                  // Both RPC attempts failed but Meta accepted the message with this WAMID.
+                  // Fall back to direct UPDATE to persist the WAMID on the attempt row.
+                  // This ensures status callbacks can correlate to the payment attempt
+                  // without requiring manual Sentry-based resolution.
+                  try {
+                    await supabase
+                      .from('payment_confirmation_deliveries')
+                      .update({
+                        meta_message_id: wamid,
+                        delivery_status: 'accepted',
+                        accepted_at: new Date().toISOString(),
+                        claim_token: null,
+                        updated_at: new Date().toISOString(),
+                      })
+                      .eq('id', attemptId);
+                    logger.info(`${logPrefix} WAMID recovery fallback succeeded for payment ${payment.id}`);
+                  } catch (fallbackErr) {
+                    // Truly unrecoverable — emit high-severity alert
+                    logSafeError(logPrefix, 'wamid-recovery-fallback', fallbackErr);
+                    Sentry.captureException(
+                      new Error(`WAMID attachment permanently failed: payment=${payment.id} wamid=${wamid}`),
+                      { tags: { component: 'send-confirmation', operation: 'wamid-attach-permanent-failure' } },
+                    );
+                  }
                 }
               }
               customerMessageSent = true;

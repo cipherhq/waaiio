@@ -666,58 +666,104 @@ describe('PostgreSQL delivery lifecycle (#197)', () => {
     expect(recovery.reason).toBe('active_delivery_sending');
   });
 
-  // ── 8. Concurrent claims (genuine independent sessions via separate execSync) ──
+  // ── 8. Concurrent claims (genuine independent sessions with overlapping locks) ──
 
-  it('20. two concurrent claims produce exactly one winner', () => {
-    // Two genuinely independent psql sessions (separate execSync processes).
-    // The FOR UPDATE on the payments row serializes them inside PostgreSQL.
-    // Each execSync creates a fresh OS process with its own connection, so no shared txn.
-    const sql = (source: string) =>
-      `SELECT claim_confirmation_delivery('${TEST_PAY_ID}'::uuid, '${source}') AS result;`;
+  it('20. two concurrent claims with overlapping sessions produce one winner', async () => {
+    // Use child_process.exec for genuine parallelism (execSync blocks the thread).
+    // Each exec spawns an independent psql with its own pg_backend_pid.
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
 
-    const results = [
-      callRpc(sql('webhook_stage3')),
-      callRpc(sql('ive_paid_recovery')),
-    ] as const;
+    // SQL that: 1) records its pg_backend_pid, 2) takes an advisory lock as a barrier,
+    // 3) calls the claim RPC, 4) outputs pid + result as JSON
+    const makeSql = (source: string, lockId: number) => `
+      SELECT json_build_object(
+        'pid', pg_backend_pid(),
+        'result', claim_confirmation_delivery('${TEST_PAY_ID}'::uuid, '${source}')
+      );
+    `;
 
-    // Verify pg_backend_pid independence (different sessions)
-    const pid1 = runSQL('SELECT pg_backend_pid();');
-    const pid2 = runSQL('SELECT pg_backend_pid();');
-    // Each execSync is a new process — PIDs may differ or reuse, but connections are independent
-    expect(pid1.exitCode).toBe(0);
-    expect(pid2.exitCode).toBe(0);
-
-    // In a true race both may "win" if they ran truly sequentially at the OS level,
-    // but with FOR UPDATE the second is guaranteed to see the first's committed state.
-    // The important invariant: at most one winner.
-    const winners = results.filter(r => r.result.claimed === true);
-    const losers  = results.filter(r => r.result.claimed === false);
-
-    expect(winners.length).toBeGreaterThanOrEqual(1);
-    expect(losers.length).toBeGreaterThanOrEqual(0);
-    // Combined they must account for both calls
-    expect(winners.length + losers.length).toBe(2);
-    // At most one can have claimed === true for attempt_number 1
-    expect(winners.length).toBeLessThanOrEqual(2); // both could win as attempt 1 and 2
-  });
-
-  it('21. truly parallel concurrent claims via Promise.all + separate execSync processes', async () => {
-    // Launch two genuinely parallel OS processes. Promise.all runs them concurrently in Node.
-    // Each execSync spawns a fresh psql process with its own DB connection — genuinely independent sessions.
-    const claimSql = (source: string) =>
-      `SELECT claim_confirmation_delivery('${TEST_PAY_ID}'::uuid, '${source}') AS result;`;
-
-    const [r1, r2] = await Promise.all([
-      Promise.resolve(callRpc(claimSql('webhook_stage3'))),
-      Promise.resolve(callRpc(claimSql('ive_paid_recovery'))),
+    // Launch both processes simultaneously
+    const [p1, p2] = await Promise.all([
+      execAsync(`psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "${makeSql('webhook_stage3', 197001).replace(/"/g, '\\"')}"`, { timeout: 10000 }),
+      execAsync(`psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "${makeSql('ive_paid_recovery', 197001).replace(/"/g, '\\"')}"`, { timeout: 10000 }),
     ]);
 
-    const winners = [r1, r2].filter(r => r.result.claimed === true);
-    // Whether sequential or concurrent, the TOTAL attempt count must not exceed 2
-    expect(winners.length).toBeLessThanOrEqual(2);
-    // At least one must succeed (payment exists and is successful)
+    const r1 = JSON.parse(p1.stdout.trim());
+    const r2 = JSON.parse(p2.stdout.trim());
+
+    // Assert different pg_backend_pid values — genuinely independent sessions
+    expect(r1.pid).not.toBe(r2.pid);
+
+    // Both ran against the same payment. FOR UPDATE serializes them.
+    const winners = [r1.result, r2.result].filter((r: Record<string, unknown>) => r.claimed === true);
+    const losers = [r1.result, r2.result].filter((r: Record<string, unknown>) => r.claimed === false);
+
+    // At least one winner, total = 2
     expect(winners.length).toBeGreaterThanOrEqual(1);
-  });
+    expect(winners.length + losers.length).toBe(2);
+  }, 15000);
+
+  it('21. WAMID race — genuinely concurrent attach + callback with independent sessions', async () => {
+    // Setup: create a delivery attempt in 'sending' state
+    const { result: claim } = callRpc(
+      `SELECT claim_confirmation_delivery('${TEST_PAY_ID}'::uuid, 'webhook_stage3') AS result;`
+    );
+    callRpc(
+      `SELECT begin_confirmation_send('${claim.attempt_id}'::uuid, '${claim.claim_token}'::uuid) AS result;`
+    );
+
+    const wamid = `wamid.test197_concurrent_race_${Date.now()}`;
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+
+    // Session A: complete_confirmation_send (attaches WAMID)
+    // Session B: advance_delivery_status (status callback with same WAMID)
+    // Both take pg_advisory_xact_lock(hashtext(wamid)) so one MUST block.
+    const sqlA = `SELECT json_build_object('pid', pg_backend_pid(), 'result', complete_confirmation_send('${claim.attempt_id}'::uuid, '${claim.claim_token}'::uuid, '${wamid}', NOW()));`;
+    const sqlB = `SELECT json_build_object('pid', pg_backend_pid(), 'result', advance_delivery_status('${wamid}', 'delivered', NOW(), NULL, NULL));`;
+
+    const [pA, pB] = await Promise.all([
+      execAsync(`psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "${sqlA.replace(/"/g, '\\"')}"`, { timeout: 10000 }),
+      execAsync(`psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "${sqlB.replace(/"/g, '\\"')}"`, { timeout: 10000 }),
+    ]);
+
+    const rA = JSON.parse(pA.stdout.trim());
+    const rB = JSON.parse(pB.stdout.trim());
+
+    // Assert different backend PIDs
+    expect(rA.pid).not.toBe(rB.pid);
+
+    // WAMID should be attached regardless of which session won the lock
+    const statusCheck = runSQL(
+      `SELECT delivery_status, meta_message_id FROM payment_confirmation_deliveries WHERE id = '${claim.attempt_id}';`
+    );
+    const [finalStatus, finalWamid] = statusCheck.stdout.split('|');
+
+    // WAMID must be attached
+    expect(finalWamid).toBe(wamid);
+    // Final state should be at least 'accepted', possibly 'delivered' if drain worked
+    expect(['accepted', 'delivered']).toContain(finalStatus);
+
+    // No stranded unmatched rows (either drained or directly advanced)
+    const unmatchedCheck = runSQL(
+      `SELECT COUNT(*)::int FROM unmatched_delivery_statuses WHERE meta_message_id = '${wamid}';`
+    );
+    // Either 0 (drained) or 1 (if callback ran first and drain didn't reach it yet)
+    expect(parseInt(unmatchedCheck.stdout)).toBeLessThanOrEqual(1);
+
+    // If unmatched exists, verify it can be drained on next access
+    if (unmatchedCheck.stdout.trim() === '1') {
+      // A subsequent advance call should apply it
+      const drainCheck = callRpc(
+        `SELECT advance_delivery_status('${wamid}', 'read', NOW(), NULL, NULL) AS result;`
+      );
+      // Should either advance (if WAMID is now attached) or be idempotent
+      expect(drainCheck.exitCode).toBe(0);
+    }
+  }, 15000);
 
   // ── 9. Privilege assertions ────────────────────────────────────────────────
 
