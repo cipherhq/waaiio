@@ -185,10 +185,9 @@ export async function POST(request: NextRequest) {
   }
 
   if (!messageId) {
-    // No WAMID = no trackable send. Finalize as failed.
-    await service.rpc('finalize_winner_contact_send', {
-      p_contact_id: contactId, p_status: 'failed', p_provider_message_id: null,
-    });
+    // No WAMID = ambiguous provider outcome (Meta may have accepted/sent the message).
+    // Do NOT finalize as 'failed' — leave the claim as 'pending' so it remains
+    // cooldown-eligible and prevents an immediate duplicate send.
     return NextResponse.json({ error: 'Send succeeded but no provider message ID received' }, { status: 502 });
   }
 

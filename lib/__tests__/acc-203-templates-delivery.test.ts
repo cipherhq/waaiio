@@ -407,8 +407,8 @@ describe('Contact Winner', () => {
     expect(res.status).toBe(401);
   });
 
-  it('missing messageId -> finalize(failed), error response', async () => {
-    // sendTemplate returns no messageId
+  it('missing messageId -> claim stays pending (cooldown-eligible), no finalize, error response', async () => {
+    // sendTemplate resolves but returns no messageId — ambiguous outcome
     const sendFn = vi.fn().mockResolvedValue({ messageId: undefined });
     mockResolvedChannel = {
       channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
@@ -417,12 +417,53 @@ describe('Contact Winner', () => {
         { name: 'promo_winner_status_v1', language: 'en_US', status: 'APPROVED' },
       ] }) },
     };
+    mockServiceRpc.mockClear();
     const res = await callContact();
     expect(res.status).toBe(502);
     const json = await res.json();
     expect(json.error).toContain('no provider message ID');
     expect(json.sent).toBeUndefined();
-    // finalize should have been called with 'failed'
+    // finalize should NOT have been called — claim stays pending
+    const finalizeCalls = mockServiceRpc.mock.calls.filter((c: unknown[]) => c[0] === 'finalize_winner_contact_send');
+    expect(finalizeCalls.length).toBe(0);
+  });
+
+  it('missing-WAMID claim prevents immediate retry (cooldown protection)', async () => {
+    // After a missing-WAMID attempt, the pending claim row prevents another send
+    // First attempt: missing WAMID (claim stays pending)
+    const sendFn = vi.fn().mockResolvedValue({ messageId: undefined });
+    mockResolvedChannel = {
+      channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: vi.fn().mockResolvedValue({ data: [
+        { name: 'promo_winner_status_v1', language: 'en_US', status: 'APPROVED' },
+      ] }) },
+    };
+    const res1 = await callContact();
+    expect(res1.status).toBe(502);
+
+    // Second attempt: claim RPC returns cooldown because pending row exists
+    mockClaimContactResult = { data: { success: false, reason: 'cooldown', minutes: 10 }, error: null };
+    const res2 = await callContact();
+    expect(res2.status).toBe(429);
+    // sendTemplate should NOT have been called on the second attempt
+    expect(sendFn).toHaveBeenCalledTimes(1); // only the first attempt
+  });
+
+  it('definite thrown provider failure still finalizes as failed', async () => {
+    // sendTemplate throws (definite failure) — finalize as failed, allowing future retry
+    const sendFn = vi.fn().mockRejectedValue(new Error('Meta API error'));
+    mockResolvedChannel = {
+      channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: vi.fn().mockResolvedValue({ data: [
+        { name: 'promo_winner_status_v1', language: 'en_US', status: 'APPROVED' },
+      ] }) },
+    };
+    mockServiceRpc.mockClear();
+    const res = await callContact();
+    expect(res.status).toBe(503);
+    // finalize SHOULD have been called with 'failed' for definite errors
     const finalizeCalls = mockServiceRpc.mock.calls.filter((c: unknown[]) => c[0] === 'finalize_winner_contact_send');
     expect(finalizeCalls.length).toBeGreaterThanOrEqual(1);
     const lastFinalize = finalizeCalls[finalizeCalls.length - 1];
