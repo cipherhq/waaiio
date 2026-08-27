@@ -270,11 +270,12 @@ describe.skipIf(!canRun)('ACC-203 DB: Delivery lifecycle', () => {
   describe('historical migration: sent_at backfill', () => {
     it('historical delivered_at migrated to sent_at with exact timestamp', () => {
       // Create a row that simulates pre-345 state: delivery_status='sent', delivered_at set, sent_at NULL
-      const testId = '00000000-0000-4000-a203-hist00000001';
+      const testId = '00000000-0000-4000-a203-a00000000001';
       const timestamp = '2026-08-01T12:00:00Z';
 
       psql(`
         DELETE FROM promo_pickup_verifications WHERE id = '${testId}';
+        DELETE FROM promo_pickup_verifications WHERE redemption_id = '${RED_ID}';
         INSERT INTO promo_pickup_verifications (id, business_id, redemption_id, phone_e164, token_hmac, expires_at, delivery_status, delivered_at, sent_at)
         VALUES ('${testId}', '${BIZ_ID}', '${RED_ID}', '+2348012345678', 'hmac_hist', now() + interval '10 minutes', 'sent', '${timestamp}'::timestamptz, NULL);
       `);
@@ -400,17 +401,23 @@ describe.skipIf(!canRun)('ACC-203 DB: Delivery lifecycle', () => {
     it('duplicate provider_message_id on promo_pickup_verifications is rejected', () => {
       const wamid = 'wamid.pickup_dup_203';
       const redId2 = '00000000-0000-4000-d203-aaaaaaaaaaab';
+      const codeId2 = '00000000-0000-4000-e203-aaaaaaaaaaab';
       psql(`
         DELETE FROM promo_pickup_verifications WHERE provider_message_id = '${wamid}';
-        DELETE FROM promo_pickup_verifications WHERE redemption_id = '${redId2}';
+        DELETE FROM promo_pickup_verifications WHERE redemption_id IN ('${RED_ID}', '${redId2}');
+        DELETE FROM promo_redemptions WHERE id = '${redId2}';
+        DELETE FROM promo_campaign_codes WHERE id = '${codeId2}';
+        -- Second code for second redemption (avoids uq_promo_redemption_code)
+        INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+        VALUES ('${codeId2}', '${BIZ_ID}', '${CAMP_ID}', '${BATCH_ID}', 'hash_test203b', 'enc_203b', '0204', 'winner', '${PRIZE_ID}', 'claimed')
+        ON CONFLICT (id) DO NOTHING;
         INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
-        VALUES ('${redId2}', '${BIZ_ID}', '${CAMP_ID}', '${CODE_ID}', '+2348012345679', 'winner', 'WAA-203T-EST1-0002', 'pending', 'secure_pickup', 'phone_verified')
+        VALUES ('${redId2}', '${BIZ_ID}', '${CAMP_ID}', '${codeId2}', '+2348012345679', 'winner', 'WAA-203T-EST1-0002', 'pending', 'secure_pickup', 'phone_verified')
         ON CONFLICT (id) DO UPDATE SET verification_status = 'phone_verified', fulfillment_status = 'pending';
       `);
 
       // First insert with redemption RED_ID
       psql(`
-        DELETE FROM promo_pickup_verifications WHERE redemption_id = '${RED_ID}';
         INSERT INTO promo_pickup_verifications (business_id, redemption_id, phone_e164, token_hmac, expires_at, delivery_status, provider_message_id, sent_at)
         VALUES ('${BIZ_ID}', '${RED_ID}', '+2348012345678', 'hmac_dup1', now() + interval '10 minutes', 'sent', '${wamid}', now());
       `);
@@ -426,6 +433,7 @@ describe.skipIf(!canRun)('ACC-203 DB: Delivery lifecycle', () => {
       psql(`
         DELETE FROM promo_pickup_verifications WHERE provider_message_id = '${wamid}';
         DELETE FROM promo_redemptions WHERE id = '${redId2}';
+        DELETE FROM promo_campaign_codes WHERE id = '${codeId2}';
       `);
     });
   });
