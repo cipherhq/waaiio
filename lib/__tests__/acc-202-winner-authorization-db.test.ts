@@ -165,35 +165,70 @@ describe.skipIf(!canRun)('ACC-202 DB: Fulfillment audit + privileges', () => {
   });
 
   it('fulfillment audit failure rolls back the entire transition', () => {
-    // Reset redemption to pending
-    psql(`UPDATE promo_redemptions SET fulfillment_status = 'pending', updated_at = now() WHERE id = '${RED_ID}'`);
+    // Reset redemption to known baseline
+    psql(`UPDATE promo_redemptions SET
+      fulfillment_status = 'pending',
+      fulfillment_reference = NULL,
+      fulfillment_notes = NULL,
+      fulfilled_at = NULL,
+      fulfilled_by = NULL,
+      updated_at = now()
+    WHERE id = '${RED_ID}'`);
     psql(`DELETE FROM admin_audit_logs WHERE entity_id = '${RED_ID}'`);
 
-    // 1. Add a blocking CHECK constraint on admin_audit_logs
-    psql(`ALTER TABLE admin_audit_logs ADD CONSTRAINT temp_block_audit_202 CHECK (false)`);
+    // Create a targeted trigger that only blocks fulfillment audit for this specific redemption
+    psql(`
+      CREATE OR REPLACE FUNCTION temp_block_fulfillment_audit_202()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        IF NEW.action = 'promotions.fulfillment_transition' AND NEW.entity_id = '${RED_ID}'::uuid THEN
+          RAISE EXCEPTION 'Injected audit failure for rollback test';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+
+      CREATE TRIGGER trg_temp_block_fulfillment_audit_202
+        BEFORE INSERT ON admin_audit_logs
+        FOR EACH ROW EXECUTE FUNCTION temp_block_fulfillment_audit_202();
+    `);
 
     try {
-      // 2. Attempt fulfillment transition (should fail because audit INSERT hits CHECK)
+      // Attempt fulfillment transition with values that would change all fields
       const result = psqlMayFail(`
         SELECT transition_promo_fulfillment(
           '${BIZ_ID}'::uuid, '${RED_ID}'::uuid, 'processing',
-          '${USER_ID}'::uuid, NULL, NULL
+          '${USER_ID}'::uuid, 'REF-TEST-202', 'Test notes for rollback'
         );
       `);
 
-      // 3. RPC should have errored
+      // RPC should have errored (trigger blocked the audit INSERT)
       expect(result.ok).toBe(false);
+      expect(result.output).toContain('Injected audit failure');
 
-      // 4. Fulfillment status must still be 'pending' (rolled back)
+      // All five fields must remain exactly at baseline (transaction rolled back)
       const status = psql(`SELECT fulfillment_status FROM promo_redemptions WHERE id = '${RED_ID}'`);
       expect(status).toBe('pending');
 
-      // 5. No audit row should exist
+      const ref = psql(`SELECT COALESCE(fulfillment_reference, 'NULL') FROM promo_redemptions WHERE id = '${RED_ID}'`);
+      expect(ref).toBe('NULL');
+
+      const notes = psql(`SELECT COALESCE(fulfillment_notes, 'NULL') FROM promo_redemptions WHERE id = '${RED_ID}'`);
+      expect(notes).toBe('NULL');
+
+      const fulfilledAt = psql(`SELECT COALESCE(fulfilled_at::text, 'NULL') FROM promo_redemptions WHERE id = '${RED_ID}'`);
+      expect(fulfilledAt).toBe('NULL');
+
+      const fulfilledBy = psql(`SELECT COALESCE(fulfilled_by::text, 'NULL') FROM promo_redemptions WHERE id = '${RED_ID}'`);
+      expect(fulfilledBy).toBe('NULL');
+
+      // Zero matching audit rows
       const auditCount = psql(`SELECT count(*)::int FROM admin_audit_logs WHERE entity_id = '${RED_ID}'`);
       expect(auditCount).toBe('0');
     } finally {
-      // 6. Clean up constraint
-      psql(`ALTER TABLE admin_audit_logs DROP CONSTRAINT IF EXISTS temp_block_audit_202`);
+      // Clean up trigger and function
+      psql(`DROP TRIGGER IF EXISTS trg_temp_block_fulfillment_audit_202 ON admin_audit_logs`);
+      psql(`DROP FUNCTION IF EXISTS temp_block_fulfillment_audit_202()`);
     }
   });
 });

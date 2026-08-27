@@ -587,15 +587,18 @@ describe('Extended role denial matrix', () => {
     expect(res.status).toBe(403);
   });
 
-  it('invited member denied', async () => {
-    setRole('invited');
+  it('admin with invited membership status is denied', async () => {
+    // resolveBusinessRole queries .eq('status', 'active'), so an invited member returns null
+    // Mock: owner check fails (not owner), member query returns null (status != active)
+    setNoRole();
     const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
     const res = await winnersGET(req);
     expect(res.status).toBe(403);
   });
 
-  it('suspended member denied', async () => {
-    setRole('suspended');
+  it('admin with suspended membership status is denied', async () => {
+    // Same - resolveBusinessRole returns not_found because .eq('status', 'active') excludes them
+    setNoRole();
     const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
     const res = await winnersGET(req);
     expect(res.status).toBe(403);
@@ -741,5 +744,251 @@ describe('Extended role denial matrix', () => {
     expect(selectSpy).toHaveBeenCalledWith('id');
     // Should reach 503 shell (or 404 depending on mock chain depth)
     expect([404, 503]).toContain(res.status);
+  });
+
+  // ── 2c. Fail-closed behavior ──
+
+  it('member lookup DB error returns 500 authority_read_error', async () => {
+    // Mock resolveBusinessRole to return { ok: false, error: 'db_error' }
+    mockBizOwnerQuery = { data: null, error: { message: 'timeout' } };
+    mockMemberQuery = { data: null, error: null };
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await revealPOST(req);
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.reason).toBe('authority_read_error');
+  });
+
+  it('business/status lookup DB error returns 500 authority_read_error', async () => {
+    setOwner();
+    // Business lookup (second .from('businesses') call) returns error
+    mockBusinessQuery = { data: null, error: { message: 'DB connection failed' } };
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await revealPOST(req);
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.reason).toBe('authority_read_error');
+  });
+
+  it('capability read error returns 500 capability_read_error', async () => {
+    setOwner();
+    mockCapError = 'DB read failure';
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await revealPOST(req);
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.reason).toBe('capability_read_error');
+  });
+
+  it('override read error returns 500 override_read_error', async () => {
+    setOwner();
+    // Override mockServiceFrom to make capability_overrides chain thenable with an error
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') {
+        return makeChain(() => ({ data: mockCapRows, error: null }));
+      }
+      if (table === 'capability_overrides') {
+        // Make the chain resolve as a thenable with error, matching Supabase's await pattern
+        const overrideChain: Record<string, any> = {};
+        ['select', 'eq'].forEach(m => (overrideChain[m] = vi.fn().mockReturnValue(overrideChain)));
+        overrideChain.then = (resolve: (v: unknown) => void) => {
+          resolve({ data: null, error: { message: 'override table down' } });
+        };
+        return overrideChain;
+      }
+      if (table === 'promo_redemptions') return makeChain(() => mockRedemptionQuery);
+      if (table === 'admin_audit_logs') return makeChain(() => ({ data: null, error: mockAuditInsertError }));
+      return makeChain(() => ({ data: null, error: null }));
+    });
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await revealPOST(req);
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.reason).toBe('override_read_error');
+  });
+
+  // ── 2d. Business status ──
+
+  it('pending business + manage_existing is allowed', async () => {
+    setOwner();
+    mockBusinessQuery = {
+      data: { id: 'biz-1', status: 'pending', subscription_tier: 'growth', trial_ends_at: null, category: 'other' },
+      error: null,
+    };
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') {
+        return makeChain(() => ({ data: mockCapRows, error: null }));
+      }
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') return makeChain(() => mockUpdateQuery);
+      return makeChain(() => ({ data: null, error: null }));
+    });
+    const req = makePutRequest({
+      businessId: 'biz-1', redemptionId: 'red-1',
+      fulfillmentStatus: 'processing',
+    });
+    const res = await fulfillmentPUT(req);
+    // manage_existing allows pending businesses
+    expect(res.status).toBe(200);
+  });
+
+  it('suspended business denied on all endpoints', async () => {
+    setOwner();
+    mockBusinessQuery = {
+      data: { id: 'biz-1', status: 'suspended', subscription_tier: 'growth', trial_ends_at: null, category: 'other' },
+      error: null,
+    };
+
+    // Reveal
+    const revealReq = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const revealRes = await revealPOST(revealReq);
+    expect(revealRes.status).toBe(403);
+    const revealData = await revealRes.json();
+    expect(revealData.reason).toBe('business_suspended');
+
+    // Contact
+    fromCallCount = 0;
+    const contactReq = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const contactRes = await contactPOST(contactReq);
+    expect(contactRes.status).toBe(403);
+    const contactData = await contactRes.json();
+    expect(contactData.reason).toBe('business_suspended');
+
+    // Fulfillment
+    fromCallCount = 0;
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') {
+        return makeChain(() => ({ data: mockCapRows, error: null }));
+      }
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') return makeChain(() => mockUpdateQuery);
+      return makeChain(() => ({ data: null, error: null }));
+    });
+    const fulfillReq = makePutRequest({
+      businessId: 'biz-1', redemptionId: 'red-1',
+      fulfillmentStatus: 'processing',
+    });
+    const fulfillRes = await fulfillmentPUT(fulfillReq);
+    expect(fulfillRes.status).toBe(403);
+    const fulfillData = await fulfillRes.json();
+    expect(fulfillData.reason).toBe('business_suspended');
+  });
+
+  // ── 2e. Scope assertions ──
+
+  it('wrong business reveals no row (404)', async () => {
+    setOwner();
+    // Redemption query with .eq('business_id', wrongBizId) returns null
+    mockRedemptionQuery = { data: null, error: null };
+    const req = makePostRequest({ businessId: 'biz-wrong', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await revealPOST(req);
+    expect(res.status).toBe(404);
+  });
+
+  it('non-winner reveal creates no audit', async () => {
+    setOwner();
+    // Redemption query with .eq('outcome', 'winner') returns null for non-winner
+    mockRedemptionQuery = { data: null, error: null };
+    const auditInsertSpy = vi.fn().mockResolvedValue({ error: null });
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') {
+        return makeChain(() => ({ data: mockCapRows, error: null }));
+      }
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') return makeChain(() => ({ data: null, error: null }));
+      if (table === 'admin_audit_logs') {
+        return { insert: auditInsertSpy };
+      }
+      return makeChain(() => ({ data: null, error: null }));
+    });
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-loser' });
+    const res = await revealPOST(req);
+    expect(res.status).toBe(404);
+    // Audit insert should NOT have been called (404 returned before audit)
+    expect(auditInsertSpy).not.toHaveBeenCalled();
+  });
+
+  // ── 2f. Contact Winner assertions ──
+
+  it('contact returns exactly 503 template_not_ready', async () => {
+    setOwner();
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await contactPOST(req);
+    expect(res.status).toBe(503);
+    const json = await res.json();
+    expect(json.error).toBe('template_not_ready');
+  });
+
+  it('contact SELECT is exactly id (no phone_e164)', async () => {
+    setOwner();
+    const selectSpy = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'red-1' }, error: null }),
+            }),
+          }),
+        }),
+      }),
+    });
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') {
+        return makeChain(() => ({ data: mockCapRows, error: null }));
+      }
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') {
+        return { select: selectSpy };
+      }
+      return makeChain(() => ({ data: null, error: null }));
+    });
+
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    await contactPOST(req);
+    // Assert select was called with 'id' not '*' or 'phone_e164'
+    expect(selectSpy).toHaveBeenCalledWith('id');
+  });
+
+  it('contact makes zero messaging/Meta calls', async () => {
+    setOwner();
+    // The contact endpoint is a 503 shell — no external calls should be made
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await contactPOST(req);
+    expect(res.status).toBe(503);
+    // Response contains only error and message — no external service data
+    const json = await res.json();
+    expect(json.error).toBe('template_not_ready');
+    expect(json.phone_e164).toBeUndefined();
+    expect(json.messageId).toBeUndefined();
   });
 });

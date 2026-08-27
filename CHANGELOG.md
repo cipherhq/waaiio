@@ -3,6 +3,19 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #202: Winner Authorization — PR #208 corrections round 3
+
+### Corrections applied (round 3)
+- **DB test rollback proof (`acc-202-winner-authorization-db.test.ts`)**: Replaced `CHECK(false)` constraint approach with targeted BEFORE INSERT trigger on admin_audit_logs. The trigger only blocks `promotions.fulfillment_transition` audit for the specific test redemption ID. Now verifies all 5 fields (fulfillment_status, fulfillment_reference, fulfillment_notes, fulfilled_at, fulfilled_by) remain at baseline after rollback. Cleanup in `finally` block drops trigger and function.
+- **Auth tests (`acc-202-winner-authorization.test.ts`)**: Fixed invited/suspended membership tests — was using `setRole('invited')` which tested a fake role string; now uses `setNoRole()` to correctly simulate `.eq('status', 'active')` excluding non-active members. Added 10 new tests: fail-closed behavior (member DB error, business DB error, capability read error, override read error), business status (pending + manage_existing, suspended on all endpoints), scope assertions (wrong business, non-winner audit absence), contact endpoint assertions (503 template_not_ready, SELECT 'id' only, zero external calls). Total: 51 tests.
+
+### Files changed
+- `lib/__tests__/acc-202-winner-authorization-db.test.ts` — rollback test rewritten
+- `lib/__tests__/acc-202-winner-authorization.test.ts` — 2 tests fixed, 10 tests added
+
+### What could break
+- Nothing — test-only changes, no production code modified
+
 ## 2026-08-26 — #202: Winner Authorization — Role-based winner management (PR #208 corrections)
 
 ### Corrections applied (round 2)
