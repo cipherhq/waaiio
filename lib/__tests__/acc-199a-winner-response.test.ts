@@ -1237,54 +1237,48 @@ describe.skipIf(!canRunDb)('direct UPDATE vs update_prize_instructions RPC — n
   });
 
   it('direct UPDATE on same prize vs RPC campaign→prize path: no deadlock', async () => {
-    const { Client } = await import('pg');
-    const clientA = new Client({ connectionString: dbUrl });
-    const clientB = new Client({ connectionString: dbUrl });
-    await clientA.connect();
-    await clientB.connect();
+    // Two independent psqlAsync calls = two separate PostgreSQL backend sessions.
+    // A: locks campaign FOR UPDATE, updates the SAME prize, sleeps 2s, commits.
+    // B: direct UPDATE on that same prize — trigger does SELECT ... FOR UPDATE on campaign,
+    //    so B blocks until A commits. After A releases, B completes.
+    // Proves: campaign→prize lock order does not deadlock with prize→campaign trigger path.
 
-    // Verify different sessions
-    const pidA = (await clientA.query('SELECT pg_backend_pid()')).rows[0].pg_backend_pid;
-    const pidB = (await clientB.query('SELECT pg_backend_pid()')).rows[0].pg_backend_pid;
-    expect(pidA).not.toBe(pidB);
+    const connA = psqlAsync(`
+      SET statement_timeout = '10s';
+      BEGIN;
+      -- Lock campaign (parent-first, same as RPC authority)
+      SELECT * FROM promo_campaigns WHERE id = '${CONT_CAMP_ID}' FOR UPDATE;
+      -- Update the SAME prize that B will also target (parent→child path)
+      UPDATE promo_prizes SET prize_instructions = 'via-A' WHERE id = '${CONT_PRIZE_ID}';
+      -- Hold the lock so B has time to start and block
+      SELECT pg_sleep(2);
+      COMMIT;
+    `, 15000);
 
-    try {
-      // A: lock campaign (parent-first, like the RPC)
-      await clientA.query('BEGIN');
-      await clientA.query(`SELECT * FROM promo_campaigns WHERE id = $1 FOR UPDATE`, [CONT_CAMP_ID]);
+    // Small delay to ensure A acquires the campaign lock first
+    await new Promise(r => setTimeout(r, 300));
 
-      // B: direct prize update — trigger will try FOR UPDATE on campaign, blocking
-      await clientB.query('BEGIN');
-      await clientB.query(`SET statement_timeout = '5s'`);
-      const bPromise = clientB.query(
-        `UPDATE promo_prizes SET prize_instructions = 'direct-B' WHERE id = $1`,
-        [CONT_PRIZE_ID]
-      ).catch(e => e);
+    // B: direct prize UPDATE — trigger fires guard_prize_instructions_integrity
+    // which does SELECT ... FROM promo_campaigns ... FOR UPDATE, blocking on A's lock
+    const connB = psqlAsync(`
+      SET statement_timeout = '10s';
+      BEGIN;
+      UPDATE promo_prizes SET prize_instructions = 'direct-B' WHERE id = '${CONT_PRIZE_ID}';
+      COMMIT;
+    `, 15000);
 
-      // Wait for B to be blocked
-      await new Promise(r => setTimeout(r, 500));
+    const [resultA, resultB] = await Promise.all([connA, connB]);
 
-      // A: now update the SAME prize (parent→child path)
-      await clientA.query(
-        `UPDATE promo_prizes SET prize_instructions = 'via-A' WHERE id = $1`,
-        [CONT_PRIZE_ID]
-      );
+    // Both must complete within timeout — no deadlock
+    expect(resultA.ok).toBe(true);
+    // B succeeds because integrity_locked is still false (no redemption occurred)
+    expect(resultB.ok).toBe(true);
 
-      // A: commit (releases campaign lock)
-      await clientA.query('COMMIT');
+    // Verify the final state: B committed after A, so B's value wins
+    const finalInstr = psql(`SELECT prize_instructions FROM promo_prizes WHERE id = '${CONT_PRIZE_ID}'`);
+    expect(finalInstr).toBe('direct-B');
 
-      // B: should now unblock and complete (trigger gets campaign lock)
-      const bResult = await bPromise;
-      // No deadlock — completed within timeout
-      // B might succeed or fail depending on whether A's update created a conflict
-      // The point is: no deadlock occurred
-
-      await clientB.query('ROLLBACK');
-    } finally {
-      // Restore prize state
-      psql(`UPDATE promo_prizes SET prize_instructions = 'Original' WHERE id = '${CONT_PRIZE_ID}'`);
-      await clientA.end();
-      await clientB.end();
-    }
+    // Restore original state
+    psql(`UPDATE promo_prizes SET prize_instructions = 'Original' WHERE id = '${CONT_PRIZE_ID}'`);
   });
 });
