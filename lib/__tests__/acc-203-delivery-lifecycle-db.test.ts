@@ -11,7 +11,7 @@
  * Skips gracefully in local dev if no DB connection.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync, execFile } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
@@ -38,6 +38,23 @@ function psqlMayFail(sql: string): { ok: boolean; output: string } {
   } catch (e: unknown) {
     return { ok: false, output: String((e as { stderr?: string }).stderr || e) };
   }
+}
+
+/** Run SQL in a separate process (independent connection) — returns promise */
+function psqlAsync(sql: string, timeoutMs = 15000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = execFile('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+      timeout: timeoutMs,
+    }, (err, stdout, stderr) => {
+      resolve({
+        ok: !err,
+        stdout: (stdout || '').toString().trim(),
+        stderr: (stderr || '').toString().trim(),
+      });
+    });
+    child.stdin!.write(sql);
+    child.stdin!.end();
+  });
 }
 
 const USER_ID = '00000000-0000-4000-f203-000000000001';
@@ -251,14 +268,31 @@ describe.skipIf(!canRun)('ACC-203 DB: Delivery lifecycle', () => {
   // ── Historical timestamp migration ──
 
   describe('historical migration: sent_at backfill', () => {
-    it('historical delivered_at migrated to sent_at', () => {
-      // Check that sent rows have sent_at populated and delivered_at cleared
-      // This verifies the migration backfill ran correctly
-      const result = psql(`
-        SELECT count(*) FROM promo_pickup_verifications
-        WHERE delivery_status = 'sent' AND delivered_at IS NOT NULL AND sent_at IS NOT NULL;
+    it('historical delivered_at migrated to sent_at with exact timestamp', () => {
+      // Create a row that simulates pre-345 state: delivery_status='sent', delivered_at set, sent_at NULL
+      const testId = '00000000-0000-4000-a203-hist00000001';
+      const timestamp = '2026-08-01T12:00:00Z';
+
+      psql(`
+        DELETE FROM promo_pickup_verifications WHERE id = '${testId}';
+        INSERT INTO promo_pickup_verifications (id, business_id, redemption_id, phone_e164, token_hmac, expires_at, delivery_status, delivered_at, sent_at)
+        VALUES ('${testId}', '${BIZ_ID}', '${RED_ID}', '+2348012345678', 'hmac_hist', now() + interval '10 minutes', 'sent', '${timestamp}'::timestamptz, NULL);
       `);
-      expect(result).toBe('0'); // No rows should have both set for 'sent' status
+
+      // Run the same backfill logic as migration 345
+      psql(`
+        UPDATE promo_pickup_verifications SET sent_at = delivered_at WHERE delivery_status = 'sent' AND sent_at IS NULL AND id = '${testId}';
+        UPDATE promo_pickup_verifications SET delivered_at = NULL WHERE delivery_status = 'sent' AND delivered_at IS NOT NULL AND sent_at IS NOT NULL AND id = '${testId}';
+      `);
+
+      // Verify exact timestamp moved
+      const sentAt = psql(`SELECT sent_at::text FROM promo_pickup_verifications WHERE id = '${testId}';`);
+      expect(sentAt).toContain('2026-08-01');
+
+      const deliveredAt = psql(`SELECT delivered_at IS NULL FROM promo_pickup_verifications WHERE id = '${testId}';`);
+      expect(deliveredAt).toBe('t');
+
+      psql(`DELETE FROM promo_pickup_verifications WHERE id = '${testId}';`);
     });
   });
 
@@ -337,22 +371,62 @@ describe.skipIf(!canRun)('ACC-203 DB: Delivery lifecycle', () => {
       psql(`DELETE FROM promo_winner_contacts WHERE provider_message_id = '${wamid}';`);
     });
 
-    it('two concurrent claims for same redemption — second gets cooldown', () => {
-      // Cleanup
+    it('two concurrent claims: one succeeds, other gets cooldown', async () => {
       psql(`DELETE FROM promo_winner_contacts WHERE redemption_id = '${RED_ID}';`);
 
-      // First claim should succeed
-      const r1 = psqlJson(`SELECT claim_winner_contact_send('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1') AS r;`);
-      expect(r1.success).toBe(true);
-      expect(r1.contact_id).toBeTruthy();
+      // Both sessions try to claim simultaneously via independent connections
+      const connA = psqlAsync(`SELECT claim_winner_contact_send('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1');`);
+      const connB = psqlAsync(`SELECT claim_winner_contact_send('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1');`);
 
-      // Second claim for same redemption within cooldown → denied
-      const r2 = psqlJson(`SELECT claim_winner_contact_send('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1') AS r;`);
-      expect(r2.success).toBe(false);
-      expect(r2.reason).toBe('cooldown');
+      const [a, b] = await Promise.all([connA, connB]);
 
-      // Cleanup
+      // Both should succeed at the RPC level (no crashes)
+      expect(a.ok).toBe(true);
+      expect(b.ok).toBe(true);
+
+      // Parse results — exactly one success, one cooldown
+      const resultA = JSON.parse(a.stdout);
+      const resultB = JSON.parse(b.stdout);
+
+      const successes = [resultA, resultB].filter(r => r.success === true);
+      const cooldowns = [resultA, resultB].filter(r => r.reason === 'cooldown');
+
+      expect(successes.length).toBe(1);
+      expect(cooldowns.length).toBe(1);
+
       psql(`DELETE FROM promo_winner_contacts WHERE redemption_id = '${RED_ID}';`);
+    });
+
+    it('duplicate provider_message_id on promo_pickup_verifications is rejected', () => {
+      const wamid = 'wamid.pickup_dup_203';
+      const redId2 = '00000000-0000-4000-d203-aaaaaaaaaaab';
+      psql(`
+        DELETE FROM promo_pickup_verifications WHERE provider_message_id = '${wamid}';
+        DELETE FROM promo_pickup_verifications WHERE redemption_id = '${redId2}';
+        INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
+        VALUES ('${redId2}', '${BIZ_ID}', '${CAMP_ID}', '${CODE_ID}', '+2348012345679', 'winner', 'WAA-203T-EST1-0002', 'pending', 'secure_pickup', 'phone_verified')
+        ON CONFLICT (id) DO UPDATE SET verification_status = 'phone_verified', fulfillment_status = 'pending';
+      `);
+
+      // First insert with redemption RED_ID
+      psql(`
+        DELETE FROM promo_pickup_verifications WHERE redemption_id = '${RED_ID}';
+        INSERT INTO promo_pickup_verifications (business_id, redemption_id, phone_e164, token_hmac, expires_at, delivery_status, provider_message_id, sent_at)
+        VALUES ('${BIZ_ID}', '${RED_ID}', '+2348012345678', 'hmac_dup1', now() + interval '10 minutes', 'sent', '${wamid}', now());
+      `);
+
+      // Duplicate WAMID on different redemption must fail
+      const r = psqlMayFail(`
+        INSERT INTO promo_pickup_verifications (business_id, redemption_id, phone_e164, token_hmac, expires_at, delivery_status, provider_message_id, sent_at)
+        VALUES ('${BIZ_ID}', '${redId2}', '+2348012345679', 'hmac_dup2', now() + interval '10 minutes', 'sent', '${wamid}', now());
+      `);
+      expect(r.ok).toBe(false);
+      expect(r.output).toContain('idx_promo_pickup_wamid');
+
+      psql(`
+        DELETE FROM promo_pickup_verifications WHERE provider_message_id = '${wamid}';
+        DELETE FROM promo_redemptions WHERE id = '${redId2}';
+      `);
     });
   });
 
@@ -401,6 +475,36 @@ describe.skipIf(!canRun)('ACC-203 DB: Delivery lifecycle', () => {
       expect(svc).toBe('t');
       const anon = psql(`SELECT has_function_privilege('anon', 'finalize_promo_pickup_delivery(uuid, text, text)', 'EXECUTE');`);
       expect(anon).toBe('f');
+    });
+
+    it('service_role can execute claim_winner_contact_send', () => {
+      const has = psql(`SELECT has_function_privilege('service_role', 'claim_winner_contact_send(uuid, uuid, uuid, uuid, text, int)', 'EXECUTE');`);
+      expect(has).toBe('t');
+    });
+
+    it('anon cannot execute claim_winner_contact_send', () => {
+      const has = psql(`SELECT has_function_privilege('anon', 'claim_winner_contact_send(uuid, uuid, uuid, uuid, text, int)', 'EXECUTE');`);
+      expect(has).toBe('f');
+    });
+
+    it('authenticated cannot execute claim_winner_contact_send', () => {
+      const has = psql(`SELECT has_function_privilege('authenticated', 'claim_winner_contact_send(uuid, uuid, uuid, uuid, text, int)', 'EXECUTE');`);
+      expect(has).toBe('f');
+    });
+
+    it('service_role can execute finalize_winner_contact_send', () => {
+      const has = psql(`SELECT has_function_privilege('service_role', 'finalize_winner_contact_send(uuid, text, text)', 'EXECUTE');`);
+      expect(has).toBe('t');
+    });
+
+    it('anon cannot execute finalize_winner_contact_send', () => {
+      const has = psql(`SELECT has_function_privilege('anon', 'finalize_winner_contact_send(uuid, text, text)', 'EXECUTE');`);
+      expect(has).toBe('f');
+    });
+
+    it('authenticated cannot execute finalize_winner_contact_send', () => {
+      const has = psql(`SELECT has_function_privilege('authenticated', 'finalize_winner_contact_send(uuid, text, text)', 'EXECUTE');`);
+      expect(has).toBe('f');
     });
   });
 });

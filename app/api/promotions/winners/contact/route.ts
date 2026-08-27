@@ -176,20 +176,30 @@ export async function POST(request: NextRequest) {
     sendFailed = true;
   }
 
-  // Finalize the claimed row with delivery result via atomic RPC
-  const { error: finalizeError } = await service.rpc('finalize_winner_contact_send', {
-    p_contact_id: contactId,
-    p_status: sendFailed ? 'failed' : 'sent',
-    p_provider_message_id: messageId || null,
-  });
-
-  if (finalizeError) {
-    logger.error('[PROMO-CONTACT] Failed to finalize winner contact:', finalizeError);
-    // The send may have succeeded but tracking failed — log but don't suppress
+  if (sendFailed) {
+    // Send failed entirely — finalize as failed
+    await service.rpc('finalize_winner_contact_send', {
+      p_contact_id: contactId, p_status: 'failed', p_provider_message_id: null,
+    });
+    return NextResponse.json({ error: 'Failed to send winner notification. Please try again.' }, { status: 503 });
   }
 
-  if (sendFailed) {
-    return NextResponse.json({ error: 'Failed to send winner notification. Please try again.' }, { status: 503 });
+  if (!messageId) {
+    // No WAMID = no trackable send. Finalize as failed.
+    await service.rpc('finalize_winner_contact_send', {
+      p_contact_id: contactId, p_status: 'failed', p_provider_message_id: null,
+    });
+    return NextResponse.json({ error: 'Send succeeded but no provider message ID received' }, { status: 502 });
+  }
+
+  // Finalize with WAMID
+  const { data: finalizeResult, error: finalizeError } = await service.rpc('finalize_winner_contact_send', {
+    p_contact_id: contactId, p_status: 'sent', p_provider_message_id: messageId,
+  });
+
+  if (finalizeError || !finalizeResult?.success) {
+    logger.error('[PROMO-CONTACT] Finalization failed:', finalizeError || finalizeResult);
+    return NextResponse.json({ error: 'Send tracking failed' }, { status: 500 });
   }
 
   // Never return phone in response

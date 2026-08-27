@@ -79,6 +79,32 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
   const businessName = bizRecord?.name || 'Business';
 
+  // Resolve channel + check template readiness BEFORE issuing verification
+  // If readiness fails, no verification is created and no cooldown is consumed.
+  const resolver = new ChannelResolver(service);
+  const resolved = await resolver.resolveByBusinessId(businessId);
+
+  if (!resolved?.sender || !resolved.sender.sendTemplate) {
+    logger.error('[PROMO-PICKUP] No template-capable WhatsApp channel for business', businessId);
+    return NextResponse.json({ error: 'WhatsApp template delivery unavailable for this business' }, { status: 503 });
+  }
+
+  if (!resolved.cloud) {
+    return NextResponse.json({ error: 'Template management not available on this channel' }, { status: 503 });
+  }
+
+  const templates = await resolved.cloud.getTemplates();
+  const v2Template = (templates.data || []).find(
+    (t: { name: string; language: string; status?: string }) => t.name === 'promo_pickup_verification_v2' && t.language === 'en_US'
+  );
+
+  if (!v2Template || v2Template.status !== 'APPROVED') {
+    return NextResponse.json({
+      error: 'template_not_ready',
+      detail: `promo_pickup_verification_v2 is ${v2Template?.status || 'missing'} on this WABA`,
+    }, { status: 503 });
+  }
+
   // Generate OTP in memory — never persisted as plaintext
   const otp = generatePickupOtp();
   const tokenHmac = hashPickupToken(businessId, redemptionId, authoritativePhone, otp);
@@ -113,42 +139,12 @@ export async function POST(request: NextRequest) {
 
   const verificationId = issueResult.verification_id as string;
 
-  // Send via WhatsApp — template-only for proactive delivery (outside 24h window)
+  // Send via WhatsApp using the SAME resolved channel from the readiness check above.
   // No sendText fallback: if template is not provisioned, delivery fails safely.
-  // Rollout note: connected WABAs must have promo_pickup_verification approved
-  // before Secure Pickup is exposed through PR #147.
   let deliveryStatus: 'sent' | 'failed' = 'failed';
   let messageId: string | undefined;
 
   try {
-    const resolver = new ChannelResolver(service);
-    const resolved = await resolver.resolveByBusinessId(businessId);
-    if (!resolved?.sender || !resolved.sender.sendTemplate) {
-      logger.error('[PROMO-PICKUP] No template-capable WhatsApp channel for business', businessId);
-      const { data: finResult } = await service.rpc('finalize_promo_pickup_delivery', {
-        p_verification_id: verificationId, p_status: 'failed',
-      });
-      if (!finResult?.success) logger.error('[PROMO-PICKUP] delivery finalization also failed');
-      return NextResponse.json({ error: 'WhatsApp template delivery unavailable for this business' }, { status: 503 });
-    }
-
-    // Check template readiness on the SAME resolved channel
-    if (!resolved.cloud) {
-      return NextResponse.json({ error: 'Template management not available on this channel' }, { status: 503 });
-    }
-
-    const templates = await resolved.cloud.getTemplates();
-    const v2Template = (templates.data || []).find(
-      (t: { name: string; language: string; status?: string }) => t.name === 'promo_pickup_verification_v2' && t.language === 'en_US'
-    );
-
-    if (!v2Template || v2Template.status !== 'APPROVED') {
-      return NextResponse.json({
-        error: 'template_not_ready',
-        detail: `promo_pickup_verification_v2 is ${v2Template?.status || 'missing'} on this WABA`,
-      }, { status: 503 });
-    }
-
     const phone = stripPlus(authoritativePhone);
     const result = await resolved.sender.sendTemplate({
       to: phone,
@@ -162,20 +158,31 @@ export async function POST(request: NextRequest) {
     deliveryStatus = 'failed';
   }
 
-  // Finalize delivery state atomically
+  if (deliveryStatus === 'failed') {
+    // Send failed entirely — finalize as failed
+    await service.rpc('finalize_promo_pickup_delivery', {
+      p_verification_id: verificationId, p_status: 'failed', p_provider_message_id: null,
+    });
+    return NextResponse.json({ error: 'Failed to send verification code. Please try again.' }, { status: 503 });
+  }
+
+  if (!messageId) {
+    // No WAMID = no trackable send. Finalize as failed.
+    await service.rpc('finalize_promo_pickup_delivery', {
+      p_verification_id: verificationId, p_status: 'failed', p_provider_message_id: null,
+    });
+    return NextResponse.json({ error: 'Send succeeded but no provider message ID received' }, { status: 502 });
+  }
+
+  // Finalize delivery state atomically with WAMID
   const { data: finResult, error: finError } = await service.rpc('finalize_promo_pickup_delivery', {
     p_verification_id: verificationId,
-    p_status: deliveryStatus,
-    p_provider_message_id: messageId || null,
+    p_status: 'sent',
+    p_provider_message_id: messageId,
   });
   if (finError || !finResult?.success) {
     logger.error('[PROMO-PICKUP] delivery finalization failed:', finError || finResult?.reason);
-    // Delivery may have succeeded but finalization failed — don't claim success
     return NextResponse.json({ error: 'Verification code delivery could not be confirmed. Please try again.' }, { status: 503 });
-  }
-
-  if (deliveryStatus === 'failed') {
-    return NextResponse.json({ error: 'Failed to send verification code. Please try again.' }, { status: 503 });
   }
 
   return NextResponse.json({ sent: true, expires_in_minutes: OTP_EXPIRY_MINUTES });

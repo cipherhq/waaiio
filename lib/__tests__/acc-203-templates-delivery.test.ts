@@ -205,7 +205,7 @@ describe('OTP Send: v2 template with dynamic params', () => {
     }));
   });
 
-  it('v2 missing -> 503, sendTemplate NOT called', async () => {
+  it('v2 missing -> 503, sendTemplate NOT called, no issue_promo_pickup RPC', async () => {
     const sendFn = vi.fn();
     mockResolvedChannel = {
       channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
@@ -214,15 +214,19 @@ describe('OTP Send: v2 template with dynamic params', () => {
         { name: 'promo_pickup_verification', language: 'en_US', status: 'APPROVED' },
       ] }) },
     };
+    mockServiceRpc.mockClear();
     const res = await callSend();
     expect(res.status).toBe(503);
     const json = await res.json();
     expect(json.error).toBe('template_not_ready');
     expect(json.detail).toContain('missing');
     expect(sendFn).not.toHaveBeenCalled();
+    // No issue_promo_pickup RPC should have been called
+    const issueCalls = mockServiceRpc.mock.calls.filter((c: unknown[]) => c[0] === 'issue_promo_pickup');
+    expect(issueCalls.length).toBe(0);
   });
 
-  it('v2 PENDING -> 503, sendTemplate NOT called', async () => {
+  it('v2 PENDING -> 503, sendTemplate NOT called, no issue_promo_pickup RPC', async () => {
     const sendFn = vi.fn();
     mockResolvedChannel = {
       channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
@@ -231,15 +235,18 @@ describe('OTP Send: v2 template with dynamic params', () => {
         { name: 'promo_pickup_verification_v2', language: 'en_US', status: 'PENDING' },
       ] }) },
     };
+    mockServiceRpc.mockClear();
     const res = await callSend();
     expect(res.status).toBe(503);
     const json = await res.json();
     expect(json.error).toBe('template_not_ready');
     expect(json.detail).toContain('PENDING');
     expect(sendFn).not.toHaveBeenCalled();
+    const issueCalls = mockServiceRpc.mock.calls.filter((c: unknown[]) => c[0] === 'issue_promo_pickup');
+    expect(issueCalls.length).toBe(0);
   });
 
-  it('v2 REJECTED -> 503, sendTemplate NOT called', async () => {
+  it('v2 REJECTED -> 503, sendTemplate NOT called, no issue_promo_pickup RPC', async () => {
     const sendFn = vi.fn();
     mockResolvedChannel = {
       channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
@@ -248,12 +255,15 @@ describe('OTP Send: v2 template with dynamic params', () => {
         { name: 'promo_pickup_verification_v2', language: 'en_US', status: 'REJECTED' },
       ] }) },
     };
+    mockServiceRpc.mockClear();
     const res = await callSend();
     expect(res.status).toBe(503);
     const json = await res.json();
     expect(json.error).toBe('template_not_ready');
     expect(json.detail).toContain('REJECTED');
     expect(sendFn).not.toHaveBeenCalled();
+    const issueCalls = mockServiceRpc.mock.calls.filter((c: unknown[]) => c[0] === 'issue_promo_pickup');
+    expect(issueCalls.length).toBe(0);
   });
 
   it('no cloud -> 503 (template management unavailable)', async () => {
@@ -266,6 +276,27 @@ describe('OTP Send: v2 template with dynamic params', () => {
     expect(res.status).toBe(503);
     const json = await res.json();
     expect(json.error).toBe('Template management not available on this channel');
+  });
+
+  it('missing messageId -> finalize(failed), error response', async () => {
+    // sendTemplate returns undefined messageId
+    const sendFn = vi.fn().mockResolvedValue({ messageId: undefined });
+    mockResolvedChannel = {
+      channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: vi.fn().mockResolvedValue({ data: [
+        { name: 'promo_pickup_verification_v2', language: 'en_US', status: 'APPROVED' },
+      ] }) },
+    };
+    const res = await callSend();
+    expect(res.status).toBe(502);
+    const json = await res.json();
+    expect(json.error).toContain('no provider message ID');
+    // finalize should have been called with 'failed'
+    const finalizeCalls = mockServiceRpc.mock.calls.filter((c: unknown[]) => c[0] === 'finalize_promo_pickup_delivery');
+    expect(finalizeCalls.length).toBeGreaterThanOrEqual(1);
+    const lastFinalize = finalizeCalls[finalizeCalls.length - 1];
+    expect(lastFinalize[1].p_status).toBe('failed');
   });
 
   it('readiness and send use the SAME resolved channel', async () => {
@@ -374,5 +405,45 @@ describe('Contact Winner', () => {
     mockUser = null;
     const res = await callContact();
     expect(res.status).toBe(401);
+  });
+
+  it('missing messageId -> finalize(failed), error response', async () => {
+    // sendTemplate returns no messageId
+    const sendFn = vi.fn().mockResolvedValue({ messageId: undefined });
+    mockResolvedChannel = {
+      channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: vi.fn().mockResolvedValue({ data: [
+        { name: 'promo_winner_status_v1', language: 'en_US', status: 'APPROVED' },
+      ] }) },
+    };
+    const res = await callContact();
+    expect(res.status).toBe(502);
+    const json = await res.json();
+    expect(json.error).toContain('no provider message ID');
+    expect(json.sent).toBeUndefined();
+    // finalize should have been called with 'failed'
+    const finalizeCalls = mockServiceRpc.mock.calls.filter((c: unknown[]) => c[0] === 'finalize_winner_contact_send');
+    expect(finalizeCalls.length).toBeGreaterThanOrEqual(1);
+    const lastFinalize = finalizeCalls[finalizeCalls.length - 1];
+    expect(lastFinalize[1].p_status).toBe('failed');
+  });
+
+  it('finalize RPC error -> no {sent:true}', async () => {
+    mockFinalizeContactResult = { data: null, error: { message: 'DB down' } };
+    const res = await callContact();
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.sent).toBeUndefined();
+    expect(json.error).toContain('tracking failed');
+  });
+
+  it('finalize success:false -> no {sent:true}', async () => {
+    mockFinalizeContactResult = { data: { success: false, reason: 'already_finalized' }, error: null };
+    const res = await callContact();
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.sent).toBeUndefined();
+    expect(json.error).toContain('tracking failed');
   });
 });
