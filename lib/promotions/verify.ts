@@ -13,6 +13,7 @@
  * - Formatting the response message
  */
 import { createServiceClient } from '@/lib/supabase/service';
+import { logger } from '@/lib/logger';
 import { normalizePromoCode } from './normalize';
 import { hashPromoCode } from './crypto';
 import type { PromoClaimResult, PromoCampaign, PromoAttemptResult } from './types';
@@ -34,6 +35,49 @@ interface VerificationResponse {
   eligibilityMode?: string;
   eligibilityPrompt?: string;
   campaignId?: string;
+}
+
+/**
+ * Generate the non-editable system claim block appended after the winner's custom message.
+ * This block provides actionable next steps based on the verification mode.
+ */
+export function buildClaimBlock(params: {
+  businessName: string;
+  campaignName: string;
+  prizeName: string;
+  claimReference: string;
+  verificationMode: string;
+  prizeInstructions?: string | null;
+}): string {
+  const lines: string[] = [
+    '',  // blank line separator
+    '\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501',
+    `\uD83C\uDFC6 *${params.prizeName}*`,
+    `\uD83C\uDFAF Campaign: *${params.campaignName}*`,
+    `\uD83D\uDCCB Claim Reference: *${params.claimReference}*`,
+  ];
+
+  if (params.verificationMode === 'secure_pickup') {
+    lines.push('\uD83D\uDD13 Verification: Secure Pickup (OTP required)');
+  } else {
+    lines.push('\uD83D\uDD13 Verification: Standard (claim reference)');
+  }
+
+  if (params.prizeInstructions) {
+    lines.push(`\uD83D\uDCDD ${params.prizeInstructions}`);
+  }
+
+  if (params.verificationMode === 'secure_pickup') {
+    lines.push('');
+    lines.push(`\uD83D\uDD10 A verification code will be sent to this number when your prize is ready for collection. Keep the code private until pickup \u2014 only provide it to ${params.businessName} when collecting your prize.`);
+  } else {
+    lines.push('');
+    lines.push(`\u2705 Present this reference to ${params.businessName} to look up your claim and collect your prize.`);
+  }
+
+  lines.push('\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501');
+
+  return lines.join('\n');
 }
 
 /**
@@ -166,10 +210,36 @@ export async function verifyPromoCode(input: VerificationInput): Promise<Verific
     };
   }
 
-  // 5. Format and return the response
+  // 5. Format the response message
+  let message = formatResponseMessage(campaign, claimResult);
+
+  // 6. Append claim block for winner outcomes (first-claim and replay)
+  if (claimResult.result === 'winner' && claimResult.claim_reference) {
+    // Look up business name for the claim block
+    const { data: business } = await supabase
+      .from('businesses')
+      .select('name')
+      .eq('id', input.businessId)
+      .single();
+
+    if (!business?.name) {
+      // Business must exist if we got this far — this is a data integrity issue
+      logger.warn('promo.verify', 'Business name not found for claim block', { businessId: input.businessId });
+    }
+
+    message += buildClaimBlock({
+      businessName: business?.name || 'the business',
+      campaignName: campaign.name,
+      prizeName: claimResult.prize_name || 'Prize',
+      claimReference: claimResult.claim_reference,
+      verificationMode: claimResult.verification_mode || 'standard',
+      prizeInstructions: claimResult.prize_instructions,
+    });
+  }
+
   return {
     result: claimResult.result,
-    message: formatResponseMessage(campaign, claimResult),
+    message,
     claimReference: claimResult.claim_reference,
     prizeName: claimResult.prize_name,
   };

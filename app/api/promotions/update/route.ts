@@ -108,6 +108,35 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
   }
 
+  // ── prizeUpdates: validate shape and reject mixed payloads early ──
+  const rawPrizeUpdates = body.prizeUpdates;
+  if (rawPrizeUpdates !== undefined) {
+    // Must be an array
+    if (!Array.isArray(rawPrizeUpdates)) {
+      return NextResponse.json({ error: 'prizeUpdates must be an array' }, { status: 400 });
+    }
+    // Mixed payload check: prizeUpdates cannot be combined with ANY campaign mutation
+    const campaignMutationFields = [
+      'name', 'description', 'winnerMessage', 'tryAgainMessage', 'invalidMessage',
+      'alreadyUsedMessage', 'expiredMessage', 'eligibilityPrompt', 'status',
+      'startAt', 'endAt', 'timezone', 'codeEntryMode', 'keyword', 'acceptBareCodes',
+      'codeFormat', 'codeLength', 'codePrefix', 'maxAttemptsPerPhone',
+      'rateLimitWindowMinutes', 'rateLimitMaxAttempts', 'eligibilityMode',
+      'eligibilityMinAge', 'maxWinsPerParticipant',
+    ];
+    const hasCampaignMutation = campaignMutationFields.some(f => f in body);
+    if (hasCampaignMutation) {
+      return NextResponse.json(
+        { error: 'prizeUpdates cannot be combined with campaign mutations in one request' },
+        { status: 400 },
+      );
+    }
+    // Empty array: no-op, return current campaign
+    if (rawPrizeUpdates.length === 0) {
+      return NextResponse.json({ campaign });
+    }
+  }
+
   // If integrity_locked, reject changes to locked fields
   if (campaign.integrity_locked) {
     const lockedFieldsAttempted = INTEGRITY_LOCKED_FIELDS.filter((f) => f in body && body[f] !== undefined);
@@ -304,6 +333,66 @@ export async function PUT(request: NextRequest) {
     }
   }
 
+  // ── Prize updates (shape already validated above; rawPrizeUpdates is a non-empty array if we reach here) ──
+  let updatedPrizes: unknown[] | undefined;
+
+  if (Array.isArray(rawPrizeUpdates) && rawPrizeUpdates.length > 0) {
+    const prizeUpdates = rawPrizeUpdates as Array<{ prizeId: string; prize_instructions?: string | null }>;
+
+    // Validate types before calling RPC
+    for (let i = 0; i < prizeUpdates.length; i++) {
+      const pu = prizeUpdates[i];
+      if (!pu.prizeId || typeof pu.prizeId !== 'string') {
+        return NextResponse.json({ error: `prizeUpdates[${i}].prizeId is required` }, { status: 400 });
+      }
+      if (pu.prize_instructions !== undefined && pu.prize_instructions !== null) {
+        if (typeof pu.prize_instructions !== 'string') {
+          return NextResponse.json({ error: `prizeUpdates[${i}].prize_instructions must be a string` }, { status: 400 });
+        }
+        if (pu.prize_instructions.length > 500) {
+          return NextResponse.json({ error: `prizeUpdates[${i}].prize_instructions must be at most 500 characters` }, { status: 400 });
+        }
+      }
+    }
+
+    // Build RPC payload and call atomic update_prize_instructions
+    const rpcPayload = prizeUpdates.map(pu => ({
+      prize_id: pu.prizeId,
+      prize_instructions: pu.prize_instructions?.trim() ?? null,
+    }));
+
+    const { data: rpcResult, error: rpcError } = await service.rpc('update_prize_instructions', {
+      p_campaign_id: campaignId,
+      p_business_id: businessId,
+      p_actor_id: user.id,
+      p_updates: rpcPayload,
+    });
+
+    if (rpcError) {
+      logger.error('[PROMOTIONS] prize update RPC error:', rpcError);
+      return NextResponse.json({ error: rpcError.message }, { status: 500 });
+    }
+    if (!rpcResult?.success) {
+      const err = (rpcResult as Record<string, unknown>)?.error as string | undefined;
+      if (err === 'integrity_locked') {
+        return NextResponse.json({ error: 'Cannot update prizes: campaign is integrity_locked' }, { status: 409 });
+      }
+      if (err === 'campaign_not_found') {
+        return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
+      }
+      return NextResponse.json({ error: err || 'Prize update failed' }, { status: 400 });
+    }
+
+    // Reload canonical prize state
+    const { data: reloadedPrizes } = await service
+      .from('promo_prizes')
+      .select('*')
+      .eq('campaign_id', campaignId)
+      .order('sort_order');
+
+    return NextResponse.json({ campaign, prizes: reloadedPrizes || [] });
+  }
+
   if (Object.keys(updates).length === 1) {
     // Only updated_at — nothing else to update via direct UPDATE.
     // If routing changed via RPC, reload to return canonical post-RPC state.
@@ -315,20 +404,30 @@ export async function PUT(request: NextRequest) {
         .single();
       return NextResponse.json({ campaign: reloaded || campaign });
     }
-    return NextResponse.json({ campaign }, { status: 200 });
+    if (!updatedPrizes) {
+      // No routing, no prizes — nothing to do
+      return NextResponse.json({ campaign }, { status: 200 });
+    }
   }
 
-  const { data: updated, error: updateError } = await service
-    .from('promo_campaigns')
-    .update(updates)
-    .eq('id', campaignId)
-    .select()
-    .single();
+  let updatedCampaign = campaign;
+  if (Object.keys(updates).length > 1) {
+    const { data: updated, error: updateError } = await service
+      .from('promo_campaigns')
+      .update(updates)
+      .eq('id', campaignId)
+      .select()
+      .single();
 
-  if (updateError) {
-    logger.error('[PROMOTIONS] update error:', updateError);
-    return NextResponse.json({ error: 'Failed to update campaign' }, { status: 500 });
+    if (updateError) {
+      logger.error('[PROMOTIONS] update error:', updateError);
+      return NextResponse.json({ error: 'Failed to update campaign' }, { status: 500 });
+    }
+    updatedCampaign = updated;
   }
 
-  return NextResponse.json({ campaign: updated });
+  return NextResponse.json({
+    campaign: updatedCampaign,
+    ...(updatedPrizes ? { prizes: updatedPrizes } : {}),
+  });
 }

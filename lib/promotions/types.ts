@@ -59,6 +59,7 @@ export interface PromoPrize {
   currency: string | null;
   fulfillment_instructions: string | null;
   verification_mode: PromoVerificationMode;
+  prize_instructions: string | null;
   sort_order: number;
   created_at: string;
 }
@@ -149,6 +150,8 @@ export interface PromoClaimResult {
   eligibility_required?: boolean;
   eligibility_mode?: string;
   eligibility_prompt?: string;
+  /** Prize-specific collection instructions set by the business */
+  prize_instructions?: string | null;
   /** Reason for not_eligible when max wins reached */
   reason?: string;
 }

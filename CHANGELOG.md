@@ -7,86 +7,64 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-08-26
 
-### test(promotions): PR #205 correction round 5 — actual handlePromoVerification execution + keyword race test (#198)
+### fix(promotions): Correction Round 5 — contention test + empty prizeUpdates response (#199A / PR #206)
 
-- **Bot handler tests replaced:** Section E now calls the actual `handlePromoVerification` from `lib/bot/handlers/promo-verification.ts` instead of testing helper functions in isolation. Mocks `@/lib/promotions/verify` module (`verifyPromoCode`, `looksLikePromoCode`, `hasActiveKeywordCampaign`, `hasActiveBareCodeCampaign`). Tests: keyword routing, bare-code routing, both-mode keyword entry, non-promo fallthrough, missing capability fallthrough.
-- **Keyword activation race test:** New DB test in `acc-198-promo-routing-db.test.ts` creates two draft campaigns with the same keyword and concurrently UPDATEs both to 'active'. Asserts the unique index `idx_promo_campaigns_keyword_unique` enforces exactly one success, one failure.
-- **Files:** `lib/__tests__/acc-198-promo-routing.test.ts`, `lib/__tests__/acc-198-promo-routing-db.test.ts`, `CHANGELOG.md`
-- **Affects:** Test coverage for bot handler execution path and concurrent activation safety
+- **Contention test rewrite:** Replaced `psqlAsync` contention test with `pg.Client`-based two-connection test. Connection A now locks the campaign row AND updates the same prize that Connection B is also trying to update, exercising the true parent→child path. Previously A just held the campaign lock without touching the prize.
+- **Empty prizeUpdates response:** `{prizeUpdates: []}` now returns `{campaign}` (no `prizes` key) instead of `{campaign, prizes: []}`. This matches the non-prize update response shape and avoids returning a misleading empty array.
+- **Files:** `app/api/promotions/update/route.ts`, `lib/__tests__/acc-199a-winner-response.test.ts`, `CHANGELOG.md`
+- **Affects:** prizeUpdates empty-array response shape, contention test accuracy
+- **Could break:** Frontend code that destructures `prizes` from an empty prizeUpdates response — but that's a no-op call, so unlikely.
+
+### fix(promotions): Correction Round 4 — early prizeUpdates validation, route tests, contention proof (#199A / PR #206)
+
+- **Early prizeUpdates validation:** Moved prizeUpdates shape check (must be array) and mixed-payload rejection to BEFORE status transition validation and activation early-return in `app/api/promotions/update/route.ts`. Previously, `{status: 'active', prizeUpdates: [...]}` would activate the campaign and return early before hitting the mixed-payload guard. Now it returns 400 immediately.
+- **Empty array no-op:** `{prizeUpdates: []}` returns 200 with `{campaign, prizes: []}` immediately — no mutations.
+- **Route execution tests (6):** Tests that call the actual PUT handler with mocked Supabase, verifying: mixed payloads with status/name/codeEntryMode all return 400 with zero RPC calls; non-array prizeUpdates (string, number) return 400; empty array returns 200 no-op.
+- **Direct-UPDATE contention test (1):** Two-connection test proving no deadlock when Connection A holds campaign row lock (RPC-style) while Connection B does a direct `UPDATE promo_prizes SET prize_instructions = ...` (hitting the trigger's `SELECT ... FOR UPDATE`). B blocks, A commits, B completes.
+- **Files:** `app/api/promotions/update/route.ts`, `lib/__tests__/acc-199a-winner-response.test.ts`, `CHANGELOG.md`
+- **Affects:** prizeUpdates + activation race, prizeUpdates input validation
+- **Could break:** Nothing — validation is stricter (rejects invalid combos earlier), all existing valid payloads still work.
+
+### fix(tests): fix CI seed SQL + add privilege tests for ACC-199A (#199A / PR #206)
+
+- **businesses INSERT:** Replaced `(id, name, owner_id, category, country)` with full NOT NULL column list including `country_code` (not `country`). CI's `businesses` table does not have a `country` column.
+- **Privilege tests:** Added `update_prize_instructions` privilege assertion tests: service_role can execute, anon cannot, authenticated cannot.
+- **Files:** `lib/__tests__/acc-199a-winner-response.test.ts`, `CHANGELOG.md`
+- **Affects:** CI test reliability — DB integration tests now use correct column names for CI PostgreSQL.
 - **Could break:** Nothing — test-only changes.
 
-### fix(promotions): PR #205 correction round 4 — collision-abort test, POST handler execution, activation+routing guard (#198)
+### fix(promotions): Correction Round 3 — atomic RPC, race tests, mixed payload rejection (#199A / #201 / PR #206)
 
-- **Collision-abort migration test:** New DB test proves migration 340 aborts when keyword normalization creates active/scheduled keyword collisions (two campaigns with 'win' and 'WIN' that both normalize to 'WIN'). Verifies transaction rollback preserves original casing.
-- **Renamed misleading test:** `migration 340 aborts on keyword-mode campaign with NULL keyword` renamed to `migration 340 successfully repairs keyword-mode campaign with wrong accept_bare_codes` to match actual behavior (repair, not abort).
-- **Actual POST create handler:** Create route tests now import and call the real `POST` handler from `app/api/promotions/create/route.ts` with mocked Supabase, replacing mirrored helper functions. Tests verify: routing_mode_conflict 400, bare_code+keyword 400, keyword required 400, valid keyword/bare_code creation 201.
-- **Actual bot verification functions:** Bot regression tests now import and call real `looksLikePromoCode`, `hasActiveBareCodeCampaign`, `hasActiveKeywordCampaign` from `lib/promotions/verify.ts` instead of manual string parsing.
-- **Activation + routing guard:** `app/api/promotions/update/route.ts` now rejects requests that combine `status: 'active'` with routing field changes (`codeEntryMode`/`keyword`) in one request with 400, preventing silent loss of routing mutations that would be skipped by the early-return activation path.
-- **PR description updated:** Removed stale "downgrades both with no keyword to bare_code" language; correctly says "fail-closed abort".
-- **Files:** `lib/__tests__/acc-198-promo-routing-db.test.ts`, `lib/__tests__/acc-198-promo-routing.test.ts`, `app/api/promotions/update/route.ts`, `CHANGELOG.md`
-- **Affects:** Activation safety (routing changes no longer silently lost), test accuracy, migration safety proof
-- **Could break:** Clients that send `{status: 'active', codeEntryMode: ..., keyword: ...}` in one request will now get 400; they must send routing changes first, then activate separately.
+- **Atomic prize-update RPC:** Added `update_prize_instructions` RPC to migration 341. Locks campaign row `FOR UPDATE` before checking `integrity_locked`, serializing against `claim_promo_code`. Replaces N independent UPDATE calls with one atomic batch.
+- **Hardened integrity trigger:** `guard_prize_instructions_integrity` trigger now uses `SELECT ... FOR UPDATE` on `promo_campaigns` to serialize against concurrent `claim_promo_code` setting `integrity_locked=true`.
+- **Mixed payload rejection:** `app/api/promotions/update/route.ts` now rejects requests containing both `prizeUpdates` and campaign mutation fields (400 error). Prize-only path returns early with canonical prize state.
+- **RPC-based update route:** Prize updates in the API route now call `update_prize_instructions` RPC instead of looping individual DB updates. Returns 409 for `integrity_locked`, 404 for missing campaign.
+- **Two-connection race tests:** 5 new real-DB tests using separate psql processes: (A) prize update first, claim sees new value; (B) redemption first, prize update sees integrity_locked; (C) no deadlock with bounded timeout; (D) batch rollback on invalid prize; (E) direct UPDATE blocked by trigger defense-in-depth.
+- **CI sentinel removed:** Removed `if (process.env.CI) expect(TEST_DATABASE_URL)` global test that broke main-app CI (no Postgres). DB tests still use `describe.skipIf(!canRunDb)`.
+- **ACC-199A CI step:** Added dedicated CI step in migrations job after ACC-186, with zero-skip enforcement.
+- **Files:** `supabase/migrations/341_promo_winner_response.sql`, `app/api/promotions/update/route.ts`, `lib/__tests__/acc-199a-winner-response.test.ts`, `.github/workflows/ci.yml`, `CHANGELOG.md`
+- **Could break:** Nothing — RPC is additive; API behavior preserved; trigger hardening is backwards-compatible.
 
-### fix(tests): fix CI seed SQL for ACC-198 DB tests (#198)
+### fix(promotions): Correction Round 2 — integrity locking, test parity, stale default (#199A / #201 / PR #206)
 
-- **auth.users INSERT:** Replaced `(id, email, encrypted_password, email_confirmed_at, ...)` with `(id, phone)` pattern from ACC-184. CI's `auth.users` schema lacks `encrypted_password`, `email`, and `email_confirmed_at` columns.
-- **businesses INSERT:** Replaced `(id, owner_id, name, slug, category)` with full NOT NULL column list: `(id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)`.
-- **Files:** `lib/__tests__/acc-198-promo-routing-db.test.ts`, `CHANGELOG.md`
-- **Affects:** CI test reliability — DB integration tests now use the correct schema for CI PostgreSQL.
-- **Could break:** Nothing — test-only changes.
+- **DB-level integrity guard:** Added `guard_prize_instructions_integrity` trigger on `promo_prizes` in migration 341. Prevents `prize_instructions` updates when parent campaign is `integrity_locked = true`. Raises `check_violation`. This makes the lock race-safe (was application-level only).
+- **CI guard test:** Added test ensuring `TEST_DATABASE_URL` is set when `CI=true`, so DB tests are never silently skipped in CI.
+- **First/replay instruction parity proof (DB):** New test calls `claim_promo_code` twice, asserts both return identical `prize_instructions`, and builds identical claim blocks via `buildClaimBlock`.
+- **Exact string equality through verifyPromoCode:** Replaced "contains" assertions with `firstResponse.message === replayResponse.message` (byte-for-byte equality proof).
+- **Dashboard stale default fixed:** Changed `DEFAULT_WINNER_MESSAGE` in `app/dashboard/promotions/create/page.tsx` from the old "We will contact you shortly with next steps" to `'Congratulations! 🎉'` matching the DB default.
+- **Files:** `supabase/migrations/341_promo_winner_response.sql`, `lib/__tests__/acc-199a-winner-response.test.ts`, `app/dashboard/promotions/create/page.tsx`, `CHANGELOG.md`
+- **Could break:** Nothing — trigger is additive; dashboard default change only affects new campaign form initial values.
 
-### fix(promotions): PR #205 correction round 3 — CI sentinel removal, migration harness, handler execution tests (#198)
+### feat(promotions): Winner response block + recipient instructions (#199A / #201)
 
-- **CI sentinel removed:** The `if (process.env.CI) expect(TEST_DATABASE_URL)` sentinel test was removed from `acc-198-promo-routing-db.test.ts`. The Main App CI job has no PostgreSQL, so this sentinel broke it. Zero-skip enforcement is handled in ci.yml, not in the test file.
-- **Migration 340 pre-migration harness:** New DB test proves migration 340 aborts on both-mode campaigns with NULL keyword. Uses SAVEPOINT to set up pre-340 state (weak CHECK), insert invalid legacy rows, run migration SQL, and verify it raises `RAISE EXCEPTION 'Migration blocked'`. Proves the transaction rolls back and invalid data remains unchanged.
-- **Actual handler execution tests:** Unit tests now import and call the real `PUT` handler from `app/api/promotions/update/route.ts` with mocked Supabase instead of simulating with local variables. Tests verify: routing_mode_conflict 400, bare_code+keyword 400, integrity-locked 409, keyword normalization before RPC, keyword_conflict 409 from RPC, bare_code_conflict 409, routing-only reload, campaign not found 404.
-- **Files:** `lib/__tests__/acc-198-promo-routing-db.test.ts`, `lib/__tests__/acc-198-promo-routing.test.ts`, `CHANGELOG.md`
-- **Affects:** CI reliability, test accuracy, migration safety proof
-- **Could break:** Nothing — all changes are test corrections. No schema or logic changes.
-
-### fix(promotions): PR #205 correction round 2 — ACC-184 regression, real concurrency, audit rollback, activation 409, CI enforcement (#198)
-
-- **ACC-184 regression fix:** Test INSERTs for `both` mode campaigns now include `keyword = 'TESTPROMO'` and `accept_bare_codes = true` to satisfy `chk_routing_consistency` CHECK. The CHECK is NOT weakened.
-- **CI enforcement:** ACC-198 DB tests now have a sentinel test that asserts `TEST_DATABASE_URL` is set when `CI=true`. Added ACC-198 CI block to `.github/workflows/ci.yml` with zero-skip enforcement.
-- **Real two-connection concurrency:** Replaced sequential "concurrency" test with real `psqlAsync` two-process test using independent PostgreSQL connections. Connection A holds FOR UPDATE lock via `pg_sleep(2)`, Connection B blocks until A commits. Proves serialization.
-- **Audit rollback proof:** New test injects `CHECK (false)` on `admin_audit_logs`, calls `update_promo_campaign_routing` on an active campaign (which requires audit), verifies the routing update ALSO rolled back. Proves audit and routing are in the same transaction.
-- **Unrelated unique_violation re-raise:** New test creates a temporary unique index on `name`, uses a trigger to force a name collision during routing update, verifies the error is re-raised as a raw PostgreSQL error (not mapped to keyword_conflict/bare_code_conflict).
-- **Activation conflicts as HTTP 409:** `PUT /api/promotions/update` activation path now returns HTTP 409 (not 422) for `keyword_conflict` and `bare_code_conflict` from `activate_promo_campaign`.
-- **Stale changelog cleanup:** References to "migration 339" updated to "migration 340". Silent `bare_code` conversion language replaced with fail-closed abort behavior.
-- **Files:** `lib/__tests__/acc-184-promo-history-db.test.ts`, `lib/__tests__/acc-198-promo-routing-db.test.ts`, `app/api/promotions/update/route.ts`, `.github/workflows/ci.yml`, `CHANGELOG.md`
-- **Affects:** CI reliability, test accuracy, API HTTP status codes for activation conflicts
-- **Could break:** Nothing — all changes are test/CI/status-code corrections. No schema or logic changes.
-
-### fix(promotions): PR #205 review corrections — migration abort, confirm dialog, stale response, test coverage (#198)
-
-- **Migration 340:** Legacy `both`/`keyword` rows with NULL keyword now ABORT the migration instead of silently converting to `bare_code`. Fail-closed with actionable error message including count of affected rows.
-- **Dashboard:** Routing changes on active/paused campaigns now require explicit `window.confirm()` before saving. Draft/scheduled campaigns skip confirmation.
-- **API update route:** After routing RPC succeeds, if routing was the only change, the campaign is reloaded from DB before returning (prevents stale pre-RPC object in response).
-- **Tests (DB):** Added: atomic audit-write verification, sequential concurrency proof, unrelated unique_violation re-raise contract, privilege assertions for anon/authenticated roles on all 3 RPC functions, CHECK constraint rejection for NULL keyword in keyword/both modes, scheduled bare-code conflict detection.
-- **Tests (unit):** Added: update route validation logic execution tests (mode conflict detection, integrity lock blocking, RPC error-to-status mapping, isRoutingChange detection, routing-only reload condition), create route normalization and derivation tests.
-- **Files:** `supabase/migrations/340_promo_routing_consistency.sql`, `app/dashboard/promotions/[id]/page.tsx`, `app/api/promotions/update/route.ts`, `lib/__tests__/acc-198-promo-routing-db.test.ts`, `lib/__tests__/acc-198-promo-routing.test.ts`
-- **Affects:** Migration safety, dashboard UX for live campaigns, API response freshness, test coverage
-- **Could break:** Migration will now fail (by design) if any keyword/both campaigns have NULL keyword — requires manual repair before re-running.
-
-### feat(promotions): safe routing/keyword edits and deterministic activation-conflict handling (#198)
-
-- **What:** Promo campaign routing fields (code_entry_mode, keyword, accept_bare_codes) are now validated, normalized, and conflict-checked atomically via a new `update_promo_campaign_routing` RPC.
-- **Migration 340:**
-  - Keyword normalization trigger (uppercase + trim on INSERT/UPDATE)
-  - Legacy data repair (deterministic fix for inconsistent keyword/bare-code states). keyword/both mode with NULL keyword now ABORTS the migration (fail-closed) instead of silently converting to bare_code.
-  - Collision guard (aborts migration if repair created active/scheduled conflicts)
-  - New `chk_routing_consistency` CHECK constraint replaces old `chk_keyword_or_bare` (stricter: enforces full 3-way consistency)
-  - `validate_promo_campaign_activation` now checks keyword AND bare-code conflicts including scheduled campaigns, with conflict campaign name in error
-  - `activate_promo_campaign` now has constraint-specific unique_violation handling
-  - New `update_promo_campaign_routing` SECURITY DEFINER RPC: atomic routing update with preflight conflict check, audit logging for active/paused campaigns, integrity_locked enforcement
-  - Privilege reassertion for all promo lifecycle functions
-- **API changes:**
-  - `PUT /api/promotions/update`: Routing changes now go through `update_promo_campaign_routing` RPC. Keyword normalized on input. Contradictory accept_bare_codes rejected with 400. Conflict errors return 409 with conflicting campaign name. Activation conflicts (keyword_conflict, bare_code_conflict) return HTTP 409 (not collapsed to 422).
-  - `POST /api/promotions/create`: Keyword normalized to uppercase. `accept_bare_codes` derived from `code_entry_mode`. Contradictions rejected with 400.
-- **Dashboard:** Settings tab now shows Campaign Routing section with entry mode selector and keyword input. `accept_bare_codes` is derived (not shown). Integrity-locked fields disabled with explanation. Active/paused campaigns show warning about immediate effect.
-- **Files:** `supabase/migrations/340_promo_routing_consistency.sql`, `app/api/promotions/update/route.ts`, `app/api/promotions/create/route.ts`, `app/dashboard/promotions/[id]/page.tsx`, `lib/__tests__/acc-198-promo-routing.test.ts`, `lib/__tests__/acc-198-promo-routing-db.test.ts`
-- **Affects:** Promo campaign creation, editing, activation, bot keyword/bare-code routing
-- **Could break:** Old API clients sending contradictory `accept_bare_codes` will get 400. Old `chk_keyword_or_bare` constraint replaced with stricter `chk_routing_consistency`. Migration will fail (by design) if any keyword/both campaigns have NULL keyword — requires manual repair.
+- **What:** When a customer wins a promo prize, the system now appends a structured claim block after the custom winner message with prize name, campaign name, claim reference, verification method, and actionable collection instructions based on the verification mode (standard vs secure_pickup).
+- **Migration 341:** (renumbered from 339 to avoid collision with PRs #196/#205) Added `prize_instructions` column to `promo_prizes`; updated `claim_promo_code` replay branch to return `redemption_id`, `verification_mode`, `verification_status`, and `prize_instructions` (parity with first-claim branch); changed default `winner_message` to `'Congratulations! 🎉'` for new campaigns only.
+- **Application layer:** `buildClaimBlock()` in `lib/promotions/verify.ts` now renders campaign name, explicit verification method label (Standard/Secure Pickup), and uses "look up your claim" wording for standard mode (not bearer-proof language). Business name lookup failure logged via `logger.warn` before fallback.
+- **API routes:** `app/api/promotions/create/route.ts` validates `prize_instructions` type (must be string) before `.trim()`. `app/api/promotions/update/route.ts` already had proper type checking.
+- **Tests:** Added real `verifyPromoCode` integration tests with mocked Supabase: first-claim winner, replay winner, standard vs secure_pickup wording, try-again (no claim block), business name failure (logged warning + fallback).
+- **Files:** `supabase/migrations/341_promo_winner_response.sql`, `lib/promotions/verify.ts`, `lib/promotions/types.ts`, `app/api/promotions/create/route.ts`, `app/api/promotions/update/route.ts`, `lib/__tests__/acc-199a-winner-response.test.ts`
+- **Affects:** Winner message display in WhatsApp, promo prize creation/update, claim_promo_code replay returns
+- **Could break:** Nothing — additive only. Existing campaigns keep their stored winner_message. Claim block is appended programmatically, not stored.
 
 ---
 
