@@ -823,11 +823,14 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // Correction Round 2: nullable business fields + platform fee regressions
   // ─────────────────────────────────────────────────────────
 
-  // q. trial_ends_at = NULL → not in trial → expected fee row with correct amount
-  it('q. trial_ends_at = NULL → finalization succeeds with expected platform_fees row', () => {
+  // q. trial_ends_at = NOW() (boundary: trial expires exactly now) → not in trial → expected fee row
+  // Note: trial_ends_at is NOT NULL in the schema (migration 002). The COALESCE in the
+  // RPC is defense-in-depth. This test proves the boundary case where trial_ends_at = NOW()
+  // evaluates as "not in trial" (since the check is strict >).
+  it('q. trial_ends_at = NOW() (boundary) → finalization succeeds with expected platform_fees row', () => {
     cleanFinData();
-    // Set trial_ends_at to NULL (the common production case for non-trial businesses)
-    psql(`UPDATE businesses SET trial_ends_at = NULL, payout_mode = 'platform', subscription_tier = 'free' WHERE id = '${BIZ_ID}'`);
+    // Set trial_ends_at to exactly NOW() — strict > comparison means "not in trial"
+    psql(`UPDATE businesses SET trial_ends_at = NOW(), payout_mode = 'platform', subscription_tier = 'free' WHERE id = '${BIZ_ID}'`);
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
     const result = psqlJson(`
@@ -937,19 +940,19 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   });
 
   // u. Missing business → full rollback (no finalization marker, no payment)
-  // FK constraint business_id → businesses(id) ON DELETE CASCADE normally prevents
-  // orphan subscriptions. This test disables FK triggers to simulate a data anomaly
-  // and prove the RPC fails closed with RAISE EXCEPTION + full rollback.
+  // FK constraint customer_subscriptions.business_id → businesses(id) uses ON DELETE CASCADE.
+  // The CASCADE trigger lives on the businesses table (not customer_subscriptions), so we
+  // must disable triggers on businesses to prevent the cascade from deleting the subscription.
   it('u. missing business → RAISE EXCEPTION, full rollback, no finalization marker', () => {
     cleanFinData();
     const GHOST_SUB = '77eeeeee-eeee-eeee-eeee-eeeeeeeeee01';
 
-    // Insert subscription then orphan it by deleting business with triggers disabled
+    // Insert subscription then orphan it by deleting business with triggers disabled on businesses
     createSub(GHOST_SUB, { code: 'sub_ghost_001', amount: 50 });
     psql(`
-      ALTER TABLE customer_subscriptions DISABLE TRIGGER ALL;
+      ALTER TABLE businesses DISABLE TRIGGER ALL;
       DELETE FROM businesses WHERE id = '${BIZ_ID}';
-      ALTER TABLE customer_subscriptions ENABLE TRIGGER ALL;
+      ALTER TABLE businesses ENABLE TRIGGER ALL;
     `);
 
     let threw = false;

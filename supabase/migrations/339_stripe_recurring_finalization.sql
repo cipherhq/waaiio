@@ -154,6 +154,16 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'reason', 'currency_mismatch');
   END IF;
 
+  -- ── Resolve business BEFORE financial writes ──
+  -- Must happen before bookings INSERT (FK: bookings.business_id → businesses.id)
+  -- to give a clean error instead of a FK violation on orphaned subscriptions.
+  SELECT subscription_tier, trial_ends_at, payout_mode INTO v_business
+    FROM businesses WHERE id = v_sub.business_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Business % not found for subscription %', v_sub.business_id, v_sub.id;
+  END IF;
+
   -- ── Financial writes: all-or-nothing ──
   v_amount := p_amount_cents / 100.0;
   v_time := TO_CHAR(v_now, 'HH24:MI');
@@ -206,16 +216,7 @@ BEGIN
   -- ── Platform fee: preserves active Stripe fee semantics exactly ──
   -- Uses ROUND(x) = integer rounding to match Math.round in getPlatformFees
   -- Uses strict > 0.10 micro-tx guard (exactly 10% is NOT waived)
-  -- NOTE: Must NOT use composite "v_business IS NOT NULL" — in PostgreSQL,
-  -- row IS NOT NULL is true only when ALL fields are non-null. A valid business
-  -- with trial_ends_at = NULL would evaluate false, silently skipping fees.
-  SELECT subscription_tier, trial_ends_at, payout_mode INTO v_business
-    FROM businesses WHERE id = v_sub.business_id;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Business % not found for subscription %', v_sub.business_id, v_sub.id;
-  END IF;
-
+  -- Business was resolved above (before financial writes).
   IF COALESCE(v_business.payout_mode, 'platform') != 'direct_split' THEN
     -- NULL trial_ends_at = not in trial (matches process-success.ts semantics)
     v_is_in_trial := COALESCE(v_business.trial_ends_at > v_now, false);
