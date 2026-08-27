@@ -3,6 +3,67 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #202: Winner Authorization — PR #208 corrections round 4
+
+### Corrections applied (round 4)
+- **DB test rollback (`acc-202-winner-authorization-db.test.ts`)**: Changed rollback test transition from `'processing'` to `'fulfilled'` — more meaningful proof since it's the terminal state.
+- **Inactive membership tests**: Added explicit comments clarifying that mock returns `null` because `.eq('status', 'active')` filters out invited/suspended members. Semantically unchanged but now self-documenting.
+- **Owner not found + member DB error test**: New test proves that when owner lookup returns no match AND member lookup returns a DB error, the guard returns 500 `authority_read_error` (fail-closed).
+- **Capability matrix (4 states × 2 actions = 8 tests)**: New tests prove `read_history` and `manage_existing` pass regardless of capability state — when only another capability (scheduling) is configured, when promo_verification is explicitly disabled, when trial-blocked, and when tier-blocked.
+- **Winner scope predicates**: New tests for reveal and contact endpoints assert `.eq()` calls include `campaign_id`, `business_id`, and `outcome=winner` predicates.
+- **Complete role/status matrix**: Added finance/support denied reveal (403), admin contact 503, support denied contact (403), finance/support denied fulfillment (403), Winners GET denial for suspended business.
+
+### Files changed
+- `lib/__tests__/acc-202-winner-authorization-db.test.ts` — rollback transition changed to 'fulfilled'
+- `lib/__tests__/acc-202-winner-authorization.test.ts` — 18 new tests added, 2 tests improved
+
+### What could break
+- Nothing — test-only changes, no production code modified
+
+## 2026-08-26 — #202: Winner Authorization — PR #208 corrections round 3
+
+### Corrections applied (round 3)
+- **DB test rollback proof (`acc-202-winner-authorization-db.test.ts`)**: Replaced `CHECK(false)` constraint approach with targeted BEFORE INSERT trigger on admin_audit_logs. The trigger only blocks `promotions.fulfillment_transition` audit for the specific test redemption ID. Now verifies all 5 fields (fulfillment_status, fulfillment_reference, fulfillment_notes, fulfilled_at, fulfilled_by) remain at baseline after rollback. Cleanup in `finally` block drops trigger and function.
+- **Auth tests (`acc-202-winner-authorization.test.ts`)**: Fixed invited/suspended membership tests — was using `setRole('invited')` which tested a fake role string; now uses `setNoRole()` to correctly simulate `.eq('status', 'active')` excluding non-active members. Added 10 new tests: fail-closed behavior (member DB error, business DB error, capability read error, override read error), business status (pending + manage_existing, suspended on all endpoints), scope assertions (wrong business, non-winner audit absence), contact endpoint assertions (503 template_not_ready, SELECT 'id' only, zero external calls). Total: 51 tests.
+
+### Files changed
+- `lib/__tests__/acc-202-winner-authorization-db.test.ts` — rollback test rewritten
+- `lib/__tests__/acc-202-winner-authorization.test.ts` — 2 tests fixed, 10 tests added
+
+### What could break
+- Nothing — test-only changes, no production code modified
+
+## 2026-08-26 — #202: Winner Authorization — Role-based winner management (PR #208 corrections)
+
+### Corrections applied (round 2)
+- **Reveal + Contact endpoints**: Added `.eq('business_id', businessId)` and `.eq('outcome', 'winner')` directly on redemption query. Removed redundant campaign→business cross-check (business_id now scoped directly on redemption). Prevents non-winner redemptions from being revealed/contacted.
+- **Migration 344**: Removed hardcoded `'actor_role', 'business'` from audit INSERT — actor_id already identifies the actor, and the RPC doesn't know the caller's actual role.
+- **DB test (`acc-202-winner-authorization-db.test.ts`)**: Added atomic rollback proof — blocks audit writes with CHECK(false) constraint and verifies fulfillment_status stays `pending` when audit fails.
+- **CI (`.github/workflows/ci.yml`)**: Added ACC-202 step after ACC-199A in Migration validation job.
+- **Auth tests (`acc-202-winner-authorization.test.ts`)**: Added 13 new test cases — finance/support/invited/suspended role denials, wrong business/campaign, non-winner reveal/contact, suspended business, pending business read_history, capability-absent read_history/manage_existing, contact endpoint phone_e164 absence proof. Total: 40 tests.
+
+### What changed (original)
+- **`lib/capabilities/resolve-role.ts`** (NEW): Pure role resolver — checks businesses.owner_id then business_members for active membership. Returns typed BusinessRole.
+- **`lib/capabilities/api-guard.ts`**: Added `requireCapabilityWithRole()` — combines role resolution + capability check + business status enforcement in a single guard. Does NOT modify existing `requireCapability` or `requireAnyCapability`.
+- **`app/api/promotions/winners/route.ts`**: Switched from `requireCapability` (owner-only) to `requireCapabilityWithRole` with `allowedRoles: ['owner', 'admin', 'manager']`. Response now includes server-derived `permissions` object (`can_reveal_phone`, `can_contact_winner`, `can_manage_fulfillment`).
+- **`app/api/promotions/winners/reveal/route.ts`** (NEW): Owner/admin-only endpoint to reveal full phone_e164. Audit-before-disclosure (fail closed). No-store cache header.
+- **`app/api/promotions/winners/contact/route.ts`** (NEW): Owner/admin/manager shell endpoint. Returns 503 — no phone lookup, no Meta send. Template pending approval.
+- **`app/api/promotions/fulfillment/route.ts`**: Switched to `requireCapabilityWithRole` with `allowedRoles: ['owner', 'admin']`. Response SELECT now uses explicit column allowlist excluding phone_e164.
+- **Migration 344**: `transition_promo_fulfillment` updated with atomic audit INSERT into admin_audit_logs. Privilege reassertion for service_role only.
+- **`app/dashboard/promotions/[id]/page.tsx`**: Winners table now role-gated — Reveal button (owner/admin), Contact button (disabled, template pending), Fulfillment Update (owner/admin). Permissions driven by server response.
+
+### What it affects
+- Winners management is now multi-role instead of owner-only
+- phone_e164 is only disclosed via the reveal endpoint (audited)
+- Fulfillment response no longer leaks phone_e164
+- Manager role can view winners and will be able to contact (when template approved) but cannot reveal phone or update fulfillment
+- Reveal/contact endpoints now reject non-winner redemptions at the query level
+
+### What could break
+- If business_members table has stale entries, users with suspended/invited status are correctly excluded (only 'active' members pass)
+- If admin_audit_logs INSERT fails inside transition_promo_fulfillment, the entire transaction rolls back — fulfillment update is rejected
+- Existing integrations that expect `select('*')` on fulfillment response will no longer receive phone_e164
+
 ## 2026-08-26 — #197: Payment confirmation delivery tracking + stale I've Paid recovery
 
 ### What changed

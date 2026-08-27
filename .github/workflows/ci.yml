@@ -1226,6 +1226,33 @@ jobs:
           fi
           echo "✅ ACC-199A DB tests passed with zero skips."
 
+      - name: ACC-202 winner authorization DB tests
+        if: hashFiles('lib/__tests__/acc-202-winner-authorization-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+          echo "Running ACC-202 winner authorization tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-202-winner-authorization-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ ACC-202 DB tests failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+          SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '\d+ skipped' | grep -oP '\d+' || echo "0")
+          if [ "$SKIP_COUNT" != "0" ] && [ "$SKIP_COUNT" != "" ]; then
+            echo "❌ ACC-202 DB tests had $SKIP_COUNT skipped tests. All must execute."
+            exit 1
+          fi
+          echo "✅ ACC-202 DB tests passed with zero skips."
+
       - name: P1-CLASS-1 class session booking authority DB tests
         if: hashFiles('lib/__tests__/p1-class-session-booking.test.ts') != ''
         env:

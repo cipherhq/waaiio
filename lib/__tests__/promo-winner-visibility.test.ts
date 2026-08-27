@@ -90,6 +90,7 @@ vi.mock('@/lib/supabase/service', () => ({
 
 vi.mock('@/lib/capabilities/api-guard', () => ({
   requireCapability: (...args: unknown[]) => mockRequireCapability(...args),
+  requireCapabilityWithRole: (...args: unknown[]) => mockRequireCapability(...args),
 }));
 
 vi.mock('@/lib/logger', () => ({
@@ -143,7 +144,7 @@ describe('Winners GET route — campaign ownership failure', () => {
 
   it('returns 404 when campaign does not belong to business', async () => {
     mockAuthGetUser.mockResolvedValue({ data: { user: { id: USER_A } }, error: null });
-    mockRequireCapability.mockResolvedValue({ allowed: true });
+    mockRequireCapability.mockResolvedValue({ allowed: true, role: 'owner', isOwner: true });
     mockCampaignResult = { data: null, error: null };
     const res = await GET(makeRequest({ businessId: BUSINESS_A, campaignId: CAMPAIGN_A }));
     expect(res.status).toBe(404);
@@ -152,7 +153,7 @@ describe('Winners GET route — campaign ownership failure', () => {
 
   it('no promo_redemptions query after campaign ownership failure', async () => {
     mockAuthGetUser.mockResolvedValue({ data: { user: { id: USER_A } }, error: null });
-    mockRequireCapability.mockResolvedValue({ allowed: true });
+    mockRequireCapability.mockResolvedValue({ allowed: true, role: 'owner', isOwner: true });
     mockCampaignResult = { data: null, error: null };
     await GET(makeRequest({ businessId: BUSINESS_A, campaignId: CAMPAIGN_A }));
     expect(serviceCalls.filter(c => c.table === 'promo_redemptions')).toHaveLength(0);
@@ -173,7 +174,7 @@ describe('Winners GET route — authorized success', () => {
 
   function setupAuthorized(redemptions: unknown[] = []) {
     mockAuthGetUser.mockResolvedValue({ data: { user: { id: USER_A } }, error: null });
-    mockRequireCapability.mockResolvedValue({ allowed: true });
+    mockRequireCapability.mockResolvedValue({ allowed: true, role: 'owner', isOwner: true });
     mockCampaignResult = { data: { id: CAMPAIGN_A }, error: null };
     mockRedemptionsResult = { data: redemptions, count: redemptions.length, error: null };
   }
@@ -352,8 +353,11 @@ describe('Winners dashboard UI contract', () => {
     expect(pageSrc).toMatch(/winner\.redeemed_code\s*\|\|\s*'—'/);
   });
 
-  it('preserves phone masking', () => {
-    expect(pageSrc).toContain('{winner.phone_e164}');
+  it('preserves phone masking — server sends masked, reveal is gated', () => {
+    // Default display uses masked phone from server (winner.phone_e164 is masked)
+    // Reveal replaces with full phone only when explicitly revealed
+    expect(pageSrc).toContain('winner.phone_e164');
+    expect(pageSrc).toContain('revealedPhones');
   });
 });
 

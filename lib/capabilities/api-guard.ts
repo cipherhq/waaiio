@@ -286,3 +286,134 @@ export async function requireAnyCapability(
     },
   };
 }
+
+// ── Role-aware capability guard ──
+
+import { resolveBusinessRole, type BusinessRole } from './resolve-role';
+
+export interface CapabilityRoleGuardAllowed {
+  allowed: true;
+  business: { id: string; status: string; subscription_tier: string; trial_ends_at: string | null; category: string | null };
+  role: BusinessRole;
+  isOwner: boolean;
+  resolution: GetEffectiveCapabilitiesResult;
+}
+
+export interface CapabilityRoleGuardDenied {
+  allowed: false;
+  status: number;
+  denial: { success: false; reason: string };
+}
+
+export type CapabilityRoleGuardResult = CapabilityRoleGuardAllowed | CapabilityRoleGuardDenied;
+
+/**
+ * Capability + role guard for multi-user business routes.
+ *
+ * Unlike requireCapability (owner-only via RLS), this resolves the user's
+ * role from authoritative DB state (businesses.owner_id + business_members)
+ * and checks against an allowlist of roles.
+ *
+ * The server route defines capability, action, AND allowedRoles.
+ * Clients cannot influence the role check.
+ */
+export async function requireCapabilityWithRole(
+  service: SupabaseClient,
+  params: {
+    businessId: string;
+    userId: string;
+    capability: CapabilityId;
+    action: CapabilityAction;
+    allowedRoles: BusinessRole[];
+  },
+): Promise<CapabilityRoleGuardResult> {
+  const { businessId, userId, capability, action, allowedRoles } = params;
+
+  // 1. Resolve role from authoritative DB state
+  const roleResult = await resolveBusinessRole(service, businessId, userId);
+  if (!roleResult.ok) {
+    if (roleResult.error === 'db_error') {
+      return { allowed: false, status: 500, denial: { success: false, reason: 'authority_read_error' } };
+    }
+    return { allowed: false, status: 403, denial: { success: false, reason: 'insufficient_permissions' } };
+  }
+
+  // 2. Check role against allowed roles
+  if (!allowedRoles.includes(roleResult.role)) {
+    return { allowed: false, status: 403, denial: { success: false, reason: 'insufficient_permissions' } };
+  }
+
+  // 3. Load business (for status + capability checks) via service client
+  const { data: business, error: bizError } = await service
+    .from('businesses')
+    .select('id, status, subscription_tier, trial_ends_at, category')
+    .eq('id', businessId)
+    .maybeSingle();
+
+  if (bizError) {
+    return { allowed: false, status: 500, denial: { success: false, reason: 'authority_read_error' } };
+  }
+  if (!business) {
+    return { allowed: false, status: 403, denial: { success: false, reason: 'business_not_found' } };
+  }
+
+  // 4. Enforce business status (same rules as requireCapability)
+  if (business.status === 'suspended') {
+    return { allowed: false, status: 403, denial: { success: false, reason: 'business_suspended' } };
+  }
+  if (business.status === 'pending' && action === 'create_new') {
+    return { allowed: false, status: 403, denial: { success: false, reason: 'business_setup_incomplete' } };
+  }
+
+  // 5. Resolve effective capabilities (REUSE existing functions)
+  const capResult = await getConfiguredCapabilities(service, businessId);
+  if (!capResult.ok) {
+    return { allowed: false, status: 500, denial: { success: false, reason: 'capability_read_error' } };
+  }
+
+  const { data: overrideRows, error: overrideError } = await service
+    .from('capability_overrides')
+    .select('capability')
+    .eq('business_id', businessId);
+  if (overrideError) {
+    return { allowed: false, status: 500, denial: { success: false, reason: 'override_read_error' } };
+  }
+
+  const overrides = (overrideRows || []).map((r: { capability: string }) => r.capability as string);
+
+  // Zero-row legacy fallback
+  let configuredRows = capResult.rows;
+  if (configuredRows.length === 0) {
+    const defaultCaps = getLegacyDefaultCapabilities(business.category);
+    configuredRows = defaultCaps.map((cap, i) => ({
+      capability: cap,
+      is_enabled: true,
+      sort_order: i,
+    }));
+  }
+
+  const resolution = getEffectiveCapabilities({
+    configuredCapabilities: configuredRows,
+    overrides,
+    tier: business.subscription_tier || 'free',
+    trialEndsAt: business.trial_ends_at,
+  });
+
+  // 6. Check action permission (canPerformAction)
+  const actionResult = canPerformAction({
+    action,
+    capability,
+    effectiveCapabilities: resolution.effective,
+  });
+  if (!actionResult.allowed) {
+    return { allowed: false, status: 403, denial: { success: false, reason: actionResult.reason || 'capability_not_effective' } };
+  }
+
+  return {
+    allowed: true,
+    business,
+    role: roleResult.role,
+    isOwner: roleResult.isOwner,
+    resolution,
+  };
+}

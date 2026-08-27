@@ -305,6 +305,13 @@ export default function PromotionDetailPage() {
   const [winners, setWinners] = useState<Winner[]>([]);
   const [winnersLoading, setWinnersLoading] = useState(false);
   const [winnersFilter, setWinnersFilter] = useState('');
+  const [winnersPermissions, setWinnersPermissions] = useState<{
+    can_reveal_phone: boolean;
+    can_contact_winner: boolean;
+    can_manage_fulfillment: boolean;
+  }>({ can_reveal_phone: false, can_contact_winner: false, can_manage_fulfillment: false });
+  const [revealingPhone, setRevealingPhone] = useState<string | null>(null);
+  const [revealedPhones, setRevealedPhones] = useState<Record<string, string>>({});
 
   // Analytics tab
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
@@ -475,6 +482,9 @@ export default function PromotionDetailPage() {
         const data = await res.json();
         // Winners API is canonical — prize_name already resolved via JOIN
         setWinners(data.winners || []);
+        if (data.permissions) {
+          setWinnersPermissions(data.permissions);
+        }
       } else {
         setWinners([]);
       }
@@ -1343,7 +1353,31 @@ export default function PromotionDetailPage() {
                   ).map((winner) => (
                     <tr key={winner.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/20">
                       <td className="px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300">
-                        {winner.phone_e164}
+                        {revealedPhones[winner.id] || winner.phone_e164}
+                        {winnersPermissions.can_reveal_phone && !revealedPhones[winner.id] && (
+                          <button
+                            onClick={async () => {
+                              setRevealingPhone(winner.id);
+                              try {
+                                const res = await fetch('/api/promotions/winners/reveal', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ businessId: business.id, campaignId: id, redemptionId: winner.id }),
+                                });
+                                if (res.ok) {
+                                  const data = await res.json();
+                                  setRevealedPhones((prev) => ({ ...prev, [winner.id]: data.phone_e164 }));
+                                }
+                              } catch { /* silently fail */ }
+                              setRevealingPhone(null);
+                            }}
+                            disabled={revealingPhone === winner.id}
+                            className="ml-2 text-brand hover:underline disabled:opacity-50"
+                            title="Reveal full phone number"
+                          >
+                            {revealingPhone === winner.id ? '...' : 'Reveal'}
+                          </button>
+                        )}
                       </td>
                       <td className="px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300">
                         {winner.redeemed_code || '—'}
@@ -1379,13 +1413,24 @@ export default function PromotionDetailPage() {
                           {winner.fulfillment_status}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
-                        <button
-                          onClick={() => openFulfillmentModal(winner)}
-                          className="text-xs text-brand hover:underline"
-                        >
-                          Update
-                        </button>
+                      <td className="px-4 py-3 space-x-2">
+                        {winnersPermissions.can_manage_fulfillment && (
+                          <button
+                            onClick={() => openFulfillmentModal(winner)}
+                            className="text-xs text-brand hover:underline"
+                          >
+                            Update
+                          </button>
+                        )}
+                        {winnersPermissions.can_contact_winner && (
+                          <button
+                            disabled
+                            className="text-xs text-gray-400 cursor-not-allowed"
+                            title="Template pending approval"
+                          >
+                            Contact
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}

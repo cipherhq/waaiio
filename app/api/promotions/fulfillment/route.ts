@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { requireCapability } from '@/lib/capabilities/api-guard';
+import { requireCapabilityWithRole } from '@/lib/capabilities/api-guard';
 import type { PromoFulfillmentStatus } from '@/lib/promotions/types';
 
 const ALL_FULFILLMENT_STATUSES: PromoFulfillmentStatus[] = [
@@ -40,11 +40,12 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'businessId is required' }, { status: 400 });
   }
 
-  const guard = await requireCapability(supabase, service, {
+  const guard = await requireCapabilityWithRole(service, {
     businessId,
     userId: user.id,
     capability: 'promo_verification',
     action: 'manage_existing',
+    allowedRoles: ['owner', 'admin'],
   });
   if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
@@ -92,10 +93,10 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: `Fulfillment transition failed: ${reason}`, ...result }, { status: 422 });
   }
 
-  // Fetch updated redemption for response
+  // Fetch updated redemption for response — explicit allowlist, no phone_e164
   const { data: updated } = await service
     .from('promo_redemptions')
-    .select('*')
+    .select('id, campaign_id, claim_reference, fulfillment_status, fulfillment_reference, fulfillment_notes, fulfilled_at, fulfilled_by, verification_mode, verification_status')
     .eq('id', redemptionId)
     .single();
 
