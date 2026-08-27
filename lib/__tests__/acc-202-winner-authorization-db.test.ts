@@ -163,4 +163,37 @@ describe.skipIf(!canRun)('ACC-202 DB: Fulfillment audit + privileges', () => {
     `);
     expect(result).toBe('f');
   });
+
+  it('fulfillment audit failure rolls back the entire transition', () => {
+    // Reset redemption to pending
+    psql(`UPDATE promo_redemptions SET fulfillment_status = 'pending', updated_at = now() WHERE id = '${RED_ID}'`);
+    psql(`DELETE FROM admin_audit_logs WHERE entity_id = '${RED_ID}'`);
+
+    // 1. Add a blocking CHECK constraint on admin_audit_logs
+    psql(`ALTER TABLE admin_audit_logs ADD CONSTRAINT temp_block_audit_202 CHECK (false)`);
+
+    try {
+      // 2. Attempt fulfillment transition (should fail because audit INSERT hits CHECK)
+      const result = psqlMayFail(`
+        SELECT transition_promo_fulfillment(
+          '${BIZ_ID}'::uuid, '${RED_ID}'::uuid, 'processing',
+          '${USER_ID}'::uuid, NULL, NULL
+        );
+      `);
+
+      // 3. RPC should have errored
+      expect(result.ok).toBe(false);
+
+      // 4. Fulfillment status must still be 'pending' (rolled back)
+      const status = psql(`SELECT fulfillment_status FROM promo_redemptions WHERE id = '${RED_ID}'`);
+      expect(status).toBe('pending');
+
+      // 5. No audit row should exist
+      const auditCount = psql(`SELECT count(*)::int FROM admin_audit_logs WHERE entity_id = '${RED_ID}'`);
+      expect(auditCount).toBe('0');
+    } finally {
+      // 6. Clean up constraint
+      psql(`ALTER TABLE admin_audit_logs DROP CONSTRAINT IF EXISTS temp_block_audit_202`);
+    }
+  });
 });

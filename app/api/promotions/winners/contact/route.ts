@@ -23,27 +23,17 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-  // Existence check only — no phone_e164 in SELECT
+  // Existence check only — no phone_e164 in SELECT, directly business + winner scoped
   const { data: redemption } = await service
     .from('promo_redemptions')
     .select('id')
     .eq('id', redemptionId)
     .eq('campaign_id', campaignId)
+    .eq('business_id', businessId)
+    .eq('outcome', 'winner')
     .maybeSingle();
 
   if (!redemption) {
-    return NextResponse.json({ error: 'Winner not found' }, { status: 404 });
-  }
-
-  // Verify campaign belongs to business
-  const { data: campaign } = await service
-    .from('promo_campaigns')
-    .select('id')
-    .eq('id', campaignId)
-    .eq('business_id', businessId)
-    .maybeSingle();
-
-  if (!campaign) {
     return NextResponse.json({ error: 'Winner not found' }, { status: 404 });
   }
 

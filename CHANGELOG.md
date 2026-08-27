@@ -3,9 +3,16 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
-## 2026-08-26 — #202: Winner Authorization — Role-based winner management
+## 2026-08-26 — #202: Winner Authorization — Role-based winner management (PR #208 corrections)
 
-### What changed
+### Corrections applied (round 2)
+- **Reveal + Contact endpoints**: Added `.eq('business_id', businessId)` and `.eq('outcome', 'winner')` directly on redemption query. Removed redundant campaign→business cross-check (business_id now scoped directly on redemption). Prevents non-winner redemptions from being revealed/contacted.
+- **Migration 344**: Removed hardcoded `'actor_role', 'business'` from audit INSERT — actor_id already identifies the actor, and the RPC doesn't know the caller's actual role.
+- **DB test (`acc-202-winner-authorization-db.test.ts`)**: Added atomic rollback proof — blocks audit writes with CHECK(false) constraint and verifies fulfillment_status stays `pending` when audit fails.
+- **CI (`.github/workflows/ci.yml`)**: Added ACC-202 step after ACC-199A in Migration validation job.
+- **Auth tests (`acc-202-winner-authorization.test.ts`)**: Added 13 new test cases — finance/support/invited/suspended role denials, wrong business/campaign, non-winner reveal/contact, suspended business, pending business read_history, capability-absent read_history/manage_existing, contact endpoint phone_e164 absence proof. Total: 40 tests.
+
+### What changed (original)
 - **`lib/capabilities/resolve-role.ts`** (NEW): Pure role resolver — checks businesses.owner_id then business_members for active membership. Returns typed BusinessRole.
 - **`lib/capabilities/api-guard.ts`**: Added `requireCapabilityWithRole()` — combines role resolution + capability check + business status enforcement in a single guard. Does NOT modify existing `requireCapability` or `requireAnyCapability`.
 - **`app/api/promotions/winners/route.ts`**: Switched from `requireCapability` (owner-only) to `requireCapabilityWithRole` with `allowedRoles: ['owner', 'admin', 'manager']`. Response now includes server-derived `permissions` object (`can_reveal_phone`, `can_contact_winner`, `can_manage_fulfillment`).
@@ -20,6 +27,7 @@ If something breaks, check this log to find what changed and when.
 - phone_e164 is only disclosed via the reveal endpoint (audited)
 - Fulfillment response no longer leaks phone_e164
 - Manager role can view winners and will be able to contact (when template approved) but cannot reveal phone or update fulfillment
+- Reveal/contact endpoints now reject non-winner redemptions at the query level
 
 ### What could break
 - If business_members table has stale entries, users with suspended/invited status are correctly excluded (only 'active' members pass)

@@ -23,27 +23,17 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-  // Load redemption — business + campaign scoped
+  // Load redemption — directly business + campaign + winner scoped
   const { data: redemption, error } = await service
     .from('promo_redemptions')
     .select('id, phone_e164')
     .eq('id', redemptionId)
     .eq('campaign_id', campaignId)
+    .eq('business_id', businessId)
+    .eq('outcome', 'winner')
     .maybeSingle();
 
   if (error || !redemption) {
-    return NextResponse.json({ error: 'Winner not found' }, { status: 404 });
-  }
-
-  // Verify campaign belongs to business
-  const { data: campaign } = await service
-    .from('promo_campaigns')
-    .select('id')
-    .eq('id', campaignId)
-    .eq('business_id', businessId)
-    .maybeSingle();
-
-  if (!campaign) {
     return NextResponse.json({ error: 'Winner not found' }, { status: 404 });
   }
 

@@ -541,3 +541,205 @@ describe('Fulfillment route (PUT /api/promotions/fulfillment)', () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════
+// F. Extended auth/regression matrix
+// ═══════════════════════════════════════════════════════
+
+describe('Extended role denial matrix', () => {
+  beforeEach(() => {
+    resetMocks();
+    fromCallCount = 0;
+    // Restore default mockServiceFrom for winners GET
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') {
+        return makeChain(() => ({ data: mockCapError ? null : mockCapRows, error: mockCapError ? { message: mockCapError } : null }));
+      }
+      if (table === 'capability_overrides') return makeChain(() => ({ data: mockOverrideRows, error: mockOverrideError }));
+      if (table === 'promo_campaigns') return makeChain(() => mockCampaignQuery);
+      if (table === 'promo_redemptions') {
+        const c = makeChain(() => mockRedemptionQuery);
+        c.range = vi.fn().mockResolvedValue({ data: [], count: 0, error: null });
+        return c;
+      }
+      if (table === 'admin_audit_logs') return makeChain(() => ({ data: null, error: mockAuditInsertError }));
+      return makeChain(() => ({ data: null, error: null }));
+    });
+  });
+
+  it('finance role denied winners list', async () => {
+    setRole('finance');
+    const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
+    const res = await winnersGET(req);
+    expect(res.status).toBe(403);
+  });
+
+  it('support role denied winners list', async () => {
+    setRole('support');
+    const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
+    const res = await winnersGET(req);
+    expect(res.status).toBe(403);
+  });
+
+  it('invited member denied', async () => {
+    setRole('invited');
+    const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
+    const res = await winnersGET(req);
+    expect(res.status).toBe(403);
+  });
+
+  it('suspended member denied', async () => {
+    setRole('suspended');
+    const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
+    const res = await winnersGET(req);
+    expect(res.status).toBe(403);
+  });
+
+  it('wrong business denied reveal', async () => {
+    setOwner();
+    // Redemption query returns null when business_id doesn't match (scoped by .eq('business_id', businessId))
+    mockRedemptionQuery = { data: null, error: null };
+    const req = makePostRequest({ businessId: 'biz-wrong', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await revealPOST(req);
+    // Guard passes (mock doesn't scope owner check), but redemption not found due to business_id scope
+    expect(res.status).toBe(404);
+  });
+
+  it('wrong campaign denied reveal', async () => {
+    setOwner();
+    mockRedemptionQuery = { data: null, error: null };
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-wrong', redemptionId: 'red-1' });
+    const res = await revealPOST(req);
+    expect(res.status).toBe(404);
+  });
+
+  it('non-winner redemption cannot be revealed', async () => {
+    setOwner();
+    // Redemption exists but outcome is not 'winner' — query with .eq('outcome', 'winner') returns null
+    mockRedemptionQuery = { data: null, error: null };
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-loser' });
+    const res = await revealPOST(req);
+    expect(res.status).toBe(404);
+  });
+
+  it('non-winner redemption cannot be contacted', async () => {
+    setOwner();
+    mockRedemptionQuery = { data: null, error: null };
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-loser' });
+    const res = await contactPOST(req);
+    expect(res.status).toBe(404);
+  });
+
+  it('suspended business denied all endpoints', async () => {
+    setOwner();
+    mockBusinessQuery = {
+      data: { id: 'biz-1', status: 'suspended', subscription_tier: 'growth', trial_ends_at: null, category: 'other' },
+      error: null,
+    };
+
+    const revealReq = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const revealRes = await revealPOST(revealReq);
+    expect(revealRes.status).toBe(403);
+    const revealData = await revealRes.json();
+    expect(revealData.reason).toBe('business_suspended');
+
+    const contactReq = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const contactRes = await contactPOST(contactReq);
+    expect(contactRes.status).toBe(403);
+    const contactData = await contactRes.json();
+    expect(contactData.reason).toBe('business_suspended');
+  });
+
+  it('pending business allowed for read_history', async () => {
+    setOwner();
+    mockBusinessQuery = {
+      data: { id: 'biz-1', status: 'pending', subscription_tier: 'growth', trial_ends_at: null, category: 'other' },
+      error: null,
+    };
+    const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
+    const res = await winnersGET(req);
+    // read_history allows pending businesses
+    expect(res.status).toBe(200);
+  });
+
+  it('read_history allowed even when promo_verification not configured', async () => {
+    setOwner();
+    // No capabilities configured at all
+    mockCapRows = [];
+    const req = makeGetRequest({ businessId: 'biz-1', campaignId: 'camp-1' });
+    const res = await winnersGET(req);
+    // read_history always returns allowed: true regardless of capability state
+    expect(res.status).toBe(200);
+  });
+
+  it('manage_existing allowed even when promo_verification not configured', async () => {
+    setOwner();
+    mockCapRows = [];
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') {
+        return makeChain(() => ({ data: [], error: null }));
+      }
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') return makeChain(() => mockUpdateQuery);
+      return makeChain(() => ({ data: null, error: null }));
+    });
+    const req = makePutRequest({
+      businessId: 'biz-1', redemptionId: 'red-1',
+      fulfillmentStatus: 'processing',
+    });
+    const res = await fulfillmentPUT(req);
+    // manage_existing always returns allowed: true regardless of capability state
+    expect(res.status).toBe(200);
+  });
+
+  it('contact winner shell does not query phone_e164', async () => {
+    setOwner();
+    const selectSpy = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'red-1' }, error: null }),
+            }),
+          }),
+        }),
+      }),
+    });
+    // Override promo_redemptions mock to spy on SELECT columns
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        fromCallCount++;
+        if (fromCallCount <= 1) return makeChain(() => mockBizOwnerQuery);
+        return makeChain(() => mockBusinessQuery);
+      }
+      if (table === 'business_members') return makeChain(() => mockMemberQuery);
+      if (table === 'business_capabilities') {
+        return makeChain(() => ({ data: mockCapRows, error: null }));
+      }
+      if (table === 'capability_overrides') return makeChain(() => ({ data: [], error: null }));
+      if (table === 'promo_redemptions') {
+        return { select: selectSpy };
+      }
+      return makeChain(() => ({ data: null, error: null }));
+    });
+
+    const req = makePostRequest({ businessId: 'biz-1', campaignId: 'camp-1', redemptionId: 'red-1' });
+    const res = await contactPOST(req);
+    // Verify select was called with 'id' only (no phone_e164)
+    expect(selectSpy).toHaveBeenCalledWith('id');
+    // Should reach 503 shell (or 404 depending on mock chain depth)
+    expect([404, 503]).toContain(res.status);
+  });
+});

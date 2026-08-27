@@ -82,8 +82,7 @@ BEGIN
       'campaign_id', v_redemption.campaign_id,
       'from_status', v_redemption.fulfillment_status,
       'to_status', p_next_status,
-      'fulfillment_reference', p_fulfillment_reference,
-      'actor_role', 'business'
+      'fulfillment_reference', p_fulfillment_reference
     )
   );
 
