@@ -271,10 +271,79 @@ CREATE TABLE IF NOT EXISTS promo_winner_contacts (
 CREATE INDEX IF NOT EXISTS idx_promo_winner_contacts_redemption ON promo_winner_contacts(redemption_id);
 CREATE INDEX IF NOT EXISTS idx_promo_winner_contacts_provider_msg ON promo_winner_contacts(provider_message_id) WHERE provider_message_id IS NOT NULL;
 
--- Unique indexes for durable tracking
-CREATE UNIQUE INDEX IF NOT EXISTS idx_promo_winner_contacts_rate_limit ON promo_winner_contacts (redemption_id) WHERE created_at > now() - interval '10 minutes' AND delivery_status != 'failed';
+-- Unique index for provider-message correlation
 CREATE UNIQUE INDEX IF NOT EXISTS idx_promo_winner_contacts_wamid ON promo_winner_contacts (provider_message_id) WHERE provider_message_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_promo_pickup_wamid ON promo_pickup_verifications (provider_message_id) WHERE provider_message_id IS NOT NULL;
+
+-- Atomic claim RPC for Contact Winner with rate limiting
+CREATE OR REPLACE FUNCTION claim_winner_contact_send(
+  p_redemption_id UUID,
+  p_business_id UUID,
+  p_campaign_id UUID,
+  p_actor_id UUID,
+  p_template_name TEXT,
+  p_cooldown_minutes INT DEFAULT 10
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_recent_count INT;
+  v_contact_id UUID;
+BEGIN
+  -- Lock the redemption row to serialize concurrent requests
+  PERFORM 1 FROM promo_redemptions WHERE id = p_redemption_id FOR UPDATE;
+
+  -- Check for recent non-failed contacts within cooldown
+  SELECT count(*) INTO v_recent_count FROM promo_winner_contacts
+    WHERE redemption_id = p_redemption_id
+      AND delivery_status != 'failed'
+      AND created_at > now() - (p_cooldown_minutes || ' minutes')::interval;
+
+  IF v_recent_count > 0 THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'cooldown', 'minutes', p_cooldown_minutes);
+  END IF;
+
+  -- Claim: insert pending contact row
+  INSERT INTO promo_winner_contacts (redemption_id, business_id, campaign_id, actor_id, template_name, delivery_status)
+  VALUES (p_redemption_id, p_business_id, p_campaign_id, p_actor_id, p_template_name, 'pending')
+  RETURNING id INTO v_contact_id;
+
+  RETURN jsonb_build_object('success', true, 'contact_id', v_contact_id);
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION claim_winner_contact_send(UUID, UUID, UUID, UUID, TEXT, INT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION claim_winner_contact_send(UUID, UUID, UUID, UUID, TEXT, INT) TO service_role;
+
+-- Finalize RPC: update pending contact with send result
+CREATE OR REPLACE FUNCTION finalize_winner_contact_send(
+  p_contact_id UUID,
+  p_status TEXT,
+  p_provider_message_id TEXT DEFAULT NULL
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  IF p_status NOT IN ('sent', 'failed') THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'invalid_status');
+  END IF;
+
+  UPDATE promo_winner_contacts SET
+    delivery_status = p_status,
+    provider_message_id = p_provider_message_id,
+    sent_at = CASE WHEN p_status = 'sent' THEN now() ELSE NULL END
+  WHERE id = p_contact_id AND delivery_status = 'pending';
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'not_pending');
+  END IF;
+
+  RETURN jsonb_build_object('success', true);
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION finalize_winner_contact_send(UUID, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION finalize_winner_contact_send(UUID, TEXT, TEXT) TO service_role;
 
 ALTER TABLE promo_winner_contacts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY promo_winner_contacts_service ON promo_winner_contacts FOR ALL TO service_role USING (true);

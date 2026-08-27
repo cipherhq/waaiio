@@ -52,6 +52,8 @@ function resetMocks() {
   mockCampaignQuery = { data: { name: 'Summer Promo' }, error: null };
   mockWinnerContactQuery = { data: null, error: null };
   mockInsertResult = { error: null };
+  mockClaimContactResult = { data: { success: true, contact_id: 'contact-1' }, error: null };
+  mockFinalizeContactResult = { data: { success: true }, error: null };
   mockTemplates = [
     { name: 'promo_pickup_verification_v2', language: 'en_US', status: 'APPROVED' },
     { name: 'promo_winner_status_v1', language: 'en_US', status: 'APPROVED' },
@@ -121,7 +123,14 @@ const mockServiceFrom = vi.fn().mockImplementation((table: string) => {
   return makeChain(() => ({ data: null, error: null }));
 });
 
-const mockServiceRpc = vi.fn().mockImplementation(() => Promise.resolve(mockRpcResult));
+let mockClaimContactResult: { data: unknown; error: unknown } = { data: { success: true, contact_id: 'contact-1' }, error: null };
+let mockFinalizeContactResult: { data: unknown; error: unknown } = { data: { success: true }, error: null };
+
+const mockServiceRpc = vi.fn().mockImplementation((name: string) => {
+  if (name === 'claim_winner_contact_send') return Promise.resolve(mockClaimContactResult);
+  if (name === 'finalize_winner_contact_send') return Promise.resolve(mockFinalizeContactResult);
+  return Promise.resolve(mockRpcResult);
+});
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn().mockResolvedValue({
@@ -341,9 +350,9 @@ describe('Contact Winner', () => {
     expect(text).not.toContain('2348012345678');
   });
 
-  it('rate limited -> 429 (unique index violation on insert)', async () => {
-    // Simulate unique partial index violation (23505) on claim insert
-    mockInsertResult = { error: { code: '23505', message: 'duplicate key value violates unique constraint "idx_promo_winner_contacts_rate_limit"' }, data: null };
+  it('rate limited -> 429 (claim RPC returns cooldown)', async () => {
+    // Simulate cooldown via claim RPC
+    mockClaimContactResult = { data: { success: false, reason: 'cooldown', minutes: 10 }, error: null };
     const res = await callContact();
     expect(res.status).toBe(429);
     const json = await res.json();

@@ -337,22 +337,19 @@ describe.skipIf(!canRun)('ACC-203 DB: Delivery lifecycle', () => {
       psql(`DELETE FROM promo_winner_contacts WHERE provider_message_id = '${wamid}';`);
     });
 
-    it('two simultaneous inserts for rate limit — one fails', () => {
-      // First insert should succeed
-      const r1 = psqlMayFail(`
-        DELETE FROM promo_winner_contacts WHERE redemption_id = '${RED_ID}' AND delivery_status != 'failed';
-        INSERT INTO promo_winner_contacts (redemption_id, business_id, campaign_id, actor_id, template_name, delivery_status)
-        VALUES ('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1', 'pending');
-      `);
-      expect(r1.ok).toBe(true);
+    it('two concurrent claims for same redemption — second gets cooldown', () => {
+      // Cleanup
+      psql(`DELETE FROM promo_winner_contacts WHERE redemption_id = '${RED_ID}';`);
 
-      // Second insert for same redemption within rate limit window should fail
-      const r2 = psqlMayFail(`
-        INSERT INTO promo_winner_contacts (redemption_id, business_id, campaign_id, actor_id, template_name, delivery_status)
-        VALUES ('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1', 'pending');
-      `);
-      expect(r2.ok).toBe(false);
-      expect(r2.output).toContain('idx_promo_winner_contacts_rate_limit');
+      // First claim should succeed
+      const r1 = psqlJson(`SELECT claim_winner_contact_send('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1') AS r;`);
+      expect(r1.success).toBe(true);
+      expect(r1.contact_id).toBeTruthy();
+
+      // Second claim for same redemption within cooldown → denied
+      const r2 = psqlJson(`SELECT claim_winner_contact_send('${RED_ID}', '${BIZ_ID}', '${CAMP_ID}', '${USER_ID}', 'promo_winner_status_v1') AS r;`);
+      expect(r2.success).toBe(false);
+      expect(r2.reason).toBe('cooldown');
 
       // Cleanup
       psql(`DELETE FROM promo_winner_contacts WHERE redemption_id = '${RED_ID}';`);

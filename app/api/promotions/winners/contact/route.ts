@@ -134,33 +134,31 @@ export async function POST(request: NextRequest) {
     }, { status: 503 });
   }
 
-  // Claim-before-send: INSERT pending row FIRST (rate limit via unique partial index)
-  const { data: claimRow, error: claimError } = await service
-    .from('promo_winner_contacts')
-    .insert({
-      redemption_id: redemptionId,
-      business_id: businessId,
-      campaign_id: campaignId,
-      actor_id: user.id,
-      template_name: WINNER_TEMPLATE_NAME,
-      provider_message_id: null,
-      delivery_status: 'pending',
-      sent_at: null,
-    })
-    .select('id')
-    .single();
+  // Claim-before-send: atomic RPC locks redemption + checks cooldown + inserts pending row
+  const { data: claimResult, error: claimRpcError } = await service.rpc('claim_winner_contact_send', {
+    p_redemption_id: redemptionId,
+    p_business_id: businessId,
+    p_campaign_id: campaignId,
+    p_actor_id: user.id,
+    p_template_name: WINNER_TEMPLATE_NAME,
+  });
 
-  if (claimError) {
-    // Unique partial index violation means rate limited
-    if (claimError.code === '23505') {
+  if (claimRpcError) {
+    logger.error('[PROMO-CONTACT] Claim RPC error:', claimRpcError);
+    return NextResponse.json({ error: 'Contact claim failed' }, { status: 500 });
+  }
+
+  if (!claimResult?.success) {
+    if (claimResult?.reason === 'cooldown') {
       return NextResponse.json({
         error: 'rate_limited',
         message: 'Winner was contacted recently. Please wait before contacting again.',
       }, { status: 429 });
     }
-    logger.error('[PROMO-CONTACT] Failed to claim winner contact slot:', claimError);
     return NextResponse.json({ error: 'Failed to initiate winner contact.' }, { status: 500 });
   }
+
+  const contactId = claimResult.contact_id;
 
   // Send template message
   let messageId: string | undefined;
@@ -178,18 +176,16 @@ export async function POST(request: NextRequest) {
     sendFailed = true;
   }
 
-  // UPDATE the claimed row with delivery result
-  const { error: updateError } = await service
-    .from('promo_winner_contacts')
-    .update({
-      provider_message_id: messageId || null,
-      delivery_status: sendFailed ? 'failed' : 'sent',
-      sent_at: sendFailed ? null : new Date().toISOString(),
-    })
-    .eq('id', claimRow.id);
+  // Finalize the claimed row with delivery result via atomic RPC
+  const { error: finalizeError } = await service.rpc('finalize_winner_contact_send', {
+    p_contact_id: contactId,
+    p_status: sendFailed ? 'failed' : 'sent',
+    p_provider_message_id: messageId || null,
+  });
 
-  if (updateError) {
-    logger.error('[PROMO-CONTACT] Failed to update winner contact delivery status:', updateError);
+  if (finalizeError) {
+    logger.error('[PROMO-CONTACT] Failed to finalize winner contact:', finalizeError);
+    // The send may have succeeded but tracking failed — log but don't suppress
   }
 
   if (sendFailed) {
@@ -197,5 +193,5 @@ export async function POST(request: NextRequest) {
   }
 
   // Never return phone in response
-  return NextResponse.json({ sent: true, contact_id: undefined });
+  return NextResponse.json({ sent: true });
 }
