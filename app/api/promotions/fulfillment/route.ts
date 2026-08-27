@@ -105,10 +105,11 @@ export async function PUT(request: NextRequest) {
     .maybeSingle();
 
   if (intent) {
-    // Non-blocking: notification failure must NEVER roll back fulfillment
-    dispatchFulfillmentNotification(service, intent, businessId).catch(err => {
-      logger.error('[FULFILLMENT] Notification dispatch failed (non-blocking):', err);
-    });
+    // ACC-204 Blocker 2: Await dispatch — serverless fire-and-forget is unsafe.
+    // dispatchFulfillmentNotification never throws (internal try/catch), so this
+    // won't roll back fulfillment, but ensures the attempt completes before
+    // the response is returned.
+    await dispatchFulfillmentNotification(service, intent, businessId);
   }
 
   // Fetch updated redemption for response — explicit allowlist, no phone_e164

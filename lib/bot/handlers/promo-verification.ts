@@ -57,7 +57,7 @@ export async function handlePromoVerification(
 
   if (claimMatch || statusMatch) {
     // Require trusted business provenance — fuzzy/returning_customer cannot self-service
-    const TRUSTED_PROVENANCES = new Set(['pre_resolved', 'dedicated_number', 'restart']);
+    const TRUSTED_PROVENANCES = new Set(['pre_resolved', 'dedicated_number', 'restart', 'active_session']);
     if (!bizResolution || !TRUSTED_PROVENANCES.has(bizResolution)) {
       return { handled: false };
     }

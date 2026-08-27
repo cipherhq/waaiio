@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS promo_fulfillment_notification_intents (
 CREATE INDEX IF NOT EXISTS idx_fulfillment_notif_redemption ON promo_fulfillment_notification_intents(redemption_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fulfillment_notif_wamid ON promo_fulfillment_notification_intents(provider_message_id) WHERE provider_message_id IS NOT NULL;
 
+-- ACC-204 Blocker 2: Track dispatch attempt for crash-safe idempotency
+ALTER TABLE promo_fulfillment_notification_intents ADD COLUMN IF NOT EXISTS attempted_at TIMESTAMPTZ;
+
 ALTER TABLE promo_fulfillment_notification_intents ENABLE ROW LEVEL SECURITY;
 CREATE POLICY fulfillment_notif_service ON promo_fulfillment_notification_intents FOR ALL TO service_role USING (true);
 
@@ -217,7 +220,8 @@ BEGIN
   UPDATE promo_fulfillment_notification_intents SET
     delivery_status = p_status,
     provider_message_id = COALESCE(p_provider_message_id, provider_message_id),
-    sent_at = CASE WHEN p_status = 'sent' THEN now() ELSE NULL END
+    sent_at = CASE WHEN p_status = 'sent' THEN now() ELSE NULL END,
+    attempted_at = COALESCE(attempted_at, now())
   WHERE id = p_intent_id AND delivery_status = 'pending';
 
   IF NOT FOUND THEN

@@ -522,6 +522,34 @@ export async function POST(request: NextRequest) {
             } catch {
               // Non-fatal — winner contact tracking should not block webhook processing
             }
+
+            // ACC-204: Fulfillment notification delivery status correlation
+            try {
+              const fnTsNum = Number(status.timestamp);
+              const fnParsed = new Date(fnTsNum * 1000);
+              const fnTimestamp = (!Number.isFinite(fnTsNum) || fnTsNum <= 0 || Number.isNaN(fnParsed.getTime()))
+                ? null
+                : fnParsed.toISOString();
+
+              const { data: fulfillmentNotif } = await supabase
+                .from('promo_fulfillment_notification_intents')
+                .select('id')
+                .eq('provider_message_id', wamid)
+                .maybeSingle();
+
+              if (fulfillmentNotif) {
+                const { data: fnResult } = await supabase.rpc('advance_promo_fulfillment_notification_status', {
+                  p_provider_message_id: wamid,
+                  p_status: newStatus,
+                  p_timestamp: fnTimestamp,
+                });
+                if (fnResult?.advanced) {
+                  log.debug(`[META-WEBHOOK] Fulfillment notification delivery advanced -> ${newStatus}`);
+                }
+              }
+            } catch {
+              // Non-fatal — fulfillment notification tracking should not block webhook processing
+            }
           }
         }
 

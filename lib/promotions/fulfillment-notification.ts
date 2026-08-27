@@ -127,7 +127,16 @@ export async function dispatchFulfillmentNotification(
     const claimReference = redemption.claim_reference || 'N/A';
     const statusLabel = formatStatus(intent.to_status);
 
-    // 7. Send template — noRetry: delivery-critical promo notification
+    // 7. Mark attempted BEFORE provider call — crash-safe idempotency
+    // If process crashes after this but before provider responds, the intent has
+    // attempted_at set (ambiguous — do NOT auto-retry immediately).
+    await service
+      .from('promo_fulfillment_notification_intents')
+      .update({ attempted_at: new Date().toISOString() })
+      .eq('id', intent.id)
+      .eq('delivery_status', 'pending');
+
+    // 8. Send template — noRetry: delivery-critical promo notification
     let messageId: string | undefined;
     try {
       const phone = stripPlus(redemption.phone_e164);
@@ -156,7 +165,7 @@ export async function dispatchFulfillmentNotification(
       return;
     }
 
-    // 8. Finalize with WAMID
+    // 9. Finalize with WAMID
     await finalizeIntent(service, intent.id, 'sent', messageId);
     logger.info(`[FULFILLMENT-NOTIF] Sent ${intent.to_status} notification for redemption ${intent.redemption_id}`);
   } catch (err) {

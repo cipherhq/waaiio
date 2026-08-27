@@ -12,7 +12,7 @@
  * Skips gracefully in local dev if no DB connection.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync, execFile } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
@@ -271,6 +271,90 @@ describe.skipIf(!canRun)('ACC-204: Fulfillment Notification Intent (DB)', () => 
       expect(result.advanced).toBe(false);
       expect(result.reason).toBe('unknown_message');
     });
+  });
+
+  // ── E-conc. Real two-session concurrency (Blocker 5b) ──
+
+  describe('E-conc. Two-session concurrency', () => {
+    const concRedemptionId = '00000000-0000-0000-0000-000000204015';
+    const concCodeId = '00000000-0000-0000-0000-000000204016';
+
+    beforeAll(() => {
+      // Create a fresh redemption for concurrency test
+      psql(`
+        INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+        VALUES ('${concCodeId}', '${testBizId}', '${testCampaignId}', '${testBatchId}', 'hash204conc', 'enc_204conc', 'CONC', 'winner', '${testPrizeId}', 'claimed')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
+        VALUES ('${concRedemptionId}', '${testBizId}', '${testCampaignId}', '${concCodeId}', '+2348099999999', 'winner', 'WAA-CONC-204', 'pending', 'standard', 'phone_verified')
+        ON CONFLICT (id) DO NOTHING;
+      `);
+    });
+
+    afterAll(() => {
+      psql(`
+        DELETE FROM promo_fulfillment_notification_intents WHERE redemption_id = '${concRedemptionId}';
+        DELETE FROM admin_audit_logs WHERE entity_id = '${concRedemptionId}';
+        DELETE FROM promo_redemptions WHERE id = '${concRedemptionId}';
+        DELETE FROM promo_campaign_codes WHERE id = '${concCodeId}';
+      `);
+    });
+
+    it('exactly 1 wins when two sessions race on same transition', async () => {
+      function psqlAsync(sql: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+        return new Promise((resolve) => {
+          const child = execFile('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+            timeout: 20000,
+          }, (err, stdout, stderr) => {
+            resolve({
+              ok: !err,
+              stdout: (stdout || '').toString().trim(),
+              stderr: (stderr || '').toString().trim(),
+            });
+          });
+          child.stdin!.write(sql);
+          child.stdin!.end();
+        });
+      }
+
+      // Session A: BEGIN -> transition (holds row lock via FOR UPDATE) -> pg_sleep(2) -> COMMIT
+      const sessionA = psqlAsync(`
+        BEGIN;
+        SELECT transition_promo_fulfillment(
+          '${testBizId}', '${concRedemptionId}', 'processing', '${testUserId}', NULL, NULL
+        );
+        SELECT pg_sleep(2);
+        COMMIT;
+      `);
+
+      // Give session A a moment to acquire the lock
+      await new Promise(r => setTimeout(r, 300));
+
+      // Session B: attempts same transition -> blocks on lock -> gets invalid_transition after A commits
+      const sessionB = psqlAsync(`
+        SELECT transition_promo_fulfillment(
+          '${testBizId}', '${concRedemptionId}', 'processing', '${testUserId}', NULL, NULL
+        );
+      `);
+
+      const [resultA, resultB] = await Promise.all([sessionA, sessionB]);
+
+      // Session A should succeed
+      expect(resultA.ok).toBe(true);
+      expect(resultA.stdout).toContain('"success": true');
+
+      // Session B should get invalid_transition (row is already 'processing')
+      expect(resultB.ok).toBe(true);
+      expect(resultB.stdout).toContain('invalid_transition');
+
+      // Exactly 1 notification intent created
+      const intentCount = psql(`
+        SELECT count(*) FROM promo_fulfillment_notification_intents
+        WHERE redemption_id = '${concRedemptionId}' AND to_status = 'processing';
+      `);
+      expect(parseInt(intentCount)).toBe(1);
+    }, 25000);
   });
 
   // ── E. Privilege hardening ──

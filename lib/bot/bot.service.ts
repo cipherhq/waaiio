@@ -2064,6 +2064,7 @@ export class BotService {
         session.business_id,
         messageId, // ACC-180: request-scoped provider message ID, not stale session state
         sessionCapabilities,
+        'active_session', // Session has authoritative tenant binding
       );
       if (promoResult.handled) return;
     }
