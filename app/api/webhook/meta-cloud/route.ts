@@ -465,6 +465,63 @@ export async function POST(request: NextRequest) {
                 log.withContext({ op: 'delivery-status.payment-advance' }).warn('[META-WEBHOOK] Payment delivery status advance failed (non-fatal)');
               }
             }
+
+            // #203: Promo OTP delivery status correlation
+            // Uses advance_promo_pickup_status RPC for monotonic state machine
+            try {
+              const promoTsNum = Number(status.timestamp);
+              const promoParsed = new Date(promoTsNum * 1000);
+              const promoTimestamp = (!Number.isFinite(promoTsNum) || promoTsNum <= 0 || Number.isNaN(promoParsed.getTime()))
+                ? null
+                : promoParsed.toISOString();
+
+              const { data: promoPickup } = await supabase
+                .from('promo_pickup_verifications')
+                .select('id')
+                .eq('provider_message_id', wamid)
+                .maybeSingle();
+
+              if (promoPickup) {
+                const { data: promoResult } = await supabase.rpc('advance_promo_pickup_status', {
+                  p_provider_message_id: wamid,
+                  p_status: newStatus,
+                  p_timestamp: promoTimestamp,
+                });
+                if (promoResult?.advanced) {
+                  log.debug(`[META-WEBHOOK] Promo pickup delivery advanced -> ${newStatus}`);
+                }
+              }
+            } catch {
+              // Non-fatal — promo delivery tracking should not block webhook processing
+            }
+
+            // #203: Winner contact delivery status correlation
+            try {
+              const wcTsNum = Number(status.timestamp);
+              const wcParsed = new Date(wcTsNum * 1000);
+              const wcTimestamp = (!Number.isFinite(wcTsNum) || wcTsNum <= 0 || Number.isNaN(wcParsed.getTime()))
+                ? null
+                : wcParsed.toISOString();
+
+              const { data: winnerContact } = await supabase
+                .from('promo_winner_contacts')
+                .select('id')
+                .eq('provider_message_id', wamid)
+                .maybeSingle();
+
+              if (winnerContact) {
+                const { data: wcResult } = await supabase.rpc('advance_promo_winner_contact_status', {
+                  p_provider_message_id: wamid,
+                  p_status: newStatus,
+                  p_timestamp: wcTimestamp,
+                });
+                if (wcResult?.advanced) {
+                  log.debug(`[META-WEBHOOK] Winner contact delivery advanced -> ${newStatus}`);
+                }
+              }
+            } catch {
+              // Non-fatal — winner contact tracking should not block webhook processing
+            }
           }
         }
 

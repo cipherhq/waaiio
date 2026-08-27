@@ -109,11 +109,11 @@ describe('Readiness status mapping', () => {
   const src = fs.readFileSync('app/api/promotions/template-status/route.ts', 'utf-8');
 
   it('APPROVED → ready', () => {
-    expect(src).toContain("readiness = 'ready'");
+    expect(src).toContain("status: 'ready'");
   });
 
   it('PENDING → pending (not ready)', () => {
-    expect(src).toContain("readiness = 'pending'");
+    expect(src).toContain("status: 'pending'");
   });
 
   it('missing → provisioning_required', () => {
@@ -121,7 +121,7 @@ describe('Readiness status mapping', () => {
   });
 
   it('REJECTED → rejected', () => {
-    expect(src).toContain("readiness = 'rejected'");
+    expect(src).toContain("status: 'rejected'");
   });
 
   it('provider failure → unavailable (fail closed)', () => {
@@ -210,12 +210,12 @@ describe('OTP send contract', () => {
     expect(sendSrc).not.toMatch(/sender\.sendText\(/);
   });
 
-  it('uses promo_pickup_verification template', () => {
-    expect(sendSrc).toContain("templateName: 'promo_pickup_verification'");
+  it('uses promo_pickup_verification_v2 template', () => {
+    expect(sendSrc).toContain("templateName: 'promo_pickup_verification_v2'");
   });
 
-  it('passes 3 template params', () => {
-    expect(sendSrc).toContain("templateParams: ['Prize', otp, String(OTP_EXPIRY_MINUTES)]");
+  it('passes 4 template params (businessName, prizeName, otp, expiry)', () => {
+    expect(sendSrc).toContain("templateParams: [businessName, prizeName, otp, String(OTP_EXPIRY_MINUTES)]");
   });
 });
 

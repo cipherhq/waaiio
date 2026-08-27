@@ -40,10 +40,10 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
-  // Read redemption phone server-side (never accept from browser)
+  // Read redemption phone + prize info server-side (never accept from browser)
   const { data: redemption } = await service
     .from('promo_redemptions')
-    .select('phone_e164')
+    .select('phone_e164, promo_code_id')
     .eq('id', redemptionId)
     .eq('business_id', businessId)
     .maybeSingle();
@@ -52,6 +52,32 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Redemption not found' }, { status: 404 });
   }
   const authoritativePhone = redemption.phone_e164;
+
+  // Fetch prize name via code -> prize_id chain
+  let prizeName = 'Prize';
+  if (redemption.promo_code_id) {
+    const { data: codeRow } = await service
+      .from('promo_campaign_codes')
+      .select('prize_id')
+      .eq('id', redemption.promo_code_id)
+      .maybeSingle();
+    if (codeRow?.prize_id) {
+      const { data: prize } = await service
+        .from('promo_prizes')
+        .select('name')
+        .eq('id', codeRow.prize_id)
+        .maybeSingle();
+      if (prize?.name) prizeName = prize.name;
+    }
+  }
+
+  // Fetch business name for template personalization
+  const { data: bizRecord } = await service
+    .from('businesses')
+    .select('name')
+    .eq('id', businessId)
+    .maybeSingle();
+  const businessName = bizRecord?.name || 'Business';
 
   // Generate OTP in memory — never persisted as plaintext
   const otp = generatePickupOtp();
@@ -109,8 +135,8 @@ export async function POST(request: NextRequest) {
     const phone = stripPlus(authoritativePhone);
     const result = await resolved.sender.sendTemplate({
       to: phone,
-      templateName: 'promo_pickup_verification',
-      templateParams: ['Prize', otp, String(OTP_EXPIRY_MINUTES)],
+      templateName: 'promo_pickup_verification_v2',
+      templateParams: [businessName, prizeName, otp, String(OTP_EXPIRY_MINUTES)],
     });
     messageId = result?.messageId;
     deliveryStatus = 'sent';

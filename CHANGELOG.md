@@ -3,6 +3,30 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #203: Versioned Templates, Delivery Correlation, Contact Winner Activation
+
+### What changed
+- **Migration 345**: Expanded `promo_pickup_verifications` with `sent_at`, `read_at`, `invalidated_at` columns. Expanded `delivery_status` CHECK to include `'delivered'` and `'read'`. Created `advance_promo_pickup_status` RPC for monotonic delivery state machine. Updated `verify_promo_pickup` to accept sent/delivered/read delivery statuses and reject invalidated tokens. Updated `finalize_promo_pickup_delivery` to set `sent_at`. Created `promo_winner_contacts` table with RLS (service-only). Created `advance_promo_winner_contact_status` RPC. All functions privilege-hardened.
+- **OTP Send route**: Changed template from `promo_pickup_verification` to `promo_pickup_verification_v2` with 4 params: `[businessName, prizeName, otp, expiryMinutes]`. No v1 fallback — fail closed if v2 not approved.
+- **Contact Winner route**: Activated from stub. Sends `promo_winner_status_v1` template to winner's WhatsApp. Owner/admin/manager only. Checks template readiness before sending. Records in `promo_winner_contacts`. Rate-limited (10 min per redemption). Phone never returned in response.
+- **Template Status route**: Now returns readiness for `promo_pickup_verification`, `promo_pickup_verification_v2`, and `promo_winner_status_v1` in a `templates` object. Backward-compatible top-level fields preserved.
+- **Webhook handler**: Added promo OTP delivery status correlation (`advance_promo_pickup_status`) and winner contact delivery status correlation (`advance_promo_winner_contact_status`). Unknown WAMIDs are safe no-ops.
+
+### Files changed
+- `supabase/migrations/345_promo_delivery_lifecycle.sql` — new migration
+- `app/api/promotions/verification/send/route.ts` — v2 template + dynamic params
+- `app/api/promotions/winners/contact/route.ts` — activated from stub
+- `app/api/promotions/template-status/route.ts` — multi-template status
+- `app/api/webhook/meta-cloud/route.ts` — promo delivery correlation
+- `lib/__tests__/acc-203-delivery-lifecycle-db.test.ts` — DB tests (24 tests)
+- `lib/__tests__/acc-203-templates-delivery.test.ts` — unit tests (13 tests)
+- `.github/workflows/ci.yml` — ACC-203 CI step
+
+### What could break
+- OTP send will fail if `promo_pickup_verification_v2` template is not APPROVED on the WABA — no v1 fallback
+- Contact Winner requires `promo_winner_status_v1` template to be APPROVED
+- `delivered_at` semantics changed: now means provider delivery evidence, not API acceptance (historical data migrated to `sent_at`)
+
 ## 2026-08-26 — #202: Winner Authorization — PR #208 corrections round 4
 
 ### Corrections applied (round 4)
