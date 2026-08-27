@@ -6,6 +6,7 @@ import { requireCapability } from '@/lib/capabilities/api-guard';
 import { generatePickupOtp, hashPickupToken } from '@/lib/promotions/crypto';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { stripPlus } from '@/lib/utils/phone';
+import { MetaApiError } from '@/lib/channels/meta-api-error';
 
 const OTP_EXPIRY_MINUTES = 10;
 
@@ -146,20 +147,31 @@ export async function POST(request: NextRequest) {
 
   try {
     const phone = stripPlus(authoritativePhone);
+    // noRetry: delivery-critical promo send — ambiguous outcomes must not produce duplicate provider POSTs
     const result = await resolved.sender.sendTemplate({
       to: phone,
       templateName: 'promo_pickup_verification_v2',
       templateParams: [businessName, prizeName, otp, String(OTP_EXPIRY_MINUTES)],
+      noRetry: true,
     });
     messageId = result?.messageId;
     deliveryStatus = 'sent';
   } catch (err) {
-    logger.error('[PROMO-PICKUP] WhatsApp template delivery failed:', err);
-    deliveryStatus = 'failed';
+    // Classify: 4xx MetaApiError = definite rejection, everything else = ambiguous
+    const isDefiniteRejection = err instanceof MetaApiError && err.httpStatus >= 400 && err.httpStatus < 500;
+    if (isDefiniteRejection) {
+      logger.error('[PROMO-PICKUP] WhatsApp template rejected (4xx):', err);
+      deliveryStatus = 'failed';
+    } else {
+      // Ambiguous: network/timeout/5xx — Meta may have accepted the message
+      // Leave verification as pending (non-verifiable but cooldown-protected)
+      logger.error('[PROMO-PICKUP] Ambiguous provider error — not finalizing as failed:', err);
+      return NextResponse.json({ error: 'Verification code delivery uncertain. Please wait and try again.' }, { status: 502 });
+    }
   }
 
   if (deliveryStatus === 'failed') {
-    // Send failed entirely — finalize as failed
+    // Definite 4xx rejection — finalize as failed + invalidate
     await service.rpc('finalize_promo_pickup_delivery', {
       p_verification_id: verificationId, p_status: 'failed', p_provider_message_id: null,
     });
@@ -167,10 +179,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (!messageId) {
-    // No WAMID = no trackable send. Finalize as failed.
-    await service.rpc('finalize_promo_pickup_delivery', {
-      p_verification_id: verificationId, p_status: 'failed', p_provider_message_id: null,
-    });
+    // sendTemplate resolved but no WAMID — ambiguous outcome, leave pending
     return NextResponse.json({ error: 'Send succeeded but no provider message ID received' }, { status: 502 });
   }
 

@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
+import { MetaApiError } from '@/lib/channels/meta-api-error';
 
 // ── Mock state ──
 
@@ -278,8 +279,8 @@ describe('OTP Send: v2 template with dynamic params', () => {
     expect(json.error).toBe('Template management not available on this channel');
   });
 
-  it('missing messageId -> finalize(failed), error response', async () => {
-    // sendTemplate returns undefined messageId
+  it('missing messageId -> leave pending (ambiguous), error response', async () => {
+    // sendTemplate resolves but no messageId — ambiguous, leave pending
     const sendFn = vi.fn().mockResolvedValue({ messageId: undefined });
     mockResolvedChannel = {
       channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
@@ -288,15 +289,62 @@ describe('OTP Send: v2 template with dynamic params', () => {
         { name: 'promo_pickup_verification_v2', language: 'en_US', status: 'APPROVED' },
       ] }) },
     };
+    mockServiceRpc.mockClear();
     const res = await callSend();
     expect(res.status).toBe(502);
     const json = await res.json();
     expect(json.error).toContain('no provider message ID');
-    // finalize should have been called with 'failed'
+    // finalize should NOT have been called — verification stays pending
+    const finalizeCalls = mockServiceRpc.mock.calls.filter((c: unknown[]) => c[0] === 'finalize_promo_pickup_delivery');
+    expect(finalizeCalls.length).toBe(0);
+  });
+
+  it('OTP ambiguous network error leaves verification pending', async () => {
+    const sendFn = vi.fn().mockRejectedValue(new Error('ETIMEDOUT'));
+    mockResolvedChannel = {
+      channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: vi.fn().mockResolvedValue({ data: [
+        { name: 'promo_pickup_verification_v2', language: 'en_US', status: 'APPROVED' },
+      ] }) },
+    };
+    mockServiceRpc.mockClear();
+    const res = await callSend();
+    expect(res.status).toBe(502);
+    // finalize should NOT be called — verification stays pending
+    const finalizeCalls = mockServiceRpc.mock.calls.filter((c: unknown[]) => c[0] === 'finalize_promo_pickup_delivery');
+    expect(finalizeCalls.length).toBe(0);
+  });
+
+  it('OTP definite 4xx rejection finalizes as failed', async () => {
+    const sendFn = vi.fn().mockRejectedValue(new MetaApiError('Cloud API error: 400', 400));
+    mockResolvedChannel = {
+      channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: vi.fn().mockResolvedValue({ data: [
+        { name: 'promo_pickup_verification_v2', language: 'en_US', status: 'APPROVED' },
+      ] }) },
+    };
+    mockServiceRpc.mockClear();
+    const res = await callSend();
+    expect(res.status).toBe(503);
     const finalizeCalls = mockServiceRpc.mock.calls.filter((c: unknown[]) => c[0] === 'finalize_promo_pickup_delivery');
     expect(finalizeCalls.length).toBeGreaterThanOrEqual(1);
-    const lastFinalize = finalizeCalls[finalizeCalls.length - 1];
-    expect(lastFinalize[1].p_status).toBe('failed');
+    expect(finalizeCalls[finalizeCalls.length - 1][1].p_status).toBe('failed');
+  });
+
+  it('OTP noRetry: exactly one provider POST', async () => {
+    const sendFn = vi.fn().mockResolvedValue({ messageId: 'wamid.test' });
+    mockResolvedChannel = {
+      channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: vi.fn().mockResolvedValue({ data: [
+        { name: 'promo_pickup_verification_v2', language: 'en_US', status: 'APPROVED' },
+      ] }) },
+    };
+    await callSend();
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    expect(sendFn).toHaveBeenCalledWith(expect.objectContaining({ noRetry: true }));
   });
 
   it('readiness and send use the SAME resolved channel', async () => {
@@ -450,9 +498,9 @@ describe('Contact Winner', () => {
     expect(sendFn).toHaveBeenCalledTimes(1); // only the first attempt
   });
 
-  it('definite thrown provider failure still finalizes as failed', async () => {
-    // sendTemplate throws (definite failure) — finalize as failed, allowing future retry
-    const sendFn = vi.fn().mockRejectedValue(new Error('Meta API error'));
+  it('definite 4xx rejection finalizes as failed', async () => {
+    // sendTemplate throws MetaApiError with 4xx — definite rejection → finalize failed
+    const sendFn = vi.fn().mockRejectedValue(new MetaApiError('Cloud API error: 400', 400));
     mockResolvedChannel = {
       channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
       sender: { sendTemplate: sendFn },
@@ -463,11 +511,68 @@ describe('Contact Winner', () => {
     mockServiceRpc.mockClear();
     const res = await callContact();
     expect(res.status).toBe(503);
-    // finalize SHOULD have been called with 'failed' for definite errors
+    // finalize SHOULD have been called with 'failed' for definite 4xx
     const finalizeCalls = mockServiceRpc.mock.calls.filter((c: unknown[]) => c[0] === 'finalize_winner_contact_send');
     expect(finalizeCalls.length).toBeGreaterThanOrEqual(1);
     const lastFinalize = finalizeCalls[finalizeCalls.length - 1];
     expect(lastFinalize[1].p_status).toBe('failed');
+  });
+
+  it('ambiguous network/timeout error leaves claim pending (cooldown-protected)', async () => {
+    // sendTemplate throws generic Error (not MetaApiError 4xx) — ambiguous outcome
+    const sendFn = vi.fn().mockRejectedValue(new Error('ETIMEDOUT'));
+    mockResolvedChannel = {
+      channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: vi.fn().mockResolvedValue({ data: [
+        { name: 'promo_winner_status_v1', language: 'en_US', status: 'APPROVED' },
+      ] }) },
+    };
+    mockServiceRpc.mockClear();
+    const res = await callContact();
+    expect(res.status).toBe(502);
+    const json = await res.json();
+    expect(json.error).toContain('uncertain');
+    expect(json.sent).toBeUndefined();
+    // finalize should NOT have been called — claim stays pending
+    const finalizeCalls = mockServiceRpc.mock.calls.filter((c: unknown[]) => c[0] === 'finalize_winner_contact_send');
+    expect(finalizeCalls.length).toBe(0);
+  });
+
+  it('ambiguous Contact Winner error blocks immediate retry', async () => {
+    // First attempt: ambiguous error → claim stays pending
+    const sendFn = vi.fn().mockRejectedValue(new Error('ECONNRESET'));
+    mockResolvedChannel = {
+      channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: vi.fn().mockResolvedValue({ data: [
+        { name: 'promo_winner_status_v1', language: 'en_US', status: 'APPROVED' },
+      ] }) },
+    };
+    const res1 = await callContact();
+    expect(res1.status).toBe(502);
+
+    // Second attempt: claim RPC returns cooldown because pending row exists
+    mockClaimContactResult = { data: { success: false, reason: 'cooldown', minutes: 10 }, error: null };
+    const res2 = await callContact();
+    expect(res2.status).toBe(429);
+    // sendTemplate should only have been called once (first attempt)
+    expect(sendFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('noRetry: exactly one provider POST for Contact Winner', async () => {
+    // Verify sendTemplate is called with noRetry: true
+    const sendFn = vi.fn().mockResolvedValue({ messageId: 'wamid.test' });
+    mockResolvedChannel = {
+      channel: { id: 'ch-1', channel_type: 'shared', business_id: null },
+      sender: { sendTemplate: sendFn },
+      cloud: { getTemplates: vi.fn().mockResolvedValue({ data: [
+        { name: 'promo_winner_status_v1', language: 'en_US', status: 'APPROVED' },
+      ] }) },
+    };
+    await callContact();
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    expect(sendFn).toHaveBeenCalledWith(expect.objectContaining({ noRetry: true }));
   });
 
   it('finalize RPC error -> no {sent:true}', async () => {

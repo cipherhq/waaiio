@@ -5,6 +5,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapabilityWithRole } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { stripPlus } from '@/lib/utils/phone';
+import { MetaApiError } from '@/lib/channels/meta-api-error';
 
 const WINNER_TEMPLATE_NAME = 'promo_winner_status_v1';
 const WINNER_TEMPLATE_LANGUAGE = 'en_US';
@@ -160,28 +161,32 @@ export async function POST(request: NextRequest) {
 
   const contactId = claimResult.contact_id;
 
-  // Send template message
+  // Send template message — noRetry: delivery-critical promo send
   let messageId: string | undefined;
-  let sendFailed = false;
   try {
     const phone = stripPlus(redemption.phone_e164);
     const result = await resolved.sender.sendTemplate({
       to: phone,
       templateName: WINNER_TEMPLATE_NAME,
       templateParams: [businessName, campaignName, prizeName, claimReference],
+      noRetry: true,
     });
     messageId = result?.messageId;
   } catch (err) {
-    logger.error('[PROMO-CONTACT] WhatsApp template delivery failed:', err);
-    sendFailed = true;
-  }
-
-  if (sendFailed) {
-    // Send failed entirely — finalize as failed
-    await service.rpc('finalize_winner_contact_send', {
-      p_contact_id: contactId, p_status: 'failed', p_provider_message_id: null,
-    });
-    return NextResponse.json({ error: 'Failed to send winner notification. Please try again.' }, { status: 503 });
+    // Classify: 4xx MetaApiError = definite rejection, everything else = ambiguous
+    const isDefiniteRejection = err instanceof MetaApiError && err.httpStatus >= 400 && err.httpStatus < 500;
+    if (isDefiniteRejection) {
+      logger.error('[PROMO-CONTACT] WhatsApp template rejected (4xx):', err);
+      // Definite failure — finalize as failed (allows future retry after cooldown)
+      await service.rpc('finalize_winner_contact_send', {
+        p_contact_id: contactId, p_status: 'failed', p_provider_message_id: null,
+      });
+      return NextResponse.json({ error: 'Failed to send winner notification. Please try again.' }, { status: 503 });
+    }
+    // Ambiguous: network/timeout/5xx — Meta may have accepted the message
+    // Leave claim as pending (cooldown-protected, prevents duplicate send)
+    logger.error('[PROMO-CONTACT] Ambiguous provider error — claim stays pending:', err);
+    return NextResponse.json({ error: 'Winner notification delivery uncertain. Please wait and try again.' }, { status: 502 });
   }
 
   if (!messageId) {
