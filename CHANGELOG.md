@@ -3,6 +3,27 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #203: Corrections round 2 — readiness-before-issue, durable WAMID correlation, real DB proofs
+
+### What changed
+- **OTP Send route**: Moved channel resolution + template readiness check BEFORE `issue_promo_pickup` RPC. If readiness fails, no verification is created and no cooldown is consumed. Previously a failed readiness check stranded a pending verification.
+- **OTP Send route**: Missing `messageId` (WAMID) after `sendTemplate` now finalizes as 'failed' and returns 502 instead of claiming success.
+- **Contact Winner route**: Missing `messageId` now finalizes as 'failed' and returns 502. Finalize RPC errors or `success:false` now block `{sent:true}` response (fail-closed).
+- **DB tests**: Replaced placeholder historical migration proof with real backfill simulation (INSERT pre-345 pattern, run same UPDATE logic, verify exact timestamp). Replaced sequential concurrency test with true `psqlAsync` dual-session proof. Added pickup WAMID uniqueness proof (`idx_promo_pickup_wamid`).
+- **DB tests**: Added privilege proofs for `claim_winner_contact_send` and `finalize_winner_contact_send` (service_role: EXECUTE, anon/authenticated: REVOKED).
+- **Unit tests**: OTP send missing/PENDING/REJECTED tests now assert zero `issue_promo_pickup` RPC calls. Added missing-messageId and finalize-error tests for both OTP send and Contact Winner.
+
+### Files changed
+- `app/api/promotions/verification/send/route.ts` — readiness before issue, WAMID-required finalization
+- `app/api/promotions/winners/contact/route.ts` — WAMID-required finalization, fail-closed on finalize error
+- `lib/__tests__/acc-203-delivery-lifecycle-db.test.ts` — real DB proofs + privilege proofs
+- `lib/__tests__/acc-203-templates-delivery.test.ts` — zero-RPC assertions + correlation tests
+
+### What could break
+- OTP send now returns 503 for template readiness failures WITHOUT creating a verification — callers that expected a verification_id in the error path will not get one
+- OTP send and Contact Winner now return 502 when `messageId` is missing — callers that accepted `{sent:true}` without WAMID correlation will now see errors
+- Contact Winner finalize errors now return 500 instead of silently succeeding — callers must handle this case
+
 ## 2026-08-26 — #203: Corrections round 1 — delivered_at semantics, v2 gate, durable contacts, #202 scope
 
 ### What changed
