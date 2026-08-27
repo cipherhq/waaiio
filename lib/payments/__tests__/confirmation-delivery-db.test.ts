@@ -729,23 +729,52 @@ describe('PostgreSQL delivery lifecycle (#197)', () => {
     // Because the attach completes first (holds lock), the callback finds the
     // WAMID already attached and advances directly (no unmatched row needed).
 
-    // Session A: attach inside explicit transaction + pg_sleep(1) to hold advisory lock
-    const attachCmd = `psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "BEGIN; SELECT json_build_object('pid', pg_backend_pid(), 'result', complete_confirmation_send('${claim.attempt_id}'::uuid, '${claim.claim_token}'::uuid, '${wamid}', NOW())); SELECT pg_sleep(1); COMMIT;"`;
+    // Session A: attach inside explicit transaction + pg_sleep(3) to hold advisory lock
+    // The longer sleep gives the test harness time to observe B's blocked state via pg_stat_activity
+    const attachCmd = `psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "BEGIN; SELECT json_build_object('pid', pg_backend_pid(), 'result', complete_confirmation_send('${claim.attempt_id}'::uuid, '${claim.claim_token}'::uuid, '${wamid}', NOW())); SELECT pg_sleep(3); COMMIT;"`;
 
     // Session B: callback — will block on pg_advisory_xact_lock(hashtext(wamid)) until A commits
     const callbackCmd = `psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "SELECT json_build_object('pid', pg_backend_pid(), 'result', advance_delivery_status('${wamid}', 'delivered', '2026-08-26T05:45:25Z'::timestamptz, NULL, NULL));"`;
 
-    // Launch both simultaneously — genuine concurrency.
-    // Small setTimeout for B ensures A acquires the advisory lock first.
-    const [attachOut, callbackOut] = await Promise.all([
-      execAsync(attachCmd, { timeout: 15000 }),
-      new Promise<{ stdout: string; stderr: string }>(resolve =>
-        setTimeout(async () => {
-          const r = await execAsync(callbackCmd, { timeout: 15000 });
-          resolve(r);
-        }, 200),
-      ),
-    ]);
+    // Launch A first (acquires advisory lock + pg_sleep holds it).
+    const attachPromise = execAsync(attachCmd, { timeout: 15000 });
+
+    // Deterministic barrier: poll pg_stat_activity until Session A visibly holds
+    // the advisory lock. This replaces the non-deterministic setTimeout(200).
+    const lockHash = `hashtext('${wamid}')`;
+    for (let i = 0; i < 50; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      const lockCheck = runSQL(
+        `SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = (${lockHash})::int AND granted = true;`
+      );
+      if (lockCheck.stdout.trim() !== '0') break;
+    }
+    // Verify A actually holds the lock before starting B
+    const lockHeld = runSQL(
+      `SELECT count(*)::int FROM pg_locks WHERE locktype = 'advisory' AND objid = (${lockHash})::int AND granted = true;`
+    );
+    expect(parseInt(lockHeld.stdout.trim())).toBeGreaterThan(0);
+
+    // Now launch B — it will block on the advisory lock until A's pg_sleep + COMMIT.
+    const callbackPromise = execAsync(callbackCmd, { timeout: 15000 });
+
+    // Deterministic proof that B is actually waiting on the lock:
+    // Poll pg_stat_activity until B appears with wait_event_type = 'Lock'.
+    for (let i = 0; i < 50; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      const waitCheck = runSQL(
+        `SELECT count(*)::int FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%advance_delivery_status%' AND state = 'active';`
+      );
+      if (waitCheck.stdout.trim() !== '0') break;
+    }
+    // Verify B is genuinely blocked before A releases
+    const bWaiting = runSQL(
+      `SELECT count(*)::int FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%advance_delivery_status%' AND state = 'active';`
+    );
+    expect(parseInt(bWaiting.stdout.trim())).toBeGreaterThan(0);
+
+    // Both complete after A's pg_sleep(1) finishes and COMMIT releases the lock.
+    const [attachOut, callbackOut] = await Promise.all([attachPromise, callbackPromise]);
 
     // Parse results — Session A output has BEGIN/json/pg_sleep/COMMIT lines
     const attachLines = attachOut.stdout.trim().split('\n');
