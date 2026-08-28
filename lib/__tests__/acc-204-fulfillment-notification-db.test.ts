@@ -218,14 +218,20 @@ describe.skipIf(!canRun)('ACC-204: Fulfillment Notification Intent (DB)', () => 
       expect(result.reason).toBe('not_pending');
     });
 
-    it('finalizes as failed', () => {
+    it('finalizes as failed (with valid claim token)', () => {
       const intentId = psql(`
         SELECT id FROM promo_fulfillment_notification_intents
         WHERE redemption_id = '${testRedemptionId}' AND to_status = 'fulfilled';
       `);
 
+      // Must claim first to get a valid token (pre-provider failure requires claim authority)
+      const claim = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentId}');
+      `);
+      expect(claim.claimed).toBe(true);
+
       const result = psqlJson(`
-        SELECT finalize_promo_fulfillment_notification('${intentId}', 'failed', NULL);
+        SELECT finalize_promo_fulfillment_notification('${intentId}', 'failed', NULL, '${claim.claim_token}');
       `);
       expect(result.success).toBe(true);
 
@@ -675,14 +681,14 @@ describe.skipIf(!canRun)('ACC-204: Fulfillment Notification Intent (DB)', () => 
 
     it('service_role can execute finalize_promo_fulfillment_notification', () => {
       const result = psql(`
-        SELECT has_function_privilege('service_role', 'finalize_promo_fulfillment_notification(uuid, text, text)', 'EXECUTE');
+        SELECT has_function_privilege('service_role', 'finalize_promo_fulfillment_notification(uuid, text, text, uuid)', 'EXECUTE');
       `);
       expect(result).toBe('t');
     });
 
     it('anon cannot execute finalize_promo_fulfillment_notification', () => {
       const result = psql(`
-        SELECT has_function_privilege('anon', 'finalize_promo_fulfillment_notification(uuid, text, text)', 'EXECUTE');
+        SELECT has_function_privilege('anon', 'finalize_promo_fulfillment_notification(uuid, text, text, uuid)', 'EXECUTE');
       `);
       expect(result).toBe('f');
     });
@@ -864,9 +870,9 @@ describe.skipIf(!canRun)('ACC-204: Fulfillment Notification Intent (DB)', () => 
     });
   });
 
-  // ── K. Recovery RPC ──
+  // ── K. Recovery RPC privileges ──
 
-  describe('K. find_recoverable_notification_intents', () => {
+  describe('K. find_recoverable_notification_intents privileges', () => {
     it('service_role can execute find_recoverable_notification_intents', () => {
       const result = psql(`
         SELECT has_function_privilege('service_role', 'find_recoverable_notification_intents(int)', 'EXECUTE');
@@ -879,6 +885,464 @@ describe.skipIf(!canRun)('ACC-204: Fulfillment Notification Intent (DB)', () => 
         SELECT has_function_privilege('anon', 'find_recoverable_notification_intents(int)', 'EXECUTE');
       `);
       expect(result).toBe('f');
+    });
+  });
+
+  // ── L. Pre-provider finalize claim token enforcement (Blocker 1 R6) ──
+
+  describe('L. Finalize claim token enforcement for pre-provider failures', () => {
+    const claimEnfRedemptionId = '00000000-0000-0000-0000-000000204070';
+    const claimEnfCodeId = '00000000-0000-0000-0000-000000204071';
+
+    beforeAll(() => {
+      psql(`
+        INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+        VALUES ('${claimEnfCodeId}', '${testBizId}', '${testCampaignId}', '${testBatchId}', 'hash204clmenf', 'enc_204clmenf', 'CENF', 'winner', '${testPrizeId}', 'claimed')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
+        VALUES ('${claimEnfRedemptionId}', '${testBizId}', '${testCampaignId}', '${claimEnfCodeId}', '+2348011111111', 'winner', 'WAA-CENF-204', 'pending', 'standard', 'phone_verified')
+        ON CONFLICT (id) DO NOTHING;
+
+        SELECT transition_promo_fulfillment(
+          '${testBizId}', '${claimEnfRedemptionId}', 'processing', '${testUserId}', NULL, NULL
+        );
+      `);
+    });
+
+    afterAll(() => {
+      psql(`
+        DELETE FROM promo_fulfillment_notification_intents WHERE redemption_id = '${claimEnfRedemptionId}';
+        DELETE FROM admin_audit_logs WHERE entity_id = '${claimEnfRedemptionId}';
+        DELETE FROM promo_redemptions WHERE id = '${claimEnfRedemptionId}';
+        DELETE FROM promo_campaign_codes WHERE id = '${claimEnfCodeId}';
+      `);
+    });
+
+    it('stale worker with expired token cannot finalize as failed after reclaim', () => {
+      const intentId = psql(`
+        SELECT id FROM promo_fulfillment_notification_intents
+        WHERE redemption_id = '${claimEnfRedemptionId}' AND to_status = 'processing';
+      `);
+
+      // Worker A claims with 1-second lease
+      const claimA = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentId}', 1);
+      `);
+      expect(claimA.claimed).toBe(true);
+      const tokenA = claimA.claim_token;
+
+      // A's lease expires
+      psql(`SELECT pg_sleep(2);`);
+
+      // Worker B reclaims
+      const claimB = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentId}');
+      `);
+      expect(claimB.claimed).toBe(true);
+      expect(claimB.claim_token).not.toBe(tokenA);
+
+      // Stale worker A tries to finalize as failed with old token → REJECTED
+      const result = psqlJson(`
+        SELECT finalize_promo_fulfillment_notification('${intentId}', 'failed', NULL, '${tokenA}');
+      `);
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('invalid_claim_for_failure');
+    });
+
+    it('valid current claimant can commit pre-provider failure', () => {
+      // Clean slate: create a new intent for this test
+      const claimEnfRedemptionId2 = '00000000-0000-0000-0000-000000204072';
+      const claimEnfCodeId2 = '00000000-0000-0000-0000-000000204073';
+      psql(`
+        INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+        VALUES ('${claimEnfCodeId2}', '${testBizId}', '${testCampaignId}', '${testBatchId}', 'hash204cenf2', 'enc_204cenf2', 'CNF2', 'winner', '${testPrizeId}', 'claimed')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
+        VALUES ('${claimEnfRedemptionId2}', '${testBizId}', '${testCampaignId}', '${claimEnfCodeId2}', '+2348011111112', 'winner', 'WAA-CNF2-204', 'pending', 'standard', 'phone_verified')
+        ON CONFLICT (id) DO NOTHING;
+
+        SELECT transition_promo_fulfillment(
+          '${testBizId}', '${claimEnfRedemptionId2}', 'processing', '${testUserId}', NULL, NULL
+        );
+      `);
+
+      const intentId2 = psql(`
+        SELECT id FROM promo_fulfillment_notification_intents
+        WHERE redemption_id = '${claimEnfRedemptionId2}' AND to_status = 'processing';
+      `);
+
+      // Claim with default lease (30s)
+      const claim = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentId2}');
+      `);
+      expect(claim.claimed).toBe(true);
+
+      // Finalize as failed with valid token → ACCEPTED
+      const result = psqlJson(`
+        SELECT finalize_promo_fulfillment_notification('${intentId2}', 'failed', NULL, '${claim.claim_token}');
+      `);
+      expect(result.success).toBe(true);
+
+      // Verify intent is now failed
+      const status = psql(`
+        SELECT delivery_status FROM promo_fulfillment_notification_intents WHERE id = '${intentId2}';
+      `);
+      expect(status).toBe('failed');
+
+      // Cleanup
+      psql(`
+        DELETE FROM promo_fulfillment_notification_intents WHERE redemption_id = '${claimEnfRedemptionId2}';
+        DELETE FROM admin_audit_logs WHERE entity_id = '${claimEnfRedemptionId2}';
+        DELETE FROM promo_redemptions WHERE id = '${claimEnfRedemptionId2}';
+        DELETE FROM promo_campaign_codes WHERE id = '${claimEnfCodeId2}';
+      `);
+    });
+
+    it('wrong token denied for pre-provider failure', () => {
+      const claimEnfRedemptionId3 = '00000000-0000-0000-0000-000000204074';
+      const claimEnfCodeId3 = '00000000-0000-0000-0000-000000204075';
+      psql(`
+        INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+        VALUES ('${claimEnfCodeId3}', '${testBizId}', '${testCampaignId}', '${testBatchId}', 'hash204cenf3', 'enc_204cenf3', 'CNF3', 'winner', '${testPrizeId}', 'claimed')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
+        VALUES ('${claimEnfRedemptionId3}', '${testBizId}', '${testCampaignId}', '${claimEnfCodeId3}', '+2348011111113', 'winner', 'WAA-CNF3-204', 'pending', 'standard', 'phone_verified')
+        ON CONFLICT (id) DO NOTHING;
+
+        SELECT transition_promo_fulfillment(
+          '${testBizId}', '${claimEnfRedemptionId3}', 'processing', '${testUserId}', NULL, NULL
+        );
+      `);
+
+      const intentId3 = psql(`
+        SELECT id FROM promo_fulfillment_notification_intents
+        WHERE redemption_id = '${claimEnfRedemptionId3}' AND to_status = 'processing';
+      `);
+
+      // Claim
+      const claim = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentId3}');
+      `);
+      expect(claim.claimed).toBe(true);
+
+      // Wrong token
+      const result = psqlJson(`
+        SELECT finalize_promo_fulfillment_notification('${intentId3}', 'failed', NULL, '00000000-0000-0000-0000-000000000099');
+      `);
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('invalid_claim_for_failure');
+
+      // Cleanup
+      psql(`
+        DELETE FROM promo_fulfillment_notification_intents WHERE redemption_id = '${claimEnfRedemptionId3}';
+        DELETE FROM admin_audit_logs WHERE entity_id = '${claimEnfRedemptionId3}';
+        DELETE FROM promo_redemptions WHERE id = '${claimEnfRedemptionId3}';
+        DELETE FROM promo_campaign_codes WHERE id = '${claimEnfCodeId3}';
+      `);
+    });
+
+    it('expired token denied for pre-provider failure', () => {
+      const claimEnfRedemptionId4 = '00000000-0000-0000-0000-000000204076';
+      const claimEnfCodeId4 = '00000000-0000-0000-0000-000000204077';
+      psql(`
+        INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+        VALUES ('${claimEnfCodeId4}', '${testBizId}', '${testCampaignId}', '${testBatchId}', 'hash204cenf4', 'enc_204cenf4', 'CNF4', 'winner', '${testPrizeId}', 'claimed')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
+        VALUES ('${claimEnfRedemptionId4}', '${testBizId}', '${testCampaignId}', '${claimEnfCodeId4}', '+2348011111114', 'winner', 'WAA-CNF4-204', 'pending', 'standard', 'phone_verified')
+        ON CONFLICT (id) DO NOTHING;
+
+        SELECT transition_promo_fulfillment(
+          '${testBizId}', '${claimEnfRedemptionId4}', 'processing', '${testUserId}', NULL, NULL
+        );
+      `);
+
+      const intentId4 = psql(`
+        SELECT id FROM promo_fulfillment_notification_intents
+        WHERE redemption_id = '${claimEnfRedemptionId4}' AND to_status = 'processing';
+      `);
+
+      // Claim with 1-second lease
+      const claim = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentId4}', 1);
+      `);
+      expect(claim.claimed).toBe(true);
+
+      // Wait for lease to expire
+      psql(`SELECT pg_sleep(2);`);
+
+      // Expired token → denied (even though it's the right token, the lease expired)
+      const result = psqlJson(`
+        SELECT finalize_promo_fulfillment_notification('${intentId4}', 'failed', NULL, '${claim.claim_token}');
+      `);
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('invalid_claim_for_failure');
+
+      // Cleanup
+      psql(`
+        DELETE FROM promo_fulfillment_notification_intents WHERE redemption_id = '${claimEnfRedemptionId4}';
+        DELETE FROM admin_audit_logs WHERE entity_id = '${claimEnfRedemptionId4}';
+        DELETE FROM promo_redemptions WHERE id = '${claimEnfRedemptionId4}';
+        DELETE FROM promo_campaign_codes WHERE id = '${claimEnfCodeId4}';
+      `);
+    });
+
+    it('post-provider finalization works without token', () => {
+      const claimEnfRedemptionId5 = '00000000-0000-0000-0000-000000204078';
+      const claimEnfCodeId5 = '00000000-0000-0000-0000-000000204079';
+      psql(`
+        INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+        VALUES ('${claimEnfCodeId5}', '${testBizId}', '${testCampaignId}', '${testBatchId}', 'hash204cenf5', 'enc_204cenf5', 'CNF5', 'winner', '${testPrizeId}', 'claimed')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
+        VALUES ('${claimEnfRedemptionId5}', '${testBizId}', '${testCampaignId}', '${claimEnfCodeId5}', '+2348011111115', 'winner', 'WAA-CNF5-204', 'pending', 'standard', 'phone_verified')
+        ON CONFLICT (id) DO NOTHING;
+
+        SELECT transition_promo_fulfillment(
+          '${testBizId}', '${claimEnfRedemptionId5}', 'processing', '${testUserId}', NULL, NULL
+        );
+      `);
+
+      const intentId5 = psql(`
+        SELECT id FROM promo_fulfillment_notification_intents
+        WHERE redemption_id = '${claimEnfRedemptionId5}' AND to_status = 'processing';
+      `);
+
+      // Claim and mark attempted (simulates provider_attempted_at IS NOT NULL)
+      const claim = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentId5}');
+      `);
+      expect(claim.claimed).toBe(true);
+
+      const markResult = psqlJson(`
+        SELECT mark_fulfillment_notification_attempted('${intentId5}', '${claim.claim_token}');
+      `);
+      expect(markResult.success).toBe(true);
+
+      // Post-provider finalize as 'sent' with WAMID — no claim token needed
+      const result = psqlJson(`
+        SELECT finalize_promo_fulfillment_notification('${intentId5}', 'sent', 'wamid.cenf5');
+      `);
+      expect(result.success).toBe(true);
+
+      // Also test post-provider 'failed' without token (provider_attempted_at set)
+      // Need a new intent for this since the above is now 'sent'
+      const claimEnfRedemptionId5b = '00000000-0000-0000-0000-000000204080';
+      const claimEnfCodeId5b = '00000000-0000-0000-0000-000000204081';
+      psql(`
+        INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+        VALUES ('${claimEnfCodeId5b}', '${testBizId}', '${testCampaignId}', '${testBatchId}', 'hash204cnf5b', 'enc_204cnf5b', 'CF5B', 'winner', '${testPrizeId}', 'claimed')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
+        VALUES ('${claimEnfRedemptionId5b}', '${testBizId}', '${testCampaignId}', '${claimEnfCodeId5b}', '+2348011111116', 'winner', 'WAA-CF5B-204', 'pending', 'standard', 'phone_verified')
+        ON CONFLICT (id) DO NOTHING;
+
+        SELECT transition_promo_fulfillment(
+          '${testBizId}', '${claimEnfRedemptionId5b}', 'processing', '${testUserId}', NULL, NULL
+        );
+      `);
+
+      const intentId5b = psql(`
+        SELECT id FROM promo_fulfillment_notification_intents
+        WHERE redemption_id = '${claimEnfRedemptionId5b}' AND to_status = 'processing';
+      `);
+
+      const claim5b = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentId5b}');
+      `);
+      expect(claim5b.claimed).toBe(true);
+
+      const mark5b = psqlJson(`
+        SELECT mark_fulfillment_notification_attempted('${intentId5b}', '${claim5b.claim_token}');
+      `);
+      expect(mark5b.success).toBe(true);
+
+      // Post-provider 'failed' without claim token → ALLOWED (provider_attempted_at set)
+      const result5b = psqlJson(`
+        SELECT finalize_promo_fulfillment_notification('${intentId5b}', 'failed');
+      `);
+      expect(result5b.success).toBe(true);
+
+      // Cleanup
+      psql(`
+        DELETE FROM promo_fulfillment_notification_intents WHERE redemption_id IN ('${claimEnfRedemptionId5}', '${claimEnfRedemptionId5b}');
+        DELETE FROM admin_audit_logs WHERE entity_id IN ('${claimEnfRedemptionId5}', '${claimEnfRedemptionId5b}');
+        DELETE FROM promo_redemptions WHERE id IN ('${claimEnfRedemptionId5}', '${claimEnfRedemptionId5b}');
+        DELETE FROM promo_campaign_codes WHERE id IN ('${claimEnfCodeId5}', '${claimEnfCodeId5b}');
+      `);
+    });
+
+    it('no claim token = denied for pre-provider failure', () => {
+      const claimEnfRedemptionId6 = '00000000-0000-0000-0000-000000204082';
+      const claimEnfCodeId6 = '00000000-0000-0000-0000-000000204083';
+      psql(`
+        INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+        VALUES ('${claimEnfCodeId6}', '${testBizId}', '${testCampaignId}', '${testBatchId}', 'hash204cenf6', 'enc_204cenf6', 'CNF6', 'winner', '${testPrizeId}', 'claimed')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
+        VALUES ('${claimEnfRedemptionId6}', '${testBizId}', '${testCampaignId}', '${claimEnfCodeId6}', '+2348011111117', 'winner', 'WAA-CNF6-204', 'pending', 'standard', 'phone_verified')
+        ON CONFLICT (id) DO NOTHING;
+
+        SELECT transition_promo_fulfillment(
+          '${testBizId}', '${claimEnfRedemptionId6}', 'processing', '${testUserId}', NULL, NULL
+        );
+      `);
+
+      const intentId6 = psql(`
+        SELECT id FROM promo_fulfillment_notification_intents
+        WHERE redemption_id = '${claimEnfRedemptionId6}' AND to_status = 'processing';
+      `);
+
+      // Claim to set the token
+      const claim = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentId6}');
+      `);
+      expect(claim.claimed).toBe(true);
+
+      // Try to finalize as failed WITHOUT claim token → REJECTED
+      const result = psqlJson(`
+        SELECT finalize_promo_fulfillment_notification('${intentId6}', 'failed');
+      `);
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('invalid_claim_for_failure');
+
+      // Cleanup
+      psql(`
+        DELETE FROM promo_fulfillment_notification_intents WHERE redemption_id = '${claimEnfRedemptionId6}';
+        DELETE FROM admin_audit_logs WHERE entity_id = '${claimEnfRedemptionId6}';
+        DELETE FROM promo_redemptions WHERE id = '${claimEnfRedemptionId6}';
+        DELETE FROM promo_campaign_codes WHERE id = '${claimEnfCodeId6}';
+      `);
+    });
+  });
+
+  // ── M. Recovery selection behavior (Blocker 3 R6) ──
+
+  describe('M. Recovery selection behavior', () => {
+    // 7 intents with different states to verify find_recoverable_notification_intents
+    const recSelRedemptionBase = '00000000-0000-0000-0000-000000204090';
+    const recSelCodeBase = '00000000-0000-0000-0000-0000002040a0';
+    const intentIds: Record<string, string> = {};
+
+    function recSelRedemptionId(n: number) { return `00000000-0000-0000-0000-00000020409${n}`; }
+    function recSelCodeId(n: number) { return `00000000-0000-0000-0000-000002040a${n}0`; }
+
+    beforeAll(() => {
+      // Create 7 codes + redemptions
+      for (let i = 1; i <= 7; i++) {
+        psql(`
+          INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+          VALUES ('${recSelCodeId(i)}', '${testBizId}', '${testCampaignId}', '${testBatchId}', 'hash204rs${i}', 'enc_204rs${i}', 'RS${i}X', 'winner', '${testPrizeId}', 'claimed')
+          ON CONFLICT (id) DO NOTHING;
+
+          INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
+          VALUES ('${recSelRedemptionId(i)}', '${testBizId}', '${testCampaignId}', '${recSelCodeId(i)}', '+234801000000${i}', 'winner', 'WAA-RS${i}-204', 'pending', 'standard', 'phone_verified')
+          ON CONFLICT (id) DO NOTHING;
+
+          SELECT transition_promo_fulfillment(
+            '${testBizId}', '${recSelRedemptionId(i)}', 'processing', '${testUserId}', NULL, NULL
+          );
+        `);
+
+        intentIds[`i${i}`] = psql(`
+          SELECT id FROM promo_fulfillment_notification_intents
+          WHERE redemption_id = '${recSelRedemptionId(i)}' AND to_status = 'processing';
+        `);
+      }
+
+      // Intent 1: unclaimed_pending — leave as-is (pending, no claim, no attempt) → INCLUDED
+
+      // Intent 2: expired_unattempted — claim with 1s lease, then let it expire
+      psql(`
+        SELECT claim_fulfillment_notification_dispatch('${intentIds.i2}', 1);
+        SELECT pg_sleep(2);
+      `);
+
+      // Intent 3: active_lease — claim with default 30s lease → EXCLUDED
+      psql(`
+        SELECT claim_fulfillment_notification_dispatch('${intentIds.i3}');
+      `);
+
+      // Intent 4: provider_attempted — claim and mark attempted → EXCLUDED
+      const claim4 = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentIds.i4}');
+      `);
+      psql(`
+        SELECT mark_fulfillment_notification_attempted('${intentIds.i4}', '${claim4.claim_token}');
+      `);
+
+      // Intent 5: sent — claim, mark attempted, finalize as sent → EXCLUDED
+      const claim5 = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentIds.i5}');
+      `);
+      psql(`
+        SELECT mark_fulfillment_notification_attempted('${intentIds.i5}', '${claim5.claim_token}');
+        SELECT finalize_promo_fulfillment_notification('${intentIds.i5}', 'sent', 'wamid.rs5');
+      `);
+
+      // Intent 6: failed — claim, mark attempted, finalize as failed → EXCLUDED
+      const claim6 = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentIds.i6}');
+      `);
+      psql(`
+        SELECT mark_fulfillment_notification_attempted('${intentIds.i6}', '${claim6.claim_token}');
+        SELECT finalize_promo_fulfillment_notification('${intentIds.i6}', 'failed');
+      `);
+
+      // Intent 7: delivered — claim, mark attempted, finalize as sent, advance to delivered → EXCLUDED
+      const claim7 = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentIds.i7}');
+      `);
+      psql(`
+        SELECT mark_fulfillment_notification_attempted('${intentIds.i7}', '${claim7.claim_token}');
+        SELECT finalize_promo_fulfillment_notification('${intentIds.i7}', 'sent', 'wamid.rs7');
+        SELECT advance_promo_fulfillment_notification_status('wamid.rs7', 'delivered', now());
+      `);
+    });
+
+    afterAll(() => {
+      for (let i = 1; i <= 7; i++) {
+        psql(`
+          DELETE FROM promo_fulfillment_notification_intents WHERE redemption_id = '${recSelRedemptionId(i)}';
+          DELETE FROM admin_audit_logs WHERE entity_id = '${recSelRedemptionId(i)}';
+          DELETE FROM promo_redemptions WHERE id = '${recSelRedemptionId(i)}';
+          DELETE FROM promo_campaign_codes WHERE id = '${recSelCodeId(i)}';
+        `);
+      }
+    });
+
+    it('returns only unclaimed_pending and expired_unattempted intents', () => {
+      const recoverable = psql(`
+        SELECT array_agg(id::text ORDER BY id) FROM find_recoverable_notification_intents(100);
+      `);
+
+      // Should include intent 1 (unclaimed) and intent 2 (expired lease, no attempt)
+      expect(recoverable).toContain(intentIds.i1);
+      expect(recoverable).toContain(intentIds.i2);
+
+      // Should NOT include any of the others
+      expect(recoverable).not.toContain(intentIds.i3); // active lease
+      expect(recoverable).not.toContain(intentIds.i4); // provider attempted
+      expect(recoverable).not.toContain(intentIds.i5); // sent
+      expect(recoverable).not.toContain(intentIds.i6); // failed
+      expect(recoverable).not.toContain(intentIds.i7); // delivered
+    });
+
+    it('returns exactly 2 recoverable intents from test data', () => {
+      // Count how many of our test intents are returned
+      const count = psql(`
+        SELECT count(*) FROM find_recoverable_notification_intents(100)
+        WHERE business_id = '${testBizId}'
+          AND id IN ('${intentIds.i1}', '${intentIds.i2}', '${intentIds.i3}', '${intentIds.i4}', '${intentIds.i5}', '${intentIds.i6}', '${intentIds.i7}');
+      `);
+      expect(parseInt(count)).toBe(2);
     });
   });
 });

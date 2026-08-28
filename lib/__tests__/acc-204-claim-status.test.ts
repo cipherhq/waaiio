@@ -1380,7 +1380,7 @@ describe('supplemental: source structure verification — finalize idempotency',
     expect(migrationSrc).toContain('GRANT EXECUTE ON FUNCTION find_recoverable_notification_intents(INT) TO service_role');
     expect(migrationSrc).toContain('REVOKE EXECUTE ON FUNCTION find_recoverable_notification_intents(INT) FROM PUBLIC, anon, authenticated');
     // Finalize and mark_attempted re-granted
-    expect(migrationSrc).toContain('GRANT EXECUTE ON FUNCTION finalize_promo_fulfillment_notification(UUID, TEXT, TEXT) TO service_role');
+    expect(migrationSrc).toContain('GRANT EXECUTE ON FUNCTION finalize_promo_fulfillment_notification(UUID, TEXT, TEXT, UUID) TO service_role');
     expect(migrationSrc).toContain('GRANT EXECUTE ON FUNCTION mark_fulfillment_notification_attempted(UUID, UUID) TO service_role');
   });
 });

@@ -104,7 +104,7 @@ export async function dispatchFulfillmentNotification(
 
     if (!resolved?.sender || !resolved.sender.sendTemplate) {
       logger.warn('[FULFILLMENT-NOTIF] No template-capable channel for business', businessId);
-      await finalizeIntent(service, intent.id, 'failed');
+      await finalizeIntent(service, intent.id, 'failed', undefined, claimToken);
       return { outcome: 'pre_provider_failure', reason: 'no_channel' };
     }
 
@@ -112,7 +112,7 @@ export async function dispatchFulfillmentNotification(
     const meta = resolved.cloud;
     if (!meta) {
       logger.warn('[FULFILLMENT-NOTIF] No cloud service for template check');
-      await finalizeIntent(service, intent.id, 'failed');
+      await finalizeIntent(service, intent.id, 'failed', undefined, claimToken);
       return { outcome: 'pre_provider_failure', reason: 'no_cloud' };
     }
 
@@ -125,12 +125,12 @@ export async function dispatchFulfillmentNotification(
 
       if (!template || template.status !== 'APPROVED') {
         logger.warn('[FULFILLMENT-NOTIF] Template not approved:', FULFILLMENT_TEMPLATE_NAME);
-        await finalizeIntent(service, intent.id, 'failed');
+        await finalizeIntent(service, intent.id, 'failed', undefined, claimToken);
         return { outcome: 'pre_provider_failure', reason: 'template_not_approved' };
       }
     } catch (err) {
       logger.error('[FULFILLMENT-NOTIF] Template status check failed:', err);
-      await finalizeIntent(service, intent.id, 'failed');
+      await finalizeIntent(service, intent.id, 'failed', undefined, claimToken);
       return { outcome: 'pre_provider_failure', reason: 'template_check_error' };
     }
 
@@ -143,7 +143,7 @@ export async function dispatchFulfillmentNotification(
 
     if (!redemption?.phone_e164) {
       logger.error('[FULFILLMENT-NOTIF] No phone for redemption', intent.redemption_id);
-      await finalizeIntent(service, intent.id, 'failed');
+      await finalizeIntent(service, intent.id, 'failed', undefined, claimToken);
       return { outcome: 'pre_provider_failure', reason: 'no_phone' };
     }
 
@@ -227,6 +227,16 @@ export async function dispatchFulfillmentNotification(
       return { outcome: 'provider_ambiguous' };
     }
 
+    // ── Cross-process WAMID durability: ACCEPTED RESIDUAL RISK ──
+    // If Supabase (PostgreSQL) is unavailable after Meta accepts the message:
+    // - The WAMID exists only in-process memory
+    // - Sentry captures the error + WAMID as structured context (see CRITICAL logs below)
+    // - But Sentry is NOT a durable transactional store — no cross-process reconciliation
+    // - Meta has already accepted the message — resending would duplicate
+    // - No outbox/dead-letter/reconciliation pattern exists in this codebase
+    // - The only safe action: log WAMID via Sentry + console, accept residual risk
+    // Decision: owner reviewed, accepted. Manual DB update if needed.
+
     // Step 5: Finalize with WAMID → bounded DB-only retry (ZERO additional Meta POSTs)
     const finResult = await finalizeIntentWithRetry(service, intent.id, messageId);
 
@@ -289,11 +299,13 @@ async function finalizeIntent(
   intentId: string,
   status: 'sent' | 'failed',
   providerMessageId?: string,
+  claimToken?: string,
 ): Promise<FinalizationResult> {
   const { data: finalizeResult, error: finalizeError } = await service.rpc('finalize_promo_fulfillment_notification', {
     p_intent_id: intentId,
     p_status: status,
     p_provider_message_id: providerMessageId || null,
+    p_claim_token: claimToken || null,
   });
 
   if (finalizeError) {
@@ -312,6 +324,13 @@ async function finalizeIntent(
   if (finalizeResult?.reason === 'not_pending') {
     // Intent is already finalized — could be same WAMID (idempotent) or different (conflicting)
     return { status: 'conflicting_wamid' };
+  }
+
+  if (finalizeResult?.reason === 'invalid_claim_for_failure') {
+    // Stale worker tried to finalize as failed but lease expired or was reclaimed.
+    // This is expected behavior — a new claimant now owns the intent.
+    logger.warn('[FULFILLMENT-NOTIF] Pre-provider failure rejected: stale claim token');
+    return { status: 'finalization_unresolved', wamid: '' };
   }
 
   logger.error('[FULFILLMENT-NOTIF] Finalization failed:', finalizeResult);

@@ -3,6 +3,24 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #204: PR #210 corrections round 6 — claim token enforcement, WAMID durability pushback, recovery selection tests
+
+### What changed
+- **Blocker 1: Pre-provider terminal failure now requires valid claim authority.** `finalize_promo_fulfillment_notification` gains a `p_claim_token UUID DEFAULT NULL` parameter. When `provider_attempted_at IS NULL` and `p_status = 'failed'` (pre-provider state), the function requires a valid, non-expired claim token matching the intent's current claim_token. This prevents a stale worker whose lease expired from finalizing as 'failed' and destroying a new claimant's valid claim. Post-provider finalization (when `provider_attempted_at IS NOT NULL`) does not require the token — the provider attempt can't be undone. Old 3-param overload is dropped.
+- **Blocker 2: Cross-process WAMID durability — pushback documented.** Audited existing infrastructure: Sentry captures errors with structured context but is not a durable transactional store. No outbox/dead-letter/reconciliation pattern exists. When PostgreSQL is unavailable after Meta accepts a message, the WAMID exists only in-process. The only safe action: log WAMID via Sentry + console, accept the residual risk. Manual DB update if needed. Documented explicitly in code comments.
+- **Blocker 3: Recovery selection behavioral tests.** New test section M seeds 7 intents in different states (unclaimed_pending, expired_unattempted, active_lease, provider_attempted, sent, failed, delivered) and verifies `find_recoverable_notification_intents` returns exactly the 2 eligible intents (unclaimed + expired unattempted). Section L adds 6 tests for claim token enforcement: stale token after reclaim rejected, valid claimant can commit failure, wrong token denied, expired token denied, post-provider finalization works without token, no token denied for pre-provider failure.
+
+### Files changed
+- `supabase/migrations/348_fulfillment_recovery_and_idempotency.sql` — `finalize_promo_fulfillment_notification` gains `p_claim_token UUID` param with pre-provider claim enforcement; drops old 3-param overload; privilege grants updated to 4-param signature
+- `lib/promotions/fulfillment-notification.ts` — `finalizeIntent` accepts + passes `claimToken`; all pre-provider failure calls pass `claimToken`; handles `invalid_claim_for_failure` response; WAMID durability pushback documented in comments
+- `lib/__tests__/acc-204-fulfillment-notification-db.test.ts` — Section L (6 tests): claim token enforcement; Section M (2 tests): recovery selection behavior with 7-state seed; existing test C updated to claim before finalizing as failed; privilege checks updated to 4-param signature
+- `lib/__tests__/acc-204-claim-status.test.ts` — Migration source structure test updated for 4-param grant signature
+
+### What could break
+- `finalize_promo_fulfillment_notification` signature changed from 3 to 4 params — all callers via RPC now pass `p_claim_token` (defaults to NULL, so existing callers without it still work for post-provider finalization)
+- Pre-provider `finalize(..., 'failed')` without a valid claim token is now rejected — this is intentional; callers must hold the claim lease to commit pre-provider failure
+- Old 3-param function overload is dropped — any direct SQL call using the exact 3-param signature will fail (but default params mean 3-arg calls route to the 4-param version)
+
 ## 2026-08-26 — #204: PR #210 corrections round 5 — structured dispatch results, DB-only finalization retry, reentry-context production component
 
 ### What changed

@@ -6,11 +6,18 @@
 
 -- ═══════════════════════════════════════════════════════
 -- Step 1: Idempotent finalize — same WAMID = success, different WAMID = reject
+--         + claim token enforcement for pre-provider failures (R6)
 -- ═══════════════════════════════════════════════════════
+
+-- Drop old 3-param overload from migration 346 (CREATE OR REPLACE with new
+-- signature creates an overload rather than replacing; we need exactly one version)
+DROP FUNCTION IF EXISTS finalize_promo_fulfillment_notification(UUID, TEXT, TEXT);
+
 CREATE OR REPLACE FUNCTION finalize_promo_fulfillment_notification(
   p_intent_id UUID,
   p_status TEXT,
-  p_provider_message_id TEXT DEFAULT NULL
+  p_provider_message_id TEXT DEFAULT NULL,
+  p_claim_token UUID DEFAULT NULL
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $$
@@ -43,6 +50,20 @@ BEGIN
       'current_status', v_intent.delivery_status);
   END IF;
 
+  -- Pre-provider terminal failure: require valid current claim authority.
+  -- A stale worker whose lease expired must NOT finalize as 'failed' —
+  -- a new claimant may have legitimately reclaimed the intent.
+  -- Post-provider (provider_attempted_at IS NOT NULL): the provider attempt
+  -- can't be undone, so finalization authority belongs to whoever attempted.
+  IF v_intent.provider_attempted_at IS NULL AND p_status = 'failed' THEN
+    IF p_claim_token IS NULL
+       OR v_intent.claim_token IS NULL
+       OR v_intent.claim_token != p_claim_token
+       OR v_intent.claim_expires_at < now() THEN
+      RETURN jsonb_build_object('success', false, 'reason', 'invalid_claim_for_failure');
+    END IF;
+  END IF;
+
   -- Finalize
   UPDATE promo_fulfillment_notification_intents SET
     delivery_status = p_status,
@@ -56,8 +77,8 @@ END;
 $$;
 
 -- Privilege reassertion (CREATE OR REPLACE resets grants)
-REVOKE EXECUTE ON FUNCTION finalize_promo_fulfillment_notification(UUID, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION finalize_promo_fulfillment_notification(UUID, TEXT, TEXT) TO service_role;
+REVOKE EXECUTE ON FUNCTION finalize_promo_fulfillment_notification(UUID, TEXT, TEXT, UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION finalize_promo_fulfillment_notification(UUID, TEXT, TEXT, UUID) TO service_role;
 
 -- ═══════════════════════════════════════════════════════
 -- Step 2: Harden mark_attempted — verify claim_token + pending + NOT already attempted + lease active
@@ -114,9 +135,9 @@ GRANT EXECUTE ON FUNCTION find_recoverable_notification_intents(INT) TO service_
 DO $$
 DECLARE v_has BOOLEAN;
 BEGIN
-  SELECT has_function_privilege('service_role', 'finalize_promo_fulfillment_notification(uuid, text, text)', 'EXECUTE') INTO v_has;
+  SELECT has_function_privilege('service_role', 'finalize_promo_fulfillment_notification(uuid, text, text, uuid)', 'EXECUTE') INTO v_has;
   IF NOT v_has THEN RAISE EXCEPTION '348: service_role cannot execute finalize_promo_fulfillment_notification'; END IF;
-  SELECT has_function_privilege('anon', 'finalize_promo_fulfillment_notification(uuid, text, text)', 'EXECUTE') INTO v_has;
+  SELECT has_function_privilege('anon', 'finalize_promo_fulfillment_notification(uuid, text, text, uuid)', 'EXECUTE') INTO v_has;
   IF v_has THEN RAISE EXCEPTION '348: anon CAN execute finalize_promo_fulfillment_notification'; END IF;
 
   SELECT has_function_privilege('service_role', 'mark_fulfillment_notification_attempted(uuid, uuid)', 'EXECUTE') INTO v_has;
