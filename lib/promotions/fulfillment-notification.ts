@@ -32,6 +32,9 @@ import { logger } from '@/lib/logger';
 const FULFILLMENT_TEMPLATE_NAME = 'promo_fulfillment_status_v1';
 const FULFILLMENT_TEMPLATE_LANGUAGE = 'en_US';
 
+/** Bounded DB-only retry count for finalization after obtaining a WAMID. */
+const FINALIZE_MAX_ATTEMPTS = 2;
+
 /** Format fulfillment status for template display. */
 function formatStatus(status: string): string {
   switch (status) {
@@ -50,11 +53,27 @@ interface NotificationIntent {
   campaign_id: string;
 }
 
+/** Structured result of a WAMID finalization attempt. */
+export type FinalizationResult =
+  | { status: 'finalized'; wamid: string }
+  | { status: 'already_finalized_same_wamid'; wamid: string }
+  | { status: 'conflicting_wamid' }
+  | { status: 'finalization_unresolved'; wamid: string };
+
+/** Structured result of a dispatch attempt. */
+export type DispatchResult =
+  | { outcome: 'not_claimed' }
+  | { outcome: 'pre_provider_failure'; reason: string }
+  | { outcome: 'provider_ambiguous' }
+  | { outcome: 'provider_failed' }
+  | { outcome: 'sent'; wamid: string }
+  | { outcome: 'finalization_unresolved'; wamid: string };
+
 export async function dispatchFulfillmentNotification(
   service: SupabaseClient,
   intent: NotificationIntent,
   businessId: string,
-): Promise<void> {
+): Promise<DispatchResult> {
   try {
     // Step 1: Atomic claim with lease — prevents concurrent dispatchers from
     // both calling the provider. If claim fails, another dispatcher already owns it.
@@ -65,12 +84,12 @@ export async function dispatchFulfillmentNotification(
 
     if (claimError) {
       logger.error('[FULFILLMENT-NOTIF] Claim RPC error:', claimError);
-      return; // Non-blocking — don't throw
+      return { outcome: 'not_claimed' };
     }
 
     if (!claimResult?.claimed) {
       logger.debug('[FULFILLMENT-NOTIF] Claim not available (already claimed or not pending):', claimResult);
-      return; // Another dispatcher owns this intent — zero provider call
+      return { outcome: 'not_claimed' };
     }
 
     const claimToken: string = claimResult.claim_token;
@@ -86,7 +105,7 @@ export async function dispatchFulfillmentNotification(
     if (!resolved?.sender || !resolved.sender.sendTemplate) {
       logger.warn('[FULFILLMENT-NOTIF] No template-capable channel for business', businessId);
       await finalizeIntent(service, intent.id, 'failed');
-      return;
+      return { outcome: 'pre_provider_failure', reason: 'no_channel' };
     }
 
     // 2b. Check template readiness
@@ -94,7 +113,7 @@ export async function dispatchFulfillmentNotification(
     if (!meta) {
       logger.warn('[FULFILLMENT-NOTIF] No cloud service for template check');
       await finalizeIntent(service, intent.id, 'failed');
-      return;
+      return { outcome: 'pre_provider_failure', reason: 'no_cloud' };
     }
 
     try {
@@ -107,12 +126,12 @@ export async function dispatchFulfillmentNotification(
       if (!template || template.status !== 'APPROVED') {
         logger.warn('[FULFILLMENT-NOTIF] Template not approved:', FULFILLMENT_TEMPLATE_NAME);
         await finalizeIntent(service, intent.id, 'failed');
-        return;
+        return { outcome: 'pre_provider_failure', reason: 'template_not_approved' };
       }
     } catch (err) {
       logger.error('[FULFILLMENT-NOTIF] Template status check failed:', err);
       await finalizeIntent(service, intent.id, 'failed');
-      return;
+      return { outcome: 'pre_provider_failure', reason: 'template_check_error' };
     }
 
     // 2c. Fetch winner phone (server-side only)
@@ -125,7 +144,7 @@ export async function dispatchFulfillmentNotification(
     if (!redemption?.phone_e164) {
       logger.error('[FULFILLMENT-NOTIF] No phone for redemption', intent.redemption_id);
       await finalizeIntent(service, intent.id, 'failed');
-      return;
+      return { outcome: 'pre_provider_failure', reason: 'no_phone' };
     }
 
     // 2d. Fetch business name
@@ -175,7 +194,7 @@ export async function dispatchFulfillmentNotification(
     if (markError || !markResult?.success) {
       logger.error('[FULFILLMENT-NOTIF] Mark attempted failed — lease may have expired:', markError || markResult);
       // Lease expired and someone else reclaimed it, or state changed. Do NOT send.
-      return;
+      return { outcome: 'not_claimed' };
     }
 
     // Step 4: Send template — noRetry: delivery-critical promo notification
@@ -194,30 +213,75 @@ export async function dispatchFulfillmentNotification(
       if (isDefiniteRejection) {
         logger.error('[FULFILLMENT-NOTIF] WhatsApp template rejected (4xx):', err);
         await finalizeIntent(service, intent.id, 'failed');
-        return;
+        return { outcome: 'provider_failed' };
       }
       // Ambiguous error (5xx/network) — provider_attempted_at is set (state C).
       // NOT auto-reclaimable. Manual recovery needed.
       logger.error('[FULFILLMENT-NOTIF] Ambiguous provider error — intent in state C (provider attempted):', err);
-      return;
+      return { outcome: 'provider_ambiguous' };
     }
 
     if (!messageId) {
       // No WAMID = ambiguous — state C (provider_attempted_at set, NOT reclaimable)
       logger.warn('[FULFILLMENT-NOTIF] Send succeeded but no WAMID — intent in state C');
-      return;
+      return { outcome: 'provider_ambiguous' };
     }
 
-    // Step 5: Finalize with WAMID → state D
-    await finalizeIntent(service, intent.id, 'sent', messageId);
-    logger.info(`[FULFILLMENT-NOTIF] Sent ${intent.to_status} notification for redemption ${intent.redemption_id}`);
+    // Step 5: Finalize with WAMID → bounded DB-only retry (ZERO additional Meta POSTs)
+    const finResult = await finalizeIntentWithRetry(service, intent.id, messageId);
+
+    if (finResult.status === 'finalized' || finResult.status === 'already_finalized_same_wamid') {
+      logger.info(`[FULFILLMENT-NOTIF] Sent ${intent.to_status} notification for redemption ${intent.redemption_id}`);
+      return { outcome: 'sent', wamid: messageId };
+    }
+
+    if (finResult.status === 'conflicting_wamid') {
+      // Another WAMID was already finalized — should not happen in normal flow.
+      // Do NOT log "Sent". Do NOT retry Meta.
+      logger.error(`[FULFILLMENT-NOTIF] CRITICAL: Conflicting WAMID for intent ${intent.id}`);
+      return { outcome: 'finalization_unresolved', wamid: messageId };
+    }
+
+    // finalization_unresolved: DB write failed persistently but we have a valid WAMID
+    logger.error(`[FULFILLMENT-NOTIF] CRITICAL: Finalization unresolved for intent ${intent.id}, WAMID=${messageId}. Manual DB update required.`);
+    return { outcome: 'finalization_unresolved', wamid: messageId };
   } catch (err) {
     // Catch-all: notification must NEVER propagate errors
     logger.error('[FULFILLMENT-NOTIF] Unexpected error (non-blocking):', err);
     try {
       await finalizeIntent(service, intent.id, 'failed');
     } catch { /* truly non-blocking */ }
+    return { outcome: 'pre_provider_failure', reason: 'unexpected_error' };
   }
+}
+
+/**
+ * Finalize intent with bounded DB-only retry. ZERO additional Meta POSTs.
+ * Attempts up to FINALIZE_MAX_ATTEMPTS times to write the WAMID to DB.
+ */
+async function finalizeIntentWithRetry(
+  service: SupabaseClient,
+  intentId: string,
+  wamid: string,
+): Promise<FinalizationResult> {
+  for (let attempt = 1; attempt <= FINALIZE_MAX_ATTEMPTS; attempt++) {
+    const result = await finalizeIntent(service, intentId, 'sent', wamid);
+
+    if (result.status === 'finalized' || result.status === 'already_finalized_same_wamid') {
+      return result;
+    }
+
+    if (result.status === 'conflicting_wamid') {
+      return result; // Not retryable — different WAMID already committed
+    }
+
+    // finalization_unresolved — DB transport error, retry
+    if (attempt < FINALIZE_MAX_ATTEMPTS) {
+      logger.warn(`[FULFILLMENT-NOTIF] Finalize attempt ${attempt} failed, retrying...`);
+    }
+  }
+
+  return { status: 'finalization_unresolved', wamid };
 }
 
 async function finalizeIntent(
@@ -225,14 +289,31 @@ async function finalizeIntent(
   intentId: string,
   status: 'sent' | 'failed',
   providerMessageId?: string,
-): Promise<void> {
+): Promise<FinalizationResult> {
   const { data: finalizeResult, error: finalizeError } = await service.rpc('finalize_promo_fulfillment_notification', {
     p_intent_id: intentId,
     p_status: status,
     p_provider_message_id: providerMessageId || null,
   });
-  // ACC-204 Blocker 2: Check BOTH error AND semantic success
-  if (finalizeError || !finalizeResult?.success) {
-    logger.error('[FULFILLMENT-NOTIF] Finalization failed:', finalizeError || finalizeResult);
+
+  if (finalizeError) {
+    logger.error('[FULFILLMENT-NOTIF] Finalization transport error:', finalizeError);
+    return { status: 'finalization_unresolved', wamid: providerMessageId || '' };
   }
+
+  if (finalizeResult?.success) {
+    if (finalizeResult.reason === 'idempotent') {
+      return { status: 'already_finalized_same_wamid', wamid: providerMessageId || '' };
+    }
+    return { status: 'finalized', wamid: providerMessageId || '' };
+  }
+
+  // success=false: check if it's a conflicting WAMID or something else
+  if (finalizeResult?.reason === 'not_pending') {
+    // Intent is already finalized — could be same WAMID (idempotent) or different (conflicting)
+    return { status: 'conflicting_wamid' };
+  }
+
+  logger.error('[FULFILLMENT-NOTIF] Finalization failed:', finalizeResult);
+  return { status: 'finalization_unresolved', wamid: providerMessageId || '' };
 }

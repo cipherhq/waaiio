@@ -37,17 +37,40 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ recovered: 0, message: 'No recoverable intents found' });
   }
 
-  const results: Array<{ intent_id: string; status: string }> = [];
+  const results: Array<{ intent_id: string; status: string; wamid?: string }> = [];
 
   for (const intent of intents) {
     try {
-      await dispatchFulfillmentNotification(service, {
+      const dispatchResult = await dispatchFulfillmentNotification(service, {
         id: intent.id,
         redemption_id: intent.redemption_id,
         to_status: intent.to_status,
         campaign_id: intent.campaign_id,
       }, intent.business_id);
-      results.push({ intent_id: intent.id, status: 'dispatched' });
+
+      // Truthful reporting: only count as recovered when actually sent
+      switch (dispatchResult.outcome) {
+        case 'sent':
+          results.push({ intent_id: intent.id, status: 'sent', wamid: dispatchResult.wamid });
+          break;
+        case 'not_claimed':
+          results.push({ intent_id: intent.id, status: 'not_claimed' });
+          break;
+        case 'provider_ambiguous':
+          results.push({ intent_id: intent.id, status: 'provider_ambiguous' });
+          break;
+        case 'provider_failed':
+          results.push({ intent_id: intent.id, status: 'provider_failed' });
+          break;
+        case 'finalization_unresolved':
+          results.push({ intent_id: intent.id, status: 'finalization_unresolved', wamid: dispatchResult.wamid });
+          break;
+        case 'pre_provider_failure':
+          results.push({ intent_id: intent.id, status: 'pre_provider_failure' });
+          break;
+        default:
+          results.push({ intent_id: intent.id, status: 'unknown' });
+      }
     } catch (err) {
       logger.error('[RECOVER-NOTIF] Dispatch error for intent', intent.id, err);
       results.push({ intent_id: intent.id, status: 'error' });
@@ -55,7 +78,7 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({
-    recovered: results.filter(r => r.status === 'dispatched').length,
+    recovered: results.filter(r => r.status === 'sent').length,
     total: results.length,
     results,
   });

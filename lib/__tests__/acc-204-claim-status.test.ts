@@ -668,7 +668,11 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
 
   it('template APPROVED -> claim -> mark_attempted -> send -> finalize sent', async () => {
     const service = makeDispatchService();
-    await callDispatch(service, testIntent, 'biz-1');
+    const result = await callDispatch(service, testIntent, 'biz-1');
+
+    // Structured result: sent with WAMID
+    expect(result.outcome).toBe('sent');
+    expect((result as any).wamid).toBe('wamid.test123');
 
     // Claim was called
     expect(dispatchServiceRpc).toHaveBeenCalledWith(
@@ -698,7 +702,7 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     );
   });
 
-  it('template missing -> zero sendTemplate calls', async () => {
+  it('template missing -> zero sendTemplate calls, pre_provider_failure result', async () => {
     mockGetTemplates.mockResolvedValue({ data: [] });
     _resolverState.result = {
       sender: { sendTemplate: mockSendTemplate },
@@ -706,8 +710,9 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
       channel: { id: 'ch-1' },
     };
     const service = makeDispatchService();
-    await callDispatch(service, testIntent, 'biz-1');
+    const result = await callDispatch(service, testIntent, 'biz-1');
 
+    expect(result.outcome).toBe('pre_provider_failure');
     expect(mockSendTemplate).not.toHaveBeenCalled();
     expect(dispatchServiceRpc).toHaveBeenCalledWith(
       'finalize_promo_fulfillment_notification',
@@ -725,8 +730,9 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
       channel: { id: 'ch-1' },
     };
     const service = makeDispatchService();
-    await callDispatch(service, testIntent, 'biz-1');
+    const result = await callDispatch(service, testIntent, 'biz-1');
 
+    expect(result.outcome).toBe('pre_provider_failure');
     expect(mockSendTemplate).not.toHaveBeenCalled();
   });
 
@@ -740,8 +746,9 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
       channel: { id: 'ch-1' },
     };
     const service = makeDispatchService();
-    await callDispatch(service, testIntent, 'biz-1');
+    const result = await callDispatch(service, testIntent, 'biz-1');
 
+    expect(result.outcome).toBe('pre_provider_failure');
     expect(mockSendTemplate).not.toHaveBeenCalled();
   });
 
@@ -754,7 +761,7 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     }));
   });
 
-  it('4xx MetaApiError -> finalize failed', async () => {
+  it('4xx MetaApiError -> finalize failed, provider_failed result', async () => {
     const { MetaApiError } = await import('@/lib/channels/meta-api-error');
     mockSendTemplate.mockRejectedValue(new MetaApiError('Bad request', 400));
     _resolverState.result = {
@@ -763,15 +770,16 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
       channel: { id: 'ch-1' },
     };
     const service = makeDispatchService();
-    await callDispatch(service, testIntent, 'biz-1');
+    const result = await callDispatch(service, testIntent, 'biz-1');
 
+    expect(result.outcome).toBe('provider_failed');
     expect(dispatchServiceRpc).toHaveBeenCalledWith(
       'finalize_promo_fulfillment_notification',
       expect.objectContaining({ p_status: 'failed' }),
     );
   });
 
-  it('network/5xx error after mark_attempted -> NOT reclaimable (no finalize)', async () => {
+  it('network/5xx error after mark_attempted -> provider_ambiguous, no finalize', async () => {
     mockSendTemplate.mockRejectedValue(new Error('ECONNRESET'));
     _resolverState.result = {
       sender: { sendTemplate: mockSendTemplate },
@@ -779,7 +787,9 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
       channel: { id: 'ch-1' },
     };
     const service = makeDispatchService();
-    await callDispatch(service, testIntent, 'biz-1');
+    const result = await callDispatch(service, testIntent, 'biz-1');
+
+    expect(result.outcome).toBe('provider_ambiguous');
 
     // mark_attempted was called (state C — provider attempted)
     expect(dispatchServiceRpc).toHaveBeenCalledWith(
@@ -794,10 +804,12 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     expect(finalizeCalls).toHaveLength(0);
   });
 
-  it('mark_attempted failure (lease expired) -> zero sendTemplate', async () => {
+  it('mark_attempted failure (lease expired) -> zero sendTemplate, not_claimed result', async () => {
     mockMarkRpc = { data: { success: false, reason: 'invalid_claim' }, error: null };
     const service = makeDispatchService();
-    await callDispatch(service, testIntent, 'biz-1');
+    const result = await callDispatch(service, testIntent, 'biz-1');
+
+    expect(result.outcome).toBe('not_claimed');
 
     // mark_attempted was called but failed
     expect(dispatchServiceRpc).toHaveBeenCalledWith(
@@ -809,7 +821,7 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     expect(mockSendTemplate).not.toHaveBeenCalled();
   });
 
-  it('missing WAMID -> intent stays in state C (no finalize)', async () => {
+  it('missing WAMID -> provider_ambiguous result, no finalize', async () => {
     mockSendTemplate.mockResolvedValue({ messageId: undefined });
     _resolverState.result = {
       sender: { sendTemplate: mockSendTemplate },
@@ -817,18 +829,21 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
       channel: { id: 'ch-1' },
     };
     const service = makeDispatchService();
-    await callDispatch(service, testIntent, 'biz-1');
+    const result = await callDispatch(service, testIntent, 'biz-1');
 
+    expect(result.outcome).toBe('provider_ambiguous');
     const finalizeCalls = dispatchServiceRpc.mock.calls.filter(
       (c: unknown[]) => c[0] === 'finalize_promo_fulfillment_notification',
     );
     expect(finalizeCalls).toHaveLength(0);
   });
 
-  it('valid WAMID -> finalize sent with provider_message_id', async () => {
+  it('valid WAMID -> sent result with wamid', async () => {
     const service = makeDispatchService();
-    await callDispatch(service, testIntent, 'biz-1');
+    const result = await callDispatch(service, testIntent, 'biz-1');
 
+    expect(result.outcome).toBe('sent');
+    expect((result as any).wamid).toBe('wamid.test123');
     expect(dispatchServiceRpc).toHaveBeenCalledWith(
       'finalize_promo_fulfillment_notification',
       expect.objectContaining({
@@ -838,48 +853,132 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     );
   });
 
-  it('finalize RPC error -> logged, not false success', async () => {
+  it('finalize RPC error -> finalization_unresolved result, not false success', async () => {
     mockFinalizeRpc = { data: null, error: { message: 'DB connection lost' } };
     const service = makeDispatchService();
+    const result = await callDispatch(service, testIntent, 'biz-1');
 
-    await callDispatch(service, testIntent, 'biz-1');
+    // Result should be finalization_unresolved (DB failed, but WAMID is known)
+    expect(result.outcome).toBe('finalization_unresolved');
+    expect((result as any).wamid).toBe('wamid.test123');
 
-    expect(dispatchServiceRpc).toHaveBeenCalledWith(
-      'finalize_promo_fulfillment_notification',
-      expect.anything(),
-    );
+    // Meta POST was exactly 1
+    expect(mockSendTemplate).toHaveBeenCalledTimes(1);
   });
 
-  it('finalize {success:false} -> logged, not false success', async () => {
+  it('finalize {success:false, reason:not_pending} -> finalization_unresolved result', async () => {
     mockFinalizeRpc = { data: { success: false, reason: 'not_pending' }, error: null };
     const service = makeDispatchService();
-    await callDispatch(service, testIntent, 'biz-1');
+    const result = await callDispatch(service, testIntent, 'biz-1');
 
-    expect(dispatchServiceRpc).toHaveBeenCalledWith(
-      'finalize_promo_fulfillment_notification',
-      expect.anything(),
-    );
+    // conflicting_wamid maps to finalization_unresolved at the dispatch level
+    expect(result.outcome).toBe('finalization_unresolved');
+    expect((result as any).wamid).toBe('wamid.test123');
   });
 
-  it('concurrent claim -> second gets not_available, zero send', async () => {
+  it('concurrent claim -> second gets not_claimed, zero send', async () => {
     const service1 = makeDispatchService();
-    await callDispatch(service1, testIntent, 'biz-1');
+    const result1 = await callDispatch(service1, testIntent, 'biz-1');
+    expect(result1.outcome).toBe('sent');
     expect(mockSendTemplate).toHaveBeenCalledTimes(1);
 
     mockClaimRpc = { data: { claimed: false, reason: 'not_available' }, error: null };
     mockSendTemplate.mockClear();
     const service2 = makeDispatchService();
-    await callDispatch(service2, testIntent, 'biz-1');
+    const result2 = await callDispatch(service2, testIntent, 'biz-1');
 
+    expect(result2.outcome).toBe('not_claimed');
     expect(mockSendTemplate).not.toHaveBeenCalled();
   });
 
-  it('claim RPC error -> zero send, no throw', async () => {
+  it('claim RPC error -> not_claimed, zero send, no throw', async () => {
     mockClaimRpc = { data: null, error: { message: 'DB error' } };
     const service = makeDispatchService();
-    await callDispatch(service, testIntent, 'biz-1');
+    const result = await callDispatch(service, testIntent, 'biz-1');
 
+    expect(result.outcome).toBe('not_claimed');
     expect(mockSendTemplate).not.toHaveBeenCalled();
+  });
+
+  // ── WAMID finalization retry tests (Blocker 1: DB-only retry) ──
+
+  it('WAMID + finalize transport error -> DB retry -> final sent', async () => {
+    // First finalize attempt fails with transport error, second succeeds
+    let finalizeCallCount = 0;
+    mockFinalizeRpc = { data: null, error: { message: 'connection reset' } };
+
+    // Override the makeDispatchService rpc to track finalize call count and vary behavior
+    const service = makeDispatchService();
+    const originalRpc = service.rpc;
+    service.rpc = vi.fn().mockImplementation((fnName: string, args: any) => {
+      if (fnName === 'finalize_promo_fulfillment_notification') {
+        finalizeCallCount++;
+        if (finalizeCallCount === 1) {
+          return Promise.resolve({ data: null, error: { message: 'connection reset' } });
+        }
+        return Promise.resolve({ data: { success: true }, error: null });
+      }
+      return originalRpc(fnName, args);
+    });
+
+    const result = await callDispatch(service, testIntent, 'biz-1');
+
+    expect(result.outcome).toBe('sent');
+    expect((result as any).wamid).toBe('wamid.test123');
+    // Meta POST = 1 (only one sendTemplate call)
+    expect(mockSendTemplate).toHaveBeenCalledTimes(1);
+    // Finalize was called twice (retry)
+    expect(finalizeCallCount).toBe(2);
+  });
+
+  it('WAMID + persistent finalize failure -> unresolved, zero resend', async () => {
+    // All finalize attempts fail
+    let finalizeCallCount = 0;
+
+    const service = makeDispatchService();
+    const originalRpc = service.rpc;
+    service.rpc = vi.fn().mockImplementation((fnName: string, args: any) => {
+      if (fnName === 'finalize_promo_fulfillment_notification') {
+        finalizeCallCount++;
+        return Promise.resolve({ data: null, error: { message: 'persistent DB failure' } });
+      }
+      return originalRpc(fnName, args);
+    });
+
+    const result = await callDispatch(service, testIntent, 'biz-1');
+
+    expect(result.outcome).toBe('finalization_unresolved');
+    expect((result as any).wamid).toBe('wamid.test123');
+    // Meta POST = 1 (exactly one sendTemplate call, no resend)
+    expect(mockSendTemplate).toHaveBeenCalledTimes(1);
+    // Finalize was attempted twice (bounded retry)
+    expect(finalizeCallCount).toBe(2);
+  });
+
+  it('WAMID + first finalize committed but response lost -> idempotent retry', async () => {
+    // First finalize returns error (response lost), second with same WAMID returns idempotent success
+    let finalizeCallCount = 0;
+
+    const service = makeDispatchService();
+    const originalRpc = service.rpc;
+    service.rpc = vi.fn().mockImplementation((fnName: string, args: any) => {
+      if (fnName === 'finalize_promo_fulfillment_notification') {
+        finalizeCallCount++;
+        if (finalizeCallCount === 1) {
+          return Promise.resolve({ data: null, error: { message: 'response timeout' } });
+        }
+        // Second call: DB already committed the first one, returns idempotent
+        return Promise.resolve({ data: { success: true, reason: 'idempotent' }, error: null });
+      }
+      return originalRpc(fnName, args);
+    });
+
+    const result = await callDispatch(service, testIntent, 'biz-1');
+
+    expect(result.outcome).toBe('sent');
+    expect((result as any).wamid).toBe('wamid.test123');
+    // Meta POST = 1
+    expect(mockSendTemplate).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1012,7 +1111,56 @@ describe('ACC-204: Webhook delivery status correlation (executable)', () => {
 // H. Provenance laundering path proofs (Blocker 1 R4)
 // ═══════════════════════════════════════════════════════════
 
-describe('ACC-204 R4: Provenance laundering prevention', () => {
+// ── H-exec. Production reentry-context component tests ──
+
+describe('ACC-204 R5: deriveReentryProvenance production component', () => {
+  it('fuzzy session -> re-entry carries fuzzy (untrusted)', async () => {
+    const { deriveReentryProvenance } = await import('@/lib/bot/reentry-context');
+    expect(deriveReentryProvenance('fuzzy')).toBe('fuzzy');
+    // Verify fuzzy is NOT trusted
+    const TRUSTED_PROVENANCES = new Set(['pre_resolved', 'dedicated_number']);
+    expect(TRUSTED_PROVENANCES.has('fuzzy')).toBe(false);
+  });
+
+  it('pre_resolved session -> re-entry carries pre_resolved (trusted)', async () => {
+    const { deriveReentryProvenance } = await import('@/lib/bot/reentry-context');
+    expect(deriveReentryProvenance('pre_resolved')).toBe('pre_resolved');
+    const TRUSTED_PROVENANCES = new Set(['pre_resolved', 'dedicated_number']);
+    expect(TRUSTED_PROVENANCES.has('pre_resolved')).toBe(true);
+  });
+
+  it('dedicated_number session -> re-entry carries dedicated_number (trusted)', async () => {
+    const { deriveReentryProvenance } = await import('@/lib/bot/reentry-context');
+    expect(deriveReentryProvenance('dedicated_number')).toBe('dedicated_number');
+    const TRUSTED_PROVENANCES = new Set(['pre_resolved', 'dedicated_number']);
+    expect(TRUSTED_PROVENANCES.has('dedicated_number')).toBe(true);
+  });
+
+  it('returning_customer session -> re-entry carries returning_customer (untrusted)', async () => {
+    const { deriveReentryProvenance } = await import('@/lib/bot/reentry-context');
+    expect(deriveReentryProvenance('returning_customer')).toBe('returning_customer');
+    const TRUSTED_PROVENANCES = new Set(['pre_resolved', 'dedicated_number']);
+    expect(TRUSTED_PROVENANCES.has('returning_customer')).toBe(false);
+  });
+
+  it('null/undefined session -> re-entry returns undefined', async () => {
+    const { deriveReentryProvenance } = await import('@/lib/bot/reentry-context');
+    expect(deriveReentryProvenance(null)).toBeUndefined();
+    expect(deriveReentryProvenance(undefined)).toBeUndefined();
+  });
+
+  it('bot.service.ts imports and uses deriveReentryProvenance (production wiring proof)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'bot', 'bot.service.ts'), 'utf-8',
+    );
+    expect(src).toContain("import { deriveReentryProvenance } from './reentry-context'");
+    expect(src).toContain('deriveReentryProvenance(');
+  });
+});
+
+describe('supplemental: source structure verification — provenance laundering', () => {
   it('bot.service.ts handleMessage accepts _internalProvenance 9th param', () => {
     const fs = require('fs');
     const path = require('path');
@@ -1163,7 +1311,7 @@ describe('ACC-204 R4: Provenance laundering prevention', () => {
 // I. Finalize idempotency + mark_attempted hardening + recovery (Blocker 2 R4)
 // ═══════════════════════════════════════════════════════════
 
-describe('ACC-204 R4: Finalize idempotency (structure proof)', () => {
+describe('supplemental: source structure verification — finalize idempotency', () => {
   it('migration 348 makes finalize idempotent for same WAMID', () => {
     const fs = require('fs');
     const path = require('path');
@@ -1234,5 +1382,114 @@ describe('ACC-204 R4: Finalize idempotency (structure proof)', () => {
     // Finalize and mark_attempted re-granted
     expect(migrationSrc).toContain('GRANT EXECUTE ON FUNCTION finalize_promo_fulfillment_notification(UUID, TEXT, TEXT) TO service_role');
     expect(migrationSrc).toContain('GRANT EXECUTE ON FUNCTION mark_fulfillment_notification_attempted(UUID, UUID) TO service_role');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// J. Recovery execution tests — structured DispatchResult truthfulness
+// ═══════════════════════════════════════════════════════════
+
+describe('ACC-204 R5: Recovery dispatch truthful results', () => {
+  let recoverClaimRpc: { data: unknown; error: unknown };
+  let recoverMarkRpc: { data: unknown; error: unknown };
+  let recoverFinalizeRpc: { data: unknown; error: unknown };
+  let recoverSendTemplate: ReturnType<typeof vi.fn>;
+  let recoverGetTemplates: ReturnType<typeof vi.fn>;
+
+  function makeRecoverService() {
+    const rpc = vi.fn().mockImplementation((fnName: string) => {
+      if (fnName === 'claim_fulfillment_notification_dispatch') return Promise.resolve(recoverClaimRpc);
+      if (fnName === 'mark_fulfillment_notification_attempted') return Promise.resolve(recoverMarkRpc);
+      if (fnName === 'finalize_promo_fulfillment_notification') return Promise.resolve(recoverFinalizeRpc);
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const from = vi.fn().mockImplementation((table: string) => {
+      const chain: Record<string, any> = {};
+      ['select', 'eq', 'neq', 'order', 'range', 'not', 'in', 'gte', 'limit', 'update'].forEach(
+        (m) => (chain[m] = vi.fn().mockReturnValue(chain)),
+      );
+      if (table === 'promo_redemptions') {
+        chain.single = vi.fn().mockResolvedValue({
+          data: { phone_e164: '+2348012345678', claim_reference: 'WAA-REC-0001', promo_code_id: 'code-1' },
+          error: null,
+        });
+      } else if (table === 'businesses') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { name: 'Biz' }, error: null });
+      } else if (table === 'promo_campaigns') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { name: 'Camp' }, error: null });
+      } else if (table === 'promo_campaign_codes') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { prize_id: 'p-1' }, error: null });
+      } else if (table === 'promo_prizes') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { name: 'Prize' }, error: null });
+      } else {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+      }
+      return chain;
+    });
+
+    return { from, rpc } as any;
+  }
+
+  const recoverIntent = { id: 'rec-1', redemption_id: 'red-rec', to_status: 'processing', campaign_id: 'camp-rec' };
+
+  beforeEach(() => {
+    recoverClaimRpc = { data: { claimed: true, claim_token: 'tok-rec' }, error: null };
+    recoverMarkRpc = { data: { success: true }, error: null };
+    recoverFinalizeRpc = { data: { success: true }, error: null };
+    recoverSendTemplate = vi.fn().mockResolvedValue({ messageId: 'wamid.rec123' });
+    recoverGetTemplates = vi.fn().mockResolvedValue({
+      data: [{ name: 'promo_fulfillment_status_v1', language: 'en_US', status: 'APPROVED' }],
+    });
+    _resolverState.result = {
+      sender: { sendTemplate: recoverSendTemplate },
+      cloud: { getTemplates: recoverGetTemplates },
+      channel: { id: 'ch-rec' },
+    };
+  });
+
+  it('eligible intent -> claimed -> dispatched -> truthful sent result', async () => {
+    const { dispatchFulfillmentNotification } = await import('@/lib/promotions/fulfillment-notification');
+    const service = makeRecoverService();
+    const result = await dispatchFulfillmentNotification(service, recoverIntent, 'biz-rec');
+
+    expect(result.outcome).toBe('sent');
+    expect((result as any).wamid).toBe('wamid.rec123');
+  });
+
+  it('active lease -> not dispatched -> truthful not_claimed', async () => {
+    recoverClaimRpc = { data: { claimed: false, reason: 'not_available' }, error: null };
+    const { dispatchFulfillmentNotification } = await import('@/lib/promotions/fulfillment-notification');
+    const service = makeRecoverService();
+    const result = await dispatchFulfillmentNotification(service, recoverIntent, 'biz-rec');
+
+    expect(result.outcome).toBe('not_claimed');
+    expect(recoverSendTemplate).not.toHaveBeenCalled();
+  });
+
+  it('no channel -> pre_provider_failure, zero dispatch', async () => {
+    _resolverState.result = null;
+    const { dispatchFulfillmentNotification } = await import('@/lib/promotions/fulfillment-notification');
+    const service = makeRecoverService();
+    const result = await dispatchFulfillmentNotification(service, recoverIntent, 'biz-rec');
+
+    expect(result.outcome).toBe('pre_provider_failure');
+    expect((result as any).reason).toBe('no_channel');
+    expect(recoverSendTemplate).not.toHaveBeenCalled();
+  });
+
+  it('ambiguous provider -> truthful provider_ambiguous', async () => {
+    recoverSendTemplate.mockRejectedValue(new Error('ECONNRESET'));
+    _resolverState.result = {
+      sender: { sendTemplate: recoverSendTemplate },
+      cloud: { getTemplates: recoverGetTemplates },
+      channel: { id: 'ch-rec' },
+    };
+    const { dispatchFulfillmentNotification } = await import('@/lib/promotions/fulfillment-notification');
+    const service = makeRecoverService();
+    const result = await dispatchFulfillmentNotification(service, recoverIntent, 'biz-rec');
+
+    expect(result.outcome).toBe('provider_ambiguous');
   });
 });

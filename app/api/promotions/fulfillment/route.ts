@@ -109,7 +109,15 @@ export async function PUT(request: NextRequest) {
     // dispatchFulfillmentNotification never throws (internal try/catch), so this
     // won't roll back fulfillment, but ensures the attempt completes before
     // the response is returned.
-    await dispatchFulfillmentNotification(service, intent, businessId);
+    const dispatchResult = await dispatchFulfillmentNotification(service, intent, businessId);
+    // Log truthful result — fulfillment already succeeded regardless
+    if (dispatchResult.outcome === 'sent') {
+      logger.info('[PROMOTIONS] Fulfillment notification sent:', dispatchResult.wamid);
+    } else if (dispatchResult.outcome === 'finalization_unresolved') {
+      logger.error('[PROMOTIONS] Fulfillment notification finalization unresolved:', dispatchResult.wamid);
+    } else if (dispatchResult.outcome !== 'not_claimed') {
+      logger.warn('[PROMOTIONS] Fulfillment notification dispatch result:', dispatchResult.outcome);
+    }
   }
 
   // Fetch updated redemption for response — explicit allowlist, no phone_e164

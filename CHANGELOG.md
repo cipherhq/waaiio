@@ -3,6 +3,26 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #204: PR #210 corrections round 5 — structured dispatch results, DB-only finalization retry, reentry-context production component
+
+### What changed
+- **Blocker 1: Known-WAMID finalization returns structured result + DB-only retry.** `finalizeIntent` now returns `FinalizationResult` (finalized / already_finalized_same_wamid / conflicting_wamid / finalization_unresolved). After getting a WAMID from Meta, `finalizeIntentWithRetry` attempts bounded DB-only retry (2 attempts, ZERO additional Meta POSTs). Only logs "Sent" when finalization actually succeeds or returns idempotent same-WAMID. On persistent finalization failure, returns `finalization_unresolved` with the known WAMID and logs as CRITICAL.
+- **Blocker 2: dispatchFulfillmentNotification returns structured DispatchResult.** Return type changed from `Promise<void>` to `Promise<DispatchResult>` with 6 outcomes: not_claimed, pre_provider_failure, provider_ambiguous, provider_failed, sent, finalization_unresolved. Fulfillment route logs truthful result (sent vs unresolved vs warning). Recovery endpoint reports truthful results: only counts `sent` as recovered, reports `not_claimed` / `provider_ambiguous` / `provider_failed` / `finalization_unresolved` truthfully.
+- **Blocker 3: Production reentry-context component replaces source-inspection tests.** Created `lib/bot/reentry-context.ts` with `deriveReentryProvenance()` — the SAME function BotService actually uses for all re-entry paths (go_back_biz, restart_yes, pc_options, pc_again, chat handoff, chat start, active session provenance). Source-inspection tests (H, I sections) relabeled as `supplemental: source structure verification`. New executable tests: deriveReentryProvenance unit tests proving trusted/untrusted propagation; WAMID finalization retry tests (DB retry -> sent, persistent failure -> unresolved, idempotent retry); recovery execution tests (eligible -> sent, active lease -> not_claimed, no channel -> pre_provider_failure, ambiguous -> provider_ambiguous).
+
+### Files changed
+- `lib/promotions/fulfillment-notification.ts` — `FinalizationResult` + `DispatchResult` types; `finalizeIntentWithRetry` with bounded DB-only retry; `dispatchFulfillmentNotification` returns structured result; `finalizeIntent` returns FinalizationResult
+- `app/api/promotions/fulfillment/route.ts` — uses DispatchResult for truthful logging
+- `app/api/promotions/notifications/recover/route.ts` — reports truthful dispatch outcomes; only counts `sent` as recovered
+- `lib/bot/reentry-context.ts` — new: `deriveReentryProvenance()` production helper
+- `lib/bot/bot.service.ts` — imports and uses `deriveReentryProvenance` for all 6 re-entry paths
+- `lib/__tests__/acc-204-claim-status.test.ts` — 89 tests: new H-exec (reentry-context tests), WAMID finalization retry tests, recovery execution tests; H/I source-inspection tests relabeled supplemental
+
+### What could break
+- `dispatchFulfillmentNotification` return type changed from `void` to `DispatchResult` — any caller that awaits without using the result is safe; any caller that checks the result must handle the new type
+- Recovery endpoint response format changed: `status: 'dispatched'` replaced by truthful `status: 'sent' | 'not_claimed' | 'provider_ambiguous' | ...`; `recovered` count only includes `sent` (was counting all non-error as `dispatched`)
+- `deriveReentryProvenance` is now the canonical path for session provenance reading — any future re-entry paths must use it
+
 ## 2026-08-26 — #204: PR #210 corrections round 4 — provenance laundering closure, lease hardening, recovery API
 
 ### What changed
