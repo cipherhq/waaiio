@@ -2167,6 +2167,62 @@ export class BotService {
       }
     }
 
+    // ── #165: Recurring setup/decline button interceptor ──
+    // Handles recurring_setup:{intentId}, recurring_decline:{intentId},
+    // recurring_freq:{frequency}:{intentId}, recurring_consent:{action}:{intentId}
+    if (messageType === 'button' && session.business_id && (
+      text.startsWith('recurring_setup:') || text.startsWith('recurring_decline:') ||
+      text.startsWith('recurring_freq:') || text.startsWith('recurring_consent:')
+    )) {
+      try {
+        const parts = text.split(':');
+
+        if (text.startsWith('recurring_decline:')) {
+          // Decline: call RPC and send confirmation
+          const intentId = parts[1];
+          if (intentId) {
+            await this.supabase.rpc('decline_recurring_offer', {
+              p_intent_id: intentId,
+              p_business_id: session.business_id,
+            });
+            await this.sendText(from, 'No problem! Your payment is confirmed.');
+            return;
+          }
+        } else {
+          // Setup, frequency selection, or consent confirmation
+          // Extract intent ID (always the last colon-separated part)
+          const intentId = parts[parts.length - 1];
+          if (intentId) {
+            const { handleRecurringSetupInteraction } = await import('@/lib/payments/recurring-setup');
+
+            // Resolve sender for CTA buttons
+            let resolvedSender: import('@/lib/channels/message-sender').MessageSender | null = null;
+            try {
+              const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
+              const resolver = new ChannelResolver(this.supabase);
+              const resolved = await resolver.resolveByBusinessId(session.business_id!);
+              if (resolved) resolvedSender = resolved.sender;
+            } catch { /* non-critical */ }
+
+            const result = await handleRecurringSetupInteraction(
+              this.supabase, intentId, session.business_id!,
+              session.user_id, from, text, resolvedSender,
+            );
+
+            if (result.handled) {
+              if (result.message) {
+                await this.sendText(from, result.message);
+              }
+              return;
+            }
+          }
+        }
+      } catch (recurringErr) {
+        logger.error('[BOT] Recurring setup interceptor error (non-fatal):', recurringErr);
+        // Fall through to normal flow
+      }
+    }
+
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
     // Only fire on non-free-text steps
     const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin'].includes(step);
