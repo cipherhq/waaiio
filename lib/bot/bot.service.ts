@@ -2178,28 +2178,29 @@ export class BotService {
         const parts = text.split(':');
 
         if (text.startsWith('recurring_decline:')) {
-          // Decline: verify user authority before declining
+          // Decline: pass user_id to RPC for authorization check
           const intentId = parts[1];
           if (intentId) {
-            // Verify the declining user owns this intent
             if (!session.user_id) {
               await this.sendText(from, 'Unable to verify your identity.');
               return;
             }
-            const { data: declineIntent } = await this.supabase
-              .from('recurring_setup_intents')
-              .select('user_id')
-              .eq('id', intentId)
-              .single();
-            if (declineIntent && declineIntent.user_id !== session.user_id) {
-              await this.sendText(from, 'This offer is for a different account.');
-              return;
-            }
 
-            await this.supabase.rpc('decline_recurring_offer', {
+            const { data: declineResult, error: declineErr } = await this.supabase.rpc('decline_recurring_offer', {
               p_intent_id: intentId,
               p_business_id: session.business_id,
+              p_user_id: session.user_id,
             });
+            const result = declineResult as Record<string, unknown> | null;
+            if (declineErr || !result?.declined) {
+              const reason = result?.reason || declineErr?.message || 'unknown';
+              if (reason === 'user_mismatch') {
+                await this.sendText(from, 'This offer is for a different account.');
+              } else {
+                await this.sendText(from, 'Could not decline the offer. Please try again.');
+              }
+              return;
+            }
             await this.sendText(from, 'No problem! Your payment is confirmed.');
             return;
           }

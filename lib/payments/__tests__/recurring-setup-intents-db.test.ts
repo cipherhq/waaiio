@@ -117,7 +117,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
 
   it('3. UNIQUE(source_payment_id) prevents second intent after declined', () => {
     const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
-    callRpc(`SELECT decline_recurring_offer('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid) AS result;`);
+    callRpc(`SELECT decline_recurring_offer('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid) AS result;`);
     const { result: r2 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     expect(r2.created).toBe(false);
     expect(r2.reason).toBe('already_exists');
@@ -221,7 +221,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
 
   it('15. declined is terminal — cannot transition back', () => {
     const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
-    callRpc(`SELECT decline_recurring_offer('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid) AS result;`);
+    callRpc(`SELECT decline_recurring_offer('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid) AS result;`);
     const { result } = callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
     expect(result.transitioned).toBe(false);
     expect(result.reason).toBe('invalid_state_declined');
@@ -300,6 +300,77 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     const r = runSQL(`INSERT INTO recurring_setup_intents (source_payment_id, business_id, user_id, amount, currency, status, frequency) VALUES ('${TEST_PAY_ID}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', 10000, 'NGN', 'consent_confirmed', 'monthly');`);
     // consent_confirmed requires consent_at + consent_message_hash
     expect(r.exitCode).not.toBe(0);
+  });
+
+  // ── Fix 5: Adversarial schema-resolution tests ──
+
+  it('25. untrusted roles cannot create tables in public schema', () => {
+    // anon cannot create a shadow table
+    const r1 = runSQL('CREATE TABLE public.recurring_setup_intents_shadow (id int);', 'anon');
+    expect(r1.exitCode).not.toBe(0);
+    // authenticated cannot create a shadow table
+    const r2 = runSQL('CREATE TABLE public.payments_shadow (id int);', 'authenticated');
+    expect(r2.exitCode).not.toBe(0);
+  });
+
+  it('26. Stripe gateway source payment rejected by RPC', () => {
+    const stripePayId = 'cd165000-0000-0000-0000-000000000050';
+    runSQL(`INSERT INTO payments (id, business_id, user_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${stripePayId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', 5000, 'test-stripe-ref', 'success', 'stripe', 'USD', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
+    const { result } = callRpc(`SELECT create_recurring_offer('${stripePayId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(result.created).toBe(false);
+    expect(result.reason).toBe('payment_not_eligible');
+    runSQL(`DELETE FROM payments WHERE id = '${stripePayId}';`);
+  });
+
+  it('27. cross-business booking rejected', () => {
+    const crossBizPayId = 'cd165000-0000-0000-0000-000000000051';
+    const crossBizBookId = 'cd165000-0000-0000-0000-000000000052';
+    const crossBizId = 'cd165000-0000-0000-0000-000000000053';
+    // Create a second business
+    runSQL(`INSERT INTO businesses (id, owner_id, name, slug, address, city, phone) VALUES ('${crossBizId}', '${TEST_OWNER_ID}', 'Cross Biz', 'cross-biz', '2 Cross St', 'Accra', '+2330000001') ON CONFLICT DO NOTHING;`);
+    // Create a booking belonging to a different business
+    runSQL(`INSERT INTO bookings (id, business_id, flow_type, guest_name, guest_phone, status) VALUES ('${crossBizBookId}', '${crossBizId}', 'payment', 'Cross Guest', '+2340000001', 'confirmed') ON CONFLICT DO NOTHING;`);
+    // Create a payment linked to that cross-business booking
+    runSQL(`INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${crossBizPayId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${crossBizBookId}', 5000, 'test-cross-ref', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
+    const { result } = callRpc(`SELECT create_recurring_offer('${crossBizPayId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(result.created).toBe(false);
+    expect(result.reason).toBe('payment_not_eligible');
+    runSQL(`DELETE FROM payments WHERE id = '${crossBizPayId}';`);
+    runSQL(`DELETE FROM bookings WHERE id = '${crossBizBookId}';`);
+    runSQL(`DELETE FROM businesses WHERE id = '${crossBizId}';`);
+  });
+
+  it('28. non-payment flow_type booking rejected', () => {
+    const nonPayFlowPayId = 'cd165000-0000-0000-0000-000000000054';
+    const nonPayFlowBookId = 'cd165000-0000-0000-0000-000000000055';
+    // Create a booking with non-payment flow_type
+    runSQL(`INSERT INTO bookings (id, business_id, flow_type, guest_name, guest_phone, status) VALUES ('${nonPayFlowBookId}', '${TEST_BIZ_ID}', 'appointment', 'Appt Guest', '+2340000002', 'confirmed') ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${nonPayFlowPayId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${nonPayFlowBookId}', 5000, 'test-appt-ref', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
+    const { result } = callRpc(`SELECT create_recurring_offer('${nonPayFlowPayId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(result.created).toBe(false);
+    expect(result.reason).toBe('payment_not_eligible');
+    runSQL(`DELETE FROM payments WHERE id = '${nonPayFlowPayId}';`);
+    runSQL(`DELETE FROM bookings WHERE id = '${nonPayFlowBookId}';`);
+  });
+
+  it('29. wrong user decline rejected', () => {
+    const wrongUserId = 'cd165000-0000-0000-0000-000000000060';
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(r1.created).toBe(true);
+    const { result: r2 } = callRpc(`SELECT decline_recurring_offer('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, '${wrongUserId}'::uuid) AS result;`);
+    expect(r2.declined).toBe(false);
+    expect(r2.reason).toBe('user_mismatch');
+  });
+
+  it('30. activation without persisted provider evidence rejected', () => {
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
+    callRpc(`SELECT confirm_recurring_consent('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hash') AS result;`);
+    const { result: beginResult } = callRpc(`SELECT begin_recurring_provider_attempt('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_test', 'AUTH_test', NOW() + INTERVAL '1 month') AS result;`);
+    // Attempt activation WITHOUT persisting plan/subscription codes first
+    const { result } = callRpc(`SELECT activate_recurring_subscription('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid, NOW() + INTERVAL '1 month') AS result;`);
+    expect(result.activated).toBe(false);
+    expect(result.reason).toBe('provider_evidence_incomplete');
   });
 });
 

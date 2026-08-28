@@ -229,10 +229,19 @@ async function handleConsentConfirmation(
     || normalizedText === 'cancel';
 
   if (isDecline) {
-    await supabase.rpc('decline_recurring_offer', {
+    const { data: declineResult, error: declineErr } = await supabase.rpc('decline_recurring_offer', {
       p_intent_id: intent.id,
       p_business_id: intent.business_id,
+      p_user_id: intent.user_id,
     });
+    if (declineErr || !(declineResult as Record<string, unknown>)?.declined) {
+      const reason = (declineResult as Record<string, unknown>)?.reason || declineErr?.message || 'unknown';
+      logger.warn(`${logPrefix} Decline failed: ${reason}`);
+      if (reason === 'user_mismatch') {
+        return { handled: true, message: 'This offer is for a different account.' };
+      }
+      return { handled: true, message: 'Could not decline the offer. Please try again.' };
+    }
     return { handled: true, message: 'No problem! Your payment is confirmed. The recurring setup has been cancelled.' };
   }
 
@@ -411,17 +420,17 @@ export async function executePaystackRecurringSetup(
     if (service?.name) serviceName = service.name;
   }
 
-  // ── Phase 1: Create Paystack Plan (classified outcome) ──
+  // ── Phase 1: Create Paystack Plan (typed outcome boundary) ──
   const planName = `${businessName} - ${serviceName} (${intent.frequency}) [rsi:${intent.id}]`;
 
-  const planOutcome = await classifiedCreatePlan({
+  const planOutcome = await recurringCreatePlan({
     name: planName,
     interval: intent.frequency as 'weekly' | 'monthly',
     amount: intent.amount,
     currency: intent.currency,
   });
 
-  if (planOutcome.status === 'definitive_failure') {
+  if (planOutcome.outcome === 'definitive_failure') {
     await supabase.rpc('fail_recurring_setup', {
       p_intent_id: intent.id,
       p_business_id: intent.business_id,
@@ -431,7 +440,7 @@ export async function executePaystackRecurringSetup(
     return;
   }
 
-  if (planOutcome.status === 'indeterminate') {
+  if (planOutcome.outcome === 'indeterminate') {
     logger.error(`${logPrefix} Plan creation indeterminate: ${planOutcome.reason}`);
     await supabase.rpc('mark_recurring_ambiguous', {
       p_intent_id: intent.id,
@@ -442,7 +451,7 @@ export async function executePaystackRecurringSetup(
     return;
   }
 
-  const planCode = planOutcome.planCode;
+  const planCode = planOutcome.data.planCode;
 
   // ── Persist plan code ──
   const { data: persistResult, error: persistErr } = await supabase.rpc('persist_recurring_plan_id', {
@@ -463,16 +472,16 @@ export async function executePaystackRecurringSetup(
     return;
   }
 
-  // ── Phase 2: Create Paystack Subscription (classified outcome) ──
+  // ── Phase 2: Create Paystack Subscription (typed outcome boundary) ──
   // NEVER auto-retry this call after any outcome
-  const subOutcome = await classifiedCreateSubscription({
+  const subOutcome = await recurringCreateSubscription({
     customer: customerCode,
     planCode,
     authorizationCode,
     startDate: startDate.toISOString(),
   });
 
-  if (subOutcome.status === 'definitive_failure') {
+  if (subOutcome.outcome === 'definitive_failure') {
     // Known failure (4xx) — plan is orphaned but setup is definitively failed
     await supabase.rpc('fail_recurring_setup', {
       p_intent_id: intent.id,
@@ -483,7 +492,7 @@ export async function executePaystackRecurringSetup(
     return;
   }
 
-  if (subOutcome.status === 'indeterminate') {
+  if (subOutcome.outcome === 'indeterminate') {
     // Timeout/network/5xx → ambiguous — NEVER auto-retry POST /subscription
     logger.error(`${logPrefix} Subscription creation indeterminate: ${subOutcome.reason}`);
     await supabase.rpc('mark_recurring_ambiguous', {
@@ -495,17 +504,17 @@ export async function executePaystackRecurringSetup(
     return;
   }
 
-  // ── Fix 4: Persist subscription code BEFORE local activation ──
+  // ── Persist subscription code BEFORE local activation ──
   // This ensures the subscription_code is durably bound even if activation fails
   const { data: persistSubResult, error: persistSubErr } = await supabase.rpc('persist_recurring_subscription_id', {
     p_intent_id: intent.id,
     p_claim_token: claimToken,
-    p_subscription_code: subOutcome.subscriptionCode,
-    p_email_token: subOutcome.emailToken,
+    p_subscription_code: subOutcome.data.subscriptionCode,
+    p_email_token: subOutcome.data.emailToken,
   });
 
   if (persistSubErr || !(persistSubResult as Record<string, unknown>)?.persisted) {
-    logger.error(`${logPrefix} persist_recurring_subscription_id failed — sub ${subOutcome.subscriptionCode} may be orphaned`);
+    logger.error(`${logPrefix} persist_recurring_subscription_id failed — sub ${subOutcome.data.subscriptionCode} may be orphaned`);
     // Subscription was created at Paystack but we can't persist the code — ambiguous
     await supabase.rpc('mark_recurring_ambiguous', {
       p_intent_id: intent.id,
@@ -517,12 +526,10 @@ export async function executePaystackRecurringSetup(
   }
 
   // ── Activate: provider_attempted → active ──
+  // Fix 3: simplified signature — reads provider evidence from persisted intent row
   const { data: activateResult, error: activateErr } = await supabase.rpc('activate_recurring_subscription', {
     p_intent_id: intent.id,
     p_claim_token: claimToken,
-    p_subscription_code: subOutcome.subscriptionCode,
-    p_email_token: subOutcome.emailToken,
-    p_plan_code: planCode,
     p_next_charge_at: startDate.toISOString(),
   });
 
@@ -548,68 +555,180 @@ export async function executePaystackRecurringSetup(
 }
 
 // ═══════════════════════════════════════════════════════
-// Typed Paystack provider outcome boundary (#213 Fix 3)
-// Distinguishes definitive failure from indeterminate (timeout/5xx).
+// Typed Paystack provider outcome boundary (#213 Fix 1)
+// Real HTTP boundary: uses fetch directly with AbortSignal.timeout.
+// Inspects response.ok and response.status BEFORE parsing JSON.
+// Distinguishes definitive failure (4xx) from indeterminate (5xx/timeout/network).
 // ═══════════════════════════════════════════════════════
 
-type PaystackPlanOutcome =
-  | { status: 'success'; planCode: string }
-  | { status: 'definitive_failure'; reason: string }
-  | { status: 'indeterminate'; reason: string };
+export type PaystackPlanOutcome =
+  | { outcome: 'success'; data: { planCode: string } }
+  | { outcome: 'definitive_failure'; reason: string }
+  | { outcome: 'indeterminate'; reason: string };
 
-type PaystackSubscriptionOutcome =
-  | { status: 'success'; subscriptionCode: string; emailToken: string }
-  | { status: 'definitive_failure'; reason: string }
-  | { status: 'indeterminate'; reason: string };
+export type PaystackSubscriptionOutcome =
+  | { outcome: 'success'; data: { subscriptionCode: string; emailToken: string } }
+  | { outcome: 'definitive_failure'; reason: string }
+  | { outcome: 'indeterminate'; reason: string };
+
+const PAYSTACK_API = 'https://api.paystack.co';
+const PAYSTACK_TIMEOUT_MS = 8000;
+
+function getPaystackKey(): string {
+  return process.env.PAYSTACK_SECRET_KEY || '';
+}
 
 /**
- * Classify a createPlan call into success / definitive_failure / indeterminate.
- * paystackRequest() throws on network/timeout errors (indeterminate).
- * data.status === false with a message is a definitive 4xx rejection.
- * null return from createPlan means definitive failure (4xx with logged error).
+ * Create a Paystack plan via raw fetch with typed outcome boundary.
+ * HTTP 4xx → definitive_failure. HTTP 5xx/timeout/network → indeterminate.
  */
-export async function classifiedCreatePlan(opts: {
+export async function recurringCreatePlan(opts: {
   name: string;
   interval: 'weekly' | 'monthly';
   amount: number;
   currency: string;
 }): Promise<PaystackPlanOutcome> {
-  try {
-    const { createPlan } = await import('@/lib/payments/paystack-recurring');
-    const result = await createPlan(opts);
-    if (!result) {
-      // createPlan returns null on data.status === false (logged by paystack-recurring)
-      return { status: 'definitive_failure', reason: 'plan_creation_rejected' };
-    }
-    return { status: 'success', planCode: result.planCode };
-  } catch (err) {
-    // Network error, timeout, 5xx — indeterminate
-    return { status: 'indeterminate', reason: err instanceof Error ? err.message : String(err) };
+  const key = getPaystackKey();
+  if (!key) {
+    return { outcome: 'indeterminate', reason: 'missing_paystack_key' };
   }
+
+  const INTERVAL_MAP: Record<string, string> = { weekly: 'weekly', monthly: 'monthly' };
+
+  let response: Response;
+  try {
+    response = await fetch(`${PAYSTACK_API}/plan`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: opts.name,
+        interval: INTERVAL_MAP[opts.interval] || opts.interval,
+        amount: Math.round(opts.amount * 100), // kobo
+        currency: opts.currency || 'NGN',
+      }),
+      signal: AbortSignal.timeout(PAYSTACK_TIMEOUT_MS),
+    });
+  } catch (err) {
+    // Network error, timeout, AbortError
+    const reason = err instanceof DOMException && err.name === 'TimeoutError'
+      ? 'timeout' : err instanceof Error ? err.message : String(err);
+    return { outcome: 'indeterminate', reason };
+  }
+
+  // Inspect HTTP status BEFORE parsing JSON
+  if (!response.ok) {
+    if (response.status >= 400 && response.status < 500) {
+      // 4xx — definitive provider rejection
+      let detail = `http_${response.status}`;
+      try {
+        const body = await response.json() as Record<string, unknown>;
+        if (body.message) detail = `${detail}: ${body.message}`;
+      } catch { /* no parseable body */ }
+      return { outcome: 'definitive_failure', reason: detail };
+    }
+    // 5xx — indeterminate
+    return { outcome: 'indeterminate', reason: `http_${response.status}` };
+  }
+
+  // HTTP 2xx — parse JSON
+  let body: Record<string, unknown>;
+  try {
+    body = await response.json() as Record<string, unknown>;
+  } catch {
+    return { outcome: 'indeterminate', reason: 'malformed_json' };
+  }
+
+  if (!body.status) {
+    // Paystack returned 2xx but status:false — treat as definitive failure
+    return { outcome: 'definitive_failure', reason: `api_rejected: ${body.message || 'unknown'}` };
+  }
+
+  const planData = body.data as Record<string, string> | undefined;
+  if (!planData?.plan_code) {
+    return { outcome: 'indeterminate', reason: 'missing_plan_code_in_response' };
+  }
+
+  return { outcome: 'success', data: { planCode: planData.plan_code } };
 }
 
 /**
- * Classify a createSubscription call into success / definitive_failure / indeterminate.
+ * Create a Paystack subscription via raw fetch with typed outcome boundary.
  * NEVER auto-retry POST /subscription after any outcome.
+ * HTTP 4xx → definitive_failure. HTTP 5xx/timeout/network → indeterminate.
  */
-export async function classifiedCreateSubscription(opts: {
+export async function recurringCreateSubscription(opts: {
   customer: string;
   planCode: string;
   authorizationCode: string;
   startDate?: string;
 }): Promise<PaystackSubscriptionOutcome> {
-  try {
-    const { createSubscription } = await import('@/lib/payments/paystack-recurring');
-    const result = await createSubscription(opts);
-    if (!result) {
-      // createSubscription returns null on data.status === false (logged by paystack-recurring)
-      return { status: 'definitive_failure', reason: 'subscription_creation_rejected' };
-    }
-    return { status: 'success', subscriptionCode: result.subscriptionCode, emailToken: result.emailToken };
-  } catch (err) {
-    // Network error, timeout, 5xx — indeterminate
-    return { status: 'indeterminate', reason: err instanceof Error ? err.message : String(err) };
+  const key = getPaystackKey();
+  if (!key) {
+    return { outcome: 'indeterminate', reason: 'missing_paystack_key' };
   }
+
+  const reqBody: Record<string, unknown> = {
+    customer: opts.customer,
+    plan: opts.planCode,
+    authorization: opts.authorizationCode,
+  };
+  if (opts.startDate) reqBody.start_date = opts.startDate;
+
+  let response: Response;
+  try {
+    response = await fetch(`${PAYSTACK_API}/subscription`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(reqBody),
+      signal: AbortSignal.timeout(PAYSTACK_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const reason = err instanceof DOMException && err.name === 'TimeoutError'
+      ? 'timeout' : err instanceof Error ? err.message : String(err);
+    return { outcome: 'indeterminate', reason };
+  }
+
+  if (!response.ok) {
+    if (response.status >= 400 && response.status < 500) {
+      let detail = `http_${response.status}`;
+      try {
+        const body = await response.json() as Record<string, unknown>;
+        if (body.message) detail = `${detail}: ${body.message}`;
+      } catch { /* no parseable body */ }
+      return { outcome: 'definitive_failure', reason: detail };
+    }
+    return { outcome: 'indeterminate', reason: `http_${response.status}` };
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = await response.json() as Record<string, unknown>;
+  } catch {
+    return { outcome: 'indeterminate', reason: 'malformed_json' };
+  }
+
+  if (!body.status) {
+    return { outcome: 'definitive_failure', reason: `api_rejected: ${body.message || 'unknown'}` };
+  }
+
+  const subData = body.data as Record<string, string> | undefined;
+  if (!subData?.subscription_code) {
+    return { outcome: 'indeterminate', reason: 'missing_subscription_code_in_response' };
+  }
+
+  return {
+    outcome: 'success',
+    data: {
+      subscriptionCode: subData.subscription_code,
+      emailToken: subData.email_token || '',
+    },
+  };
 }
 
 /** Send a text message via sender, handling errors gracefully. */
