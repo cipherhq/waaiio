@@ -8,8 +8,20 @@
  * This function never throws — all errors are logged and the intent is
  * marked 'failed' so it doesn't block future transitions.
  *
- * ACC-204 Blocker 2: Uses claim_fulfillment_notification_dispatch RPC for
- * single-winner atomic claim before any provider call.
+ * ACC-204 Blocker 2: Uses claim_fulfillment_notification_dispatch RPC with
+ * lease/token model. Flow:
+ * 1. Claim with token + lease (30s default)
+ * 2. Pre-provider work (channel resolve, template check, phone lookup)
+ * 3. Mark provider_attempted_at (point of no return)
+ * 4. sendTemplate with noRetry
+ * 5. Finalize with WAMID or failure
+ *
+ * States:
+ * A. pending, claim_token=NULL, provider_attempted_at=NULL → reclaimable
+ * B. pending, claim_token=X, lease active, provider_attempted_at=NULL → claimed, reclaimable after expiry
+ * C. pending, provider_attempted_at IS NOT NULL → provider attempted, NOT auto-reclaimable
+ * D. sent, provider_message_id=X → success
+ * E. failed → definite failure
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
@@ -44,7 +56,7 @@ export async function dispatchFulfillmentNotification(
   businessId: string,
 ): Promise<void> {
   try {
-    // ACC-204 Blocker 2: Atomic claim — prevents concurrent dispatchers from
+    // Step 1: Atomic claim with lease — prevents concurrent dispatchers from
     // both calling the provider. If claim fails, another dispatcher already owns it.
     const { data: claimResult, error: claimError } = await service.rpc(
       'claim_fulfillment_notification_dispatch',
@@ -61,7 +73,13 @@ export async function dispatchFulfillmentNotification(
       return; // Another dispatcher owns this intent — zero provider call
     }
 
-    // 1. Resolve WhatsApp channel
+    const claimToken: string = claimResult.claim_token;
+
+    // Step 2: Pre-provider work — channel resolve, template check, phone lookup
+    // If any of these fail, the intent stays in state B (claimed, pre-provider)
+    // and can be reclaimed after lease expiry.
+
+    // 2a. Resolve WhatsApp channel
     const resolver = new ChannelResolver(service);
     const resolved = await resolver.resolveByBusinessId(businessId);
 
@@ -71,7 +89,7 @@ export async function dispatchFulfillmentNotification(
       return;
     }
 
-    // 2. Check template readiness
+    // 2b. Check template readiness
     const meta = resolved.cloud;
     if (!meta) {
       logger.warn('[FULFILLMENT-NOTIF] No cloud service for template check');
@@ -97,7 +115,7 @@ export async function dispatchFulfillmentNotification(
       return;
     }
 
-    // 3. Fetch winner phone (server-side only)
+    // 2c. Fetch winner phone (server-side only)
     const { data: redemption } = await service
       .from('promo_redemptions')
       .select('phone_e164, claim_reference, promo_code_id')
@@ -110,7 +128,7 @@ export async function dispatchFulfillmentNotification(
       return;
     }
 
-    // 4. Fetch business name
+    // 2d. Fetch business name
     const { data: bizRecord } = await service
       .from('businesses')
       .select('name')
@@ -118,7 +136,7 @@ export async function dispatchFulfillmentNotification(
       .maybeSingle();
     const businessName = bizRecord?.name || 'Business';
 
-    // 5. Fetch campaign name
+    // 2e. Fetch campaign name
     const { data: campaign } = await service
       .from('promo_campaigns')
       .select('name')
@@ -126,7 +144,7 @@ export async function dispatchFulfillmentNotification(
       .maybeSingle();
     const campaignName = campaign?.name || 'Promotion';
 
-    // 6. Fetch prize name
+    // 2f. Fetch prize name
     let prizeName = 'Prize';
     if (redemption.promo_code_id) {
       const { data: codeRow } = await service
@@ -147,8 +165,20 @@ export async function dispatchFulfillmentNotification(
     const claimReference = redemption.claim_reference || 'N/A';
     const statusLabel = formatStatus(intent.to_status);
 
-    // 7. Send template — noRetry: delivery-critical promo notification
-    // NOTE: attempted_at was already set by the claim RPC — no separate update needed
+    // Step 3: Mark provider_attempted_at — POINT OF NO RETURN
+    // After this, the intent is in state C (provider attempted, NOT auto-reclaimable).
+    const { data: markResult, error: markError } = await service.rpc(
+      'mark_fulfillment_notification_attempted',
+      { p_intent_id: intent.id, p_claim_token: claimToken },
+    );
+
+    if (markError || !markResult?.success) {
+      logger.error('[FULFILLMENT-NOTIF] Mark attempted failed — lease may have expired:', markError || markResult);
+      // Lease expired and someone else reclaimed it, or state changed. Do NOT send.
+      return;
+    }
+
+    // Step 4: Send template — noRetry: delivery-critical promo notification
     let messageId: string | undefined;
     try {
       const phone = stripPlus(redemption.phone_e164);
@@ -166,18 +196,19 @@ export async function dispatchFulfillmentNotification(
         await finalizeIntent(service, intent.id, 'failed');
         return;
       }
-      // Ambiguous error — leave as pending with attempted_at set (claim RPC already set it)
-      logger.error('[FULFILLMENT-NOTIF] Ambiguous provider error — intent stays attempted:', err);
+      // Ambiguous error (5xx/network) — provider_attempted_at is set (state C).
+      // NOT auto-reclaimable. Manual recovery needed.
+      logger.error('[FULFILLMENT-NOTIF] Ambiguous provider error — intent in state C (provider attempted):', err);
       return;
     }
 
     if (!messageId) {
-      // No WAMID = ambiguous — leave with attempted_at set
-      logger.warn('[FULFILLMENT-NOTIF] Send succeeded but no WAMID — intent stays attempted');
+      // No WAMID = ambiguous — state C (provider_attempted_at set, NOT reclaimable)
+      logger.warn('[FULFILLMENT-NOTIF] Send succeeded but no WAMID — intent in state C');
       return;
     }
 
-    // 8. Finalize with WAMID
+    // Step 5: Finalize with WAMID → state D
     await finalizeIntent(service, intent.id, 'sent', messageId);
     logger.info(`[FULFILLMENT-NOTIF] Sent ${intent.to_status} notification for redemption ${intent.redemption_id}`);
   } catch (err) {

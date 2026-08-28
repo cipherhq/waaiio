@@ -7,10 +7,11 @@
  * C. CLAIM/STATUS rejection: wrong phone, wrong business, not winner
  * D. Fulfillment status display formatting
  * D-pre. Session provenance (Blocker 1) — persisted biz_resolution, NOT hardcoded
+ * D-prov. Provenance helper unit tests (Blocker 1)
  * D-pred. Predicate-sensitive authorization
  * E-route. Routing order proofs
- * F. Provider behavior — execute dispatchFulfillmentNotification (Blocker 3a)
- * G. Webhook application tests (Blocker 3c)
+ * F. Provider behavior — execute dispatchFulfillmentNotification (Blocker 2)
+ * G. Webhook correlation tests — executable (Blocker 3)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -156,12 +157,14 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
       expect(result.handled).toBe(false);
     });
 
-    it('allows restart provenance', async () => {
+    it('rejects restart provenance (no longer directly trusted — Blocker 1)', async () => {
+      // ACC-204 Blocker 1: 'restart' is removed from TRUSTED_PROVENANCES.
+      // Restart now carries the ORIGINAL provenance from session_data.biz_resolution.
       const result = await handlePromoVerification(
         mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
         'biz-1', 'msg-1', ['promo_verification'], 'restart',
       );
-      expect(result.handled).toBe(true);
+      expect(result.handled).toBe(false);
     });
 
     it('does not match partial CLAIM (no reference)', async () => {
@@ -185,8 +188,6 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
         mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
         'biz-1', 'msg-1', ['promo_verification'], 'active_session',
       );
-      // active_session is no longer in TRUSTED_PROVENANCES — provenance should be
-      // the original biz_resolution read from session_data, not a hardcoded string
       expect(result.handled).toBe(false);
     });
   });
@@ -283,7 +284,6 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
     });
 
     it('uses same generic response for all mismatch types', async () => {
-      // Test that both no-redemption and no-campaign give identical message
       mockRedemptionQuery = { data: null, error: null };
       await handlePromoVerification(
         mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
@@ -320,7 +320,6 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
 
   describe('D-pre. Session provenance persisted from biz_resolution (Blocker 1)', () => {
     it('pre_resolved provenance (from session_data.biz_resolution) allows CLAIM', async () => {
-      // This simulates the active-session path reading biz_resolution from session_data
       const result = await handlePromoVerification(
         mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
         'biz-1', 'msg-1', ['promo_verification'], 'pre_resolved',
@@ -340,7 +339,6 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
     });
 
     it('fuzzy provenance (persisted in session_data) denies CLAIM', async () => {
-      // Session created from fuzzy resolution has biz_resolution='fuzzy' in session_data
       const result = await handlePromoVerification(
         mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
         'biz-1', 'msg-1', ['promo_verification'], 'fuzzy',
@@ -354,6 +352,73 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
         'biz-1', 'msg-1', ['promo_verification'], 'returning_customer',
       );
       expect(result.handled).toBe(false);
+    });
+  });
+
+  // ── D-prov. Provenance helper unit tests (Blocker 1) ──
+
+  describe('D-prov. Provenance helper — deriveFirstMessageProvenance + deriveActiveSessionProvenance', () => {
+    it('pre_resolved always wins over restart', async () => {
+      const { deriveFirstMessageProvenance } = await import('@/lib/bot/derive-promo-provenance');
+      expect(deriveFirstMessageProvenance('biz-1', 'fuzzy', true)).toBe('pre_resolved');
+      expect(deriveFirstMessageProvenance('biz-1', 'dedicated_number', true)).toBe('pre_resolved');
+      expect(deriveFirstMessageProvenance('biz-1', null, false)).toBe('pre_resolved');
+    });
+
+    it('restart carries forward original session provenance', async () => {
+      const { deriveFirstMessageProvenance } = await import('@/lib/bot/derive-promo-provenance');
+      // A session originally created from dedicated_number restarts
+      expect(deriveFirstMessageProvenance(null, 'dedicated_number', true)).toBe('dedicated_number');
+      // A session originally created from pre_resolved restarts
+      expect(deriveFirstMessageProvenance(null, 'pre_resolved', true)).toBe('pre_resolved');
+      // A session originally from fuzzy restarts — carries fuzzy, NOT trusted
+      expect(deriveFirstMessageProvenance(null, 'fuzzy', true)).toBe('fuzzy');
+      // A session originally from returning_customer restarts — carries it, NOT trusted
+      expect(deriveFirstMessageProvenance(null, 'returning_customer', true)).toBe('returning_customer');
+    });
+
+    it('restart with no persisted provenance returns null', async () => {
+      const { deriveFirstMessageProvenance } = await import('@/lib/bot/derive-promo-provenance');
+      expect(deriveFirstMessageProvenance(null, null, true)).toBeNull();
+    });
+
+    it('no pre_resolved and no restart returns null', async () => {
+      const { deriveFirstMessageProvenance } = await import('@/lib/bot/derive-promo-provenance');
+      expect(deriveFirstMessageProvenance(null, null, false)).toBeNull();
+    });
+
+    it('active session reads persisted provenance', async () => {
+      const { deriveActiveSessionProvenance } = await import('@/lib/bot/derive-promo-provenance');
+      expect(deriveActiveSessionProvenance('pre_resolved')).toBe('pre_resolved');
+      expect(deriveActiveSessionProvenance('dedicated_number')).toBe('dedicated_number');
+      expect(deriveActiveSessionProvenance('fuzzy')).toBe('fuzzy');
+      expect(deriveActiveSessionProvenance(undefined)).toBeUndefined();
+    });
+
+    it('fuzzy restart → CLAIM denied (full chain proof)', async () => {
+      const { deriveFirstMessageProvenance } = await import('@/lib/bot/derive-promo-provenance');
+      // Step 1: Session originally created from fuzzy resolution
+      const restartProvenance = deriveFirstMessageProvenance(null, 'fuzzy', true);
+      expect(restartProvenance).toBe('fuzzy');
+
+      // Step 2: This provenance would be passed to handlePromoVerification
+      const result = await handlePromoVerification(
+        mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
+        'biz-1', 'msg-1', ['promo_verification'], restartProvenance!,
+      );
+      expect(result.handled).toBe(false); // Denied — fuzzy not trusted
+    });
+
+    it('dedicated_number restart → CLAIM allowed (full chain proof)', async () => {
+      const { deriveFirstMessageProvenance } = await import('@/lib/bot/derive-promo-provenance');
+      const restartProvenance = deriveFirstMessageProvenance(null, 'dedicated_number', true);
+      expect(restartProvenance).toBe('dedicated_number');
+
+      const result = await handlePromoVerification(
+        mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
+        'biz-1', 'msg-1', ['promo_verification'], restartProvenance!,
+      );
+      expect(result.handled).toBe(true); // Allowed — dedicated_number is trusted
     });
   });
 
@@ -381,7 +446,6 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
         return filterChain;
       });
       filterChain.maybeSingle = vi.fn().mockImplementation(() => {
-        // Only return redemption if ALL predicates present
         const hasReference = eqFilters.some(([c]) => c === 'claim_reference');
         const hasPhone = eqFilters.some(([c]) => c === 'phone_e164');
         const hasBiz = eqFilters.some(([c]) => c === 'business_id');
@@ -389,7 +453,6 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
         if (hasReference && hasPhone && hasBiz && hasOutcome) {
           return Promise.resolve({ data: redemptionRow, error: null });
         }
-        // Missing any predicate = should not return data (security breach)
         return Promise.resolve({ data: null, error: null });
       });
 
@@ -407,7 +470,6 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
       expect(sentMessages).toHaveLength(1);
       expect(sentMessages[0].text).toContain('WAA-TEST-0001');
 
-      // Verify all 4 predicates were applied
       expect(eqFilters.some(([c]) => c === 'claim_reference')).toBe(true);
       expect(eqFilters.some(([c]) => c === 'phone_e164')).toBe(true);
       expect(eqFilters.some(([c]) => c === 'business_id')).toBe(true);
@@ -427,7 +489,6 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
         return filterChain;
       });
       filterChain.maybeSingle = vi.fn().mockImplementation(() => {
-        // Require phone_e164 — if missing, reject
         const hasPhone = eqFilters.some(([c]) => c === 'phone_e164');
         if (!hasPhone) return Promise.resolve({ data: null, error: null });
         return Promise.resolve({
@@ -450,7 +511,6 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
         mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
         'biz-1', 'msg-1', ['promo_verification'], 'pre_resolved',
       );
-      // Handler includes phone_e164 so the filter-aware mock returns data -> handled
       expect(result.handled).toBe(true);
       expect(eqFilters.some(([c]) => c === 'phone_e164')).toBe(true);
 
@@ -462,19 +522,14 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
 
   describe('E-route. CLAIM runs before eligibility YES/NO and keyword routing', () => {
     it('CLAIM is handled before YES/NO eligibility path', async () => {
-      // If someone sends "CLAIM WAA-xxx" while there's a pending eligibility,
-      // CLAIM should take precedence (it's checked first in the handler).
       const result = await handlePromoVerification(
         mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
         'biz-1', 'msg-1', ['promo_verification'], 'pre_resolved',
       );
       expect(result.handled).toBe(true);
-      // The handler checks CLAIM/STATUS before YES/NO — verified by code order
-      // (line 55: claimMatch/statusMatch check -> line 131: isAck/isDecline check)
     });
 
     it('CLAIM takes priority over bare code matching', async () => {
-      // "CLAIM WAA-TEST-0001" should NOT fall through to bare code or keyword
       mockHasActiveBareCode = true;
       mockHasActiveKeyword = true;
       const result = await handlePromoVerification(
@@ -482,7 +537,6 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
         'biz-1', 'msg-1', ['promo_verification'], 'pre_resolved',
       );
       expect(result.handled).toBe(true);
-      // Verify it used CLAIM path (returned claim info, not verification result)
       expect(sentMessages[0].text).toContain('WAA-TEST-0001');
       expect(sentMessages[0].text).not.toContain('Test result');
     });
@@ -516,7 +570,7 @@ describe('ACC-204: CLAIM/STATUS self-service', () => {
 });
 
 // ═══════════════════════════════════════════════════════════
-// F. Provider behavior — execute dispatchFulfillmentNotification (Blocker 3a)
+// F. Provider behavior — execute dispatchFulfillmentNotification (Blocker 2)
 // ═══════════════════════════════════════════════════════════
 
 // Module-level mutable state for ChannelResolver mock (hoisted vi.mock needs this)
@@ -534,6 +588,7 @@ vi.mock('@/lib/channels/channel-resolver', () => {
 
 describe('ACC-204: Provider behavior — dispatchFulfillmentNotification execution', () => {
   let mockClaimRpc: { data: unknown; error: unknown };
+  let mockMarkRpc: { data: unknown; error: unknown };
   let mockFinalizeRpc: { data: unknown; error: unknown };
   let mockSendTemplate: ReturnType<typeof vi.fn>;
   let mockGetTemplates: ReturnType<typeof vi.fn>;
@@ -543,6 +598,9 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     dispatchServiceRpc = vi.fn().mockImplementation((fnName: string) => {
       if (fnName === 'claim_fulfillment_notification_dispatch') {
         return Promise.resolve(mockClaimRpc);
+      }
+      if (fnName === 'mark_fulfillment_notification_attempted') {
+        return Promise.resolve(mockMarkRpc);
       }
       if (fnName === 'finalize_promo_fulfillment_notification') {
         return Promise.resolve(mockFinalizeRpc);
@@ -587,13 +645,13 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
   };
 
   beforeEach(() => {
-    mockClaimRpc = { data: { claimed: true, intent_id: 'intent-1' }, error: null };
+    mockClaimRpc = { data: { claimed: true, claim_token: 'tok-abc-123' }, error: null };
+    mockMarkRpc = { data: { success: true }, error: null };
     mockFinalizeRpc = { data: { success: true }, error: null };
     mockSendTemplate = vi.fn().mockResolvedValue({ messageId: 'wamid.test123' });
     mockGetTemplates = vi.fn().mockResolvedValue({
       data: [{ name: 'promo_fulfillment_status_v1', language: 'en_US', status: 'APPROVED' }],
     });
-    // Set the module-level resolver result so the hoisted mock picks it up
     _resolverState.result = {
       sender: { sendTemplate: mockSendTemplate },
       cloud: { getTemplates: mockGetTemplates },
@@ -606,7 +664,7 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     return dispatchFulfillmentNotification(service, intent, businessId);
   }
 
-  it('template APPROVED -> send proceeds and finalizes as sent', async () => {
+  it('template APPROVED -> claim -> mark_attempted -> send -> finalize sent', async () => {
     const service = makeDispatchService();
     await callDispatch(service, testIntent, 'biz-1');
 
@@ -614,6 +672,12 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     expect(dispatchServiceRpc).toHaveBeenCalledWith(
       'claim_fulfillment_notification_dispatch',
       expect.objectContaining({ p_intent_id: 'intent-1' }),
+    );
+
+    // Mark attempted was called with claim token
+    expect(dispatchServiceRpc).toHaveBeenCalledWith(
+      'mark_fulfillment_notification_attempted',
+      expect.objectContaining({ p_intent_id: 'intent-1', p_claim_token: 'tok-abc-123' }),
     );
 
     // Template check happened
@@ -643,7 +707,6 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     await callDispatch(service, testIntent, 'biz-1');
 
     expect(mockSendTemplate).not.toHaveBeenCalled();
-    // Finalized as failed
     expect(dispatchServiceRpc).toHaveBeenCalledWith(
       'finalize_promo_fulfillment_notification',
       expect.objectContaining({ p_status: 'failed' }),
@@ -706,7 +769,7 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     );
   });
 
-  it('network/5xx error -> intent stays with attempted_at set (no finalize)', async () => {
+  it('network/5xx error after mark_attempted -> NOT reclaimable (no finalize)', async () => {
     mockSendTemplate.mockRejectedValue(new Error('ECONNRESET'));
     _resolverState.result = {
       sender: { sendTemplate: mockSendTemplate },
@@ -716,14 +779,35 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     const service = makeDispatchService();
     await callDispatch(service, testIntent, 'biz-1');
 
-    // Claim RPC already set attempted_at. No finalize should be called for ambiguous errors.
+    // mark_attempted was called (state C — provider attempted)
+    expect(dispatchServiceRpc).toHaveBeenCalledWith(
+      'mark_fulfillment_notification_attempted',
+      expect.objectContaining({ p_intent_id: 'intent-1' }),
+    );
+
+    // No finalize for ambiguous errors — intent stays in state C
     const finalizeCalls = dispatchServiceRpc.mock.calls.filter(
       (c: unknown[]) => c[0] === 'finalize_promo_fulfillment_notification',
     );
     expect(finalizeCalls).toHaveLength(0);
   });
 
-  it('missing WAMID -> intent stays with attempted_at set (no finalize)', async () => {
+  it('mark_attempted failure (lease expired) -> zero sendTemplate', async () => {
+    mockMarkRpc = { data: { success: false, reason: 'invalid_claim' }, error: null };
+    const service = makeDispatchService();
+    await callDispatch(service, testIntent, 'biz-1');
+
+    // mark_attempted was called but failed
+    expect(dispatchServiceRpc).toHaveBeenCalledWith(
+      'mark_fulfillment_notification_attempted',
+      expect.anything(),
+    );
+
+    // Send should NOT happen because mark_attempted failed
+    expect(mockSendTemplate).not.toHaveBeenCalled();
+  });
+
+  it('missing WAMID -> intent stays in state C (no finalize)', async () => {
     mockSendTemplate.mockResolvedValue({ messageId: undefined });
     _resolverState.result = {
       sender: { sendTemplate: mockSendTemplate },
@@ -756,10 +840,8 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     mockFinalizeRpc = { data: null, error: { message: 'DB connection lost' } };
     const service = makeDispatchService();
 
-    // Should not throw
     await callDispatch(service, testIntent, 'biz-1');
 
-    // The function should still complete (never throws)
     expect(dispatchServiceRpc).toHaveBeenCalledWith(
       'finalize_promo_fulfillment_notification',
       expect.anything(),
@@ -771,7 +853,6 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     const service = makeDispatchService();
     await callDispatch(service, testIntent, 'biz-1');
 
-    // Function should complete without throwing
     expect(dispatchServiceRpc).toHaveBeenCalledWith(
       'finalize_promo_fulfillment_notification',
       expect.anything(),
@@ -779,18 +860,15 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
   });
 
   it('concurrent claim -> second gets not_available, zero send', async () => {
-    // First dispatch claims successfully
     const service1 = makeDispatchService();
     await callDispatch(service1, testIntent, 'biz-1');
     expect(mockSendTemplate).toHaveBeenCalledTimes(1);
 
-    // Second dispatch: claim returns not_available
     mockClaimRpc = { data: { claimed: false, reason: 'not_available' }, error: null };
     mockSendTemplate.mockClear();
     const service2 = makeDispatchService();
     await callDispatch(service2, testIntent, 'biz-1');
 
-    // Zero send calls for the second attempt
     expect(mockSendTemplate).not.toHaveBeenCalled();
   });
 
@@ -804,61 +882,113 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
 });
 
 // ═══════════════════════════════════════════════════════════
-// G. Webhook application tests (Blocker 3c)
+// G. Webhook correlation tests — executable (Blocker 3)
 // ═══════════════════════════════════════════════════════════
 
-describe('ACC-204: Webhook delivery status correlation', () => {
-  // Read the webhook route source to verify the correlation logic
-  // Since the webhook is a Next.js route handler, we test the logic flow
-  // by examining the actual code structure and verifying the RPC calls
+describe('ACC-204: Webhook delivery status correlation (executable)', () => {
+  let mockLookupResult: { data: unknown; error: unknown };
+  let mockAdvanceResult: { data: unknown; error: unknown };
+  let webhookServiceFrom: ReturnType<typeof vi.fn>;
+  let webhookServiceRpc: ReturnType<typeof vi.fn>;
 
-  it('webhook correlates fulfillment notification WAMID with advance RPC', () => {
-    // The webhook handler at app/api/webhook/meta-cloud/route.ts:
-    // 1. Looks up promo_fulfillment_notification_intents by provider_message_id
-    // 2. If found, calls advance_promo_fulfillment_notification_status RPC
-    // This is verified by the DB tests (acc-204-fulfillment-notification-db.test.ts)
-    // and the integration is correct because:
-    const path = require('path');
-    const fs = require('fs');
-    const webhookSrc = fs.readFileSync(
-      path.join(__dirname, '..', '..', 'app', 'api', 'webhook', 'meta-cloud', 'route.ts'),
-      'utf-8',
-    );
+  function makeWebhookService() {
+    webhookServiceRpc = vi.fn().mockImplementation(() => {
+      return Promise.resolve(mockAdvanceResult);
+    });
 
-    // Verify the correlation pattern exists (lookup -> RPC call)
-    expect(webhookSrc).toContain('promo_fulfillment_notification_intents');
-    expect(webhookSrc).toContain('advance_promo_fulfillment_notification_status');
+    webhookServiceFrom = vi.fn().mockImplementation((table: string) => {
+      const chain: Record<string, any> = {};
+      ['select', 'eq', 'neq', 'order', 'range', 'not', 'in', 'gte', 'limit'].forEach(
+        (m) => (chain[m] = vi.fn().mockReturnValue(chain)),
+      );
+      if (table === 'promo_fulfillment_notification_intents') {
+        chain.maybeSingle = vi.fn().mockResolvedValue(mockLookupResult);
+      } else {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      }
+      return chain;
+    });
 
-    // Verify it's non-fatal (wrapped in try/catch)
-    const fnBlock = webhookSrc.slice(
-      webhookSrc.indexOf('ACC-204: Fulfillment notification delivery status correlation'),
-    );
-    expect(fnBlock).toContain('catch');
-    expect(fnBlock).toContain('Non-fatal');
+    return { from: webhookServiceFrom, rpc: webhookServiceRpc } as any;
+  }
+
+  beforeEach(() => {
+    mockLookupResult = { data: { id: 'intent-1' }, error: null };
+    mockAdvanceResult = { data: { advanced: true, new_status: 'delivered' }, error: null };
   });
 
-  it('webhook handles all delivery statuses (delivered, read, failed)', () => {
-    // The advance RPC handles all statuses via the monotonic state machine.
-    // The webhook passes newStatus directly which can be 'delivered', 'read', or 'failed'.
-    // This is verified by the DB tests:
-    // - D. advance sent -> delivered (pass)
-    // - D. advance delivered -> read (pass)
-    // - D. reject backward read -> sent (pass)
-    // - D. ignore late failure after read (pass)
-    // - D. unknown WAMID returns unknown_message (pass)
-    // Here we verify the webhook passes the status correctly:
-    const path = require('path');
-    const fs = require('fs');
-    const webhookSrc = fs.readFileSync(
-      path.join(__dirname, '..', '..', 'app', 'api', 'webhook', 'meta-cloud', 'route.ts'),
-      'utf-8',
+  it('matched WAMID + delivered -> advance called + returns matched/advanced', async () => {
+    const { correlateFulfillmentNotificationStatus } = await import('@/lib/promotions/fulfillment-webhook-correlator');
+    const service = makeWebhookService();
+    const result = await correlateFulfillmentNotificationStatus(
+      service, 'wamid.test204', 'delivered', '2026-08-26T10:00:00Z',
     );
 
-    // The RPC call uses p_status: newStatus (not hardcoded)
-    expect(webhookSrc).toContain('p_status: newStatus');
+    expect(result.matched).toBe(true);
+    expect(result.advanced).toBe(true);
+    expect(result.newStatus).toBe('delivered');
+    expect(webhookServiceRpc).toHaveBeenCalledWith('advance_promo_fulfillment_notification_status', {
+      p_provider_message_id: 'wamid.test204',
+      p_status: 'delivered',
+      p_timestamp: '2026-08-26T10:00:00Z',
+    });
   });
 
-  it('winner-contact correlation is separate from fulfillment notification', () => {
+  it('matched WAMID + read -> advance called', async () => {
+    mockAdvanceResult = { data: { advanced: true, new_status: 'read' }, error: null };
+    const { correlateFulfillmentNotificationStatus } = await import('@/lib/promotions/fulfillment-webhook-correlator');
+    const service = makeWebhookService();
+    const result = await correlateFulfillmentNotificationStatus(
+      service, 'wamid.test204', 'read', '2026-08-26T10:01:00Z',
+    );
+
+    expect(result.matched).toBe(true);
+    expect(result.advanced).toBe(true);
+    expect(result.newStatus).toBe('read');
+  });
+
+  it('matched WAMID + failed -> advance called', async () => {
+    mockAdvanceResult = { data: { advanced: false, reason: 'late_failure_ignored' }, error: null };
+    const { correlateFulfillmentNotificationStatus } = await import('@/lib/promotions/fulfillment-webhook-correlator');
+    const service = makeWebhookService();
+    const result = await correlateFulfillmentNotificationStatus(
+      service, 'wamid.test204', 'failed', '2026-08-26T10:02:00Z',
+    );
+
+    expect(result.matched).toBe(true);
+    expect(result.advanced).toBe(false);
+    expect(result.reason).toBe('late_failure_ignored');
+  });
+
+  it('duplicate callback -> idempotent (already_at_or_past)', async () => {
+    mockAdvanceResult = { data: { advanced: false, reason: 'already_at_or_past' }, error: null };
+    const { correlateFulfillmentNotificationStatus } = await import('@/lib/promotions/fulfillment-webhook-correlator');
+    const service = makeWebhookService();
+    const result = await correlateFulfillmentNotificationStatus(
+      service, 'wamid.test204', 'delivered', '2026-08-26T10:00:00Z',
+    );
+
+    expect(result.matched).toBe(true);
+    expect(result.advanced).toBe(false);
+    expect(result.reason).toBe('already_at_or_past');
+  });
+
+  it('unknown WAMID -> no advance called', async () => {
+    mockLookupResult = { data: null, error: null };
+    const { correlateFulfillmentNotificationStatus } = await import('@/lib/promotions/fulfillment-webhook-correlator');
+    const service = makeWebhookService();
+    const result = await correlateFulfillmentNotificationStatus(
+      service, 'wamid.unknown', 'delivered', '2026-08-26T10:00:00Z',
+    );
+
+    expect(result.matched).toBe(false);
+    expect(result.advanced).toBe(false);
+    expect(result.reason).toBe('unknown_wamid');
+    expect(webhookServiceRpc).not.toHaveBeenCalled();
+  });
+
+  it('webhook route uses correlateFulfillmentNotificationStatus (structure proof)', () => {
+    // Verify the webhook route imports and uses the correlator
     const path = require('path');
     const fs = require('fs');
     const webhookSrc = fs.readFileSync(
@@ -866,15 +996,12 @@ describe('ACC-204: Webhook delivery status correlation', () => {
       'utf-8',
     );
 
-    // Both correlations exist independently
+    // The webhook now imports the correlator instead of inline logic
+    expect(webhookSrc).toContain('correlateFulfillmentNotificationStatus');
+    // Still wrapped in try/catch for non-fatal behavior
+    expect(webhookSrc).toContain('Non-fatal');
+    // Winner contact correlation is still separate and independent
     expect(webhookSrc).toContain('promo_winner_contacts');
     expect(webhookSrc).toContain('advance_promo_winner_contact_status');
-    expect(webhookSrc).toContain('promo_fulfillment_notification_intents');
-    expect(webhookSrc).toContain('advance_promo_fulfillment_notification_status');
-
-    // They are in separate try/catch blocks
-    const winnerIdx = webhookSrc.indexOf('promo_winner_contacts');
-    const fulfillmentIdx = webhookSrc.indexOf('promo_fulfillment_notification_intents');
-    expect(fulfillmentIdx).toBeGreaterThan(winnerIdx);
   });
 });

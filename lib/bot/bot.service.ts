@@ -960,8 +960,14 @@ export class BotService {
       // Determine standalone business
       let businessId: string | null = preResolvedBusinessId || restartBusinessId || null;
       // ACC-180: Track HOW business was resolved — trusted sources only authorize first-message promo
-      type BizResolution = 'pre_resolved' | 'dedicated_number' | 'restart' | 'bot_code' | 'fuzzy' | 'returning_customer' | null;
-      let bizResolution: BizResolution = preResolvedBusinessId ? 'pre_resolved' : restartBusinessId ? 'restart' : null;
+      type BizResolution = 'pre_resolved' | 'dedicated_number' | 'bot_code' | 'fuzzy' | 'returning_customer' | null;
+      // ACC-204 Blocker 1: On restart, carry forward the PERSISTED biz_resolution from the
+      // original session instead of hardcoding 'restart'. This prevents a fuzzy-derived session
+      // from restarting and becoming trusted.
+      const restartProvenance = restartBusinessId && session?.session_data?.biz_resolution
+        ? session.session_data.biz_resolution as string
+        : null;
+      let bizResolution: BizResolution = preResolvedBusinessId ? 'pre_resolved' : (restartProvenance as BizResolution) || null;
       logger.debug('[BOT] preResolvedBusinessId:', preResolvedBusinessId);
 
       // Determine the country of the shared number being messaged (for country scoping)
@@ -1175,7 +1181,8 @@ export class BotService {
       // Only trusted resolution sources (pre_resolved, dedicated_number, restart) may claim.
       // If handled, sets flag to skip CAS-004 and greeting/flow — but the SAME canonical
       // session creation path runs to preserve all lifecycle invariants.
-      const PROMO_TRUSTED_SOURCES: ReadonlySet<string> = new Set(['pre_resolved', 'dedicated_number', 'restart']);
+      // ACC-204 Blocker 1: 'restart' removed — restart now carries original provenance.
+      const PROMO_TRUSTED_SOURCES: ReadonlySet<string> = new Set(['pre_resolved', 'dedicated_number']);
       let promoHandledFirstMessage = false;
       if (business && tierInfo?.allowed && bizResolution && PROMO_TRUSTED_SOURCES.has(bizResolution)
           && capabilities.includes('promo_verification' as CapabilityId) && text.length >= 4) {

@@ -3,6 +3,30 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #204: PR #210 corrections round 3 — provenance laundering fix, lease/recovery dispatch, executable webhook tests
+
+### What changed
+- **Blocker 1: Restart no longer launders untrusted provenance.** Previously `restartBusinessId ? 'restart'` hardcoded provenance, allowing a fuzzy-derived session to restart and become trusted. Now carries forward the PERSISTED `session_data.biz_resolution` from the original session. `'restart'` removed from `TRUSTED_PROVENANCES` in both `promo-verification.ts` and `PROMO_TRUSTED_SOURCES` in `bot.service.ts`. Extracted `deriveFirstMessageProvenance` + `deriveActiveSessionProvenance` helpers with unit tests proving the full chain (fuzzy restart -> denied, dedicated_number restart -> allowed).
+- **Blocker 2: Dispatch claim with lease/recovery.** Migration 347 now adds `claim_token UUID`, `claim_expires_at TIMESTAMPTZ`, `provider_attempted_at TIMESTAMPTZ` columns. `claim_fulfillment_notification_dispatch` generates a UUID token + lease (default 30s). New `mark_fulfillment_notification_attempted` RPC marks the point of no return before the Meta POST. Five states: (A) never attempted/reclaimable, (B) claimed with active lease/reclaimable after expiry, (C) provider attempted/NOT auto-reclaimable, (D) sent with WAMID, (E) failed. `fulfillment-notification.ts` updated to call claim -> pre-provider work -> mark_attempted -> send -> finalize. DB tests cover lease expiry + reclaim, provider_attempted_at blocking reclaim, wrong token rejection, two-session claim race.
+- **Blocker 3: Executable webhook + application tests.** Extracted `fulfillment-webhook-correlator.ts` from inline webhook handler. Webhook route now delegates to `correlateFulfillmentNotificationStatus()`. Executable tests call the correlator with mocked Supabase: delivered callback -> advance called, read callback -> advance, failed -> handled, duplicate -> idempotent, unknown WAMID -> no advance. Dispatch tests updated for lease model: mark_attempted failure (lease expired) -> zero sendTemplate. Provenance tests now test `deriveFirstMessageProvenance` helper with full chain proofs.
+
+### Files changed
+- `lib/bot/bot.service.ts` — restart carries forward `session_data.biz_resolution` instead of hardcoded `'restart'`; `PROMO_TRUSTED_SOURCES` reduced to `['pre_resolved', 'dedicated_number']`
+- `lib/bot/handlers/promo-verification.ts` — `TRUSTED_PROVENANCES` reduced to `['pre_resolved', 'dedicated_number']`
+- `lib/bot/derive-promo-provenance.ts` — new: extracted provenance derivation helpers
+- `lib/promotions/fulfillment-notification.ts` — lease model: claim_token, mark_attempted before send
+- `lib/promotions/fulfillment-webhook-correlator.ts` — new: extracted webhook correlation logic
+- `app/api/webhook/meta-cloud/route.ts` — delegates to `correlateFulfillmentNotificationStatus`
+- `supabase/migrations/347_claim_fulfillment_notification_dispatch.sql` — claim_token, claim_expires_at, provider_attempted_at, mark_fulfillment_notification_attempted RPC
+- `lib/__tests__/acc-204-claim-status.test.ts` — 58 executable tests: provenance helper proofs, lease dispatch, webhook correlation
+- `lib/__tests__/acc-204-fulfillment-notification-db.test.ts` — DB tests for lease/token/expiry/mark_attempted
+- `lib/bot/__tests__/acc-180-promo-first-message.test.ts` — updated for restart provenance change
+
+### What could break
+- Sessions created before this change: `biz_resolution` is preserved. Old sessions without it will have `undefined` provenance on restart -> CLAIM denied (fail-closed).
+- Migration 347 is now a breaking rewrite (adds columns + new RPC). Must be applied fresh — cannot be applied incrementally on top of the previous version.
+- Any code that relied on `'restart'` being in `TRUSTED_PROVENANCES` will now be denied. This is intentional — restart must carry the original source.
+
 ## 2026-08-26 — #204: PR #210 corrections round 2 — provenance persistence, atomic claim, executable tests
 
 ### What changed

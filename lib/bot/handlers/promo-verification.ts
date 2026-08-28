@@ -57,9 +57,10 @@ export async function handlePromoVerification(
 
   if (claimMatch || statusMatch) {
     // Require trusted business provenance — fuzzy/returning_customer cannot self-service.
-    // ACC-204 Blocker 1: 'active_session' removed — provenance is now read from session_data.biz_resolution
-    // which preserves the original authoritative source (e.g. 'pre_resolved', 'dedicated_number', 'restart').
-    const TRUSTED_PROVENANCES = new Set(['pre_resolved', 'dedicated_number', 'restart']);
+    // ACC-204 Blocker 1: 'restart' removed — restart now carries the ORIGINAL persisted
+    // provenance from session_data.biz_resolution (e.g. 'pre_resolved', 'dedicated_number').
+    // A fuzzy restart will carry 'fuzzy' and be correctly denied.
+    const TRUSTED_PROVENANCES = new Set(['pre_resolved', 'dedicated_number']);
     if (!bizResolution || !TRUSTED_PROVENANCES.has(bizResolution)) {
       return { handled: false };
     }

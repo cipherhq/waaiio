@@ -531,22 +531,8 @@ export async function POST(request: NextRequest) {
                 ? null
                 : fnParsed.toISOString();
 
-              const { data: fulfillmentNotif } = await supabase
-                .from('promo_fulfillment_notification_intents')
-                .select('id')
-                .eq('provider_message_id', wamid)
-                .maybeSingle();
-
-              if (fulfillmentNotif) {
-                const { data: fnResult } = await supabase.rpc('advance_promo_fulfillment_notification_status', {
-                  p_provider_message_id: wamid,
-                  p_status: newStatus,
-                  p_timestamp: fnTimestamp,
-                });
-                if (fnResult?.advanced) {
-                  log.debug(`[META-WEBHOOK] Fulfillment notification delivery advanced -> ${newStatus}`);
-                }
-              }
+              const { correlateFulfillmentNotificationStatus } = await import('@/lib/promotions/fulfillment-webhook-correlator');
+              await correlateFulfillmentNotificationStatus(supabase, wamid, newStatus, fnTimestamp);
             } catch {
               // Non-fatal — fulfillment notification tracking should not block webhook processing
             }
