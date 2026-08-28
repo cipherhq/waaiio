@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { PROMO_TEMPLATE_CONTRACTS } from '@/lib/promotions/template-contracts';
 
 const API_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
@@ -87,42 +88,9 @@ export const WAAIIO_TEMPLATES: TemplateDefinition[] = [
       { type: 'BODY', text: 'Your {{1}} pickup verification code is {{2}}.\nIt expires in {{3}} minutes.\nOnly share this code with staff when collecting your prize.', example: { body_text: [['Prize', '123456', '10']] } },
     ],
   },
-  {
-    name: 'promo_pickup_verification_v2',
-    language: 'en_US',
-    category: 'UTILITY',
-    components: [
-      {
-        type: 'BODY',
-        text: '{{1}} — Your {{2}} pickup verification code is {{3}}. It expires in {{4}} minutes. Only share this code with the sponsoring business when collecting your prize.',
-        example: { body_text: [['Acme Corp', 'Gold Watch', '123456', '10']] },
-      },
-    ],
-  },
-  {
-    name: 'promo_winner_status_v1',
-    language: 'en_US',
-    category: 'UTILITY',
-    components: [
-      {
-        type: 'BODY',
-        text: '{{1}} — You won {{3}} in the {{2}} promotion. Claim reference: {{4}}. Keep this reference for lookup and status checks. It does not replace any required pickup verification.',
-        example: { body_text: [['Acme Corp', 'Summer Giveaway', 'Gold Watch', 'WAA-XXXX-XXXX-XXXX-XXXX']] },
-      },
-    ],
-  },
-  {
-    name: 'promo_fulfillment_status_v1',
-    language: 'en_US',
-    category: 'UTILITY',
-    components: [
-      {
-        type: 'BODY',
-        text: '{{1}} — Update for {{2}}: {{3}}. Claim reference: {{4}}. Status: {{5}}.',
-        example: { body_text: [['Acme Corp', 'Summer Giveaway', 'Gold Watch', 'WAA-XXXX-XXXX-XXXX-XXXX', 'Fulfilled']] },
-      },
-    ],
-  },
+  PROMO_TEMPLATE_CONTRACTS.promo_pickup_verification_v2,
+  PROMO_TEMPLATE_CONTRACTS.promo_winner_status_v1,
+  PROMO_TEMPLATE_CONTRACTS.promo_fulfillment_status_v1,
 ];
 
 /**
@@ -142,7 +110,7 @@ export async function provisionTemplates(
     try {
       // Check if template already exists
       const checkRes = await fetch(
-        `https://graph.facebook.com/${API_VERSION}/${wabaId}/message_templates?name=${template.name}&fields=name,status`,
+        `https://graph.facebook.com/${API_VERSION}/${wabaId}/message_templates?name=${template.name}&fields=name,status,language`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
       const checkData = await checkRes.json();

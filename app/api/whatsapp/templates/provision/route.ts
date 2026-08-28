@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { CAPABILITIES } from '@/lib/capabilities/types';
+import { PROMO_TEMPLATE_CONTRACTS } from '@/lib/promotions/template-contracts';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 
@@ -35,7 +36,7 @@ interface TemplateDef {
 // Maps capability → required Meta WhatsApp message templates.
 // These are submitted to Meta for approval and used for proactive outreach
 // (outside the 24h conversation window).
-export const REQUIRED_TEMPLATES: Record<string, TemplateDef[]> = {
+const REQUIRED_TEMPLATES: Record<string, TemplateDef[]> = {
   whatsapp_sign: [
     {
       name: SIGN_TEMPLATE_NAME,
@@ -219,42 +220,9 @@ export const REQUIRED_TEMPLATES: Record<string, TemplateDef[]> = {
         },
       ],
     },
-    {
-      name: 'promo_pickup_verification_v2',
-      category: 'UTILITY',
-      language: 'en_US',
-      components: [
-        {
-          type: 'BODY',
-          text: '{{1}} — Your {{2}} pickup verification code is {{3}}. It expires in {{4}} minutes. Only share this code with the sponsoring business when collecting your prize.',
-          example: { body_text: [['Acme Corp', 'Gold Watch', '123456', '10']] },
-        },
-      ],
-    },
-    {
-      name: 'promo_winner_status_v1',
-      category: 'UTILITY',
-      language: 'en_US',
-      components: [
-        {
-          type: 'BODY',
-          text: '{{1}} — You won {{3}} in the {{2}} promotion. Claim reference: {{4}}. Keep this reference for lookup and status checks. It does not replace any required pickup verification.',
-          example: { body_text: [['Acme Corp', 'Summer Giveaway', 'Gold Watch', 'WAA-XXXX-XXXX-XXXX-XXXX']] },
-        },
-      ],
-    },
-    {
-      name: 'promo_fulfillment_status_v1',
-      category: 'UTILITY',
-      language: 'en_US',
-      components: [
-        {
-          type: 'BODY',
-          text: '{{1}} — Update for {{2}}: {{3}}. Claim reference: {{4}}. Status: {{5}}.',
-          example: { body_text: [['Acme Corp', 'Summer Giveaway', 'Gold Watch', 'WAA-XXXX-XXXX-XXXX-XXXX', 'Fulfilled']] },
-        },
-      ],
-    },
+    PROMO_TEMPLATE_CONTRACTS.promo_pickup_verification_v2,
+    PROMO_TEMPLATE_CONTRACTS.promo_winner_status_v1,
+    PROMO_TEMPLATE_CONTRACTS.promo_fulfillment_status_v1,
   ],
 };
 
