@@ -689,9 +689,10 @@ describe('ACC-204: Provider behavior — dispatchFulfillmentNotification executi
     // Template check happened
     expect(mockGetTemplates).toHaveBeenCalled();
 
-    // Send happened with correct params
+    // Send happened with exact positional params — fails if any are reordered
     expect(mockSendTemplate).toHaveBeenCalledWith(expect.objectContaining({
       templateName: 'promo_fulfillment_status_v1',
+      templateParams: ['Test Biz', 'Summer Promo', 'Gold Watch', 'WAA-TEST-0001', 'Processing'],
       noRetry: true,
     }));
 
