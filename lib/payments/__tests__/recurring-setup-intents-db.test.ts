@@ -47,6 +47,8 @@ const TEST_OWNER_ID = 'cd165000-0000-0000-0000-000000000000';
 const TEST_BIZ_ID = 'cd165000-0000-0000-0000-000000000001';
 const TEST_PAY_ID = 'cd165000-0000-0000-0000-000000000002';
 const TEST_PAY_ID2 = 'cd165000-0000-0000-0000-000000000003';
+const TEST_SERVICE_ID = 'cd165000-0000-0000-0000-000000000004';
+const SERVICE_ID = TEST_SERVICE_ID;
 const TEST_USER_ID = TEST_OWNER_ID;
 
 describe('PostgreSQL recurring_setup_intents (#165)', () => {
@@ -54,8 +56,10 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     // Cleanup
     runSQL(`
       DELETE FROM recurring_setup_intents WHERE business_id = '${TEST_BIZ_ID}';
+      DELETE FROM customer_subscriptions WHERE business_id = '${TEST_BIZ_ID}';
       DELETE FROM payments WHERE business_id = '${TEST_BIZ_ID}';
       DELETE FROM bookings WHERE business_id = '${TEST_BIZ_ID}';
+      DELETE FROM services WHERE business_id = '${TEST_BIZ_ID}';
       DELETE FROM businesses WHERE id = '${TEST_BIZ_ID}';
       DELETE FROM profiles WHERE id = '${TEST_OWNER_ID}';
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
@@ -75,15 +79,17 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
       ON CONFLICT DO NOTHING;
     `);
     if (biz.exitCode !== 0) throw new Error(`Business insert failed: ${biz.stderr}`);
+    // Create test service
+    runSQL(`INSERT INTO services (id, business_id, name, service_type) VALUES ('${TEST_SERVICE_ID}', '${TEST_BIZ_ID}', 'Test Giving', 'giving') ON CONFLICT DO NOTHING;`);
     // Two test bookings + payments (canonical Payment/Giving context required by INNER JOIN)
     const TEST_BOOKING_IDS = ['cd165000-0000-0000-0000-000000000010', 'cd165000-0000-0000-0000-000000000011'];
     for (let i = 0; i < 2; i++) {
       const pid = [TEST_PAY_ID, TEST_PAY_ID2][i];
       const bid = TEST_BOOKING_IDS[i];
-      // Create booking first (flow_type='payment' for Giving/Payment context)
+      // Create booking with service_id for service-specific tests
       runSQL(`
-        INSERT INTO bookings (id, business_id, user_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size)
-        VALUES ('${bid}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', 'WA-GV-${i}', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1)
+        INSERT INTO bookings (id, business_id, user_id, service_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size)
+        VALUES ('${bid}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${TEST_SERVICE_ID}', 'WA-GV-${i}', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1)
         ON CONFLICT DO NOTHING;
       `);
       // Create payment linked to booking
@@ -98,8 +104,10 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
   afterAll(() => {
     runSQL(`
       DELETE FROM recurring_setup_intents WHERE business_id = '${TEST_BIZ_ID}';
+      DELETE FROM customer_subscriptions WHERE business_id = '${TEST_BIZ_ID}';
       DELETE FROM payments WHERE business_id = '${TEST_BIZ_ID}';
       DELETE FROM bookings WHERE business_id = '${TEST_BIZ_ID}';
+      DELETE FROM services WHERE business_id = '${TEST_BIZ_ID}';
       DELETE FROM businesses WHERE id = '${TEST_BIZ_ID}';
       DELETE FROM profiles WHERE id = '${TEST_OWNER_ID}';
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
@@ -109,7 +117,10 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
   }, 15000);
 
   beforeEach(() => {
-    runSQL(`DELETE FROM recurring_setup_intents WHERE business_id = '${TEST_BIZ_ID}';`);
+    runSQL(`
+      DELETE FROM recurring_setup_intents WHERE business_id = '${TEST_BIZ_ID}';
+      DELETE FROM customer_subscriptions WHERE business_id = '${TEST_BIZ_ID}';
+    `);
   });
 
   // ── Uniqueness ──
@@ -514,6 +525,89 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     expect(result.created).toBe(false);
     expect(result.reason).toBe('payment_not_eligible');
     runSQL(`DELETE FROM payments WHERE id = '${noBookingPayId}';`);
+  });
+
+  // ── Generic service_id IS NULL duplicate-active-subscription protection ──
+
+  it('40. RPC rejects offer when active NULL-service subscription exists', () => {
+    // Create an active customer_subscription with service_id=NULL for this user+business
+    const subId = 'cd165000-0000-0000-0000-000000000080';
+    runSQL(`
+      INSERT INTO customer_subscriptions (id, business_id, user_id, service_id, amount, currency, frequency, status, gateway, customer_phone, setup_channel)
+      VALUES ('${subId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', NULL, 10000, 'NGN', 'monthly', 'active', 'paystack', '+2340000165', 'whatsapp')
+      ON CONFLICT DO NOTHING;
+    `);
+
+    // Try to create an offer from a payment whose booking also has service_id=NULL
+    // First create a booking with NULL service_id
+    const nullSvcBookId = 'cd165000-0000-0000-0000-000000000081';
+    const nullSvcPayId = 'cd165000-0000-0000-0000-000000000082';
+    runSQL(`INSERT INTO bookings (id, business_id, user_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size) VALUES ('${nullSvcBookId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', 'WA-GV-NS1', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1) ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${nullSvcPayId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${nullSvcBookId}', 10000, 'test-nullsvc', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
+
+    const { result } = callRpc(`SELECT create_recurring_offer('${nullSvcPayId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(result.created).toBe(false);
+    expect(result.reason).toBe('active_subscription_exists');
+
+    // Cleanup
+    runSQL(`DELETE FROM payments WHERE id = '${nullSvcPayId}';`);
+    runSQL(`DELETE FROM bookings WHERE id = '${nullSvcBookId}';`);
+    runSQL(`DELETE FROM customer_subscriptions WHERE id = '${subId}';`);
+  });
+
+  it('41. RPC rejects offer when active service-specific subscription exists', () => {
+    // Create an active subscription FOR the test service
+    const subId = 'cd165000-0000-0000-0000-000000000083';
+    runSQL(`
+      INSERT INTO customer_subscriptions (id, business_id, user_id, service_id, amount, currency, frequency, status, gateway, customer_phone, setup_channel)
+      VALUES ('${subId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${SERVICE_ID}', 10000, 'NGN', 'weekly', 'active', 'paystack', '+2340000165', 'whatsapp')
+      ON CONFLICT DO NOTHING;
+    `);
+
+    // The main test payments have service_id from the booking — try to create offer
+    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(result.created).toBe(false);
+    expect(result.reason).toBe('active_subscription_exists');
+
+    // Cleanup
+    runSQL(`DELETE FROM customer_subscriptions WHERE id = '${subId}';`);
+  });
+
+  it('42. RPC allows offer when subscription exists for DIFFERENT service', () => {
+    // Create an active subscription for a DIFFERENT service
+    const diffServiceId = 'cd165000-0000-0000-0000-000000000084';
+    const subId = 'cd165000-0000-0000-0000-000000000085';
+    runSQL(`INSERT INTO services (id, business_id, name) VALUES ('${diffServiceId}', '${TEST_BIZ_ID}', 'Other Service') ON CONFLICT DO NOTHING;`);
+    runSQL(`
+      INSERT INTO customer_subscriptions (id, business_id, user_id, service_id, amount, currency, frequency, status, gateway, customer_phone, setup_channel)
+      VALUES ('${subId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${diffServiceId}', 5000, 'NGN', 'monthly', 'active', 'paystack', '+2340000165', 'whatsapp')
+      ON CONFLICT DO NOTHING;
+    `);
+
+    // The main test payment's service is different — offer should be allowed
+    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(result.created).toBe(true);
+
+    // Cleanup
+    runSQL(`DELETE FROM customer_subscriptions WHERE id = '${subId}';`);
+    runSQL(`DELETE FROM services WHERE id = '${diffServiceId}';`);
+  });
+
+  it('43. cancelled/paused subscriptions do not block new offer', () => {
+    // Create a cancelled subscription for the same service
+    const subId = 'cd165000-0000-0000-0000-000000000086';
+    runSQL(`
+      INSERT INTO customer_subscriptions (id, business_id, user_id, service_id, amount, currency, frequency, status, gateway, customer_phone, setup_channel, cancelled_at)
+      VALUES ('${subId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${SERVICE_ID}', 10000, 'NGN', 'monthly', 'cancelled', 'paystack', '+2340000165', 'whatsapp', NOW())
+      ON CONFLICT DO NOTHING;
+    `);
+
+    // Cancelled subscription should NOT block new offer
+    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(result.created).toBe(true);
+
+    // Cleanup
+    runSQL(`DELETE FROM customer_subscriptions WHERE id = '${subId}';`);
   });
 });
 

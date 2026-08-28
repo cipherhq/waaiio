@@ -154,6 +154,22 @@ BEGIN
     RETURN jsonb_build_object('created', false, 'reason', 'payment_missing_user');
   END IF;
 
+  -- Check for existing active subscription for this user+business+service scope
+  -- Covers both service-specific AND generic (NULL service_id) recurring commitments
+  IF v_service_id IS NOT NULL THEN
+    PERFORM id FROM public.customer_subscriptions
+    WHERE business_id = p_business_id AND user_id = v_user_id
+      AND service_id = v_service_id AND status = 'active';
+  ELSE
+    PERFORM id FROM public.customer_subscriptions
+    WHERE business_id = p_business_id AND user_id = v_user_id
+      AND service_id IS NULL AND status = 'active';
+  END IF;
+
+  IF FOUND THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'active_subscription_exists');
+  END IF;
+
   -- Idempotent insert
   INSERT INTO public.recurring_setup_intents (
     source_payment_id, business_id, user_id, service_id,

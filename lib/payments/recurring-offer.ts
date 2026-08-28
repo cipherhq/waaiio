@@ -89,20 +89,25 @@ export async function checkAndOfferRecurring(
 
     if (!profile) return; // No profile — can't create intent
 
-    if (booking.service_id) {
-      const { data: existingSub } = await supabase
-        .from('customer_subscriptions')
-        .select('id')
-        .eq('business_id', businessId)
-        .eq('user_id', profile.id)
-        .eq('service_id', booking.service_id)
-        .eq('status', 'active')
-        .maybeSingle();
+    // Check for existing active subscription — covers both service-specific AND generic (NULL service_id)
+    const subQuery = supabase
+      .from('customer_subscriptions')
+      .select('id')
+      .eq('business_id', businessId)
+      .eq('user_id', profile.id)
+      .eq('status', 'active');
 
-      if (existingSub) {
-        logger.info(`${logPrefix} Recurring offer skipped — active subscription exists for user+service`);
-        return;
-      }
+    if (booking.service_id) {
+      subQuery.eq('service_id', booking.service_id);
+    } else {
+      subQuery.is('service_id', null);
+    }
+
+    const { data: existingSub } = await subQuery.maybeSingle();
+
+    if (existingSub) {
+      logger.info(`${logPrefix} Recurring offer skipped — active subscription exists for user+business${booking.service_id ? '+service' : ' (generic)'}`);
+      return;
     }
 
     // ── 5. Create the recurring offer via RPC (idempotent) ──
