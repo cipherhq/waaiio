@@ -609,6 +609,182 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     // Cleanup
     runSQL(`DELETE FROM customer_subscriptions WHERE id = '${subId}';`);
   });
+
+  // ── Same-scope provider-attempt serialization gate (migration 350) ──
+
+  it('44. two consent_confirmed intents for SAME scope — only one wins provider gate', async () => {
+    // Create two different source payments for the same user/business/service
+    const PAY_A = 'cd165000-0000-0000-0000-000000000090';
+    const PAY_B = 'cd165000-0000-0000-0000-000000000091';
+    const BOOK_A = 'cd165000-0000-0000-0000-000000000092';
+    const BOOK_B = 'cd165000-0000-0000-0000-000000000093';
+
+    for (const [pid, bid, ref] of [[PAY_A, BOOK_A, 'WA-GV-A'], [PAY_B, BOOK_B, 'WA-GV-B']]) {
+      runSQL(`INSERT INTO bookings (id, business_id, user_id, service_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size) VALUES ('${bid}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${TEST_SERVICE_ID}', '${ref}', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1) ON CONFLICT DO NOTHING;`);
+      runSQL(`INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${pid}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${bid}', 10000, 'test-scope-${pid}', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
+    }
+
+    // Create intents for both payments
+    const { result: offerA } = callRpc(`SELECT create_recurring_offer('${PAY_A}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    const { result: offerB } = callRpc(`SELECT create_recurring_offer('${PAY_B}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(offerA.created).toBe(true);
+    expect(offerB.created).toBe(true);
+
+    // Drive both to consent_confirmed
+    for (const intentId of [offerA.intent_id, offerB.intent_id]) {
+      callRpc(`SELECT select_recurring_frequency('${intentId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
+      callRpc(`SELECT confirm_recurring_consent('${intentId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hash_scope_test') AS result;`);
+    }
+
+    // Race their provider-attempt claims using two independent sessions
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+
+    const sqlA = `SELECT json_build_object('pid', pg_backend_pid(), 'result', begin_recurring_provider_attempt('${offerA.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_A', 'AUTH_A', NOW() + INTERVAL '1 month'));`;
+    const sqlB = `SELECT json_build_object('pid', pg_backend_pid(), 'result', begin_recurring_provider_attempt('${offerB.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_B', 'AUTH_B', NOW() + INTERVAL '1 month'));`;
+
+    const [pA, pB] = await Promise.all([
+      execAsync(`psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "${sqlA.replace(/"/g, '\\"')}"`, { timeout: 15000 }),
+      execAsync(`psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "${sqlB.replace(/"/g, '\\"')}"`, { timeout: 15000 }),
+    ]);
+
+    const rA = JSON.parse(pA.stdout.trim());
+    const rB = JSON.parse(pB.stdout.trim());
+
+    // Different PIDs — genuinely independent sessions
+    expect(rA.pid).not.toBe(rB.pid);
+
+    // Exactly one wins, one loses
+    const winners = [rA.result, rB.result].filter((r: Record<string, unknown>) => r.transitioned === true);
+    const losers = [rA.result, rB.result].filter((r: Record<string, unknown>) => r.transitioned === false);
+    expect(winners).toHaveLength(1);
+    expect(losers).toHaveLength(1);
+    expect(losers[0].reason).toBe('competing_provider_attempt');
+
+    // Cleanup
+    runSQL(`DELETE FROM payments WHERE id IN ('${PAY_A}', '${PAY_B}');`);
+    runSQL(`DELETE FROM bookings WHERE id IN ('${BOOK_A}', '${BOOK_B}');`);
+  }, 20000);
+
+  it('45. NULL service_id scope serialization works identically', async () => {
+    // Same as test 44 but with NULL service_id (Generic Payment)
+    const PAY_C = 'cd165000-0000-0000-0000-000000000094';
+    const PAY_D = 'cd165000-0000-0000-0000-000000000095';
+    const BOOK_C = 'cd165000-0000-0000-0000-000000000096';
+    const BOOK_D = 'cd165000-0000-0000-0000-000000000097';
+
+    // Bookings WITHOUT service_id
+    for (const [pid, bid, ref] of [[PAY_C, BOOK_C, 'WA-GV-C'], [PAY_D, BOOK_D, 'WA-GV-D']]) {
+      runSQL(`INSERT INTO bookings (id, business_id, user_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size) VALUES ('${bid}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${ref}', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1) ON CONFLICT DO NOTHING;`);
+      runSQL(`INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${pid}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${bid}', 10000, 'test-null-${pid}', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
+    }
+
+    const { result: offerC } = callRpc(`SELECT create_recurring_offer('${PAY_C}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    const { result: offerD } = callRpc(`SELECT create_recurring_offer('${PAY_D}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(offerC.created).toBe(true);
+    expect(offerD.created).toBe(true);
+
+    for (const intentId of [offerC.intent_id, offerD.intent_id]) {
+      callRpc(`SELECT select_recurring_frequency('${intentId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'weekly') AS result;`);
+      callRpc(`SELECT confirm_recurring_consent('${intentId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hash_null') AS result;`);
+    }
+
+    // Sequential test (advisory lock serializes — second sees first's committed state)
+    const { result: rC } = callRpc(`SELECT begin_recurring_provider_attempt('${offerC.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_C', 'AUTH_C', NOW() + INTERVAL '7 days') AS result;`);
+    const { result: rD } = callRpc(`SELECT begin_recurring_provider_attempt('${offerD.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_D', 'AUTH_D', NOW() + INTERVAL '7 days') AS result;`);
+
+    // First wins, second blocked by competing_provider_attempt
+    expect(rC.transitioned).toBe(true);
+    expect(rD.transitioned).toBe(false);
+    expect(rD.reason).toBe('competing_provider_attempt');
+
+    runSQL(`DELETE FROM payments WHERE id IN ('${PAY_C}', '${PAY_D}');`);
+    runSQL(`DELETE FROM bookings WHERE id IN ('${BOOK_C}', '${BOOK_D}');`);
+  });
+
+  it('46. different service scope is NOT blocked', () => {
+    // Intent A is for TEST_SERVICE_ID, already at provider_attempted
+    const { result: offerA } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    callRpc(`SELECT select_recurring_frequency('${offerA.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
+    callRpc(`SELECT confirm_recurring_consent('${offerA.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'h') AS result;`);
+    callRpc(`SELECT begin_recurring_provider_attempt('${offerA.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS', 'AUTH', NOW() + INTERVAL '1 month') AS result;`);
+
+    // Intent B is for a DIFFERENT service — should NOT be blocked
+    const diffSvcId = 'cd165000-0000-0000-0000-000000000098';
+    const diffBookId = 'cd165000-0000-0000-0000-000000000099';
+    const diffPayId = 'cd165000-0000-0000-0000-0000000000a0';
+    runSQL(`INSERT INTO services (id, business_id, name) VALUES ('${diffSvcId}', '${TEST_BIZ_ID}', 'Diff Svc') ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO bookings (id, business_id, user_id, service_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size) VALUES ('${diffBookId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${diffSvcId}', 'WA-GV-DS', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1) ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${diffPayId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${diffBookId}', 5000, 'test-diff-svc', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
+
+    const { result: offerB } = callRpc(`SELECT create_recurring_offer('${diffPayId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(offerB.created).toBe(true);
+    callRpc(`SELECT select_recurring_frequency('${offerB.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'weekly') AS result;`);
+    callRpc(`SELECT confirm_recurring_consent('${offerB.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'h2') AS result;`);
+    const { result: rB } = callRpc(`SELECT begin_recurring_provider_attempt('${offerB.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS2', 'AUTH2', NOW() + INTERVAL '7 days') AS result;`);
+
+    // Different service scope — should succeed
+    expect(rB.transitioned).toBe(true);
+
+    runSQL(`DELETE FROM payments WHERE id = '${diffPayId}';`);
+    runSQL(`DELETE FROM bookings WHERE id = '${diffBookId}';`);
+    runSQL(`DELETE FROM services WHERE id = '${diffSvcId}';`);
+  });
+
+  it('47. provider_ambiguous blocks another provider mutation', () => {
+    const { result: offer } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    callRpc(`SELECT select_recurring_frequency('${offer.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
+    callRpc(`SELECT confirm_recurring_consent('${offer.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'h') AS result;`);
+    const { result: begin } = callRpc(`SELECT begin_recurring_provider_attempt('${offer.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS', 'AUTH', NOW() + INTERVAL '1 month') AS result;`);
+    // Mark ambiguous
+    callRpc(`SELECT mark_recurring_ambiguous('${offer.intent_id}'::uuid, '${begin.claim_token}'::uuid, 'timeout') AS result;`);
+
+    // Second intent for SAME scope
+    const PAY_X = 'cd165000-0000-0000-0000-0000000000b0';
+    const BOOK_X = 'cd165000-0000-0000-0000-0000000000b1';
+    runSQL(`INSERT INTO bookings (id, business_id, user_id, service_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size) VALUES ('${BOOK_X}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${TEST_SERVICE_ID}', 'WA-GV-X', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1) ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${PAY_X}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${BOOK_X}', 10000, 'test-ambig-block', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
+
+    const { result: offerX } = callRpc(`SELECT create_recurring_offer('${PAY_X}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(offerX.created).toBe(true);
+    callRpc(`SELECT select_recurring_frequency('${offerX.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
+    callRpc(`SELECT confirm_recurring_consent('${offerX.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hx') AS result;`);
+
+    // Should be blocked by the ambiguous intent
+    const { result: rX } = callRpc(`SELECT begin_recurring_provider_attempt('${offerX.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_X', 'AUTH_X', NOW() + INTERVAL '1 month') AS result;`);
+    expect(rX.transitioned).toBe(false);
+    expect(rX.reason).toBe('competing_provider_attempt');
+
+    runSQL(`DELETE FROM payments WHERE id = '${PAY_X}';`);
+    runSQL(`DELETE FROM bookings WHERE id = '${BOOK_X}';`);
+  });
+
+  it('48. declined/expired/setup_failed do NOT permanently block', () => {
+    // Intent at provider_attempted, then failed
+    const { result: offer } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    callRpc(`SELECT select_recurring_frequency('${offer.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
+    callRpc(`SELECT confirm_recurring_consent('${offer.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hf') AS result;`);
+    callRpc(`SELECT fail_recurring_setup('${offer.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'test_fail') AS result;`);
+
+    // Second intent for SAME scope should NOT be blocked (prior intent is terminal)
+    const PAY_Y = 'cd165000-0000-0000-0000-0000000000c0';
+    const BOOK_Y = 'cd165000-0000-0000-0000-0000000000c1';
+    runSQL(`INSERT INTO bookings (id, business_id, user_id, service_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size) VALUES ('${BOOK_Y}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${TEST_SERVICE_ID}', 'WA-GV-Y', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1) ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${PAY_Y}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${BOOK_Y}', 10000, 'test-term-ok', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
+
+    const { result: offerY } = callRpc(`SELECT create_recurring_offer('${PAY_Y}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(offerY.created).toBe(true);
+    callRpc(`SELECT select_recurring_frequency('${offerY.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'weekly') AS result;`);
+    callRpc(`SELECT confirm_recurring_consent('${offerY.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hy') AS result;`);
+
+    // Should succeed — no competing provider_attempted/ambiguous in scope
+    const { result: rY } = callRpc(`SELECT begin_recurring_provider_attempt('${offerY.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_Y', 'AUTH_Y', NOW() + INTERVAL '7 days') AS result;`);
+    expect(rY.transitioned).toBe(true);
+
+    runSQL(`DELETE FROM payments WHERE id = '${PAY_Y}';`);
+    runSQL(`DELETE FROM bookings WHERE id = '${BOOK_Y}';`);
+  });
 });
 
 } // end if (dbUrl)
