@@ -66,10 +66,14 @@ export async function handleRecurringSetupInteraction(
       return { handled: true, message: 'This recurring setup link is not valid for this business.' };
     }
 
-    // User verification (if we have userId)
-    if (userId && intent.user_id !== userId) {
+    // User verification — REQUIRE non-null userId to prevent bypass
+    if (!userId) {
+      logger.warn(`${logPrefix} No userId — cannot verify payer identity`);
+      return { handled: true, message: 'Unable to verify your identity.' };
+    }
+    if (intent.user_id !== userId) {
       logger.warn(`${logPrefix} User mismatch: intent=${intent.user_id} session=${userId}`);
-      return { handled: true, message: 'This recurring setup link is not valid for your account.' };
+      return { handled: true, message: 'This offer is for a different account.' };
     }
 
     // Expiry check
@@ -407,42 +411,38 @@ export async function executePaystackRecurringSetup(
     if (service?.name) serviceName = service.name;
   }
 
-  // ── Phase 1: Create Paystack Plan ──
+  // ── Phase 1: Create Paystack Plan (classified outcome) ──
   const planName = `${businessName} - ${serviceName} (${intent.frequency}) [rsi:${intent.id}]`;
 
-  let planCode: string;
-  try {
-    const { createPlan } = await import('@/lib/payments/paystack-recurring');
-    const planResult = await createPlan({
-      name: planName,
-      interval: intent.frequency as 'weekly' | 'monthly',
-      amount: intent.amount,
-      currency: intent.currency,
+  const planOutcome = await classifiedCreatePlan({
+    name: planName,
+    interval: intent.frequency as 'weekly' | 'monthly',
+    amount: intent.amount,
+    currency: intent.currency,
+  });
+
+  if (planOutcome.status === 'definitive_failure') {
+    await supabase.rpc('fail_recurring_setup', {
+      p_intent_id: intent.id,
+      p_business_id: intent.business_id,
+      p_reason: `plan_creation_failed: ${planOutcome.reason}`,
     });
+    await sendSetupMessage(sender, phone, '\u274C Could not create the recurring plan. Please try again later.');
+    return;
+  }
 
-    if (!planResult) {
-      // createPlan returns null on known failure (4xx from Paystack)
-      await supabase.rpc('fail_recurring_setup', {
-        p_intent_id: intent.id,
-        p_business_id: intent.business_id,
-        p_reason: 'plan_creation_failed',
-      });
-      await sendSetupMessage(sender, phone, '\u274C Could not create the recurring plan. Please try again later.');
-      return;
-    }
-
-    planCode = planResult.planCode;
-  } catch (planErr) {
-    // Timeout/network/5xx → ambiguous
-    logger.error(`${logPrefix} Plan creation error (ambiguous):`, planErr);
+  if (planOutcome.status === 'indeterminate') {
+    logger.error(`${logPrefix} Plan creation indeterminate: ${planOutcome.reason}`);
     await supabase.rpc('mark_recurring_ambiguous', {
       p_intent_id: intent.id,
       p_claim_token: claimToken,
-      p_reason: `plan_creation_error: ${planErr instanceof Error ? planErr.message : String(planErr)}`.slice(0, 500),
+      p_reason: `plan_creation_indeterminate: ${planOutcome.reason}`.slice(0, 500),
     });
     await sendSetupMessage(sender, phone, '\u26A0\uFE0F We couldn\'t confirm the plan creation. Our team will look into this. Please do not retry.');
     return;
   }
+
+  const planCode = planOutcome.planCode;
 
   // ── Persist plan code ──
   const { data: persistResult, error: persistErr } = await supabase.rpc('persist_recurring_plan_id', {
@@ -463,67 +463,152 @@ export async function executePaystackRecurringSetup(
     return;
   }
 
-  // ── Phase 2: Create Paystack Subscription ──
-  // NEVER auto-retry this call after ambiguous outcome
-  try {
-    const { createSubscription } = await import('@/lib/payments/paystack-recurring');
-    const subResult = await createSubscription({
-      customer: customerCode,
-      planCode,
-      authorizationCode,
-      startDate: startDate.toISOString(),
-    });
+  // ── Phase 2: Create Paystack Subscription (classified outcome) ──
+  // NEVER auto-retry this call after any outcome
+  const subOutcome = await classifiedCreateSubscription({
+    customer: customerCode,
+    planCode,
+    authorizationCode,
+    startDate: startDate.toISOString(),
+  });
 
-    if (!subResult) {
-      // Known failure (4xx) — fail the setup
-      await supabase.rpc('fail_recurring_setup', {
-        p_intent_id: intent.id,
-        p_business_id: intent.business_id,
-        p_reason: 'subscription_creation_failed',
-      });
-      await sendSetupMessage(sender, phone, '\u274C Could not create the recurring subscription. Please try again later.');
-      return;
-    }
-
-    // ── Activate: provider_attempted → active ──
-    const { data: activateResult, error: activateErr } = await supabase.rpc('activate_recurring_subscription', {
+  if (subOutcome.status === 'definitive_failure') {
+    // Known failure (4xx) — plan is orphaned but setup is definitively failed
+    await supabase.rpc('fail_recurring_setup', {
       p_intent_id: intent.id,
-      p_claim_token: claimToken,
-      p_subscription_code: subResult.subscriptionCode,
-      p_email_token: subResult.emailToken,
-      p_plan_code: planCode,
-      p_next_charge_at: startDate.toISOString(),
+      p_business_id: intent.business_id,
+      p_reason: `subscription_creation_failed: ${subOutcome.reason}`,
     });
+    await sendSetupMessage(sender, phone, '\u274C Could not create the recurring subscription. Please try again later.');
+    return;
+  }
 
-    if (activateErr || !(activateResult as Record<string, unknown>)?.activated) {
-      const reason = (activateResult as Record<string, unknown>)?.reason || activateErr?.message || 'unknown';
-      logger.error(`${logPrefix} activate_recurring_subscription failed: ${reason}`);
-      // Subscription was created at Paystack but activation failed locally — ambiguous
-      await supabase.rpc('mark_recurring_ambiguous', {
-        p_intent_id: intent.id,
-        p_claim_token: claimToken,
-        p_reason: `activation_failed: ${reason}`,
-      });
-      await sendSetupMessage(sender, phone, '\u26A0\uFE0F Your subscription was created but we had trouble finalizing. Our team will sort this out.');
-      return;
-    }
-
-    // Success!
-    const frequencyLabel = intent.frequency === 'weekly' ? 'every week' : 'every month';
-    const formattedAmount = formatCurrency(intent.amount, intent.currency as CountryCode);
-    await sendSetupMessage(sender, phone,
-      `\u2705 *Recurring Payment Active!*\n\nYou will be charged ${formattedAmount} ${frequencyLabel}.\n\nType *cancel subscription* anytime to stop.`);
-    logger.info(`${logPrefix} Recurring subscription activated successfully`);
-
-  } catch (subErr) {
-    // Timeout/network/5xx → ambiguous — NEVER auto-retry
-    logger.error(`${logPrefix} Subscription creation error (ambiguous):`, subErr);
+  if (subOutcome.status === 'indeterminate') {
+    // Timeout/network/5xx → ambiguous — NEVER auto-retry POST /subscription
+    logger.error(`${logPrefix} Subscription creation indeterminate: ${subOutcome.reason}`);
     await supabase.rpc('mark_recurring_ambiguous', {
       p_intent_id: intent.id,
       p_claim_token: claimToken,
-      p_reason: `subscription_creation_error: ${subErr instanceof Error ? subErr.message : String(subErr)}`.slice(0, 500),
+      p_reason: `subscription_creation_indeterminate: ${subOutcome.reason}`.slice(0, 500),
     });
     await sendSetupMessage(sender, phone, '\u26A0\uFE0F We couldn\'t confirm the subscription creation. Our team will look into this. Please do not retry.');
+    return;
+  }
+
+  // ── Fix 4: Persist subscription code BEFORE local activation ──
+  // This ensures the subscription_code is durably bound even if activation fails
+  const { data: persistSubResult, error: persistSubErr } = await supabase.rpc('persist_recurring_subscription_id', {
+    p_intent_id: intent.id,
+    p_claim_token: claimToken,
+    p_subscription_code: subOutcome.subscriptionCode,
+    p_email_token: subOutcome.emailToken,
+  });
+
+  if (persistSubErr || !(persistSubResult as Record<string, unknown>)?.persisted) {
+    logger.error(`${logPrefix} persist_recurring_subscription_id failed — sub ${subOutcome.subscriptionCode} may be orphaned`);
+    // Subscription was created at Paystack but we can't persist the code — ambiguous
+    await supabase.rpc('mark_recurring_ambiguous', {
+      p_intent_id: intent.id,
+      p_claim_token: claimToken,
+      p_reason: 'subscription_persist_failed',
+    });
+    await sendSetupMessage(sender, phone, '\u26A0\uFE0F Setup encountered an issue. Our team will look into this.');
+    return;
+  }
+
+  // ── Activate: provider_attempted → active ──
+  const { data: activateResult, error: activateErr } = await supabase.rpc('activate_recurring_subscription', {
+    p_intent_id: intent.id,
+    p_claim_token: claimToken,
+    p_subscription_code: subOutcome.subscriptionCode,
+    p_email_token: subOutcome.emailToken,
+    p_plan_code: planCode,
+    p_next_charge_at: startDate.toISOString(),
+  });
+
+  if (activateErr || !(activateResult as Record<string, unknown>)?.activated) {
+    const reason = (activateResult as Record<string, unknown>)?.reason || activateErr?.message || 'unknown';
+    logger.error(`${logPrefix} activate_recurring_subscription failed: ${reason} — subscription code already persisted`);
+    // Subscription code is already persisted, so reconciliation can recover
+    await supabase.rpc('mark_recurring_ambiguous', {
+      p_intent_id: intent.id,
+      p_claim_token: claimToken,
+      p_reason: `activation_failed: ${reason}`,
+    });
+    await sendSetupMessage(sender, phone, '\u26A0\uFE0F Your subscription was created but we had trouble finalizing. Our team will sort this out.');
+    return;
+  }
+
+  // Success!
+  const frequencyLabel = intent.frequency === 'weekly' ? 'every week' : 'every month';
+  const formattedAmount = formatCurrency(intent.amount, intent.currency as CountryCode);
+  await sendSetupMessage(sender, phone,
+    `\u2705 *Recurring Payment Active!*\n\nYou will be charged ${formattedAmount} ${frequencyLabel}.\n\nType *cancel subscription* anytime to stop.`);
+  logger.info(`${logPrefix} Recurring subscription activated successfully`);
+}
+
+// ═══════════════════════════════════════════════════════
+// Typed Paystack provider outcome boundary (#213 Fix 3)
+// Distinguishes definitive failure from indeterminate (timeout/5xx).
+// ═══════════════════════════════════════════════════════
+
+type PaystackPlanOutcome =
+  | { status: 'success'; planCode: string }
+  | { status: 'definitive_failure'; reason: string }
+  | { status: 'indeterminate'; reason: string };
+
+type PaystackSubscriptionOutcome =
+  | { status: 'success'; subscriptionCode: string; emailToken: string }
+  | { status: 'definitive_failure'; reason: string }
+  | { status: 'indeterminate'; reason: string };
+
+/**
+ * Classify a createPlan call into success / definitive_failure / indeterminate.
+ * paystackRequest() throws on network/timeout errors (indeterminate).
+ * data.status === false with a message is a definitive 4xx rejection.
+ * null return from createPlan means definitive failure (4xx with logged error).
+ */
+export async function classifiedCreatePlan(opts: {
+  name: string;
+  interval: 'weekly' | 'monthly';
+  amount: number;
+  currency: string;
+}): Promise<PaystackPlanOutcome> {
+  try {
+    const { createPlan } = await import('@/lib/payments/paystack-recurring');
+    const result = await createPlan(opts);
+    if (!result) {
+      // createPlan returns null on data.status === false (logged by paystack-recurring)
+      return { status: 'definitive_failure', reason: 'plan_creation_rejected' };
+    }
+    return { status: 'success', planCode: result.planCode };
+  } catch (err) {
+    // Network error, timeout, 5xx — indeterminate
+    return { status: 'indeterminate', reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Classify a createSubscription call into success / definitive_failure / indeterminate.
+ * NEVER auto-retry POST /subscription after any outcome.
+ */
+export async function classifiedCreateSubscription(opts: {
+  customer: string;
+  planCode: string;
+  authorizationCode: string;
+  startDate?: string;
+}): Promise<PaystackSubscriptionOutcome> {
+  try {
+    const { createSubscription } = await import('@/lib/payments/paystack-recurring');
+    const result = await createSubscription(opts);
+    if (!result) {
+      // createSubscription returns null on data.status === false (logged by paystack-recurring)
+      return { status: 'definitive_failure', reason: 'subscription_creation_rejected' };
+    }
+    return { status: 'success', subscriptionCode: result.subscriptionCode, emailToken: result.emailToken };
+  } catch (err) {
+    // Network error, timeout, 5xx — indeterminate
+    return { status: 'indeterminate', reason: err instanceof Error ? err.message : String(err) };
   }
 }
 

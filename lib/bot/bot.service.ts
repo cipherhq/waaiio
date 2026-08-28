@@ -2178,9 +2178,24 @@ export class BotService {
         const parts = text.split(':');
 
         if (text.startsWith('recurring_decline:')) {
-          // Decline: call RPC and send confirmation
+          // Decline: verify user authority before declining
           const intentId = parts[1];
           if (intentId) {
+            // Verify the declining user owns this intent
+            if (!session.user_id) {
+              await this.sendText(from, 'Unable to verify your identity.');
+              return;
+            }
+            const { data: declineIntent } = await this.supabase
+              .from('recurring_setup_intents')
+              .select('user_id')
+              .eq('id', intentId)
+              .single();
+            if (declineIntent && declineIntent.user_id !== session.user_id) {
+              await this.sendText(from, 'This offer is for a different account.');
+              return;
+            }
+
             await this.supabase.rpc('decline_recurring_offer', {
               p_intent_id: intentId,
               p_business_id: session.business_id,

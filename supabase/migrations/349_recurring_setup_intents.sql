@@ -114,41 +114,50 @@ ALTER TABLE recurring_setup_intents ENABLE ROW LEVEL SECURITY;
 CREATE OR REPLACE FUNCTION create_recurring_offer(
   p_source_payment_id UUID,
   p_business_id UUID,
-  p_user_id UUID,
-  p_service_id UUID,
-  p_amount INTEGER,
-  p_currency VARCHAR(3),
   p_provider TEXT
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_intent RECORD;
   v_new_id UUID;
+  v_amount INTEGER;
+  v_currency VARCHAR(3);
+  v_user_id UUID;
+  v_service_id UUID;
+  v_biz_id UUID;
 BEGIN
   -- Validate provider
   IF p_provider != 'paystack' THEN
     RETURN jsonb_build_object('created', false, 'reason', 'unsupported_provider');
   END IF;
 
-  -- Validate source payment exists, is successful, and belongs to business
-  PERFORM id FROM payments
-  WHERE id = p_source_payment_id
-    AND business_id = p_business_id
-    AND status = 'success'
-    AND finalization_completed_at IS NOT NULL
-    AND confirmation_sent_at IS NOT NULL;
+  -- Load authoritative values from source payment and its associated booking
+  SELECT p.amount, p.currency, p.user_id, b.service_id, b.business_id
+  INTO v_amount, v_currency, v_user_id, v_service_id, v_biz_id
+  FROM public.payments p
+  LEFT JOIN public.bookings b ON b.id = p.booking_id
+  WHERE p.id = p_source_payment_id
+    AND p.business_id = p_business_id
+    AND p.status = 'success'
+    AND p.finalization_completed_at IS NOT NULL
+    AND p.confirmation_sent_at IS NOT NULL;
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('created', false, 'reason', 'payment_not_eligible');
   END IF;
 
+  -- Validate the payment has a user_id (anonymous payments cannot set up recurring)
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'payment_missing_user');
+  END IF;
+
   -- Idempotent insert
-  INSERT INTO recurring_setup_intents (
+  INSERT INTO public.recurring_setup_intents (
     source_payment_id, business_id, user_id, service_id,
     amount, currency, provider
   ) VALUES (
-    p_source_payment_id, p_business_id, p_user_id, p_service_id,
-    p_amount, p_currency, p_provider
+    p_source_payment_id, p_business_id, v_user_id, v_service_id,
+    v_amount, v_currency, p_provider
   )
   ON CONFLICT (source_payment_id) DO NOTHING
   RETURNING id INTO v_new_id;
@@ -159,7 +168,7 @@ BEGIN
 
   -- Existing intent — return its current state
   SELECT id, status, expires_at INTO v_intent
-  FROM recurring_setup_intents
+  FROM public.recurring_setup_intents
   WHERE source_payment_id = p_source_payment_id;
 
   RETURN jsonb_build_object(
@@ -191,7 +200,7 @@ BEGIN
   END IF;
 
   SELECT id, status, business_id, expires_at INTO v_intent
-  FROM recurring_setup_intents
+  FROM public.recurring_setup_intents
   WHERE id = p_intent_id
   FOR UPDATE;
 
@@ -202,14 +211,14 @@ BEGIN
     RETURN jsonb_build_object('transitioned', false, 'reason', 'tenant_mismatch');
   END IF;
   IF v_intent.expires_at < NOW() THEN
-    UPDATE recurring_setup_intents SET status = 'expired', updated_at = NOW() WHERE id = p_intent_id AND status = 'offered';
+    UPDATE public.recurring_setup_intents SET status = 'expired', updated_at = NOW() WHERE id = p_intent_id AND status = 'offered';
     RETURN jsonb_build_object('transitioned', false, 'reason', 'expired');
   END IF;
   IF v_intent.status != 'offered' THEN
     RETURN jsonb_build_object('transitioned', false, 'reason', 'invalid_state_' || v_intent.status);
   END IF;
 
-  UPDATE recurring_setup_intents
+  UPDATE public.recurring_setup_intents
   SET status = 'frequency_selected', frequency = p_frequency, updated_at = NOW()
   WHERE id = p_intent_id AND status = 'offered';
 
@@ -236,7 +245,7 @@ BEGIN
   END IF;
 
   SELECT id, status, business_id, frequency, expires_at INTO v_intent
-  FROM recurring_setup_intents
+  FROM public.recurring_setup_intents
   WHERE id = p_intent_id
   FOR UPDATE;
 
@@ -247,7 +256,7 @@ BEGIN
     RETURN jsonb_build_object('transitioned', false, 'reason', 'tenant_mismatch');
   END IF;
   IF v_intent.expires_at < NOW() THEN
-    UPDATE recurring_setup_intents SET status = 'expired', updated_at = NOW() WHERE id = p_intent_id AND status IN ('offered', 'frequency_selected');
+    UPDATE public.recurring_setup_intents SET status = 'expired', updated_at = NOW() WHERE id = p_intent_id AND status IN ('offered', 'frequency_selected');
     RETURN jsonb_build_object('transitioned', false, 'reason', 'expired');
   END IF;
   IF v_intent.status != 'frequency_selected' THEN
@@ -257,7 +266,7 @@ BEGIN
     RETURN jsonb_build_object('transitioned', false, 'reason', 'frequency_not_set');
   END IF;
 
-  UPDATE recurring_setup_intents
+  UPDATE public.recurring_setup_intents
   SET status = 'consent_confirmed', consent_at = NOW(), consent_message_hash = p_consent_message_hash, updated_at = NOW()
   WHERE id = p_intent_id AND status = 'frequency_selected';
 
@@ -285,7 +294,7 @@ DECLARE
 BEGIN
   SELECT id, status, business_id, consent_at, consent_message_hash, expires_at
   INTO v_intent
-  FROM recurring_setup_intents
+  FROM public.recurring_setup_intents
   WHERE id = p_intent_id
   FOR UPDATE;
 
@@ -296,7 +305,7 @@ BEGIN
     RETURN jsonb_build_object('transitioned', false, 'reason', 'tenant_mismatch');
   END IF;
   IF v_intent.expires_at < NOW() THEN
-    UPDATE recurring_setup_intents SET status = 'expired', updated_at = NOW() WHERE id = p_intent_id AND status IN ('offered', 'frequency_selected', 'consent_confirmed');
+    UPDATE public.recurring_setup_intents SET status = 'expired', updated_at = NOW() WHERE id = p_intent_id AND status IN ('offered', 'frequency_selected', 'consent_confirmed');
     RETURN jsonb_build_object('transitioned', false, 'reason', 'expired');
   END IF;
   IF v_intent.status != 'consent_confirmed' THEN
@@ -308,7 +317,7 @@ BEGIN
 
   v_token := gen_random_uuid();
 
-  UPDATE recurring_setup_intents
+  UPDATE public.recurring_setup_intents
   SET status = 'provider_attempted',
       provider_customer_code = p_customer_code,
       provider_authorization_code = p_authorization_code,
@@ -336,7 +345,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_intent RECORD;
 BEGIN
-  SELECT id, status, claim_token FROM recurring_setup_intents
+  SELECT id, status, claim_token FROM public.recurring_setup_intents
   WHERE id = p_intent_id FOR UPDATE INTO v_intent;
 
   IF NOT FOUND THEN
@@ -349,8 +358,48 @@ BEGIN
     RETURN jsonb_build_object('persisted', false, 'reason', 'token_mismatch');
   END IF;
 
-  UPDATE recurring_setup_intents
+  UPDATE public.recurring_setup_intents
   SET provider_plan_id = p_plan_code, updated_at = NOW()
+  WHERE id = p_intent_id;
+
+  RETURN jsonb_build_object('persisted', true);
+END;
+$$;
+
+-- ═══════════════════════════════════════════════════════
+-- RPC: persist_recurring_subscription_id
+-- Records Paystack subscription_code after successful Phase 2
+-- MUST be called BEFORE activate_recurring_subscription
+-- so the code is durably bound even if activation fails.
+-- ═══════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION persist_recurring_subscription_id(
+  p_intent_id UUID,
+  p_claim_token UUID,
+  p_subscription_code TEXT,
+  p_email_token TEXT
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_intent RECORD;
+BEGIN
+  SELECT id, status, claim_token FROM public.recurring_setup_intents
+  WHERE id = p_intent_id FOR UPDATE INTO v_intent;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('persisted', false, 'reason', 'intent_not_found');
+  END IF;
+  IF v_intent.status != 'provider_attempted' THEN
+    RETURN jsonb_build_object('persisted', false, 'reason', 'invalid_state_' || v_intent.status);
+  END IF;
+  IF v_intent.claim_token IS NULL OR v_intent.claim_token != p_claim_token THEN
+    RETURN jsonb_build_object('persisted', false, 'reason', 'token_mismatch');
+  END IF;
+
+  UPDATE public.recurring_setup_intents
+  SET provider_subscription_id = p_subscription_code,
+      provider_email_token = p_email_token,
+      updated_at = NOW()
   WHERE id = p_intent_id;
 
   RETURN jsonb_build_object('persisted', true);
@@ -361,6 +410,8 @@ $$;
 -- RPC: activate_recurring_subscription
 -- provider_attempted → active (with local subscription creation)
 -- Atomic: creates customer_subscriptions + updates intent
+-- NOTE: only provider_attempted is accepted. provider_ambiguous
+--   intents are fail-closed and require manual/admin resolution (deferred).
 -- ═══════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION activate_recurring_subscription(
@@ -376,17 +427,18 @@ DECLARE
   v_intent RECORD;
   v_sub_id UUID;
 BEGIN
-  SELECT * FROM recurring_setup_intents
+  SELECT * FROM public.recurring_setup_intents
   WHERE id = p_intent_id FOR UPDATE INTO v_intent;
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'intent_not_found');
   END IF;
-  IF v_intent.status NOT IN ('provider_attempted', 'provider_ambiguous') THEN
+  -- Fix #5: only provider_attempted accepted. provider_ambiguous is fail-closed
+  -- and requires manual/admin resolution (deferred to a future reconciliation worker).
+  IF v_intent.status != 'provider_attempted' THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'invalid_state_' || v_intent.status);
   END IF;
-  -- For provider_attempted: require claim token. For provider_ambiguous (reconciliation): skip token check.
-  IF v_intent.status = 'provider_attempted' AND (v_intent.claim_token IS NULL OR v_intent.claim_token != p_claim_token) THEN
+  IF v_intent.claim_token IS NULL OR v_intent.claim_token != p_claim_token THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'token_mismatch');
   END IF;
   -- Idempotent: if already has resulting_subscription_id, return success
@@ -395,7 +447,7 @@ BEGIN
   END IF;
 
   -- Create customer_subscriptions row
-  INSERT INTO customer_subscriptions (
+  INSERT INTO public.customer_subscriptions (
     business_id, user_id, service_id, amount, currency, frequency,
     status, gateway, gateway_subscription_code, gateway_plan_code,
     gateway_customer_code, authorization_code,
@@ -409,13 +461,13 @@ BEGIN
     v_intent.provider_customer_code, v_intent.provider_authorization_code,
     -- Card details from source payment metadata
     NULL, NULL, p_next_charge_at,
-    (SELECT guest_phone FROM bookings WHERE payment_id = v_intent.source_payment_id LIMIT 1),
+    (SELECT guest_phone FROM public.bookings WHERE payment_id = v_intent.source_payment_id LIMIT 1),
     'whatsapp',
     jsonb_build_object('source_payment_id', v_intent.source_payment_id, 'setup_intent_id', v_intent.id, 'email_token', p_email_token)
   RETURNING id INTO v_sub_id;
 
   -- Update intent to active
-  UPDATE recurring_setup_intents
+  UPDATE public.recurring_setup_intents
   SET status = 'active',
       provider_subscription_id = p_subscription_code,
       provider_email_token = p_email_token,
@@ -443,7 +495,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_intent RECORD;
 BEGIN
-  SELECT id, status, claim_token FROM recurring_setup_intents
+  SELECT id, status, claim_token FROM public.recurring_setup_intents
   WHERE id = p_intent_id FOR UPDATE INTO v_intent;
 
   IF NOT FOUND THEN
@@ -456,7 +508,7 @@ BEGIN
     RETURN jsonb_build_object('marked', false, 'reason', 'token_mismatch');
   END IF;
 
-  UPDATE recurring_setup_intents
+  UPDATE public.recurring_setup_intents
   SET status = 'provider_ambiguous', claim_token = NULL, claim_expires_at = NULL, updated_at = NOW()
   WHERE id = p_intent_id;
 
@@ -478,7 +530,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_intent RECORD;
 BEGIN
-  SELECT id, status, business_id FROM recurring_setup_intents
+  SELECT id, status, business_id FROM public.recurring_setup_intents
   WHERE id = p_intent_id FOR UPDATE INTO v_intent;
 
   IF NOT FOUND THEN
@@ -491,7 +543,7 @@ BEGIN
     RETURN jsonb_build_object('failed', false, 'reason', 'invalid_state_' || v_intent.status);
   END IF;
 
-  UPDATE recurring_setup_intents
+  UPDATE public.recurring_setup_intents
   SET status = 'setup_failed', claim_token = NULL, claim_expires_at = NULL, updated_at = NOW()
   WHERE id = p_intent_id;
 
@@ -512,7 +564,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_intent RECORD;
 BEGIN
-  SELECT id, status, business_id FROM recurring_setup_intents
+  SELECT id, status, business_id, user_id FROM public.recurring_setup_intents
   WHERE id = p_intent_id FOR UPDATE INTO v_intent;
 
   IF NOT FOUND THEN
@@ -525,7 +577,7 @@ BEGIN
     RETURN jsonb_build_object('declined', false, 'reason', 'invalid_state_' || v_intent.status);
   END IF;
 
-  UPDATE recurring_setup_intents
+  UPDATE public.recurring_setup_intents
   SET status = 'declined', updated_at = NOW()
   WHERE id = p_intent_id;
 
@@ -544,7 +596,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_count INTEGER;
 BEGIN
-  UPDATE recurring_setup_intents
+  UPDATE public.recurring_setup_intents
   SET status = 'expired', updated_at = NOW()
   WHERE status = 'offered' AND expires_at < NOW();
   GET DIAGNOSTICS v_count = ROW_COUNT;
@@ -558,33 +610,36 @@ $$;
 
 DO $$ BEGIN
   -- Revoke from PUBLIC, anon, authenticated
-  REVOKE ALL ON FUNCTION create_recurring_offer(UUID, UUID, UUID, UUID, INTEGER, VARCHAR, TEXT) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION create_recurring_offer(UUID, UUID, TEXT) FROM PUBLIC;
   REVOKE ALL ON FUNCTION select_recurring_frequency(UUID, UUID, TEXT) FROM PUBLIC;
   REVOKE ALL ON FUNCTION confirm_recurring_consent(UUID, UUID, TEXT) FROM PUBLIC;
   REVOKE ALL ON FUNCTION begin_recurring_provider_attempt(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ) FROM PUBLIC;
   REVOKE ALL ON FUNCTION persist_recurring_plan_id(UUID, UUID, TEXT) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION persist_recurring_subscription_id(UUID, UUID, TEXT, TEXT) FROM PUBLIC;
   REVOKE ALL ON FUNCTION activate_recurring_subscription(UUID, UUID, TEXT, TEXT, TEXT, TIMESTAMPTZ) FROM PUBLIC;
   REVOKE ALL ON FUNCTION mark_recurring_ambiguous(UUID, UUID, TEXT) FROM PUBLIC;
   REVOKE ALL ON FUNCTION fail_recurring_setup(UUID, UUID, TEXT) FROM PUBLIC;
   REVOKE ALL ON FUNCTION decline_recurring_offer(UUID, UUID) FROM PUBLIC;
   REVOKE ALL ON FUNCTION expire_stale_recurring_offers() FROM PUBLIC;
 
-  EXECUTE 'REVOKE ALL ON FUNCTION create_recurring_offer(UUID, UUID, UUID, UUID, INTEGER, VARCHAR, TEXT) FROM anon';
+  EXECUTE 'REVOKE ALL ON FUNCTION create_recurring_offer(UUID, UUID, TEXT) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION select_recurring_frequency(UUID, UUID, TEXT) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION confirm_recurring_consent(UUID, UUID, TEXT) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION begin_recurring_provider_attempt(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION persist_recurring_plan_id(UUID, UUID, TEXT) FROM anon';
+  EXECUTE 'REVOKE ALL ON FUNCTION persist_recurring_subscription_id(UUID, UUID, TEXT, TEXT) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION activate_recurring_subscription(UUID, UUID, TEXT, TEXT, TEXT, TIMESTAMPTZ) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION mark_recurring_ambiguous(UUID, UUID, TEXT) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION fail_recurring_setup(UUID, UUID, TEXT) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION decline_recurring_offer(UUID, UUID) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION expire_stale_recurring_offers() FROM anon';
 
-  EXECUTE 'REVOKE ALL ON FUNCTION create_recurring_offer(UUID, UUID, UUID, UUID, INTEGER, VARCHAR, TEXT) FROM authenticated';
+  EXECUTE 'REVOKE ALL ON FUNCTION create_recurring_offer(UUID, UUID, TEXT) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION select_recurring_frequency(UUID, UUID, TEXT) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION confirm_recurring_consent(UUID, UUID, TEXT) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION begin_recurring_provider_attempt(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION persist_recurring_plan_id(UUID, UUID, TEXT) FROM authenticated';
+  EXECUTE 'REVOKE ALL ON FUNCTION persist_recurring_subscription_id(UUID, UUID, TEXT, TEXT) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION activate_recurring_subscription(UUID, UUID, TEXT, TEXT, TEXT, TIMESTAMPTZ) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION mark_recurring_ambiguous(UUID, UUID, TEXT) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION fail_recurring_setup(UUID, UUID, TEXT) FROM authenticated';
@@ -592,11 +647,12 @@ DO $$ BEGIN
   EXECUTE 'REVOKE ALL ON FUNCTION expire_stale_recurring_offers() FROM authenticated';
 
   -- Grant only to service_role
-  EXECUTE 'GRANT EXECUTE ON FUNCTION create_recurring_offer(UUID, UUID, UUID, UUID, INTEGER, VARCHAR, TEXT) TO service_role';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION create_recurring_offer(UUID, UUID, TEXT) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION select_recurring_frequency(UUID, UUID, TEXT) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION confirm_recurring_consent(UUID, UUID, TEXT) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION begin_recurring_provider_attempt(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION persist_recurring_plan_id(UUID, UUID, TEXT) TO service_role';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION persist_recurring_subscription_id(UUID, UUID, TEXT, TEXT) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION activate_recurring_subscription(UUID, UUID, TEXT, TEXT, TEXT, TIMESTAMPTZ) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION mark_recurring_ambiguous(UUID, UUID, TEXT) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION fail_recurring_setup(UUID, UUID, TEXT) TO service_role';

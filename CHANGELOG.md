@@ -3,6 +3,30 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #213: PR review blockers for #165 recurring payment continuation
+
+### What changed (7 fixes)
+1. **Fix 1 — Source payment authoritative (349 migration + recurring-offer.ts):** `create_recurring_offer` RPC now derives `amount`, `currency`, `user_id`, `service_id` from the source payment + booking instead of trusting caller-supplied values. Signature reduced from 7 to 3 args. Also rejects payments with NULL `user_id`.
+2. **Fix 2 — CTA authorization (recurring-setup.ts + bot.service.ts):** `handleRecurringSetupInteraction` now requires non-null `userId` (prevents bypass). Decline path in bot.service.ts verifies the declining user owns the intent before calling `decline_recurring_offer`.
+3. **Fix 3 — Provider outcome classification (recurring-setup.ts):** Added `classifiedCreatePlan` and `classifiedCreateSubscription` typed wrappers that distinguish success / definitive_failure (4xx) / indeterminate (timeout/5xx). Replaced inline try/catch+null checks in `executePaystackRecurringSetup`.
+4. **Fix 4 — Persist subscription code before activation (349 migration + recurring-setup.ts):** New `persist_recurring_subscription_id` RPC persists subscription_code + email_token BEFORE calling `activate_recurring_subscription`. If activation fails, the subscription code is durably bound for reconciliation.
+5. **Fix 5 — Remove provider_ambiguous activation shortcut (349 migration):** `activate_recurring_subscription` now only accepts `provider_attempted` state (removed `provider_ambiguous`). Ambiguous intents are fail-closed; manual/admin resolution is deferred.
+6. **Fix 6 — Provider-boundary tests (NEW file):** 13 tests covering plan/subscription success, 4xx, timeout, DB failure, and the critical invariant that `createSubscription` is called exactly once in every ambiguous scenario.
+7. **Fix 7 — Hardened search_path (349 migration):** All table references in RPCs now use `public.` schema-qualification to prevent shadow-table attacks.
+
+### Files changed
+- `supabase/migrations/349_recurring_setup_intents.sql` — Fixes 1, 4, 5, 7
+- `lib/payments/recurring-setup.ts` — Fixes 2, 3, 4
+- `lib/payments/recurring-offer.ts` — Fix 1 (simplified RPC call)
+- `lib/bot/bot.service.ts` — Fix 2 (decline path user verification)
+- `lib/payments/__tests__/recurring-provider-boundary.test.ts` (NEW) — Fix 6
+- `lib/payments/__tests__/recurring-setup-intents-db.test.ts` — Updated for new 3-arg RPC signature
+
+### What could break
+- Any caller still using the old 7-argument `create_recurring_offer` signature will fail (only `recurring-offer.ts` calls it — already updated)
+- Intents stuck in `provider_ambiguous` state can no longer auto-activate — they require manual resolution
+- Test payments in DB tests now require `user_id` to be set (added to setup)
+
 ## 2026-08-26 — #165: Recurring payment continuation (application layer)
 
 ### What changed

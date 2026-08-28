@@ -11,7 +11,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { logger } from '@/lib/logger';
-import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 
 interface PaymentForRecurring {
@@ -106,16 +106,12 @@ export async function checkAndOfferRecurring(
     }
 
     // ── 5. Create the recurring offer via RPC (idempotent) ──
+    // Amount, currency, user_id, service_id are now derived from the source payment by the RPC
     const countryCode = (business.country_code || 'NG') as CountryCode;
-    const currency = getCurrencyCode(countryCode);
 
     const { data: offerResult, error: offerError } = await supabase.rpc('create_recurring_offer', {
       p_source_payment_id: payment.id,
       p_business_id: businessId,
-      p_user_id: profile.id,
-      p_service_id: booking.service_id || null,
-      p_amount: payment.amount,
-      p_currency: currency,
       p_provider: 'paystack',
     });
 

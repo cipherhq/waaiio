@@ -74,11 +74,11 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
       ON CONFLICT DO NOTHING;
     `);
     if (biz.exitCode !== 0) throw new Error(`Business insert failed: ${biz.stderr}`);
-    // Two test payments (success + finalized)
+    // Two test payments (success + finalized + user_id set for RPC authority derivation)
     for (const pid of [TEST_PAY_ID, TEST_PAY_ID2]) {
       runSQL(`
-        INSERT INTO payments (id, business_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version)
-        VALUES ('${pid}', '${TEST_BIZ_ID}', 10000, 'test-165-ref-${pid}', 'success', 'paystack', 'NGN', NOW(), NOW(), 1)
+        INSERT INTO payments (id, business_id, user_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version)
+        VALUES ('${pid}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', 10000, 'test-165-ref-${pid}', 'success', 'paystack', 'NGN', NOW(), NOW(), 1)
         ON CONFLICT DO NOTHING;
       `);
     }
@@ -103,56 +103,56 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
   // ── Uniqueness ──
 
   it('1. creates intent for eligible payment', () => {
-    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     expect(result.created).toBe(true);
     expect(result.intent_id).toBeTruthy();
   });
 
   it('2. duplicate INSERT for same payment returns already_exists', () => {
-    callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
-    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     expect(result.created).toBe(false);
     expect(result.reason).toBe('already_exists');
   });
 
   it('3. UNIQUE(source_payment_id) prevents second intent after declined', () => {
-    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     callRpc(`SELECT decline_recurring_offer('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid) AS result;`);
-    const { result: r2 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result: r2 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     expect(r2.created).toBe(false);
     expect(r2.reason).toBe('already_exists');
     expect(r2.status).toBe('declined');
   });
 
   it('4. UNIQUE prevents second intent after expired', () => {
-    callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     runSQL(`UPDATE recurring_setup_intents SET status = 'expired' WHERE source_payment_id = '${TEST_PAY_ID}';`);
-    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     expect(result.created).toBe(false);
     expect(result.status).toBe('expired');
   });
 
   it('5. UNIQUE prevents second intent after setup_failed', () => {
-    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     // Transition to consent_confirmed first, then fail
     callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
     callRpc(`SELECT confirm_recurring_consent('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hash123') AS result;`);
     callRpc(`SELECT fail_recurring_setup('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'test') AS result;`);
-    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     expect(result.created).toBe(false);
     expect(result.status).toBe('setup_failed');
   });
 
   it('6. different payment ID can create new intent', () => {
-    callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
-    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID2}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID2}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     expect(result.created).toBe(true);
   });
 
   // ── State machine transitions ──
 
   it('7. offered → frequency_selected with valid frequency', () => {
-    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     const { result: r2 } = callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'weekly') AS result;`);
     expect(r2.transitioned).toBe(true);
     const check = runSQL(`SELECT status, frequency FROM recurring_setup_intents WHERE id = '${r1.intent_id}';`);
@@ -160,14 +160,14 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
   });
 
   it('8. rejects invalid frequency', () => {
-    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     const { result: r2 } = callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'yearly') AS result;`);
     expect(r2.transitioned).toBe(false);
     expect(r2.reason).toBe('invalid_frequency');
   });
 
   it('9. frequency_selected → consent_confirmed with hash', () => {
-    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
     const { result } = callRpc(`SELECT confirm_recurring_consent('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'sha256_abc123') AS result;`);
     expect(result.transitioned).toBe(true);
@@ -179,7 +179,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
   });
 
   it('10. rejects consent without hash', () => {
-    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
     const { result } = callRpc(`SELECT confirm_recurring_consent('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, '') AS result;`);
     expect(result.transitioned).toBe(false);
@@ -187,7 +187,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
   });
 
   it('11. consent_confirmed → provider_attempted', () => {
-    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
     callRpc(`SELECT confirm_recurring_consent('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hash') AS result;`);
     const { result } = callRpc(`SELECT begin_recurring_provider_attempt('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_test', 'AUTH_test', NOW() + INTERVAL '1 month') AS result;`);
@@ -196,7 +196,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
   });
 
   it('12. rejects provider attempt without consent', () => {
-    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
     // Skip consent, go straight to provider attempt
     const { result } = callRpc(`SELECT begin_recurring_provider_attempt('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_test', 'AUTH_test', NOW()) AS result;`);
@@ -205,14 +205,14 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
   });
 
   it('13. tenant mismatch rejected', () => {
-    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     const { result } = callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '00000000-0000-0000-0000-000000000000'::uuid, 'monthly') AS result;`);
     expect(result.transitioned).toBe(false);
     expect(result.reason).toBe('tenant_mismatch');
   });
 
   it('14. expired intent rejects frequency selection', () => {
-    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     runSQL(`UPDATE recurring_setup_intents SET expires_at = NOW() - INTERVAL '1 hour' WHERE id = '${r1.intent_id}';`);
     const { result } = callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
     expect(result.transitioned).toBe(false);
@@ -220,7 +220,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
   });
 
   it('15. declined is terminal — cannot transition back', () => {
-    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     callRpc(`SELECT decline_recurring_offer('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid) AS result;`);
     const { result } = callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
     expect(result.transitioned).toBe(false);
@@ -233,7 +233,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     const { exec } = await import('child_process');
     const { promisify } = await import('util');
     const execAsync = promisify(exec);
-    const sql = `SELECT json_build_object('pid', pg_backend_pid(), 'result', create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack'));`;
+    const sql = `SELECT json_build_object('pid', pg_backend_pid(), 'result', create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack'));`;
     const [pA, pB] = await Promise.all([
       execAsync(`psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "${sql.replace(/"/g, '\\"')}"`, { timeout: 10000 }),
       execAsync(`psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "${sql.replace(/"/g, '\\"')}"`, { timeout: 10000 }),
@@ -250,17 +250,17 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
   // ── Privilege assertions ──
 
   it('17. anon cannot execute create_recurring_offer', () => {
-    const r = runSQL(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack');`, 'anon');
+    const r = runSQL(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack');`, 'anon');
     expect(r.exitCode).not.toBe(0);
   });
 
   it('18. authenticated cannot execute create_recurring_offer', () => {
-    const r = runSQL(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack');`, 'authenticated');
+    const r = runSQL(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack');`, 'authenticated');
     expect(r.exitCode).not.toBe(0);
   });
 
   it('19. service_role can execute create_recurring_offer', () => {
-    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`, 'service_role');
+    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`, 'service_role');
     expect(result.created).toBe(true);
   });
 
@@ -274,14 +274,14 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
   it('21. rejects non-successful payment', () => {
     const pendingPayId = 'cd165000-0000-0000-0000-000000000099';
     runSQL(`INSERT INTO payments (id, business_id, amount, gateway_reference, status, gateway, currency) VALUES ('${pendingPayId}', '${TEST_BIZ_ID}', 100, 'test-pend', 'pending', 'paystack', 'NGN') ON CONFLICT DO NOTHING;`);
-    const { result } = callRpc(`SELECT create_recurring_offer('${pendingPayId}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 100, 'NGN', 'paystack') AS result;`);
+    const { result } = callRpc(`SELECT create_recurring_offer('${pendingPayId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     expect(result.created).toBe(false);
     expect(result.reason).toBe('payment_not_eligible');
     runSQL(`DELETE FROM payments WHERE id = '${pendingPayId}';`);
   });
 
   it('22. rejects unsupported provider', () => {
-    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'stripe') AS result;`);
+    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'stripe') AS result;`);
     expect(result.created).toBe(false);
     expect(result.reason).toBe('unsupported_provider');
   });
@@ -289,7 +289,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
   // ── CHECK constraints ──
 
   it('23. CHECK: frequency NULL in offered state is allowed', () => {
-    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid, NULL::uuid, 10000, 'NGN', 'paystack') AS result;`);
+    const { result } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     expect(result.created).toBe(true);
     const check = runSQL(`SELECT frequency IS NULL AS freq_null FROM recurring_setup_intents WHERE id = '${result.intent_id}';`);
     expect(check.stdout).toBe('t');
