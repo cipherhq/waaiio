@@ -3,6 +3,25 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #165: Recurring payment continuation (application layer)
+
+### What changed
+- **recurring-offer.ts (NEW):** Post-finalization hook that checks eligibility (Paystack, reusable card, payment flow_type=payment, business recurring_enabled + recurring capability, no existing active subscription) and sends WhatsApp CTA buttons ("Set Up Recurring" / "No Thanks") via `create_recurring_offer` RPC.
+- **recurring-setup.ts (NEW):** State machine handler for the full setup flow: frequency selection (weekly/monthly via `select_recurring_frequency`), consent confirmation (SHA-256 hash via `confirm_recurring_consent`), and Paystack plan+subscription creation (`createPlan` → `persist_recurring_plan_id` → `createSubscription` → `activate_recurring_subscription`). Error classification: known 4xx → `fail_recurring_setup`, timeout/5xx/network → `mark_recurring_ambiguous`. NEVER auto-retries POST /subscription after ambiguous.
+- **send-confirmation.ts:** Added recurring offer hook after `finalizeConfirmationClaim` but before `return { status: 'completed' }`. Wrapped in try/catch — NEVER affects payment finalization.
+- **bot.service.ts:** Added recurring button interceptor (recurring_setup:, recurring_decline:, recurring_freq:, recurring_consent:) after stale payment button handler, before keyword matching. Decline calls `decline_recurring_offer` RPC. Setup routes to `handleRecurringSetupInteraction`. All errors caught — falls through to normal flow.
+
+### Files changed
+- `lib/payments/recurring-offer.ts` (NEW) — eligibility check + CTA send
+- `lib/payments/recurring-setup.ts` (NEW) — state machine handler + Paystack setup
+- `lib/payments/send-confirmation.ts` — recurring offer hook (lines 1118-1125)
+- `lib/bot/bot.service.ts` — recurring button interceptor (after stale payment handler)
+
+### What could break
+- If `create_recurring_offer` RPC doesn't exist in the DB (migration 349 not applied), the offer hook will error and be silently caught
+- If Paystack plan/subscription creation changes API shape, the setup flow may fail (caught → `fail_recurring_setup` or `mark_recurring_ambiguous`)
+- Bot button IDs use `recurring_setup:`, `recurring_decline:`, `recurring_freq:`, `recurring_consent:` prefixes — collision with any future button ID starting with these prefixes would be intercepted
+
 ## 2026-08-26 — #211: Promo WhatsApp template provisioning (code prep)
 
 ### What changed
