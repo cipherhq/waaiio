@@ -2,8 +2,9 @@
  * ACC-180: First-message promo routing + provider message ID threading.
  *
  * Tests the agreed architecture:
- * - Trusted business context (pre_resolved, dedicated_number, restart) authorizes first-message promo
+ * - Trusted business context (pre_resolved, dedicated_number) authorizes first-message promo
  * - Untrusted context (fuzzy, returning_customer) does NOT authorize first-message promo
+ * - Restart carries forward original provenance (ACC-204 Blocker 1)
  * - Meta msg.id threaded request-scoped through handleMessage → promo handler
  * - Existing-session promo uses request-scoped messageId (not stale session state)
  * - Promo evaluated before canonical semantic routing
@@ -11,8 +12,9 @@
 import { describe, it, expect } from 'vitest';
 
 describe('ACC-180: Tenant authority tracking', () => {
-  // Verify the bot service tracks resolution source and only trusts explicit sources
-  const PROMO_TRUSTED: ReadonlySet<string> = new Set(['pre_resolved', 'dedicated_number', 'restart']);
+  // ACC-204 Blocker 1: Only pre_resolved and dedicated_number are directly trusted.
+  // Restart carries forward the original provenance from session_data.biz_resolution.
+  const PROMO_TRUSTED: ReadonlySet<string> = new Set(['pre_resolved', 'dedicated_number']);
 
   it('pre_resolved is trusted for first-message promo', () => {
     expect(PROMO_TRUSTED.has('pre_resolved')).toBe(true);
@@ -22,8 +24,8 @@ describe('ACC-180: Tenant authority tracking', () => {
     expect(PROMO_TRUSTED.has('dedicated_number')).toBe(true);
   });
 
-  it('restart is trusted for first-message promo', () => {
-    expect(PROMO_TRUSTED.has('restart')).toBe(true);
+  it('restart is NOT directly trusted (carries original provenance — ACC-204 Blocker 1)', () => {
+    expect(PROMO_TRUSTED.has('restart')).toBe(false);
   });
 
   it('fuzzy match is NOT trusted', () => {
@@ -72,7 +74,8 @@ describe('ACC-180: Source code contracts', () => {
     const src = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
     // Must contain the first-message promo block with trusted source check
     expect(src).toContain('PROMO_TRUSTED_SOURCES');
-    expect(src).toContain("new Set(['pre_resolved', 'dedicated_number', 'restart'])");
+    // ACC-204 Blocker 1: 'restart' removed — restart now carries original provenance
+    expect(src).toContain("new Set(['pre_resolved', 'dedicated_number'])");
     // Must check bizResolution
     expect(src).toContain('PROMO_TRUSTED_SOURCES.has(bizResolution)');
   });

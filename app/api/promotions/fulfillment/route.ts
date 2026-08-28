@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapabilityWithRole } from '@/lib/capabilities/api-guard';
 import type { PromoFulfillmentStatus } from '@/lib/promotions/types';
+import { dispatchFulfillmentNotification } from '@/lib/promotions/fulfillment-notification';
 
 const ALL_FULFILLMENT_STATUSES: PromoFulfillmentStatus[] = [
   'pending',
@@ -91,6 +92,32 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Secure pickup verification is required before fulfillment', reason }, { status: 422 });
     }
     return NextResponse.json({ error: `Fulfillment transition failed: ${reason}`, ...result }, { status: 422 });
+  }
+
+  // ACC-204: Non-blocking fulfillment notification dispatch
+  // Check for pending notification intent created atomically by the RPC
+  const { data: intent } = await service
+    .from('promo_fulfillment_notification_intents')
+    .select('id, redemption_id, to_status, campaign_id')
+    .eq('redemption_id', redemptionId)
+    .eq('to_status', fulfillmentStatus)
+    .eq('delivery_status', 'pending')
+    .maybeSingle();
+
+  if (intent) {
+    // ACC-204 Blocker 2: Await dispatch — serverless fire-and-forget is unsafe.
+    // dispatchFulfillmentNotification never throws (internal try/catch), so this
+    // won't roll back fulfillment, but ensures the attempt completes before
+    // the response is returned.
+    const dispatchResult = await dispatchFulfillmentNotification(service, intent, businessId);
+    // Log truthful result — fulfillment already succeeded regardless
+    if (dispatchResult.outcome === 'sent') {
+      logger.info('[PROMOTIONS] Fulfillment notification sent:', dispatchResult.wamid);
+    } else if (dispatchResult.outcome === 'finalization_unresolved') {
+      logger.error('[PROMOTIONS] Fulfillment notification finalization unresolved:', dispatchResult.wamid);
+    } else if (dispatchResult.outcome !== 'not_claimed') {
+      logger.warn('[PROMOTIONS] Fulfillment notification dispatch result:', dispatchResult.outcome);
+    }
   }
 
   // Fetch updated redemption for response — explicit allowlist, no phone_e164

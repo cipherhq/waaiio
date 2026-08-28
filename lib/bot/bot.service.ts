@@ -38,6 +38,7 @@ import { executeKeywordAction as _executeKeywordAction } from './handlers/keywor
 import { handleChatHandoff as _handleChatHandoff, handleChatStart as _handleChatStart } from './handlers/chat-handoff';
 import { handleCardPinStep as _handleCardPinStep } from './handlers/saved-cards';
 import { handleRefundRequest as _handleRefundRequest } from './handlers/refund-request';
+import { deriveReentryProvenance } from './reentry-context';
 
 import { HOME_PATTERN, handleEscapeHatch as _handleEscapeHatch } from './handlers/escape-hatches';
 import { handlePromoVerification as _handlePromoVerification } from './handlers/promo-verification';
@@ -71,6 +72,9 @@ export class BotService {
     mediaUrl?: string,
     /** Provider inbound message ID (Meta wamid). Request-scoped, not persisted to session. */
     messageId?: string,
+    /** ACC-204 Blocker 1 R4: Provenance from recursive/internal calls — prevents trust laundering.
+     *  Only the webhook entry (no _internalProvenance) should assign 'pre_resolved'. */
+    _internalProvenance?: string,
   ): Promise<void> {
     try {
     const text = messageText.trim();
@@ -141,9 +145,10 @@ export class BotService {
     // Pre-check 2b: Handle post-exit buttons (session was already deactivated)
     if (text === 'go_back_biz') {
       // Find the last business this user interacted with
+      // ACC-204 R4: Also fetch session_data to carry forward original provenance
       const { data: lastSession } = await this.supabase
         .from('bot_sessions')
-        .select('business_id')
+        .select('business_id, session_data')
         .eq('whatsapp_number', from)
         .eq('is_active', false)
         .not('business_id', 'is', null)
@@ -151,7 +156,9 @@ export class BotService {
         .limit(1)
         .maybeSingle();
       if (lastSession?.business_id) {
-        return this.handleMessage(from, 'Hi', messageType, destinationPhone, lastSession.business_id);
+        // ACC-204 R4: Carry forward the original provenance from the deactivated session
+        const lastProvenance = deriveReentryProvenance((lastSession.session_data as Record<string, unknown>)?.biz_resolution as string | undefined);
+        return this.handleMessage(from, 'Hi', messageType, destinationPhone, lastSession.business_id, undefined, undefined, lastProvenance);
       }
       // Fallback — no previous business found
       return this.handleMessage(from, 'Hi', messageType, destinationPhone);
@@ -782,7 +789,8 @@ export class BotService {
           .eq('id', detection.businessId)
           .single();
         if (biz) {
-          await this.handleMessage(from, biz.bot_code || 'Hi', messageType, destinationPhone, biz.id);
+          // ACC-204 R4: Keyword/switch match is user-initiated fuzzy lookup — NOT authoritative
+          await this.handleMessage(from, biz.bot_code || 'Hi', messageType, destinationPhone, biz.id, undefined, undefined, 'bot_code');
           return;
         }
       }
@@ -914,6 +922,8 @@ export class BotService {
       if (text === 'restart_yes') {
         // Confirmed restart — deactivate current session and restart fresh
         delete session.session_data._restart_pending;
+        // ACC-204 R4: Read provenance BEFORE deactivating (session still available)
+        const restartProvenance = deriveReentryProvenance(session.session_data?.biz_resolution as string | undefined);
         await this.deactivateSession(session.id);
         // Restart with the same business context
         const restartBizId = session.business_id || null;
@@ -923,7 +933,8 @@ export class BotService {
             .select('bot_code')
             .eq('id', restartBizId)
             .single();
-          await this.handleMessage(from, restartBiz?.bot_code || 'Hi', messageType, destinationPhone, restartBizId);
+          // ACC-204 R4: Carry forward original provenance — prevents fuzzy->restart trust laundering
+          await this.handleMessage(from, restartBiz?.bot_code || 'Hi', messageType, destinationPhone, restartBizId, undefined, undefined, restartProvenance);
         } else {
           await this.handleMessage(from, 'Hi', messageType, destinationPhone);
         }
@@ -960,9 +971,19 @@ export class BotService {
       // Determine standalone business
       let businessId: string | null = preResolvedBusinessId || restartBusinessId || null;
       // ACC-180: Track HOW business was resolved — trusted sources only authorize first-message promo
-      type BizResolution = 'pre_resolved' | 'dedicated_number' | 'restart' | 'bot_code' | 'fuzzy' | 'returning_customer' | null;
-      let bizResolution: BizResolution = preResolvedBusinessId ? 'pre_resolved' : restartBusinessId ? 'restart' : null;
-      logger.debug('[BOT] preResolvedBusinessId:', preResolvedBusinessId);
+      type BizResolution = 'pre_resolved' | 'dedicated_number' | 'bot_code' | 'fuzzy' | 'returning_customer' | null;
+      // ACC-204 Blocker 1 R4: Provenance derivation — three sources in priority order:
+      // 1. _internalProvenance: Recursive call carrying forward original provenance (prevents laundering)
+      // 2. preResolvedBusinessId WITHOUT _internalProvenance: Webhook entry = authoritative 'pre_resolved'
+      // 3. restartProvenance: Restart path carries forward persisted biz_resolution from session
+      const restartProvenance = restartBusinessId
+        ? deriveReentryProvenance(session?.session_data?.biz_resolution as string | undefined) || null
+        : null;
+      let bizResolution: BizResolution = _internalProvenance
+        ? _internalProvenance as BizResolution  // Carry forward from recursive call — prevents laundering
+        : preResolvedBusinessId ? 'pre_resolved'  // Webhook-supplied = authoritative
+        : (restartProvenance as BizResolution) || null;
+      logger.debug('[BOT] preResolvedBusinessId:', preResolvedBusinessId, '_internalProvenance:', _internalProvenance);
 
       // Determine the country of the shared number being messaged (for country scoping)
       let sharedNumberCountry: string | null = null;
@@ -1175,13 +1196,15 @@ export class BotService {
       // Only trusted resolution sources (pre_resolved, dedicated_number, restart) may claim.
       // If handled, sets flag to skip CAS-004 and greeting/flow — but the SAME canonical
       // session creation path runs to preserve all lifecycle invariants.
-      const PROMO_TRUSTED_SOURCES: ReadonlySet<string> = new Set(['pre_resolved', 'dedicated_number', 'restart']);
+      // ACC-204 Blocker 1: 'restart' removed — restart now carries original provenance.
+      const PROMO_TRUSTED_SOURCES: ReadonlySet<string> = new Set(['pre_resolved', 'dedicated_number']);
       let promoHandledFirstMessage = false;
       if (business && tierInfo?.allowed && bizResolution && PROMO_TRUSTED_SOURCES.has(bizResolution)
           && capabilities.includes('promo_verification' as CapabilityId) && text.length >= 4) {
         const promoResult = await _handlePromoVerification(
           this.supabase, this.sendText.bind(this), from, text,
           business.id, messageId, capabilities as string[],
+          bizResolution, // ACC-204: trusted provenance for CLAIM/STATUS self-service
         );
         if (promoResult.handled) {
           promoHandledFirstMessage = true;
@@ -1353,6 +1376,9 @@ export class BotService {
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
             ...(canonicalActivatedLanguage ? { _detected_language: canonicalActivatedLanguage } : {}),
+            // ACC-204 Blocker 1: Persist authoritative provenance so active-session path
+            // can read it back instead of trusting a hardcoded literal.
+            ...(bizResolution ? { biz_resolution: bizResolution } : {}),
             // CAS-004: No _canonical_result in persisted session data.
             // Semantic meaning must NOT cross inbound message boundaries.
             // Each new message gets its own canonical understanding.
@@ -2055,6 +2081,11 @@ export class BotService {
     // so we avoid a redundant businesses.capabilities DB read here.
     if (!isChatMode && session.business_id) {
       const sessionCapabilities = (session.session_data?.capabilities as string[] | undefined) || [];
+      // ACC-204 Blocker 1: Read persisted provenance from session creation.
+      // Only sessions created from authoritative sources (pre_resolved, dedicated_number, restart)
+      // will have a trusted biz_resolution. Sessions from 'returning_customer' or 'fuzzy'
+      // will have those values persisted and correctly denied by the TRUSTED_PROVENANCES set.
+      const sessionProvenance = deriveReentryProvenance(session.session_data?.biz_resolution as string | undefined);
       const promoResult = await _handlePromoVerification(
         this.supabase,
         this.sendText.bind(this),
@@ -2063,6 +2094,7 @@ export class BotService {
         session.business_id,
         messageId, // ACC-180: request-scoped provider message ID, not stale session state
         sessionCapabilities,
+        sessionProvenance, // Original authoritative provenance from session creation
       );
       if (promoResult.handled) return;
     }
@@ -2220,11 +2252,14 @@ export class BotService {
 
     // Handle post-completion menu (after successful transaction)
     if (step === 'post_completion') {
+      // ACC-204 R4: Read provenance from session BEFORE deactivation for all pc_ paths
+      const pcProvenance = deriveReentryProvenance(session.session_data?.biz_resolution as string | undefined);
       if (text === 'pc_options' || text === 'pc_done') {
         // View Options — restart at capability menu for same business
         await this.deactivateSession(session.id);
         if (session.business_id) {
-          await this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
+          // ACC-204 R4: Carry forward original provenance — prevents trust laundering via post-completion
+          await this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id, undefined, undefined, pcProvenance);
         }
         return;
       }
@@ -2234,7 +2269,8 @@ export class BotService {
         if (session.business_id) {
           const { data: biz } = await this.supabase
             .from('businesses').select('bot_code').eq('id', session.business_id).single();
-          await this.handleMessage(from, biz?.bot_code || 'Hi', messageType, destinationPhone, session.business_id);
+          // ACC-204 R4: Carry forward original provenance
+          await this.handleMessage(from, biz?.bot_code || 'Hi', messageType, destinationPhone, session.business_id, undefined, undefined, pcProvenance);
         }
         return;
       }
@@ -2568,22 +2604,26 @@ export class BotService {
 
     // Chat handoff: bot is paused, route messages to human agent (delegated to handlers/chat-handoff.ts)
     if (session.business_id && step === 'chat_handoff') {
+      // ACC-204 R4: Capture provenance before passing to handler — prevents laundering via reenterBot
+      const chatHandoffProvenance = deriveReentryProvenance(session.session_data?.biz_resolution as string | undefined);
       return _handleChatHandoff(
         this.supabase, this.messageSender, this.sendText.bind(this), from,
         session as { id: string; business_id: string; session_data: Record<string, unknown> },
         text, messageType, mediaUrl, this.deactivateSession.bind(this),
-        (f, t, mt, _dp, bid) => this.handleMessage(f, t, mt, destinationPhone, bid),
+        (f, t, mt, _dp, bid) => this.handleMessage(f, t, mt, destinationPhone, bid, undefined, undefined, chatHandoffProvenance),
         this.forwardToBusinessOwner.bind(this),
       );
     }
 
     // Chat fallback: if message doesn't match any flow step and chat is enabled (delegated to handlers/chat-handoff.ts)
     if (session.business_id && step === 'chat_start') {
+      // ACC-204 R4: Capture provenance before passing to handler — prevents laundering via reenterBot
+      const chatStartProvenance = deriveReentryProvenance(session.session_data?.biz_resolution as string | undefined);
       return _handleChatStart(
         this.supabase, this.messageSender, this.sendText.bind(this), from,
         session as { id: string; business_id: string; session_data: Record<string, unknown> },
         text, messageType, mediaUrl, this.deactivateSession.bind(this),
-        (f, t, mt, _dp, bid) => this.handleMessage(f, t, mt, destinationPhone, bid),
+        (f, t, mt, _dp, bid) => this.handleMessage(f, t, mt, destinationPhone, bid, undefined, undefined, chatStartProvenance),
         this.forwardToBusinessOwner.bind(this),
       );
     }

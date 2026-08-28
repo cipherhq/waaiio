@@ -3,6 +3,132 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #204: PR #210 corrections round 6 — claim token enforcement, WAMID durability pushback, recovery selection tests
+
+### What changed
+- **Blocker 1: Pre-provider terminal failure now requires valid claim authority.** `finalize_promo_fulfillment_notification` gains a `p_claim_token UUID DEFAULT NULL` parameter. When `provider_attempted_at IS NULL` and `p_status = 'failed'` (pre-provider state), the function requires a valid, non-expired claim token matching the intent's current claim_token. This prevents a stale worker whose lease expired from finalizing as 'failed' and destroying a new claimant's valid claim. Post-provider finalization (when `provider_attempted_at IS NOT NULL`) does not require the token — the provider attempt can't be undone. Old 3-param overload is dropped.
+- **Blocker 2: Cross-process WAMID durability — pushback documented.** Audited existing infrastructure: Sentry captures errors with structured context but is not a durable transactional store. No outbox/dead-letter/reconciliation pattern exists. When PostgreSQL is unavailable after Meta accepts a message, the WAMID exists only in-process. The only safe action: log WAMID via Sentry + console, accept the residual risk. Manual DB update if needed. Documented explicitly in code comments.
+- **Blocker 3: Recovery selection behavioral tests.** New test section M seeds 7 intents in different states (unclaimed_pending, expired_unattempted, active_lease, provider_attempted, sent, failed, delivered) and verifies `find_recoverable_notification_intents` returns exactly the 2 eligible intents (unclaimed + expired unattempted). Section L adds 6 tests for claim token enforcement: stale token after reclaim rejected, valid claimant can commit failure, wrong token denied, expired token denied, post-provider finalization works without token, no token denied for pre-provider failure.
+
+### Files changed
+- `supabase/migrations/348_fulfillment_recovery_and_idempotency.sql` — `finalize_promo_fulfillment_notification` gains `p_claim_token UUID` param with pre-provider claim enforcement; drops old 3-param overload; privilege grants updated to 4-param signature
+- `lib/promotions/fulfillment-notification.ts` — `finalizeIntent` accepts + passes `claimToken`; all pre-provider failure calls pass `claimToken`; handles `invalid_claim_for_failure` response; WAMID durability pushback documented in comments
+- `lib/__tests__/acc-204-fulfillment-notification-db.test.ts` — Section L (6 tests): claim token enforcement; Section M (2 tests): recovery selection behavior with 7-state seed; existing test C updated to claim before finalizing as failed; privilege checks updated to 4-param signature
+- `lib/__tests__/acc-204-claim-status.test.ts` — Migration source structure test updated for 4-param grant signature
+
+### What could break
+- `finalize_promo_fulfillment_notification` signature changed from 3 to 4 params — all callers via RPC now pass `p_claim_token` (defaults to NULL, so existing callers without it still work for post-provider finalization)
+- Pre-provider `finalize(..., 'failed')` without a valid claim token is now rejected — this is intentional; callers must hold the claim lease to commit pre-provider failure
+- Old 3-param function overload is dropped — any direct SQL call using the exact 3-param signature will fail (but default params mean 3-arg calls route to the 4-param version)
+
+## 2026-08-26 — #204: PR #210 corrections round 5 — structured dispatch results, DB-only finalization retry, reentry-context production component
+
+### What changed
+- **Blocker 1: Known-WAMID finalization returns structured result + DB-only retry.** `finalizeIntent` now returns `FinalizationResult` (finalized / already_finalized_same_wamid / conflicting_wamid / finalization_unresolved). After getting a WAMID from Meta, `finalizeIntentWithRetry` attempts bounded DB-only retry (2 attempts, ZERO additional Meta POSTs). Only logs "Sent" when finalization actually succeeds or returns idempotent same-WAMID. On persistent finalization failure, returns `finalization_unresolved` with the known WAMID and logs as CRITICAL.
+- **Blocker 2: dispatchFulfillmentNotification returns structured DispatchResult.** Return type changed from `Promise<void>` to `Promise<DispatchResult>` with 6 outcomes: not_claimed, pre_provider_failure, provider_ambiguous, provider_failed, sent, finalization_unresolved. Fulfillment route logs truthful result (sent vs unresolved vs warning). Recovery endpoint reports truthful results: only counts `sent` as recovered, reports `not_claimed` / `provider_ambiguous` / `provider_failed` / `finalization_unresolved` truthfully.
+- **Blocker 3: Production reentry-context component replaces source-inspection tests.** Created `lib/bot/reentry-context.ts` with `deriveReentryProvenance()` — the SAME function BotService actually uses for all re-entry paths (go_back_biz, restart_yes, pc_options, pc_again, chat handoff, chat start, active session provenance). Source-inspection tests (H, I sections) relabeled as `supplemental: source structure verification`. New executable tests: deriveReentryProvenance unit tests proving trusted/untrusted propagation; WAMID finalization retry tests (DB retry -> sent, persistent failure -> unresolved, idempotent retry); recovery execution tests (eligible -> sent, active lease -> not_claimed, no channel -> pre_provider_failure, ambiguous -> provider_ambiguous).
+
+### Files changed
+- `lib/promotions/fulfillment-notification.ts` — `FinalizationResult` + `DispatchResult` types; `finalizeIntentWithRetry` with bounded DB-only retry; `dispatchFulfillmentNotification` returns structured result; `finalizeIntent` returns FinalizationResult
+- `app/api/promotions/fulfillment/route.ts` — uses DispatchResult for truthful logging
+- `app/api/promotions/notifications/recover/route.ts` — reports truthful dispatch outcomes; only counts `sent` as recovered
+- `lib/bot/reentry-context.ts` — new: `deriveReentryProvenance()` production helper
+- `lib/bot/bot.service.ts` — imports and uses `deriveReentryProvenance` for all 6 re-entry paths
+- `lib/__tests__/acc-204-claim-status.test.ts` — 89 tests: new H-exec (reentry-context tests), WAMID finalization retry tests, recovery execution tests; H/I source-inspection tests relabeled supplemental
+
+### What could break
+- `dispatchFulfillmentNotification` return type changed from `void` to `DispatchResult` — any caller that awaits without using the result is safe; any caller that checks the result must handle the new type
+- Recovery endpoint response format changed: `status: 'dispatched'` replaced by truthful `status: 'sent' | 'not_claimed' | 'provider_ambiguous' | ...`; `recovered` count only includes `sent` (was counting all non-error as `dispatched`)
+- `deriveReentryProvenance` is now the canonical path for session provenance reading — any future re-entry paths must use it
+
+## 2026-08-26 — #204: PR #210 corrections round 4 — provenance laundering closure, lease hardening, recovery API
+
+### What changed
+- **Blocker 1 R4: Closed ALL provenance laundering paths.** Added `_internalProvenance` as 9th parameter to `handleMessage()`. When a recursive/internal call passes a business_id, it now also passes the original provenance from the session. The provenance derivation at the new-session path checks `_internalProvenance` FIRST, before `preResolvedBusinessId`. This prevents 6 laundering paths: (1) `go_back_biz` now reads `session_data.biz_resolution` from the last deactivated session, (2) keyword/switch action passes `'bot_code'` (non-authoritative), (3) `restart_yes` reads provenance before deactivating, (4) `pc_options`/`pc_again` capture `pcProvenance` before deactivation, (5-6) chat handoff/start lambdas capture `chatHandoffProvenance`/`chatStartProvenance`. Only webhook entry (no `_internalProvenance`) assigns `'pre_resolved'`.
+- **Blocker 2 R4: Lease hardening + finalize idempotency + recovery.** Migration 348 rewrites `finalize_promo_fulfillment_notification` with idempotent semantics: same WAMID re-finalize = success, different WAMID = reject (fail closed). `mark_fulfillment_notification_attempted` now additionally verifies `claim_expires_at > now()` and `provider_attempted_at IS NULL`. New `find_recoverable_notification_intents` RPC returns pending intents with no provider attempt and no active lease. New recovery API at `/api/promotions/notifications/recover` (service-role only) finds and re-dispatches stuck intents.
+- **Tests: 76 unit tests, full DB coverage.** New laundering path structure proofs (H section): verifies all 6 paths carry provenance correctly. Full chain proofs: fuzzy go_back_biz -> CLAIM denied, keyword -> denied, authoritative -> go_back_biz -> CLAIM allowed. DB tests for finalize idempotency (same WAMID twice = idempotent, different WAMID = rejected), mark_attempted lease expiry hardening, old token after reclaim, recovery RPC privilege hardening.
+
+### Files changed
+- `lib/bot/bot.service.ts` — `_internalProvenance` 9th param; all recursive handleMessage calls carry forward provenance; provenance derivation checks `_internalProvenance` first
+- `lib/bot/derive-promo-provenance.ts` — updated docs for _internalProvenance role
+- `supabase/migrations/348_fulfillment_recovery_and_idempotency.sql` — new: idempotent finalize, hardened mark_attempted, find_recoverable_notification_intents RPC
+- `app/api/promotions/notifications/recover/route.ts` — new: service-role-only recovery endpoint
+- `lib/__tests__/acc-204-claim-status.test.ts` — 76 tests: added H (laundering proofs) and I (idempotency proofs) sections
+- `lib/__tests__/acc-204-fulfillment-notification-db.test.ts` — added I (finalize idempotency), J (lease hardening), K (recovery RPC) DB tests
+
+### What could break
+- Migration 348 rewrites `finalize_promo_fulfillment_notification` and `mark_fulfillment_notification_attempted` — must be applied after 346+347
+- `mark_attempted` now checks `claim_expires_at > now()` — if the lease expires between claim and mark_attempted (>30s gap), the send is correctly blocked. This is intentional but changes behavior for very slow pre-provider work.
+- Recovery API requires `SUPABASE_SERVICE_ROLE_KEY` in `x-service-secret` header — not exposed to end users
+
+## 2026-08-26 — #204: PR #210 corrections round 3 — provenance laundering fix, lease/recovery dispatch, executable webhook tests
+
+### What changed
+- **Blocker 1: Restart no longer launders untrusted provenance.** Previously `restartBusinessId ? 'restart'` hardcoded provenance, allowing a fuzzy-derived session to restart and become trusted. Now carries forward the PERSISTED `session_data.biz_resolution` from the original session. `'restart'` removed from `TRUSTED_PROVENANCES` in both `promo-verification.ts` and `PROMO_TRUSTED_SOURCES` in `bot.service.ts`. Extracted `deriveFirstMessageProvenance` + `deriveActiveSessionProvenance` helpers with unit tests proving the full chain (fuzzy restart -> denied, dedicated_number restart -> allowed).
+- **Blocker 2: Dispatch claim with lease/recovery.** Migration 347 now adds `claim_token UUID`, `claim_expires_at TIMESTAMPTZ`, `provider_attempted_at TIMESTAMPTZ` columns. `claim_fulfillment_notification_dispatch` generates a UUID token + lease (default 30s). New `mark_fulfillment_notification_attempted` RPC marks the point of no return before the Meta POST. Five states: (A) never attempted/reclaimable, (B) claimed with active lease/reclaimable after expiry, (C) provider attempted/NOT auto-reclaimable, (D) sent with WAMID, (E) failed. `fulfillment-notification.ts` updated to call claim -> pre-provider work -> mark_attempted -> send -> finalize. DB tests cover lease expiry + reclaim, provider_attempted_at blocking reclaim, wrong token rejection, two-session claim race.
+- **Blocker 3: Executable webhook + application tests.** Extracted `fulfillment-webhook-correlator.ts` from inline webhook handler. Webhook route now delegates to `correlateFulfillmentNotificationStatus()`. Executable tests call the correlator with mocked Supabase: delivered callback -> advance called, read callback -> advance, failed -> handled, duplicate -> idempotent, unknown WAMID -> no advance. Dispatch tests updated for lease model: mark_attempted failure (lease expired) -> zero sendTemplate. Provenance tests now test `deriveFirstMessageProvenance` helper with full chain proofs.
+
+### Files changed
+- `lib/bot/bot.service.ts` — restart carries forward `session_data.biz_resolution` instead of hardcoded `'restart'`; `PROMO_TRUSTED_SOURCES` reduced to `['pre_resolved', 'dedicated_number']`
+- `lib/bot/handlers/promo-verification.ts` — `TRUSTED_PROVENANCES` reduced to `['pre_resolved', 'dedicated_number']`
+- `lib/bot/derive-promo-provenance.ts` — new: extracted provenance derivation helpers
+- `lib/promotions/fulfillment-notification.ts` — lease model: claim_token, mark_attempted before send
+- `lib/promotions/fulfillment-webhook-correlator.ts` — new: extracted webhook correlation logic
+- `app/api/webhook/meta-cloud/route.ts` — delegates to `correlateFulfillmentNotificationStatus`
+- `supabase/migrations/347_claim_fulfillment_notification_dispatch.sql` — claim_token, claim_expires_at, provider_attempted_at, mark_fulfillment_notification_attempted RPC
+- `lib/__tests__/acc-204-claim-status.test.ts` — 58 executable tests: provenance helper proofs, lease dispatch, webhook correlation
+- `lib/__tests__/acc-204-fulfillment-notification-db.test.ts` — DB tests for lease/token/expiry/mark_attempted
+- `lib/bot/__tests__/acc-180-promo-first-message.test.ts` — updated for restart provenance change
+
+### What could break
+- Sessions created before this change: `biz_resolution` is preserved. Old sessions without it will have `undefined` provenance on restart -> CLAIM denied (fail-closed).
+- Migration 347 is now a breaking rewrite (adds columns + new RPC). Must be applied fresh — cannot be applied incrementally on top of the previous version.
+- Any code that relied on `'restart'` being in `TRUSTED_PROVENANCES` will now be denied. This is intentional — restart must carry the original source.
+
+## 2026-08-26 — #204: PR #210 corrections round 2 — provenance persistence, atomic claim, executable tests
+
+### What changed
+- **Blocker 1: Persist tenant-authoritative provenance in session**. `bot.service.ts` now persists `biz_resolution` in `session_data` JSONB when a session is created. On the active-session path, the handler reads `session_data.biz_resolution` instead of trusting a hardcoded `'active_session'` literal. Sessions created from `returning_customer` or `fuzzy` sources will have those values persisted, and the CLAIM handler correctly denies them. Removed `'active_session'` from `TRUSTED_PROVENANCES` set.
+- **Blocker 2: Single-winner dispatch claim**. Added migration 347 with `claim_fulfillment_notification_dispatch` RPC — atomically claims a pending intent via `SELECT FOR UPDATE` + pending check + `attempted_at IS NULL`. Updated `fulfillment-notification.ts` to call claim RPC before any provider call. If claim fails (already claimed), returns immediately with zero provider POST. Fixed `finalizeIntent` to check both `error` AND `!result?.success`. Removed the separate `attempted_at` update since the claim RPC sets it atomically.
+- **Blocker 3: Executable application tests**. Replaced all source-string `indexOf()` tests with executable tests that actually call `dispatchFulfillmentNotification` with mocked ChannelResolver, MetaCloudService, and Supabase. 15 dispatch tests: template APPROVED/missing/PENDING/REJECTED, noRetry:true, 4xx/5xx error handling, missing WAMID, concurrent claim, finalize error/semantic-failure. Webhook correlation verified structurally. Provenance tests updated to verify `active_session` is no longer trusted directly.
+
+### Files changed
+- `lib/bot/bot.service.ts` — persists `biz_resolution` in session_data on creation; active-session path reads it back
+- `lib/bot/handlers/promo-verification.ts` — removed `'active_session'` from TRUSTED_PROVENANCES
+- `lib/promotions/fulfillment-notification.ts` — uses `claim_fulfillment_notification_dispatch` RPC, checks finalize success semantically
+- `supabase/migrations/347_claim_fulfillment_notification_dispatch.sql` — atomic claim RPC (new)
+- `lib/__tests__/acc-204-claim-status.test.ts` — replaced source-string tests with executable dispatch + provenance tests
+
+### What could break
+- Sessions created before this change will NOT have `biz_resolution` in session_data. On the active-session path, `sessionProvenance` will be `undefined`, which means CLAIM/STATUS will be denied until the user starts a new session. This is the secure default (fail-closed).
+- Migration 347 must be applied after 346 (depends on `promo_fulfillment_notification_intents` table and `attempted_at` column).
+
+## 2026-08-26 — #204: CLAIM/STATUS self-service + fulfillment notifications (corrections round)
+
+### What changed
+- **CLAIM/STATUS bot commands**: Winners can now text `CLAIM WAA-xxx` or `STATUS WAA-xxx` to check their claim status via WhatsApp. Trusted provenance now includes `active_session` (Blocker 1) — existing sessions with authoritative tenant binding can use CLAIM/STATUS.
+- **bizResolution passthrough**: `bot.service.ts` passes `bizResolution` to `handlePromoVerification` in BOTH paths: first-message (with explicit provenance) AND active-session (with `'active_session'` provenance).
+- **Migration 346**: Added `attempted_at TIMESTAMPTZ` column for crash-safe dispatch idempotency (Blocker 2). `finalize_promo_fulfillment_notification` sets `attempted_at` on finalization.
+- **Durable dispatch (Blocker 2)**: Fulfillment route now `await`s dispatch instead of fire-and-forget `.catch()`. Dispatch sets `attempted_at = now()` BEFORE the provider call — if the process crashes mid-flight, the intent is marked as attempted (ambiguous, not auto-retried).
+- **Meta webhook correlation (Blocker 3)**: Added fulfillment notification delivery status correlation to `meta-cloud/route.ts` — uses `advance_promo_fulfillment_notification_status` RPC.
+- **CI (Blocker 4)**: Added ACC-204 fulfillment notification DB tests step to `.github/workflows/ci.yml`.
+- **Strengthened tests (Blocker 5)**: Predicate-sensitive filter-aware CLAIM/STATUS mocks (5a), two-session concurrency with pg_sleep (5b), provider safety code path verification (5c), rate limit ordering proof (5d), routing order proof (5e).
+
+### Files changed
+- `lib/bot/bot.service.ts` — active-session call now passes `'active_session'` provenance
+- `lib/bot/handlers/promo-verification.ts` — TRUSTED_PROVENANCES now includes `'active_session'`
+- `supabase/migrations/346_promo_fulfillment_notification_intent.sql` — added `attempted_at` column, updated finalize RPC
+- `app/api/promotions/fulfillment/route.ts` — `await` dispatch instead of fire-and-forget
+- `lib/promotions/fulfillment-notification.ts` — sets `attempted_at` before provider call
+- `app/api/webhook/meta-cloud/route.ts` — fulfillment notification delivery status correlation
+- `.github/workflows/ci.yml` — ACC-204 DB test step
+- `lib/__tests__/acc-204-claim-status.test.ts` — predicate-sensitive, routing order, provider safety, rate limit ordering tests
+- `lib/__tests__/acc-204-fulfillment-notification-db.test.ts` — two-session concurrency test
+
+### What could break
+- `handlePromoVerification` now accepts `'active_session'` provenance — any code path that reaches the active-session handler with a fabricated provenance string could theoretically bypass gating, but the provenance is set server-side in bot.service.ts only.
+- `attempted_at` column added to migration 346 — if migration was already applied, a supplementary `ALTER TABLE` is needed.
+
 ## 2026-08-26 — #203: Corrections round 3 — failed finalization invalidation, actual migration harness, deterministic concurrency
 
 ### What changed
