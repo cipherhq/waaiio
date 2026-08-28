@@ -21,7 +21,7 @@ interface TemplateDefinition {
   }>;
 }
 
-const WAAIIO_TEMPLATES: TemplateDefinition[] = [
+export const WAAIIO_TEMPLATES: TemplateDefinition[] = [
   {
     name: 'booking_confirmation',
     category: 'UTILITY',
@@ -87,6 +87,42 @@ const WAAIIO_TEMPLATES: TemplateDefinition[] = [
       { type: 'BODY', text: 'Your {{1}} pickup verification code is {{2}}.\nIt expires in {{3}} minutes.\nOnly share this code with staff when collecting your prize.', example: { body_text: [['Prize', '123456', '10']] } },
     ],
   },
+  {
+    name: 'promo_pickup_verification_v2',
+    language: 'en_US',
+    category: 'UTILITY',
+    components: [
+      {
+        type: 'BODY',
+        text: '{{1}} — Your {{2}} pickup verification code is {{3}}. It expires in {{4}} minutes. Only share this code with the sponsoring business when collecting your prize.',
+        example: { body_text: [['Acme Corp', 'Gold Watch', '123456', '10']] },
+      },
+    ],
+  },
+  {
+    name: 'promo_winner_status_v1',
+    language: 'en_US',
+    category: 'UTILITY',
+    components: [
+      {
+        type: 'BODY',
+        text: '{{1}} — You won {{3}} in the {{2}} promotion. Claim reference: {{4}}. Keep this reference for lookup and status checks. It does not replace any required pickup verification.',
+        example: { body_text: [['Acme Corp', 'Summer Giveaway', 'Gold Watch', 'WAA-XXXX-XXXX-XXXX-XXXX']] },
+      },
+    ],
+  },
+  {
+    name: 'promo_fulfillment_status_v1',
+    language: 'en_US',
+    category: 'UTILITY',
+    components: [
+      {
+        type: 'BODY',
+        text: '{{1}} — Update for {{2}}: {{3}}. Claim reference: {{4}}. Status: {{5}}.',
+        example: { body_text: [['Acme Corp', 'Summer Giveaway', 'Gold Watch', 'WAA-XXXX-XXXX-XXXX-XXXX', 'Fulfilled']] },
+      },
+    ],
+  },
 ];
 
 /**
@@ -111,7 +147,10 @@ export async function provisionTemplates(
       );
       const checkData = await checkRes.json();
 
-      if (checkData.data?.length > 0) {
+      const alreadyExists = (checkData.data || []).some(
+        (t: { name: string; language?: string }) => t.name === template.name && t.language === template.language,
+      );
+      if (alreadyExists) {
         skipped++;
         continue;
       }

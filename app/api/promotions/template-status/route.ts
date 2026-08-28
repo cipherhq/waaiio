@@ -8,6 +8,7 @@ import { logger } from '@/lib/logger';
 const PICKUP_TEMPLATE_NAME = 'promo_pickup_verification';
 const PICKUP_V2_TEMPLATE_NAME = 'promo_pickup_verification_v2';
 const WINNER_TEMPLATE_NAME = 'promo_winner_status_v1';
+const FULFILLMENT_TEMPLATE_NAME = 'promo_fulfillment_status_v1';
 const TEMPLATE_LANGUAGE = 'en_US';
 
 export type TemplateReadiness = 'ready' | 'pending' | 'provisioning_required' | 'rejected' | 'unavailable';
@@ -98,12 +99,14 @@ export async function GET(request: NextRequest) {
     const pickupV1 = resolveTemplate(PICKUP_TEMPLATE_NAME);
     const pickupV2 = resolveTemplate(PICKUP_V2_TEMPLATE_NAME);
     const winnerStatus = resolveTemplate(WINNER_TEMPLATE_NAME);
+    const fulfillmentStatus = resolveTemplate(FULFILLMENT_TEMPLATE_NAME);
 
     return NextResponse.json({
       templates: {
         [PICKUP_TEMPLATE_NAME]: { template: PICKUP_TEMPLATE_NAME, ...pickupV1 },
         [PICKUP_V2_TEMPLATE_NAME]: { template: PICKUP_V2_TEMPLATE_NAME, ...pickupV2 },
         [WINNER_TEMPLATE_NAME]: { template: WINNER_TEMPLATE_NAME, ...winnerStatus },
+        [FULFILLMENT_TEMPLATE_NAME]: { template: FULFILLMENT_TEMPLATE_NAME, ...fulfillmentStatus },
       },
       // Backward compat: top-level fields use pickup v1 for existing callers
       template: PICKUP_TEMPLATE_NAME,
