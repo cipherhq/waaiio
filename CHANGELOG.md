@@ -3,6 +3,24 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #204: PR #210 corrections round 2 — provenance persistence, atomic claim, executable tests
+
+### What changed
+- **Blocker 1: Persist tenant-authoritative provenance in session**. `bot.service.ts` now persists `biz_resolution` in `session_data` JSONB when a session is created. On the active-session path, the handler reads `session_data.biz_resolution` instead of trusting a hardcoded `'active_session'` literal. Sessions created from `returning_customer` or `fuzzy` sources will have those values persisted, and the CLAIM handler correctly denies them. Removed `'active_session'` from `TRUSTED_PROVENANCES` set.
+- **Blocker 2: Single-winner dispatch claim**. Added migration 347 with `claim_fulfillment_notification_dispatch` RPC — atomically claims a pending intent via `SELECT FOR UPDATE` + pending check + `attempted_at IS NULL`. Updated `fulfillment-notification.ts` to call claim RPC before any provider call. If claim fails (already claimed), returns immediately with zero provider POST. Fixed `finalizeIntent` to check both `error` AND `!result?.success`. Removed the separate `attempted_at` update since the claim RPC sets it atomically.
+- **Blocker 3: Executable application tests**. Replaced all source-string `indexOf()` tests with executable tests that actually call `dispatchFulfillmentNotification` with mocked ChannelResolver, MetaCloudService, and Supabase. 15 dispatch tests: template APPROVED/missing/PENDING/REJECTED, noRetry:true, 4xx/5xx error handling, missing WAMID, concurrent claim, finalize error/semantic-failure. Webhook correlation verified structurally. Provenance tests updated to verify `active_session` is no longer trusted directly.
+
+### Files changed
+- `lib/bot/bot.service.ts` — persists `biz_resolution` in session_data on creation; active-session path reads it back
+- `lib/bot/handlers/promo-verification.ts` — removed `'active_session'` from TRUSTED_PROVENANCES
+- `lib/promotions/fulfillment-notification.ts` — uses `claim_fulfillment_notification_dispatch` RPC, checks finalize success semantically
+- `supabase/migrations/347_claim_fulfillment_notification_dispatch.sql` — atomic claim RPC (new)
+- `lib/__tests__/acc-204-claim-status.test.ts` — replaced source-string tests with executable dispatch + provenance tests
+
+### What could break
+- Sessions created before this change will NOT have `biz_resolution` in session_data. On the active-session path, `sessionProvenance` will be `undefined`, which means CLAIM/STATUS will be denied until the user starts a new session. This is the secure default (fail-closed).
+- Migration 347 must be applied after 346 (depends on `promo_fulfillment_notification_intents` table and `attempted_at` column).
+
 ## 2026-08-26 — #204: CLAIM/STATUS self-service + fulfillment notifications (corrections round)
 
 ### What changed

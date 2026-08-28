@@ -56,8 +56,10 @@ export async function handlePromoVerification(
   const statusMatch = text.match(/^STATUS\s+(WAA-[A-Z0-9-]+)$/i);
 
   if (claimMatch || statusMatch) {
-    // Require trusted business provenance — fuzzy/returning_customer cannot self-service
-    const TRUSTED_PROVENANCES = new Set(['pre_resolved', 'dedicated_number', 'restart', 'active_session']);
+    // Require trusted business provenance — fuzzy/returning_customer cannot self-service.
+    // ACC-204 Blocker 1: 'active_session' removed — provenance is now read from session_data.biz_resolution
+    // which preserves the original authoritative source (e.g. 'pre_resolved', 'dedicated_number', 'restart').
+    const TRUSTED_PROVENANCES = new Set(['pre_resolved', 'dedicated_number', 'restart']);
     if (!bizResolution || !TRUSTED_PROVENANCES.has(bizResolution)) {
       return { handled: false };
     }

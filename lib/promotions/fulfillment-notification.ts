@@ -7,6 +7,9 @@
  * CONSTRAINT: Notification failure must NEVER roll back fulfillment.
  * This function never throws — all errors are logged and the intent is
  * marked 'failed' so it doesn't block future transitions.
+ *
+ * ACC-204 Blocker 2: Uses claim_fulfillment_notification_dispatch RPC for
+ * single-winner atomic claim before any provider call.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
@@ -41,6 +44,23 @@ export async function dispatchFulfillmentNotification(
   businessId: string,
 ): Promise<void> {
   try {
+    // ACC-204 Blocker 2: Atomic claim — prevents concurrent dispatchers from
+    // both calling the provider. If claim fails, another dispatcher already owns it.
+    const { data: claimResult, error: claimError } = await service.rpc(
+      'claim_fulfillment_notification_dispatch',
+      { p_intent_id: intent.id },
+    );
+
+    if (claimError) {
+      logger.error('[FULFILLMENT-NOTIF] Claim RPC error:', claimError);
+      return; // Non-blocking — don't throw
+    }
+
+    if (!claimResult?.claimed) {
+      logger.debug('[FULFILLMENT-NOTIF] Claim not available (already claimed or not pending):', claimResult);
+      return; // Another dispatcher owns this intent — zero provider call
+    }
+
     // 1. Resolve WhatsApp channel
     const resolver = new ChannelResolver(service);
     const resolved = await resolver.resolveByBusinessId(businessId);
@@ -127,16 +147,8 @@ export async function dispatchFulfillmentNotification(
     const claimReference = redemption.claim_reference || 'N/A';
     const statusLabel = formatStatus(intent.to_status);
 
-    // 7. Mark attempted BEFORE provider call — crash-safe idempotency
-    // If process crashes after this but before provider responds, the intent has
-    // attempted_at set (ambiguous — do NOT auto-retry immediately).
-    await service
-      .from('promo_fulfillment_notification_intents')
-      .update({ attempted_at: new Date().toISOString() })
-      .eq('id', intent.id)
-      .eq('delivery_status', 'pending');
-
-    // 8. Send template — noRetry: delivery-critical promo notification
+    // 7. Send template — noRetry: delivery-critical promo notification
+    // NOTE: attempted_at was already set by the claim RPC — no separate update needed
     let messageId: string | undefined;
     try {
       const phone = stripPlus(redemption.phone_e164);
@@ -154,18 +166,18 @@ export async function dispatchFulfillmentNotification(
         await finalizeIntent(service, intent.id, 'failed');
         return;
       }
-      // Ambiguous error — leave as pending (Meta may have accepted)
-      logger.error('[FULFILLMENT-NOTIF] Ambiguous provider error — intent stays pending:', err);
+      // Ambiguous error — leave as pending with attempted_at set (claim RPC already set it)
+      logger.error('[FULFILLMENT-NOTIF] Ambiguous provider error — intent stays attempted:', err);
       return;
     }
 
     if (!messageId) {
-      // No WAMID = ambiguous — leave pending
-      logger.warn('[FULFILLMENT-NOTIF] Send succeeded but no WAMID — intent stays pending');
+      // No WAMID = ambiguous — leave with attempted_at set
+      logger.warn('[FULFILLMENT-NOTIF] Send succeeded but no WAMID — intent stays attempted');
       return;
     }
 
-    // 9. Finalize with WAMID
+    // 8. Finalize with WAMID
     await finalizeIntent(service, intent.id, 'sent', messageId);
     logger.info(`[FULFILLMENT-NOTIF] Sent ${intent.to_status} notification for redemption ${intent.redemption_id}`);
   } catch (err) {
@@ -183,12 +195,13 @@ async function finalizeIntent(
   status: 'sent' | 'failed',
   providerMessageId?: string,
 ): Promise<void> {
-  const { error } = await service.rpc('finalize_promo_fulfillment_notification', {
+  const { data: finalizeResult, error: finalizeError } = await service.rpc('finalize_promo_fulfillment_notification', {
     p_intent_id: intentId,
     p_status: status,
     p_provider_message_id: providerMessageId || null,
   });
-  if (error) {
-    logger.error('[FULFILLMENT-NOTIF] Finalize RPC error:', error);
+  // ACC-204 Blocker 2: Check BOTH error AND semantic success
+  if (finalizeError || !finalizeResult?.success) {
+    logger.error('[FULFILLMENT-NOTIF] Finalization failed:', finalizeError || finalizeResult);
   }
 }

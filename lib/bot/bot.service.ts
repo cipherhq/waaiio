@@ -1354,6 +1354,9 @@ export class BotService {
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
             ...(canonicalActivatedLanguage ? { _detected_language: canonicalActivatedLanguage } : {}),
+            // ACC-204 Blocker 1: Persist authoritative provenance so active-session path
+            // can read it back instead of trusting a hardcoded literal.
+            ...(bizResolution ? { biz_resolution: bizResolution } : {}),
             // CAS-004: No _canonical_result in persisted session data.
             // Semantic meaning must NOT cross inbound message boundaries.
             // Each new message gets its own canonical understanding.
@@ -2056,6 +2059,11 @@ export class BotService {
     // so we avoid a redundant businesses.capabilities DB read here.
     if (!isChatMode && session.business_id) {
       const sessionCapabilities = (session.session_data?.capabilities as string[] | undefined) || [];
+      // ACC-204 Blocker 1: Read persisted provenance from session creation.
+      // Only sessions created from authoritative sources (pre_resolved, dedicated_number, restart)
+      // will have a trusted biz_resolution. Sessions from 'returning_customer' or 'fuzzy'
+      // will have those values persisted and correctly denied by the TRUSTED_PROVENANCES set.
+      const sessionProvenance = session.session_data?.biz_resolution as string | undefined;
       const promoResult = await _handlePromoVerification(
         this.supabase,
         this.sendText.bind(this),
@@ -2064,7 +2072,7 @@ export class BotService {
         session.business_id,
         messageId, // ACC-180: request-scoped provider message ID, not stale session state
         sessionCapabilities,
-        'active_session', // Session has authoritative tenant binding
+        sessionProvenance, // Original authoritative provenance from session creation
       );
       if (promoResult.handled) return;
     }
